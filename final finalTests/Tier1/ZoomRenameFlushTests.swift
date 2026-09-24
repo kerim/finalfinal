@@ -45,7 +45,7 @@ struct ZoomRenameFlushTests {
     Beta body.
     """
 
-    fileprivate struct Fixture {
+    struct Fixture {
         let db: ProjectDatabase
         let pid: String
         let state: EditorViewState
@@ -54,7 +54,9 @@ struct ZoomRenameFlushTests {
         let betaId: String
     }
 
-    fileprivate func makeFixture() throws -> Fixture {
+    // Internal (not fileprivate): used by the M3 interleaving tests in
+    // ZoomRenameFlushRestoreRaceTests.swift, which need cross-file access to this fixture.
+    func makeFixture() throws -> Fixture {
         let db = try TestFixtureFactory.createTemporary(content: Self.fixtureMarkdown)
         let pid = try TestFixtureFactory.getProjectId(from: db)
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
@@ -79,7 +81,9 @@ struct ZoomRenameFlushTests {
 
     /// Sets up `state` as though `zoomToSection` had already zoomed onto `rootId`'s range,
     /// using its live sortOrder as the range start and `endSortOrder` as the range end.
-    fileprivate func zoomOnto(_ fixture: Fixture, rootId: String, sectionIds: Set<String>, endSortOrder: Double?) throws {
+    /// Internal (not fileprivate): used by the M3 interleaving tests in
+    /// ZoomRenameFlushRestoreRaceTests.swift too.
+    func zoomOnto(_ fixture: Fixture, rootId: String, sectionIds: Set<String>, endSortOrder: Double?) throws {
         let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
         let root = blocks.first { $0.id == rootId }!
         fixture.state.zoomedSectionId = rootId
@@ -130,7 +134,8 @@ struct ZoomRenameFlushTests {
 
     // MARK: - 9. Renaming a child while zoomed stays in the sidebar (add-only) -- M7 flush-level
     // add-only regression (judge fix round): the ORIGINAL coverage of this invariant
-    // (`sectionSyncPairingSurvivesAddOnlyIdUpdate`, further below) only calls the extracted
+    // (`sectionSyncPairingSurvivesAddOnlyIdUpdate`, in ZoomRenameFlushTeardownSafetyTests.swift)
+    // only calls the extracted
     // PURE filter function (`SectionSyncService.zoomedExistingSections`) with hand-built data --
     // it can never catch a regression to the unsafe swap-based approach this fix specifically
     // moved away from AT THE FLUSH LEVEL (`EditorViewState.flushContentToDatabase`'s own
@@ -362,207 +367,6 @@ struct ZoomRenameFlushTests {
         #expect(after.contains { $0.textContent == "Beta" })
     }
 
-    // MARK: - 13. SectionSyncService pairing survives an add-only id update
-
-    @Test("SectionSyncService.zoomedExistingSections pairing survives an add-only zoomedIds update")
-    func sectionSyncPairingSurvivesAddOnlyIdUpdate() throws {
-        let oldAlphaId = "old-alpha"
-        let oldChildId = "old-child"
-        let newAlphaId = "new-alpha-after-rename"
-
-        let alphaSection = Section(id: oldAlphaId, projectId: "p", sortOrder: 0, headerLevel: 2, title: "Alpha")
-        let childSection = Section(id: oldChildId, projectId: "p", sortOrder: 1, headerLevel: 3, title: "Child")
-        let existing = [alphaSection, childSection]
-
-        // Add-only: old ids retained, new one added alongside.
-        let addOnlyIds: Set<String> = [oldAlphaId, oldChildId, newAlphaId]
-        let paired = SectionSyncService.zoomedExistingSections(existing, zoomedIds: addOnlyIds)
-        #expect(
-            paired.map { $0.id } == [oldAlphaId, oldChildId],
-            "both existing rows should still be present and correctly ordered under an add-only update"
-        )
-
-        // Contrast: a SWAPPED set (the old id removed) breaks the pairing -- proving this test
-        // would actually catch a regression to swap-instead-of-add behavior.
-        let swappedIds: Set<String> = [oldChildId, newAlphaId]
-        let pairedAfterSwap = SectionSyncService.zoomedExistingSections(existing, zoomedIds: swappedIds)
-        #expect(
-            pairedAfterSwap.map { $0.id } == [oldChildId],
-            "removing an id from the set drops the corresponding Section row -- exactly what add-only avoids"
-        )
-    }
-
-    // MARK: - 14-17. M3 interleaving tests (fix-round-3, judge fix round)
-    //
-    // `EditorViewState.acquireZoomRestore()`/`releaseZoomRestore()` are internal (accessible
-    // via `@testable import`), so these tests hold the REAL mutex directly -- no fake/stand-in
-    // Task needed, and no risk of a test-only shim diverging from the real synchronization
-    // primitive it's supposed to be modeling. `FakeInFlightRestore` below is a thin wrapper
-    // that just calls those two real methods, letting a test deterministically hold the "a
-    // restore is in flight" state open, start a SECOND real call that must wait for it, and
-    // release it at a moment the test controls -- rather than racing real timing against a
-    // live WebView round trip.
-    //
-    // Each test asserts the invariant M3 exists to guarantee: whenever the zoom flags say "not
-    // zoomed," the editor is showing the full document -- plus, where relevant, that the
-    // database's block set outside the zoomed section is unchanged after the next flush.
-
-    /// Populates `state.sections` from the DB's outline blocks, matching what a live app would
-    /// have (zoomToSection reads `sections`, not the DB, to resolve a target section id).
-    private func populateSections(_ fixture: Fixture) throws {
-        let outlineBlocks = try fixture.db.fetchOutlineBlocks(projectId: fixture.pid)
-        fixture.state.sections = outlineBlocks.map { SectionViewModel(from: $0) }
-    }
-
-    /// Asserts the M3 invariant: whenever the zoom flags say "not zoomed," the editor's content
-    /// is the FULL document (every heading present), never a stranded zoomed subset.
-    private func assertNotZoomedImpliesFullDocument(_ fixture: Fixture) {
-        guard fixture.state.zoomedSectionId == nil else { return }  // legitimately still zoomed -- nothing to check here
-        #expect(fixture.state.content.contains("# Doc"), "invariant: not-zoomed must mean the FULL document is showing")
-        #expect(fixture.state.content.contains("## Alpha"), "invariant: not-zoomed must mean the FULL document is showing")
-        #expect(fixture.state.content.contains("## Beta"), "invariant: not-zoomed must mean the FULL document is showing")
-    }
-
-    /// Asserts every block that was outside the ORIGINAL zoom range (Beta and its body) is
-    /// still present, unduplicated, after a subsequent flush -- the concrete "nothing outside
-    /// the zoomed section was touched" check the judge asked each interleaving test to make.
-    private func assertBetaUntouchedAfterFlush(_ fixture: Fixture) throws {
-        fixture.state.flushContentToDatabase()
-        let after = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        #expect(after.filter { $0.textContent == "Beta" }.count == 1, "Beta's heading must survive, unduplicated")
-        #expect(after.filter { $0.textContent == "Beta body." }.count == 1, "Beta's body must survive, unduplicated")
-    }
-
-    /// Thin wrapper over the REAL `acquireZoomRestore()`/`releaseZoomRestore()` mutex (M3
-    /// fix-round-3) -- `install` claims it (immediately, since nothing else holds it yet at
-    /// the start of each test below) and `finish` releases it, handing ownership to whichever
-    /// real caller is queued behind it.
-    @MainActor
-    private final class FakeInFlightRestore {
-        func install(on state: EditorViewState) async {
-            await state.acquireZoomRestore()
-        }
-
-        func finish(clearing state: EditorViewState) {
-            state.releaseZoomRestore()
-        }
-    }
-
-    // MARK: - 14. Recovery holding the mutex while zoomToSection targets a DIFFERENT section
-
-    @Test("zoomToSection targeting a different section waits for an in-flight restore, then proceeds correctly")
-    func zoomToSectionWaitsForInFlightRestoreTargetingDifferentSection() async throws {
-        let fixture = try makeFixture()
-        let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        let beta = blocks.first { $0.id == fixture.betaId }!
-        try zoomOnto(fixture, rootId: fixture.alphaId, sectionIds: [fixture.alphaId, fixture.childId], endSortOrder: beta.sortOrder)
-        fixture.state.content = "## Alpha\n\nBody.\n\n### Child\n\nChild body."
-        try populateSections(fixture)
-
-        let fake = FakeInFlightRestore()
-        await fake.install(on: fixture.state)
-
-        let zoomTask = Task { await fixture.state.zoomToSection(fixture.betaId) }
-        await Task.yield()  // let zoomToSection reach its internal `await zoomOut()` wait
-
-        fake.finish(clearing: fixture.state)
-        await zoomTask.value
-
-        assertNotZoomedImpliesFullDocument(fixture)
-        try assertBetaUntouchedAfterFlush(fixture)
-    }
-
-    // MARK: - 15. Same, but the target section no longer exists (the abort branch)
-
-    @Test("zoomToSection's abort branch, reached after waiting for an in-flight restore, does not clear flags over stale content")
-    func zoomToSectionAbortBranchWaitsForInFlightRestore() async throws {
-        let fixture = try makeFixture()
-        let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        let beta = blocks.first { $0.id == fixture.betaId }!
-        try zoomOnto(fixture, rootId: fixture.alphaId, sectionIds: [fixture.alphaId, fixture.childId], endSortOrder: beta.sortOrder)
-        fixture.state.content = "## Alpha\n\nBody.\n\n### Child\n\nChild body."
-        try populateSections(fixture)
-
-        let fake = FakeInFlightRestore()
-        await fake.install(on: fixture.state)
-
-        // Target a section id that does not exist in `sections` -- zoomToSection's abort branch.
-        let zoomTask = Task { await fixture.state.zoomToSection("does-not-exist") }
-        await Task.yield()
-
-        fake.finish(clearing: fixture.state)
-        await zoomTask.value
-
-        // The abort branch's own `zoomedSectionId = nil` etc. must find zoom state ALREADY
-        // resolved by the awaited zoomOut() -- not a stale zoomed subset it's clearing flags
-        // over (M3's must-fix 3).
-        assertNotZoomedImpliesFullDocument(fixture)
-        try assertBetaUntouchedAfterFlush(fixture)
-    }
-
-    // MARK: - 16. Recovery racing a user-initiated zoomOut()
-
-    @Test("a user-initiated zoomOut() waits for an in-flight restore instead of silently no-op'ing")
-    func zoomOutWaitsForInFlightRestore() async throws {
-        let fixture = try makeFixture()
-        let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        let beta = blocks.first { $0.id == fixture.betaId }!
-        try zoomOnto(fixture, rootId: fixture.alphaId, sectionIds: [fixture.alphaId, fixture.childId], endSortOrder: beta.sortOrder)
-        fixture.state.content = "## Alpha\n\nBody.\n\n### Child\n\nChild body."
-
-        let fake = FakeInFlightRestore()
-        await fake.install(on: fixture.state)
-
-        let zoomOutTask = Task { await fixture.state.zoomOut() }
-        await Task.yield()  // let zoomOut() reach its own acquireZoomRestore() wait
-
-        fake.finish(clearing: fixture.state)
-        await zoomOutTask.value
-
-        #expect(fixture.state.zoomedSectionId == nil, "zoomOut() must have actually completed, not silently no-op'd")
-        assertNotZoomedImpliesFullDocument(fixture)
-        try assertBetaUntouchedAfterFlush(fixture)
-    }
-
-    // MARK: - 17. Recovery racing a project switch
-
-    /// Directly exercises the epoch-guard mechanism `restoreFullDocumentAndClearZoom` uses to
-    /// detect a project switch completing mid-restore, rather than timing a live interleaving:
-    /// `resetForProjectSwitch()` is SYNCHRONOUS (it cannot `await` anything), so the only
-    /// caller-side protection available is exactly this -- passing a stale `expectedEpoch` is
-    /// the deterministic equivalent of "a project switch bumped zoomEpoch while this restore
-    /// was already in flight."
-    @Test("restoreFullDocumentAndClearZoom aborts cleanly, touching nothing, when zoomEpoch no longer matches (project-switch race)")
-    func restoreAbortsWhenEpochMovedDuringRestore() async throws {
-        let fixture = try makeFixture()
-        let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        let beta = blocks.first { $0.id == fixture.betaId }!
-        try zoomOnto(fixture, rootId: fixture.alphaId, sectionIds: [fixture.alphaId, fixture.childId], endSortOrder: beta.sortOrder)
-        fixture.state.content = "a zoomed subset only -- must never leak into a restore for the wrong epoch"
-
-        let staleEpoch = fixture.state.zoomEpoch - 1  // simulates: zoomEpoch already moved on since this restore was dispatched
-
-        let completed = try await fixture.state.restoreFullDocumentAndClearZoom(
-            db: fixture.db, pid: fixture.pid, expectedEpoch: staleEpoch
-        )
-
-        #expect(completed == false, "must report it did NOT complete when superseded mid-dispatch")
-        #expect(
-            fixture.state.content == "a zoomed subset only -- must never leak into a restore for the wrong epoch",
-            "must not push or assign ANY content when superseded"
-        )
-        #expect(
-            fixture.state.zoomedSectionId == fixture.alphaId,
-            "must not clear zoom flags when superseded -- whatever superseded this owns them now"
-        )
-        #expect(fixture.state.zoomedBlockRange != nil, "must not clear the range either")
-
-        let after = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        #expect(after.contains { $0.textContent == "Doc" })
-        #expect(after.contains { $0.textContent == "Alpha" })
-        #expect(after.contains { $0.textContent == "Beta" })
-    }
-
     // MARK: - 18. M8 accepted residual, pinned (not a fix -- do not tighten the guard further)
 
     /// M8's guard declines an anchor bind when the anchor's OLD title+level survive elsewhere
@@ -618,88 +422,6 @@ struct ZoomRenameFlushTests {
         // Bounded consequence: nothing is LOST -- both headings survive as real rows either way.
         #expect(newHeading != nil)
         #expect(renamedRoot != nil)
-    }
-
-    // MARK: - 19. zoomOut()'s own catch block must not wipe the document (judge fix round, must-fix 1)
-
-    /// `restoreFullDocumentAndClearZoom`'s only throwing call is `db.fetchBlocks`, which runs
-    /// BEFORE anything is ever pushed to the editor -- so when `zoomOut()`'s catch block runs,
-    /// the editor still holds the zoomed subset. Forces exactly that by swapping in a SEPARATE,
-    /// deliberately-closed database for the duration of the call (`zoomOut()` re-reads
-    /// `projectDatabase` fresh after acquiring the mutex, so this is equivalent to "fetchBlocks
-    /// throws" without permanently breaking the fixture's own real database), then restores the
-    /// real database and confirms nothing was lost.
-    @Test("zoomOut()'s catch block keeps zoom flags set and the document intact when fetchBlocks throws")
-    func zoomOutCatchBlockDoesNotWipeDocumentWhenFetchBlocksThrows() async throws {
-        let fixture = try makeFixture()
-        let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        let beta = blocks.first { $0.id == fixture.betaId }!
-        try zoomOnto(fixture, rootId: fixture.alphaId, sectionIds: [fixture.alphaId, fixture.childId], endSortOrder: beta.sortOrder)
-        fixture.state.content = "## Alpha\n\nBody.\n\n### Child\n\nChild body."
-
-        let brokenDB = try TestFixtureFactory.createTemporary(content: "# Broken")
-        try brokenDB.dbWriter.close()
-        fixture.state.projectDatabase = brokenDB
-
-        await fixture.state.zoomOut()
-
-        #expect(
-            fixture.state.zoomedSectionId == fixture.alphaId,
-            "zoom flags must stay set when the restore throws -- the editor still holds the zoomed subset"
-        )
-        #expect(fixture.state.zoomedSectionIds != nil, "zoomedSectionIds must stay set too")
-        #expect(fixture.state.zoomedBlockRange == nil, "the range must clear so subsequent flushes keep safely no-op'ing")
-
-        // Restore the REAL database and confirm a subsequent flush (correctly skipped, since
-        // zoomedSectionId is set with no range) leaves the whole document intact.
-        fixture.state.projectDatabase = fixture.db
-        fixture.state.currentProjectId = fixture.pid
-        fixture.state.flushContentToDatabase()
-
-        let after = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        #expect(after.contains { $0.textContent == "Doc" })
-        #expect(after.contains { $0.textContent == "Alpha" })
-        #expect(after.contains { $0.textContent == "Child" })
-        #expect(after.contains { $0.textContent == "Beta" })
-    }
-
-    // MARK: - 20. zoomToSection re-targeting an already-lost root must not wipe the document (judge fix round, must-fix 2)
-
-    /// Round 3's fix only covered the case where `zoomToSection`'s internal `await zoomOut()`
-    /// call actually ran to completion. It missed: `zoomedSectionId == sectionId` (re-targeting
-    /// the SAME, now-lost root) -- `zoomOut()` is SKIPPED entirely (the `zoomedSectionId !=
-    /// sectionId` guard is false), so `zoomToSection`'s own abort branch (the root's DB row is
-    /// gone, so `db.fetchBlock(id:)` returns nil) used to clear all zoom flags unconditionally
-    /// over a WebView still showing the stale zoomed subset.
-    @Test("zoomToSection re-targeting an already-lost root (zoomOut() skipped) does not wipe the document")
-    func zoomToSectionRetargetingLostRootDoesNotWipeDocument() async throws {
-        let fixture = try makeFixture()
-        let blocks = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        let beta = blocks.first { $0.id == fixture.betaId }!
-        try zoomOnto(fixture, rootId: fixture.alphaId, sectionIds: [fixture.alphaId, fixture.childId], endSortOrder: beta.sortOrder)
-        fixture.state.content = "## Alpha\n\nBody.\n\n### Child\n\nChild body."
-        try populateSections(fixture)
-
-        // Delete the root's row directly, out from under the live zoom state -- zoomedSectionId
-        // (== alphaId) is now a dead id, but `sections` (read earlier) still lists it.
-        try await fixture.db.dbWriter.write { database in
-            _ = try Block.filter(Block.Columns.id == fixture.alphaId).deleteAll(database)
-        }
-
-        // Re-target the SAME (now-lost) section id: zoomedSectionId == sectionId, so the
-        // internal `await zoomOut()` call is SKIPPED entirely.
-        await fixture.state.zoomToSection(fixture.alphaId)
-
-        #expect(fixture.state.zoomedBlockRange == nil, "must not be left pointing at a stale range for a heading that's gone")
-
-        // Whether the abort branch took the safe path (flags stay set, range clears, recovery
-        // spawned) or something else resolved it, the invariant holds: a subsequent flush must
-        // not wipe anything outside what was always the zoom target.
-        fixture.state.flushContentToDatabase()
-        let after = try TestFixtureFactory.fetchBlocks(from: fixture.db)
-        #expect(after.contains { $0.textContent == "Doc" }, "Doc must survive")
-        #expect(after.contains { $0.textContent == "Child" }, "Child must survive")
-        #expect(after.contains { $0.textContent == "Beta" }, "Beta, outside the zoom range entirely, must survive")
     }
 
     // MARK: - 21. Final-acceptance-round must-fix: the zoom-root-lost toast's wording/action/lifecycle

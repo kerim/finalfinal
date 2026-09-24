@@ -1,0 +1,767 @@
+//
+//  UITestQueryAndFixtureHelpers.swift
+//  final finalUITests
+//
+//  Split out of UITestHelpers.swift to keep that file under SwiftLint's file_length limit.
+//  Holds the "proven pattern" element-query helpers (see "Proven patterns" in
+//  .claude/skills/e2e-verify/SKILL.md), the app-file helpers, the fixture-database (sqlite3
+//  CLI) helpers, document-note seeding, and the fixture-path helpers.
+//
+
+import XCTest
+
+// MARK: - Proven-Pattern Query Helpers
+//
+// Each helper below encodes a failure mode diagnosed live in the 2026-08-16
+// superdev batch (see "Proven patterns" in .claude/skills/e2e-verify/SKILL.md).
+// Disposable e2e tests should compose these instead of re-deriving queries.
+
+extension XCUIApplication {
+    /// The WKWebView editor container. Every query for editor content must be
+    /// scoped here: a bare `app.staticTexts[...]` also matches the outline
+    /// sidebar's mirror of each heading, and `.firstMatch` resolves to the
+    /// *sidebar* match first — so an unscoped "click the heading" clicks a
+    /// sidebar row instead.
+    var editorArea: XCUIElement {
+        groups["editor-area"]
+    }
+
+    /// First StaticText inside the editor whose value (or, for heading
+    /// containers, label) starts with `text`, or nil if none appears within
+    /// `timeout`.
+    ///
+    /// Matching is done in Swift, not NSPredicate: heading containers carry a
+    /// non-string value (the heading level, an NSNumber), and any substring
+    /// predicate (`CONTAINS`, `BEGINSWITH`) evaluated against one throws
+    /// NSInvalidArgumentException at resolution time. Prefix (not exact)
+    /// matching, because a leaf text run carries a trailing space when an
+    /// inline link follows, and a heading container's label concatenates all
+    /// child text — exact equality matches neither.
+    ///
+    /// Re-call after every mutation: a handle resolved before typing goes
+    /// stale once the text changes.
+    ///
+    /// `element.exists`-guarded per element (round-2 fix, vmtest strike-2 diagnosis on
+    /// E2EScratchTests.swift: "Failed to get matching snapshot: No matches found for Element
+    /// at index 3"): `allElementsBoundByIndex` snapshots a positional index into the AX tree,
+    /// and touching `.value`/`.label` on an element the tree has since invalidated (a real risk
+    /// while a WebView is still mid-mount/mid-content-replay, e.g. right after a document open
+    /// or reopen -- this app's most AX-tree-mutation-heavy moment) throws instead of returning
+    /// nil. Same fix EditorModeSwitchUndoE2ETests.markerPresent's own doc comment documents for
+    /// the identical failure class: `.exists` is a documented-safe, non-throwing existence
+    /// check, so guarding with it before either property access skips a vanished element
+    /// instead of crashing the scan.
+    func editorStaticText(startingWith text: String, timeout: TimeInterval = 10) -> XCUIElement? {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                if let value = element.value as? String, value.hasPrefix(text) {
+                    return element
+                }
+                if element.label.hasPrefix(text) {
+                    return element
+                }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// Locates a heading's line by its BARE TEXT alone -- NEVER by the raw markdown syntax mark
+    /// ("#", "##", "###", ...) that precedes it in Source mode. Two tiers, both scoped to
+    /// `.staticTexts` ONLY: (1) exact-prefix match (`editorStaticText(startingWith:)`), (2) a
+    /// substring scan still scoped to `.staticTexts` (catches a leaf whose text doesn't START
+    /// with `text` -- e.g. a leading space left over from a split-off syntax mark).
+    ///
+    /// **Deliberately has NO third, broader (`.any`-descendants) fallback tier -- do not re-add
+    /// one.** LESSON (zoom-rename-sidebar e2e batch, 2026-09-23, superdev-diagnostician,
+    /// CONFIRMED from the driver's `xcodebuild.log` StaticText scans): a round-1 version of this
+    /// function had exactly that fallback, reasoning (WRONG -- corrected here) that a zoomed
+    /// root heading's markdown-prefixed text ("## Riverside") must be splitting across leaves.
+    /// The real cause: the zoom root's heading line is not exposed as a `StaticText` AT ALL in
+    /// Source mode, under ANY query text, prefixed or bare -- confirmed directly from the AX
+    /// scans (`## Riverside`/`## Garden` never appear, in any pass, across the whole test run).
+    /// The `.any`-descendants fallback then did exactly what a broader element-type net risks
+    /// doing: it matched the FIRST unrelated element anywhere under `editor-area` whose value
+    /// happened to contain the bare title -- `status-bar-outline`, the status bar's own
+    /// zoom-summary button (value "Zoomed into Riverside"), which is nested inside `editor-area`
+    /// (`ContentView+EditorPresentation.swift:43`). Clicking that button opened a section-list
+    /// popover instead of placing a cursor in the document, so every subsequent
+    /// select-line/type/delete keystroke went to the popover, not the editor -- a SILENT wrong
+    /// click, not a clean failure, and strictly worse than the `nil` this two-tier version
+    /// returns instead. **A broader fallback here can silently succeed against interactive
+    /// chrome (a button, a control) instead of content -- never widen this beyond
+    /// `.staticTexts`.** For a heading that genuinely isn't exposed as a `StaticText` at all
+    /// (the zoom root's own case), locate its line STRUCTURALLY instead -- see
+    /// `E2EScratchTests.swift`'s `selectZoomRootHeadingLine(bodyPrefix:)` (click a known-reliable
+    /// body-paragraph StaticText, then Cmd-Up/`cursorDocStart` to reach line 1) -- rather than
+    /// widening this function's own element-type net to compensate.
+    func editorHeadingText(matching text: String, timeout: TimeInterval = 10) -> XCUIElement? {
+        if let exact = editorStaticText(startingWith: text, timeout: timeout) {
+            return exact
+        }
+        let deadline = Date(timeIntervalSinceNow: 2)
+        repeat {
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                if let value = element.value as? String, value.contains(text) { return element }
+                if element.label.contains(text) { return element }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// Dumps every `editorArea.staticTexts` element's `label`/`value` as one string, for
+    /// attaching as failure evidence when a heading/content lookup fails -- so a future
+    /// diagnosis doesn't need forensic screen-recording archaeology (as `editorHeadingText`'s
+    /// own doc comment above required) to see what the AX tree actually looked like at the
+    /// moment of failure. Manual `.exists`-guarded scan, not a predicate: same reasoning as
+    /// `editorStaticText` above (a heading container's `value` can be a non-String NSNumber).
+    func editorStaticTextsDump() -> String {
+        var lines: [String] = []
+        for (index, element) in editorArea.staticTexts.allElementsBoundByIndex.enumerated() {
+            guard element.exists else {
+                lines.append("[\(index)] (vanished before it could be read)")
+                continue
+            }
+            let valueDescription = (element.value as? String).map { "\"\($0)\"" } ?? String(describing: element.value)
+            lines.append("[\(index)] label=\"\(element.label)\" value=\(valueDescription)")
+        }
+        return lines.isEmpty ? "(no staticTexts found in editor-area)" : lines.joined(separator: "\n")
+    }
+
+    /// True if a StaticText inside `editor-area` whose value/label starts with `prefix` EXISTS
+    /// (within `timeout`) AND its accessibility frame currently intersects `editor-area`'s own
+    /// visible frame -- i.e. it is genuinely on screen right now, not merely present somewhere
+    /// in the (possibly much taller) document. Built on `editorStaticText` above, so it
+    /// inherits that function's poll behavior; the short default `timeout` makes this a
+    /// near-immediate single pass, appropriate for checking an "immediately after an
+    /// interaction" moment rather than a settled state -- use `waitForValue`/a manual poll loop
+    /// around this call for the latter.
+    ///
+    /// IMPORTANT caveat this function cannot resolve on its own: a `false` result can mean
+    /// either "present, but scrolled off screen" OR "not exposed in the AX tree at all" --
+    /// CONFIRMED live (vmtest diagnosis, milkdown-citation-scroll-top branch, 2026-09-04):
+    /// content below the viewport is not reliably enumerable in this WebView's AX tree even
+    /// when it is genuinely present in the document -- a scan's element enumeration can simply
+    /// stop short of a marker seeded at a fixed offset, confirmed in two separate failing runs.
+    /// (A prior misdiagnosis of the same failure treated an XCTest log line describing the
+    /// query being resolved -- e.g. "Find the 'X' StaticText" -- as proof a match had been
+    /// found; that line is XCUITest's own query-description logging, emitted regardless of
+    /// whether anything actually matches, not a positive result.) Never assert "scrolled away
+    /// from" a marker seeded at a calibrated document offset off a single `false` here -- use
+    /// `visibleEditorText(matching:)` below to discover whatever's ACTUALLY on screen instead,
+    /// which sidesteps needing that calibration at all.
+    func editorTextVisible(startingWith prefix: String, timeout: TimeInterval = 0.1) -> Bool {
+        guard let element = editorStaticText(startingWith: prefix, timeout: timeout) else { return false }
+        return editorArea.frame.intersects(element.frame)
+    }
+
+    /// The prefix (through the first `delimiter`, default a comma; the full value if none is
+    /// found) of any StaticText inside `editor-area` that is CURRENTLY on screen -- see
+    /// `editorTextVisible` above for exactly what "on screen" means and why a naive existence
+    /// check isn't enough -- and whose value/label starts with `prefix`. This discovers the
+    /// viewport's own identity at runtime, rather than requiring a marker pre-placed at a
+    /// calibrated document offset.
+    ///
+    /// Use this to build a scroll-position-preservation assertion without knowing in advance
+    /// where in the document the viewport will land: capture the result BEFORE the action under
+    /// test as an anchor (e.g. a fixture's own repeating padding-paragraph prefix, "Body padding
+    /// paragraph "), then assert `editorTextVisible(startingWith: anchor)` is still true AFTER
+    /// it. This is the fix for the failure mode `editorTextVisible`'s doc comment describes -- a
+    /// hand-placed marker at a guessed "N paragraphs down" offset is fragile against viewport
+    /// height, font size, and exact line-wrap points, and this app exposes no `window.scrollY`
+    /// read to XCUITest to check scroll position any more directly.
+    ///
+    /// Polls, like `editorStaticText`: the WebView's AX tree can be transiently EMPTY right
+    /// after an interaction (confirmed live: a scan returned only 2 elements -- the status-bar
+    /// word count and a heading -- while paragraphs were plainly visible in a screenshot from
+    /// the same moment).
+    func visibleEditorText(matching prefix: String, upTo delimiter: Character = ",", timeout: TimeInterval = 10) -> String? {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            let editorFrame = editorArea.frame
+            for element in editorArea.staticTexts.allElementsBoundByIndex {
+                guard element.exists else { continue }
+                guard let value = element.value as? String, value.hasPrefix(prefix) else { continue }
+                guard editorFrame.intersects(element.frame) else { continue }
+                guard let cut = value.firstIndex(of: delimiter) else { return value }
+                return String(value[...cut])
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// Places the caret at the true end of the document: clicks near the CENTER of `element`
+    /// (safe for any resolved text-run element -- unlike a click on the whole `editorArea`
+    /// container, a single content element has no top-padding region to land in by mistake),
+    /// then presses Cmd-Down (`moveToEndOfDocument`) to reach the exact position.
+    ///
+    /// Use this instead of trying to approximate "near the start"/"near the end of the text"
+    /// with a small or large `dx` in `element.coordinate(withNormalizedOffset:)`. CONFIRMED
+    /// (t-7c1d3fd8 e2e authoring, two separate VM rounds, 2026-09-23): that offset scales by
+    /// the ELEMENT'S OWN frame width, not a fixed pixel distance, so `dx: 0.05` on a text run
+    /// can land two characters in (not "the start"), and there is no reliable `dx` for "the
+    /// end" of arbitrary text either -- only an exact keyboard command has well-defined
+    /// semantics, coordinates don't. Only correct when the target position genuinely IS the
+    /// end of the document (e.g. appending to the last block of a freshly seeded fixture, as
+    /// opposed to inserting into the middle of a longer one) -- for a different target
+    /// position, reach for other keyboard navigation instead of a coordinate trick (this
+    /// suite already uses Cmd-Up for document start, Cmd-ArrowDown for CodeMirror's true
+    /// document end since `.end` only reaches the visual wrap point there too).
+    func moveCaretToDocumentEnd(clickingInto element: XCUIElement) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        typeKey(.downArrow, modifierFlags: .command)
+    }
+
+    /// Waits for a menu item by TITLE and returns it, or fails. XCUITest gives
+    /// `NSMenuItem` only `title` and an identifier (`menuAction:`) — no
+    /// `label` — so a `label BEGINSWITH` query against `menuItems` matches
+    /// nothing, forever, while the item sits open and visible on screen.
+    /// Prefix matching, for items whose title embeds a document name
+    /// ("Undo Restore of ...").
+    @discardableResult
+    func menuItem(titleStartingWith prefix: String, timeout: TimeInterval = 10,
+                  file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let item = menuItems.matching(
+            NSPredicate(format: "title BEGINSWITH %@", prefix)
+        ).firstMatch
+        if !item.waitForExistence(timeout: timeout) {
+            XCTFail("No menu item with title starting \"\(prefix)\" appeared within \(timeout)s "
+                + "(note: menu items match on title, never label)", file: file, line: line)
+        }
+        return item
+    }
+
+    /// Waits for and clicks a button in a modal alert raised via
+    /// `NSAlert.runModal()` (e.g. from a menu command). Those alerts are
+    /// top-level Dialog siblings of the windows, so `windows.buttons[...]`
+    /// can never reach them; and a bare `app.buttons[...]` can resolve to the
+    /// Touch Bar mirror of the dialog's default button instead of the real
+    /// one. Dialog scope avoids both.
+    func clickDialogButton(_ title: String, timeout: TimeInterval = 10,
+                           file: StaticString = #filePath, line: UInt = #line) {
+        let button = dialogs.buttons[title]
+        if !button.waitForExistence(timeout: timeout) {
+            XCTFail("Dialog button \"\(title)\" did not appear within \(timeout)s "
+                + "(runModal alerts live under app.dialogs, not app.windows)", file: file, line: line)
+            return
+        }
+        button.click()
+    }
+
+    /// True if `text` appears in full anywhere inside editor-area. Fresh fetch per poll.
+    /// Substring, not equality: a leaf run can carry a leading/trailing space and a heading
+    /// container concatenates its children (see editorStaticText's doc comment).
+    ///
+    /// Scoped to `descendants(matching: .any)`, NOT `staticTexts` (vmtest strike 3, bt
+    /// t-ef411da3's e2e-verify round): CONFIRMED live that a freshly-edited CodeMirror line gets
+    /// split across MULTIPLE DOM text nodes/leaf `StaticText`s (e.g. a typed heading landed as
+    /// two separate elements, `"## New Section "` and the rest of the line concatenated onto
+    /// it) -- so the full typed run is never contained in any SINGLE `staticTexts` leaf, only in
+    /// a containing element reachable via `.any`. Scanning `staticTexts` alone produced a false
+    /// "not landed" here even though the text had landed byte-for-byte correct, which then fed a
+    /// broken repair attempt in `typeTextVerifyingLanded` below.
+    ///
+    /// A `.exists`-guarded manual scan of `value as? String` -- `value` is typed `Any?` and
+    /// this WebKit-backed tree exposes some elements (a heading container's level, a checkbox
+    /// marker) with a non-`String` value, which throws under a direct `CONTAINS` predicate.
+    /// This editor's text lives in `value`, not `label` (see this project's e2e-verify skill
+    /// and `E2EAsyncImageCorruptionTests.swift`'s lesson block) -- a `label CONTAINS` query
+    /// against editor content matches nothing, so it was dropped rather than paying for a
+    /// full-tree scan that can never succeed.
+    ///
+    /// Batched via `XCUIElement.snapshot()`, not a per-element `descendants(matching: .any)`
+    /// walk: fetching each of the 500+ elements under `editor-area` individually round-trips to
+    /// the AX server once per element (~0.1s each), so a single "not found" poll of the old
+    /// per-element scan cost roughly 50s regardless of `timeout` -- the deadline was only
+    /// checked once that whole pass finished, so it always overshot short timeouts by a wide
+    /// margin. `snapshot()` fetches the entire subtree in one round trip; the tree is then
+    /// walked in-process (`snapshotDescendantsContainText` below), over exactly the same element
+    /// set `descendants(matching: .any)` produced (every descendant, self excluded), checking
+    /// each node's `value as? String` exactly as the old predicate did.
+    func editorContainsText(_ text: String, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            do {
+                let root = try editorArea.snapshot()
+                if Self.snapshotDescendantsContainText(root, text) { return true }
+            } catch {
+                // Loud on purpose (must-fix from plan review): a `snapshot()` failure --
+                // truncation, an AX-server timeout, etc. -- must show up directly in a failing
+                // run's output, not be inferred later from "the text was never found."
+                print("[editorContainsText] snapshot() of editor-area failed this poll: \(error)")
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return false
+    }
+
+    /// Recursively checks every descendant of `snapshot` (the root itself excluded, matching
+    /// `descendants(matching: .any)`'s own semantics) for a `value` containing `text`. Used only
+    /// by `editorContainsText` above to batch what used to be a per-element live AX fetch.
+    private static func snapshotDescendantsContainText(_ snapshot: XCUIElementSnapshot, _ text: String) -> Bool {
+        for child in snapshot.children {
+            if let value = child.value as? String, value.contains(text) { return true }
+            if snapshotDescendantsContainText(child, text) { return true }
+        }
+        return false
+    }
+
+    /// Types `text` at the current caret position -- assumed to land on its own,
+    /// otherwise-empty line (true immediately after a fresh `Return`) -- then verifies via the
+    /// editor's own accessibility tree that it landed byte-for-byte, retyping on a mismatch
+    /// rather than trusting `typeText` blindly.
+    ///
+    /// Guards against a known XCUITest flakiness class: `typeText` occasionally drops
+    /// characters mid-string while synthesizing keystrokes, especially under VM load. CONFIRMED
+    /// via a real vmtest run (E2EScratchTests.swift, swiftlint-param-refactor task, 2026-08-30):
+    /// a typed paragraph was found in the block table as "Newly typed paragra Alpha while
+    /// zoomed." -- "ph" silently dropped from "paragraph" -- with every other assertion in that
+    /// run passing, i.e. the flakiness is in `typeText` itself, not whatever code the test was
+    /// exercising.
+    ///
+    /// Verification is scan-based via `editorContainsText`, never positional: an earlier
+    /// version trusted `editorArea.staticTexts.allElementsBoundByIndex.last` as "the editor is
+    /// empty" when that one index's `.exists` read false -- but a WKWebView mid-repaint can fail
+    /// ONE positional index while the tree still holds several live elements, so that read a
+    /// populated tree as empty (diagnosed live: "Checking existence of Element at index 6" was
+    /// logged 3 times, impossible if the array were actually empty, since a nil `.last` would
+    /// short-circuit before `.exists` is ever called). `editorContainsText` scans every element
+    /// and only trusts the ones still present, so a single stale index can never masquerade as
+    /// "nothing here."
+    ///
+    /// On a mismatch, this looks for a PARTIAL/corrupted landing of `text` -- an element whose
+    /// value or label shares `text`'s first 24+ characters -- rather than assuming the editor is
+    /// empty. If found, it clears the CURRENT LINE (not a computed character count -- see the
+    /// vmtest-strike-3 note below) and retries. If nothing resembling `text` is found at all --
+    /// no exact match, no partial-prefix match -- this does NOT blind-retype (that would
+    /// compound garbage on top of garbage against who-knows-what state); it fails immediately
+    /// with every surviving element's value/label dumped, so the failure is legible instead of
+    /// misleadingly claiming "empty" against a tree that may still hold plenty of content.
+    ///
+    /// Both scans below are `descendants(matching: .any)`-scoped, NOT `staticTexts` -- same
+    /// vmtest-strike-3 fix as `editorContainsText` above (a freshly-edited CodeMirror line can
+    /// split across multiple DOM text nodes, so no single `staticTexts` leaf need hold the whole
+    /// typed run).
+    ///
+    /// vmtest strike 3 (bt t-ef411da3's e2e-verify round): the retry-repair here used to
+    /// backspace `partialLanded.count` times -- the length of whatever FRAGMENT this scan
+    /// happened to match, not the length of `text` that was actually typed. Combined with the
+    /// `staticTexts` scope bug above (which made this repair path trigger on text that had
+    /// ALREADY landed correctly, just split across elements), that under-backspaced, left a
+    /// leftover fragment behind, and the retry's fresh `typeText(text)` landed ON TOP of it --
+    /// producing a visible duplicate. Now clears the whole current line via Cmd+Left
+    /// (moveToBeginningOfLine) + Cmd+Shift+Right (moveToEndOfLineAndModifySelection) + one
+    /// `Delete`, which is correct under this method's own documented precondition (caret lands
+    /// on its own, otherwise-empty line before typing) regardless of how many characters
+    /// actually landed -- no count to get wrong. NOT `Shift-Home` + `Delete`: Home/Shift+Home
+    /// are DOCUMENT-boundary motions in this WebKit editor (moveToBeginningOfDocument), not
+    /// line-boundary ones, so that repair could select and delete everything before the caret
+    /// instead of just the current line -- confirmed live (E2EScratchTests.swift, image
+    /// caption editing) where this exact repair path made a partial-landing collision
+    /// catastrophically worse.
+    func typeTextVerifyingLanded(
+        _ text: String, maxAttempts: Int = 3,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        for attempt in 1...maxAttempts {
+            activateAndWaitForForeground()
+            typeText(text)
+            Thread.sleep(forTimeInterval: 1.0)
+
+            if editorContainsText(text, timeout: 15) {
+                return
+            }
+
+            // Not an exact landing -- look for a partial/corrupted version of what we just
+            // typed (shares a meaningful prefix) so we can clean it up before retrying.
+            // 24, not 8: two strings sharing an 8-char prefix (e.g. two test captions both
+            // starting "Caption ") could otherwise collide here, making this guard unable to
+            // tell a genuine partial landing of `text` apart from a DIFFERENT string that
+            // merely starts the same way.
+            let prefixLen = min(24, text.count)
+            let expectedPrefix = String(text.prefix(prefixLen))
+            var partialElement: XCUIElement?
+            var partialLanded = ""
+            for element in editorArea.descendants(matching: .any).allElementsBoundByIndex {
+                guard element.exists else { continue }
+                let candidate = (element.value as? String) ?? element.label
+                if candidate.hasPrefix(expectedPrefix) {
+                    partialElement = element
+                    partialLanded = candidate
+                    break
+                }
+            }
+
+            guard partialElement != nil else {
+                // Nothing recognizable at all: not "empty" (that misreading is exactly the bug
+                // this method used to have), but nothing resembling `text` either. Fail loud
+                // with a full dump instead of guessing by blind-retyping.
+                let elements = editorArea.descendants(matching: .any).allElementsBoundByIndex
+                var dump: [String] = []
+                for (idx, element) in elements.enumerated() {
+                    guard element.exists else {
+                        dump.append("  [\(idx)]: <stale, skipped>")
+                        continue
+                    }
+                    let value = (element.value as? String) ?? "<non-string value>"
+                    dump.append("  [\(idx)]: value=\"\(value)\" label=\"\(element.label)\"")
+                }
+                XCTFail(
+                    "typeTextVerifyingLanded: expected \"\(text)\" but found no exact or "
+                        + "partial-prefix match among \(elements.count) editor descendant(s) "
+                        + "after attempt \(attempt) of \(maxAttempts):\n"
+                        + dump.joined(separator: "\n"), file: file, line: line
+                )
+                return
+            }
+
+            if attempt == maxAttempts {
+                XCTFail(
+                    "Typed text never landed correctly after \(maxAttempts) attempts -- known "
+                        + "XCUITest typeText character-drop flakiness (see this method's doc "
+                        + "comment). Expected \"\(text)\", last landed value: \"\(partialLanded)\"",
+                    file: file, line: line
+                )
+                return
+            }
+
+            // Clear the whole current line (Cmd+Left to the line start, Cmd+Shift+Right to
+            // select to the line end, then one Delete removes the selection) instead of
+            // backspacing a computed character count -- see this method's doc comment for why
+            // a count-based clear was the vmtest-strike-3 bug, and for why Home/Shift+Home are
+            // NOT used here (they are document-boundary motions in this WebKit editor, not
+            // line-boundary ones).
+            typeKey(.leftArrow, modifierFlags: .command)
+            typeKey(.rightArrow, modifierFlags: [.command, .shift])
+            typeKey(.delete, modifierFlags: [])
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+}
+
+extension XCUIElement {
+    /// Clicks via coordinates instead of element hit-testing. Sidebar cards
+    /// are non-hittable by design — `PassthroughHostingView.hitTest` returns
+    /// nil for anything but right-clicks — so `element.click()` on one can
+    /// never land, and the failure masquerades as a layout/obstruction
+    /// problem. Every positioned click in this suite goes through
+    /// coordinates; this wraps that precedent.
+    func clickViaCoordinate(normalizedDx: CGFloat = 0.5, normalizedDy: CGFloat = 0.5,
+                            timeout: TimeInterval = 10,
+                            file: StaticString = #filePath, line: UInt = #line) {
+        if !waitForExistence(timeout: timeout) {
+            XCTFail("Element \(debugDescription) did not appear within \(timeout)s "
+                + "for coordinate click", file: file, line: line)
+            return
+        }
+        coordinate(withNormalizedOffset: CGVector(dx: normalizedDx, dy: normalizedDy)).click()
+    }
+}
+
+// MARK: - App File Helpers
+
+/// Reads files the APP writes (logs, exports) from inside the test runner.
+/// The runner's own home is containerized: `NSHomeDirectory()` and
+/// `FileManager.default.homeDirectoryForCurrentUser` point at the xctrunner
+/// container, not the app's home — a read helper built on either silently
+/// returns nothing.
+enum AppFileHelper {
+    struct ReadError: Error, CustomStringConvertible {
+        let relativePath: String
+        let attempted: [String]
+        var description: String {
+            "AppFileHelper: \"\(relativePath)\" not found. Attempted: \(attempted.joined(separator: ", ")). "
+                + "A missing file is a real failure — never treat it as \"the app wrote nothing\"."
+        }
+    }
+
+    /// Candidate locations for an app-written path relative to the app's home
+    /// (e.g. "Library/Application Support/com.kerim.final-final/..."), as
+    /// home roots in the order worth trying: the real user home by name
+    /// (works around the runner's containerized home), the home implied by
+    /// the standard Application Support lookup, then the runner's own idea
+    /// of home as a last resort.
+    static func candidateURLs(appRelativePath: String) -> [URL] {
+        let fm = FileManager.default
+        var homes: [URL] = [URL(fileURLWithPath: "/Users/\(NSUserName())")]
+        if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            // Strip "Application Support" and "Library" to get a home root.
+            homes.append(appSupport.deletingLastPathComponent().deletingLastPathComponent())
+        }
+        homes.append(fm.homeDirectoryForCurrentUser)
+        // De-dup while preserving order (the three often agree outside a VM).
+        var seen = Set<String>()
+        return homes.filter { seen.insert($0.path).inserted }
+            .map { $0.appendingPathComponent(appRelativePath) }
+    }
+
+    /// Returns the contents of the first candidate that exists. Throws a
+    /// descriptive error naming every attempted path — never an empty string
+    /// for a missing file, which made a wrong path indistinguishable from
+    /// "the app never wrote" and burned three VM cycles on one silent read
+    /// failure.
+    static func read(appRelativePath: String) throws -> String {
+        var attempted: [String] = []
+        for url in candidateURLs(appRelativePath: appRelativePath) {
+            attempted.append(url.path)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return try String(contentsOf: url, encoding: .utf8)
+            }
+        }
+        throw ReadError(relativePath: appRelativePath, attempted: attempted)
+    }
+}
+
+// MARK: - Fixture Database Helpers (sqlite3 CLI)
+//
+// Reads are safe to run WHILE the app holds the DB open -- WAL mode allows concurrent readers,
+// the same pattern already proven in E2ESectionReconcilerPseudoSectionTests.swift/
+// NestedListE2ETests.swift/HrTypedConversionE2ETests.swift. Writes (fixture doctoring) must only
+// ever run with the app terminated, never against a live connection -- callers are responsible
+// for that ordering, matching those same precedents.
+//
+// MISDIAGNOSIS, CORRECTED (2026-08-22 vmtest investigation, UnifiedUndoE2ETests): a real failure
+// once showed the app's own diagnostic log reporting a structural delete completed end-to-end,
+// while `read()` moments later still saw the pre-delete row count -- diagnosed at the time as
+// cross-process WAL visibility latency (a separate `sqlite3` CLI connection not yet seeing the
+// app's committed frames) and "fixed" by forcing `PRAGMA wal_checkpoint(TRUNCATE)` on every
+// `read()` call. A later review traced the ACTUAL cause: `querySectionCount()`/
+// `queryOrderedSectionTitles()` read `FROM section` (the legacy mirror table), and the
+// `deleteSections`/`duplicateSections` bug active at the time (`Database+SectionOps.swift`,
+// since fixed) matched `section` rows by `block` ids -- an ID space `section` never used -- so
+// it deleted nothing there at all. The read was reporting the DB's true, unchanged `section`
+// state correctly the whole time; there was never a visibility race to fix. The forced
+// checkpoint was not just inert but a live liability: `TRUNCATE` is an aggressive checkpoint
+// mode that blocks readers/writers and rewrites the WAL file, and this ran 4x/second (once per
+// `waitUntil` poll tick) from a separate process against the live app's actively-writing
+// database -- exactly the kind of contention this suite's own eviction-cap test (rapid
+// back-to-back structural ops) is most sensitive to. Removed entirely; `read()` below is a
+// plain query again.
+
+/// Shared `sqlite3` CLI wrapper for reading/writing a test fixture's `content.sqlite` from
+/// inside the test runner. Factored out of the section-reconciler pattern above so new e2e tests
+/// don't each re-derive the same `Process`/`Pipe` boilerplate.
+enum FixtureDatabase {
+    /// Runs a write statement (UPDATE/INSERT/etc.) against `<fixturePath>/content.sqlite`.
+    /// Caller must ensure the app is terminated first -- see this enum's own doc comment. No
+    /// checkpoint needed here (unlike `read` below): the app hasn't opened its own connection
+    /// yet at the point this is used (fixture seeding, before `launchForTesting`), so there is no
+    /// concurrent writer whose frames could be sitting unmerged in the WAL.
+    static func write(fixturePath: String, sql: String, file: StaticString = #filePath, line: UInt = #line) {
+        _ = run(dbPath: fixturePath + "/content.sqlite", sql: sql, file: file, line: line)
+    }
+
+    /// Runs a `SELECT` against `<fixturePath>/content.sqlite` and returns raw stdout. Safe to
+    /// call while the app is open (WAL mode) -- see this enum's own doc comment. No checkpoint
+    /// forced here (there was one; removed 2026-08-22 -- see this enum's own doc comment for
+    /// why it was a misdiagnosis, not a real fix).
+    @discardableResult
+    static func read(fixturePath: String, sql: String, file: StaticString = #filePath, line: UInt = #line) -> String {
+        run(dbPath: fixturePath + "/content.sqlite", sql: sql, file: file, line: line)
+    }
+
+    /// Escapes a raw string for embedding in a single-quoted SQL literal.
+    static func escape(_ rawValue: String) -> String {
+        rawValue.replacingOccurrences(of: "'", with: "''")
+    }
+
+    /// Seeds `content.markdown` AND clears `block` in the same statement. Clearing `block` is
+    /// mandatory: `ContentView+ProjectLifecycle.loadInitialContent` assembles the document from
+    /// `block` rows whenever any exist and never reads `content.markdown` in that case -- the
+    /// committed fixture ships block rows (`TestFixtureFactory.createFixture` populates them), so
+    /// a content-only seed is silently discarded and the app loads stale fixture content instead.
+    /// Pass `appending: true` to append to the existing `content.markdown` (fixture doctoring)
+    /// instead of replacing it outright. Caller must ensure the app is terminated first -- see
+    /// `write` above.
+    static func seedMarkdown(
+        fixturePath: String,
+        markdown: String,
+        appending: Bool = false,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let assignment = appending
+            ? "markdown = markdown || '\(escape(markdown))'"
+            : "markdown = '\(escape(markdown))'"
+        write(fixturePath: fixturePath, sql: "DELETE FROM block; UPDATE content SET \(assignment);", file: file, line: line)
+    }
+
+    @discardableResult
+    private static func run(dbPath: String, sql: String, file: StaticString, line: UInt) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [dbPath, sql]
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        do {
+            try process.run()
+        } catch {
+            XCTFail("FixtureDatabase: sqlite3 failed to launch: \(error)", file: file, line: line)
+            return ""
+        }
+        // Deadlock fix (2026-08-22): both pipes MUST be drained CONCURRENTLY, before
+        // `waitUntilExit()`, not read sequentially or after. A pipe's buffer is small (~64KB) --
+        // if sqlite3 ever writes more than that to EITHER stdout or stderr, the child blocks on
+        // a full pipe nobody is reading. `waitUntilExit()` alone would then deadlock forever
+        // (this process waiting for a child that can't finish); reading stdout-then-stderr
+        // sequentially on one thread is not safe either -- a child that blocks mid-write on a
+        // full stderr buffer while this process is still draining stdout would never produce
+        // stdout's EOF either, hanging the FIRST read. Draining both pipes on separate queues at
+        // the same time removes any ordering dependency between them. Safe today only because
+        // the committed fixture is tiny -- `queryAllMarkdownConcatenated()` is exactly the query
+        // whose output scales with document size, and would be the first to hit this the moment
+        // this suite (or a future one reusing this helper) points at a realistic document.
+        let stdoutQueue = DispatchQueue(label: "FixtureDatabase.stdout")
+        var stdoutData = Data()
+        let stdoutDone = DispatchSemaphore(value: 0)
+        stdoutQueue.async {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            stdoutDone.signal()
+        }
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        stdoutDone.wait()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+            XCTFail(
+                "FixtureDatabase: sqlite3 query failed (status \(process.terminationStatus)) "
+                    + "against \(dbPath): \(stderr)\nSQL: \(sql)",
+                file: file, line: line
+            )
+        }
+        return String(data: stdoutData, encoding: .utf8) ?? ""
+    }
+}
+
+// MARK: - Document Note Seeding
+//
+// Hoisted out of `ShortcutTooltipE2ETests.swift`/`AnnotationDeleteE2ETests.swift`, which each
+// carried an identical copy (flagged as duplicated-but-correct during the
+// e2e-replace-annotations-coverage review, 2026-09-18). Free functions, not XCTestCase
+// extension methods: neither uses `self` -- both work entirely off `TestFixtureHelper`/
+// `FixtureDatabase`, which are already global. Other e2e classes
+// (`EditorModeSwitchUndoE2ETests.swift`, `FootnoteCursorPlacementE2ETests.swift`,
+// `SidebarRerenderCountE2ETests.swift`, `UnifiedUndoE2ETests+Helpers.swift`) keep their own
+// separate `shortUUID()` -- out of scope here; an unqualified call inside those classes still
+// resolves to their own local declaration first, so this shared one never shadows them.
+
+/// A short (8-character) unique suffix for building unique per-test identifiers/markers, e.g.
+/// `"e2e-doc-note-\(shortUUID())"`.
+func shortUUID() -> String {
+    String(UUID().uuidString.prefix(8))
+}
+
+/// Inserts a Document Note (charOffset == Annotation.documentLevelOffset, DB-only, never part
+/// of content.markdown) directly into the fixture, mirroring `Database+Annotations.swift`'s
+/// `insertDocumentAnnotation`. Caller must ensure the app is terminated first (FixtureDatabase's
+/// own established contract). `datetime('now')` matches GRDB's default Date column format
+/// closely enough for round-trip decoding (yyyy-MM-dd HH:mm:ss, which GRDB's lenient Date parser
+/// accepts).
+///
+/// Needed so `AnnotationPanel.swift`'s `documentNotesSection` (the sole place "Document Notes"
+/// is rendered) mounts regardless of `isDocumentNotesCollapsed`; without a seeded row the
+/// committed fixture's empty `annotation`/`annotation_v2` tables make the panel show
+/// `emptyState` instead, where the header can never appear.
+func seedDocumentNote(id: String, type: String, text: String) {
+    let contentIdRaw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: "SELECT id FROM content LIMIT 1;")
+    let contentId = contentIdRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sql = """
+    INSERT INTO annotation (id, contentId, sectionId, type, text, isCompleted, charOffset, highlightStart, highlightEnd, createdAt, updatedAt)
+    VALUES ('\(FixtureDatabase.escape(id))', '\(FixtureDatabase.escape(contentId))', NULL, '\(FixtureDatabase.escape(type))', \
+    '\(FixtureDatabase.escape(text))', 0, -1, NULL, NULL, datetime('now'), datetime('now'));
+    """
+    FixtureDatabase.write(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
+}
+
+// MARK: - Fixture Helpers
+
+enum TestFixtureHelper {
+    /// Backing storage for the per-test fixture path. XCTest runs one test's
+    /// setUp -> test -> tearDown serially before starting the next, so there is
+    /// no real concurrent access here -- `nonisolated(unsafe)` documents that
+    /// this mutable static is safe under that serial-execution contract, which
+    /// Swift 6 strict concurrency cannot see on its own.
+    private nonisolated(unsafe) static var currentFixturePath: String?
+
+    /// The per-test fixture path, assigned fresh by `setupFixture(from:)` and
+    /// cleared by `cleanupFixture()`. Each test gets its own
+    /// `ff-test-fixture-<UUID>.ff` under `NSTemporaryDirectory()` rather than a
+    /// single shared path, so one test's fixture file can't be read, mutated,
+    /// or torn down out from under a previously-running test.
+    ///
+    /// Reading this before `setupFixture(from:)` has run (or after
+    /// `cleanupFixture()` already ran) is a test-authoring bug: the old shared
+    /// `static let` would have silently handed back a stale path left over
+    /// from whatever test ran last, which is exactly the cross-test pollution
+    /// this per-test isolation exists to prevent. Fail loudly instead of
+    /// reproducing that silently-stale behavior -- via `XCTFail` rather than
+    /// `fatalError`, so the misuse fails only the one offending test instead
+    /// of killing the whole XCUITest runner process. Every current call site
+    /// runs with `continueAfterFailure = false`, so `XCTFail` unwinds the test
+    /// immediately and the sentinel path below is never actually consumed in
+    /// practice; it exists only to satisfy this property's non-throwing
+    /// `String` return type.
+    static var fixturePath: String {
+        guard let currentFixturePath else {
+            XCTFail(
+                "TestFixtureHelper.fixturePath read before setupFixture(from:) was called (or after "
+                    + "cleanupFixture() already ran) -- call setupFixture(from:) in this test's setUp first."
+            )
+            return "/dev/null/TestFixtureHelper-fixturePath-read-before-setupFixture"
+        }
+        return currentFixturePath
+    }
+
+    /// Copies the committed fixture from the UI test bundle to a fresh,
+    /// per-test path in the temp directory. Must be called in setUp before
+    /// launching the app.
+    static func setupFixture(from testCase: XCTestCase) throws {
+        // Belt-and-braces (see `installLocalNetworkPermissionInterruptionMonitor`'s doc
+        // comment): arm this before the app ever launches, so it's ready for the first
+        // interaction regardless of which test method runs.
+        testCase.installLocalNetworkPermissionInterruptionMonitor()
+
+        let fm = FileManager.default
+        let path = NSTemporaryDirectory() + "ff-test-fixture-\(UUID().uuidString).ff"
+
+        // Find fixture in the UI test bundle using URL-based path
+        let bundle = Bundle(for: type(of: testCase))
+        guard let fixtureSource = bundle.resourceURL?
+            .appendingPathComponent("Fixtures/test-fixture.ff"),
+              fm.fileExists(atPath: fixtureSource.path) else {
+            XCTFail("Test fixture not found in UI test bundle. Ensure FixtureGeneratorTests has run and fixture is committed.")
+            return
+        }
+
+        // Fresh copy for test isolation
+        try? fm.removeItem(atPath: path)
+        try fm.copyItem(at: fixtureSource, to: URL(fileURLWithPath: path))
+
+        // Only publish the path once the copy has actually succeeded --
+        // assigning it earlier would let a failed bundle lookup or copy leave
+        // `currentFixturePath` pointing at a file that doesn't exist.
+        currentFixturePath = path
+
+        print("[TestFixture] Fixture copied to: \(path)")
+    }
+
+    /// Removes the test fixture and clears the stored path. Call from
+    /// tearDown. A documented no-op when no fixture is currently set -- e.g. a
+    /// test method that never called `setupFixture(from:)` sharing a
+    /// `tearDown`/`tearDownWithError` with a sibling method that did (see
+    /// ProjectOpenErrorE2ETests, where `tearDownWithError` calls this
+    /// unconditionally but only one of its two test methods calls
+    /// `setupFixture`).
+    static func cleanupFixture() {
+        guard let path = currentFixturePath else { return }
+        try? FileManager.default.removeItem(atPath: path)
+        currentFixturePath = nil
+    }
+}

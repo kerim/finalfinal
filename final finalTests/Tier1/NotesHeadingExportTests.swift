@@ -38,7 +38,7 @@ final class NotesHeadingExportTests: XCTestCase {
     /// footnote definitions -- exactly what `FootnoteSyncService` produces when Pandoc lifts
     /// `[^N]: ...` blocks out of the flowing body. Every non-empty block under the heading
     /// matches the footnote-definition pattern, so the heading should be dropped on export.
-    private func buildQualifyingNotesRunBlocks() -> [Block] {
+    func buildQualifyingNotesRunBlocks() -> [Block] {
         let heading = Block(
             projectId: "test", sortOrder: 1.0, blockType: .heading,
             textContent: "Introduction", markdownFragment: "# Introduction"
@@ -69,7 +69,7 @@ final class NotesHeadingExportTests: XCTestCase {
     /// A user-typed "Notes" heading with the user's own prose underneath -- zero footnotes
     /// anywhere in the document, no `[^N]:` pattern at all. The critical negative case: this
     /// heading must never be dropped, since the app never generated it.
-    private func buildUserAuthoredNotesBlocks() -> [Block] {
+    func buildUserAuthoredNotesBlocks() -> [Block] {
         let notesHeading = Block(
             projectId: "test", sortOrder: 1.0, blockType: .heading,
             textContent: "Notes", markdownFragment: "# Notes",
@@ -366,93 +366,4 @@ final class NotesHeadingExportTests: XCTestCase {
         XCTAssertFalse(droppedOutput.contains("Entry two."))
     }
 
-    // MARK: - 8. assembleMarkdownForEditor guard: the live editor is completely unaffected
-
-    func testAssembleMarkdownForEditor_UnaffectedByNotesHeadingLogic() {
-        let qualifyingOutput = BlockParser.assembleMarkdownForEditor(from: buildQualifyingNotesRunBlocks())
-        XCTAssertTrue(qualifyingOutput.contains("# Notes"),
-                     "The live editor must never drop a Notes heading, even when export would. " +
-                     "Output:\n\(qualifyingOutput)")
-
-        let userAuthoredOutput = BlockParser.assembleMarkdownForEditor(from: buildUserAuthoredNotesBlocks())
-        XCTAssertTrue(userAuthoredOutput.contains("# Notes"))
-    }
-
-    // MARK: - 9. Raw-markdown export paths guard: unaffected, heading is correct/wanted there
-
-    func testRawMarkdownExportPaths_UnaffectedByNotesHeadingLogic() {
-        let blocks = buildQualifyingNotesRunBlocks()
-
-        let standardOutput = BlockParser.assembleStandardMarkdownForExport(from: blocks)
-        XCTAssertTrue(standardOutput.contains("# Notes"))
-        XCTAssertTrue(standardOutput.contains("[^1]: First footnote."))
-        XCTAssertTrue(standardOutput.contains("[^2]: Second footnote."))
-
-        let markdownOnlyOutput = BlockParser.assembleMarkdownOnlyForExport(from: blocks)
-        XCTAssertTrue(markdownOnlyOutput.contains("# Notes"))
-        XCTAssertTrue(markdownOnlyOutput.contains("[^1]: First footnote."))
-        XCTAssertTrue(markdownOnlyOutput.contains("[^2]: Second footnote."))
-    }
-
-    // MARK: - 10. Non-numeric footnote-shaped label -> heading survives (regex is numeric-only)
-
-    /// The single most important test here: the fix's whole safety property rests on
-    /// `footnoteDefStartPattern` matching ONLY numeric labels (`[^1]:`, `[^42]:`, ...), because
-    /// `FootnoteSyncService` never generates anything else. A non-numeric label like
-    /// `[^method-note]:` is therefore evidence the block was hand-typed by the user, not
-    /// evidence to loosen the pattern for -- if this regex were ever widened to match any label
-    /// shape, this is the test that would catch it, since every other test here only ever uses
-    /// numeric labels.
-    func testNonNumericFootnoteShapedLabel_HeadingSurvives() {
-        let notesHeading = Block(
-            projectId: "test", sortOrder: 1.0, blockType: .heading,
-            textContent: "Notes", markdownFragment: "# Notes",
-            isNotes: true
-        )
-        let handTypedAside = Block(
-            projectId: "test", sortOrder: 2.0, blockType: .paragraph,
-            textContent: "[^method-note]: A hand-typed aside.",
-            markdownFragment: "[^method-note]: A hand-typed aside.",
-            isNotes: true
-        )
-
-        let output = BlockParser.assembleMarkdownForExport(from: [notesHeading, handTypedAside])
-
-        XCTAssertTrue(output.contains("# Notes"),
-                     "A non-numeric footnote-shaped label ([^method-note]:) is evidence of " +
-                     "hand-typed content, not a machine-generated definition -- the app only ever " +
-                     "generates numeric labels like [^1]:. The heading must survive. " +
-                     "Output:\n\(output)")
-        XCTAssertTrue(output.contains("[^method-note]: A hand-typed aside."))
-    }
-
-    // MARK: - 11. Start-anchoring: a definition shape on line 2 must not count (no .anchorsMatchLines)
-
-    /// Proves the footnote-definition regex anchors `^` to the START of the whole trimmed
-    /// fragment, not to the start of any line within it. A fragment whose first line is ordinary
-    /// prose and whose SECOND line merely looks like a footnote definition must not be treated
-    /// as one -- if the pattern were ever built with `.anchorsMatchLines`, this test would catch
-    /// the resulting false-positive match.
-    func testDefinitionShapeOnSecondLine_StartAnchored_HeadingSurvives() {
-        let notesHeading = Block(
-            projectId: "test", sortOrder: 1.0, blockType: .heading,
-            textContent: "Notes", markdownFragment: "# Notes",
-            isNotes: true
-        )
-        let twoLineFragment = Block(
-            projectId: "test", sortOrder: 2.0, blockType: .paragraph,
-            textContent: "Some prose here.\n[^1]: something",
-            markdownFragment: "Some prose here.\n[^1]: something",
-            isNotes: true
-        )
-
-        let output = BlockParser.assembleMarkdownForExport(from: [notesHeading, twoLineFragment])
-
-        XCTAssertTrue(output.contains("# Notes"),
-                     "The footnote-definition pattern must anchor to the start of the whole " +
-                     "trimmed fragment, not to the start of any line within it -- a block whose " +
-                     "SECOND line merely looks like a definition must not qualify. " +
-                     "Output:\n\(output)")
-        XCTAssertTrue(output.contains("Some prose here.\n[^1]: something"))
-    }
 }
