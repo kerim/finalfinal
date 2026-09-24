@@ -64,7 +64,8 @@ private final class ApplyChainNode {
     /// per-block merge in `doPollBlockChanges`, where shared ids keep the newer
     /// text and this batch's own blocks still land. See the L6/L11 loss paths in
     /// the plan (`docs`-level reasoning lives in the code comments at the two
-    /// checks in `doPollBlockChanges`).
+    /// checks: the sequence guard in `doPollBlockChanges` and the abandon check in
+    /// `recordApplyOutcome`).
     private(set) var isAbandoned = false
 
     func wait() async {                       // returns immediately once finished
@@ -500,11 +501,13 @@ class BlockSyncService {
     /// session's while `fetchSequence` restarts low. Rows already edited last session
     /// carry stamps like `(E, 300)`, so every update/delete this session's low-sequence
     /// batches sent to those rows would be dropped as "superseded" until the in-memory
-    /// counter caught up -- silent loss of the user's typing. `doPollBlockChanges` retries
-    /// the bump at the top of the cycle, BEFORE it reads the epoch and before anything is
-    /// fetched, and defers the whole poll while the retry keeps failing. That trades a
-    /// silent-drop failure for a no-write failure, which is lossless: nothing has been
-    /// consumed JS-side yet, so the batch stays queued and is re-offered next tick.
+    /// counter caught up -- silent loss of the user's typing. `installApplyChainSlot`
+    /// retries the bump — after `doPollBlockChanges`'s fetch-boundary cancellation
+    /// check, not at the top of the cycle — BEFORE it reads the epoch and before
+    /// anything is fetched, and defers the whole poll while the retry keeps failing.
+    /// That trades a silent-drop failure for a no-write failure, which is lossless:
+    /// nothing has been consumed JS-side yet, so the batch stays queued and is
+    /// re-offered next tick.
     private var needsEpochBump = false
 
     /// Set synchronously by a bibliography/Notes/footnote rebuild the instant it bumps
@@ -836,9 +839,9 @@ class BlockSyncService {
     /// trap — when both sides fire close together.
     ///
     /// Exactly one caller now: the apply-chain valve (`chainWaitSeconds`, whose
-    /// release default is `applyChainWaitSeconds`) in `doPollBlockChanges`. The poll
-    /// cycle's own watchdog uses `raceWithTimeout(seconds:work:)` instead, because it
-    /// needs the work task's handle to cancel the loser.
+    /// release default is `applyChainWaitSeconds`) in `awaitPredecessorOrAbandon`. The
+    /// poll cycle's own watchdog uses `raceWithTimeout(seconds:work:)` instead,
+    /// because it needs the work task's handle to cancel the loser.
     ///
     /// Deadline hygiene (judge should-fix S3, mirroring `raceWithTimeout`): the
     /// deadline task is captured and cancelled once the continuation resumes, so an
@@ -1019,11 +1022,9 @@ class BlockSyncService {
     private func doPollBlockChanges(force: Bool = false, progress: CycleProgress? = nil) async throws {
         try Task.checkCancellation()
 
-        if !force {
-            guard editorState?.contentState == .idle else {
-                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
-                return
-            }
+        guard force || editorState?.contentState == .idle else {
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] SKIPPED: contentState=\(String(describing: editorState?.contentState))")
+            return
         }
 
         guard isConfigured, let webView, let database = projectDatabase, let projectId else { return }
@@ -1095,72 +1096,27 @@ class BlockSyncService {
 
         // Last lossless cancellation checkpoint. INVARIANT (do not weaken): there
         // must be NO cancellation-OBSERVING await between here and
-        // `applyAndConfirm` below. Every post-fetch step — the `evaluateJS` call
-        // inside `getBlockChanges` (WebKit's async API does not observe Swift task
-        // cancellation), the synchronous guards/logs, the apply-chain valve
-        // (`withCheckedContinuation`, whose two racing tasks are fresh and
-        // unstructured, so this cycle's cancellation cannot reach them),
-        // `applyAndConfirm`'s `Task.detached` write (detached tasks do not inherit
-        // cancellation, and the region catches internally), `confirmBlockIds`, the
-        // DEBUG `testAfterApplyHook` (tests must not park), and the closing
-        // `defer { chainNode.finish() }` — is non-cancellation-observing. That is
-        // exactly what makes the watchdog's `orphan.cancel()` and the drain's
-        // `task.cancel()` safe: cancellation stops this cycle only at its four
-        // pre-fetch checkpoints, so a batch already consumed JS-side is always
-        // written (in chain order) rather than lost.
+        // `applyAndConfirm` below. Every post-fetch step — `installApplyChainSlot`
+        // (synchronous epoch-bump retry, epoch read, and chain install), the
+        // `evaluateJS` call inside `getBlockChanges` (WebKit's async API does not
+        // observe Swift task cancellation), the synchronous guards/logs
+        // (`batchNeedsApplying`), the apply-chain valve (`awaitPredecessorOrAbandon`,
+        // whose `withCheckedContinuation` races two fresh, unstructured tasks that
+        // this cycle's cancellation cannot reach), `applyAndConfirm`'s
+        // `Task.detached` write (detached tasks do not inherit cancellation, and the
+        // region catches internally), `confirmBlockIds`, the post-apply bookkeeping
+        // in `recordApplyOutcome`, the DEBUG `testAfterApplyHook` (tests must not
+        // park), and the closing `defer { chainNode.finish() }` — is
+        // non-cancellation-observing. That is exactly what makes the watchdog's
+        // `orphan.cancel()` and the drain's `task.cancel()` safe: cancellation stops
+        // this cycle only at its four pre-fetch checkpoints, so a batch already
+        // consumed JS-side is always written (in chain order) rather than lost.
         // The checkpoint immediately below, BEFORE this call, is the last safe
         // place to bail out losslessly.
         try Task.checkCancellation()
 
-        // A `configure`/`reconfigure` epoch bump that FAILED is retried here, on THIS
-        // cycle's own `database`/`projectId`, before the epoch is read below - otherwise
-        // this session's low fetch sequences would be measured against the previous
-        // session's persisted row stamps and silently drop real edits (see
-        // `needsEpochBump`). Synchronous (no `await`), and placed before the chain node
-        // is installed: an early `return` AFTER installation and before `finish()` would
-        // wedge every successor. If the retry fails too, return WITHOUT fetching - lossless,
-        // because nothing has been consumed JS-side yet, so the batch stays queued and is
-        // re-offered next tick. Logged unconditionally every time, since a persistently
-        // failing bump means nothing is being written.
-        if needsEpochBump {
-            do {
-                _ = try database.bumpBlockWriteEpoch(projectId: projectId)
-                needsEpochBump = false
-            } catch {
-                DebugLog.always(
-                    "[BlockSync] write-stamp: retry of the deferred blockWriteEpoch bump failed (\(error)) - "
-                    + "deferring this poll BEFORE the fetch; the batch stays queued JS-side")
-                return
-            }
-        }
-
-        // --- apply-chain install (synchronous: no `await` between the tail
-        // capture, the install, the stamp and the JS call issued by
-        // getBlockChanges() below, so chain order IS stamp order IS fetch order
-        // IS batch-age order — a node's predecessor therefore ALWAYS carries a
-        // strictly lower stamp, which is what makes the sequence guard below
-        // incapable of discarding newer text).
-        let predecessor = applyChainTail
-        // (epoch, sequence) write stamp. The epoch is read HERE - synchronously, before
-        // the JS fetch and before the chain install - for three reasons: it lands in the
-        // same no-await region as `fetchSequence &+= 1` below, so chain order IS stamp
-        // order; nothing has been consumed JS-side yet, so a read failure can still
-        // return LOSSLESSLY; and there is no cleanup to unwind, because `chainNode` is
-        // not installed yet.
-        let myWriteEpoch: Int64
-        do {
-            myWriteEpoch = try database.currentBlockWriteEpoch(projectId: projectId)
-        } catch {
-            DebugLog.always(
-                "[BlockSync] write-stamp: could not read blockWriteEpoch (\(error)) - "
-                + "abandoning this poll BEFORE the fetch; the batch stays queued JS-side")
-            return
-        }
-        let chainNode = ApplyChainNode()
-        applyChainTail = chainNode
-        fetchSequence &+= 1
-        let myFetchSequence = fetchSequence
-        let myStamp = BlockWriteStamp(epoch: myWriteEpoch, sequence: Int64(clamping: myFetchSequence))
+        guard let slot = installApplyChainSlot(database: database, projectId: projectId) else { return }
+        let chainNode = slot.node
         // Released when THIS cycle's apply step ends — on every path below.
         // Deliberately NOT in runPollCycle: that returns at the watchdog while
         // this work task is still running, and a successor must wait for the real
@@ -1210,36 +1166,11 @@ class BlockSyncService {
             return
         }
 
-        // Skip if no actual changes
-        guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {
-            return
-        }
-
-        logChangeDigest(changes, force: force)
-
-        if shouldRejectStaleSnapshot(changes, database: database, projectId: projectId) {
-            return
-        }
+        guard batchNeedsApplying(changes, database: database, projectId: projectId, force: force) else { return }
 
         let resolvedChanges = resolvingStaleTempIds(changes)
 
-        if let predecessor {
-            let finished = await Self.awaitWithTimeout(seconds: chainWaitSeconds) {
-                await predecessor.wait()
-            }
-            if !finished {
-                // Mark the slow predecessor ABANDONED: when it reaches its own
-                // check below it will MERGE its (older) batch per block — landing
-                // only the blocks no newer batch has written — instead of applying
-                // it wholesale after ours. If its `Task.detached` write is already
-                // in flight, nothing here can recall it — residual L11.
-                predecessor.abandon()
-                DebugLog.always(
-                    "[BlockSync] apply chain: predecessor did not apply within "
-                    + "\(chainWaitSeconds)s — marking it abandoned and proceeding"
-                )
-            }
-        }
+        await awaitPredecessorOrAbandon(slot.predecessor)
         // A successor gave up on THIS cycle, so our batch is strictly older than the one
         // it applied. Do NOT drop the batch: the persisted (epoch, sequence) stamp in the
         // write transaction now decides, per row, which of its blocks a newer batch has
@@ -1263,10 +1194,10 @@ class BlockSyncService {
         // row in the write transaction against the persisted stamp: every id it still
         // carries is one NO newer apply wrote, so landing it cannot resurrect newer text —
         // the only hazard this guard exists to catch.
-        guard chainNode.isAbandoned || myFetchSequence > lastAppliedFetchSequence else {
+        guard chainNode.isAbandoned || slot.fetchSequence > lastAppliedFetchSequence else {
             DebugLog.always(
                 "[BlockSync] apply chain: ABANDONED batch from an older fetch "
-                + "(fetchSeq=\(myFetchSequence), lastApplied=\(lastAppliedFetchSequence)) — "
+                + "(fetchSeq=\(slot.fetchSequence), lastApplied=\(lastAppliedFetchSequence)) — "
                 + "a newer batch already landed; applying this one would resurrect older text")
             return
         }
@@ -1291,26 +1222,8 @@ class BlockSyncService {
         }
 
         let result = await applyAndConfirm(resolvedChanges, database: database, projectId: projectId,
-                                           webView: webView, stamp: myStamp)
-        // Written ONLY after a SUCCESSFUL apply (A10) — the DB write, not the intent.
-        // A failed write must not publish its stamp, or a later, genuinely newer batch
-        // would be rejected as "older" against a stamp that never landed. `max` keeps
-        // it monotonic even though the valve can let two applies overlap — and it is
-        // still right for a MERGED apply: `lastAppliedFetchSequence` already holds the
-        // successor's newer stamp, so `max` deliberately keeps that newer value rather
-        // than moving it back to this (older) cycle's stamp.
-        if let result {
-            if chainNode.isAbandoned {
-                DebugLog.always(
-                    "[BlockSync] apply chain: own batch arrived after a successor applied - "
-                    + "merged=\(result.writtenCount) superseded=\(result.droppedCount) "
-                    + "(fetchSeq=\(myFetchSequence))")
-                #if DEBUG
-                testOwnBatchAbandonCount += 1
-                #endif
-            }
-            lastAppliedFetchSequence = max(lastAppliedFetchSequence, myFetchSequence)
-        }
+                                           webView: webView, stamp: slot.stamp)
+        recordApplyOutcome(result, chainNode: chainNode, fetchSequence: slot.fetchSequence)
         #if DEBUG
         await testAfterApplyHook?()
         #endif
@@ -2044,9 +1957,9 @@ extension BlockSyncService {
     /// (an existing, separate fix) and suppressing it would regress that.
     ///
     /// Window widened by the apply chain (M1/A1): this function runs only after
-    /// `doPollBlockChanges`'s `predecessor.wait()` valve, which can park the cycle for
-    /// up to `chainWaitSeconds` after the postFetch generation check. That widened
-    /// pre-write window is covered by the `postChainWait` re-check of
+    /// `awaitPredecessorOrAbandon`'s `predecessor.wait()` valve, which can park the
+    /// cycle for up to `chainWaitSeconds` after the postFetch generation check. That
+    /// widened pre-write window is covered by the `postChainWait` re-check of
     /// `checkGenerationGuard` that runs immediately before this call — not by anything
     /// in here.
     @discardableResult
@@ -2087,5 +2000,159 @@ extension BlockSyncService {
             DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
             return nil
         }
+    }
+
+    /// Slot handed back by `installApplyChainSlot(database:projectId:)`: this cycle's
+    /// predecessor link, its newly-installed chain node, and the (fetchSequence, stamp)
+    /// pair computed in the same synchronous region as the install. `private` because it
+    /// carries the file-private `ApplyChainNode`.
+    private struct ApplyChainSlot {
+        let predecessor: ApplyChainNode?
+        let node: ApplyChainNode
+        let fetchSequence: UInt64
+        let stamp: BlockWriteStamp
+    }
+
+    /// Retries a deferred `blockWriteEpoch` bump, reads the current write epoch, and
+    /// installs this cycle's node onto the apply chain, immediately before
+    /// `doPollBlockChanges` calls `getBlockChanges()`. MUST stay synchronous and
+    /// non-throwing (no `await`, no `throws`): it is part of the "no
+    /// cancellation-OBSERVING await between here and `applyAndConfirm`" invariant
+    /// documented at `doPollBlockChanges`'s fetch-boundary comment. Nothing may run in
+    /// here AFTER the chain node is installed (`applyChainTail = node`) — both failure
+    /// paths (the `needsEpochBump` retry and the epoch read) return `nil` BEFORE that
+    /// install, so an early return here can never wedge a successor waiting on a
+    /// half-installed node.
+    private func installApplyChainSlot(database: ProjectDatabase, projectId: String) -> ApplyChainSlot? {
+        // A `configure`/`reconfigure` epoch bump that FAILED is retried here, on THIS
+        // cycle's own `database`/`projectId`, before the epoch is read below - otherwise
+        // this session's low fetch sequences would be measured against the previous
+        // session's persisted row stamps and silently drop real edits (see
+        // `needsEpochBump`). Synchronous (no `await`), and placed before the chain node
+        // is installed: an early `return` AFTER installation and before `finish()` would
+        // wedge every successor. If the retry fails too, return WITHOUT fetching - lossless,
+        // because nothing has been consumed JS-side yet, so the batch stays queued and is
+        // re-offered next tick. Logged unconditionally every time, since a persistently
+        // failing bump means nothing is being written.
+        if needsEpochBump {
+            do {
+                _ = try database.bumpBlockWriteEpoch(projectId: projectId)
+                needsEpochBump = false
+            } catch {
+                DebugLog.always(
+                    "[BlockSync] write-stamp: retry of the deferred blockWriteEpoch bump failed (\(error)) - "
+                    + "deferring this poll BEFORE the fetch; the batch stays queued JS-side")
+                return nil
+            }
+        }
+
+        // --- apply-chain install (synchronous: no `await` between the tail
+        // capture, the install, the stamp and the JS call `doPollBlockChanges` issues
+        // via `getBlockChanges()` right after this returns, so chain order IS stamp
+        // order IS fetch order IS batch-age order — a node's predecessor therefore
+        // ALWAYS carries a strictly lower stamp, which is what makes the sequence
+        // guard in `doPollBlockChanges` incapable of discarding newer text).
+        let predecessor = applyChainTail
+        // (epoch, sequence) write stamp. The epoch is read HERE - synchronously, before
+        // the JS fetch and before the chain install - for three reasons: it lands in the
+        // same no-await region as `fetchSequence &+= 1` below, so chain order IS stamp
+        // order; nothing has been consumed JS-side yet, so a read failure can still
+        // return LOSSLESSLY; and there is no cleanup to unwind, because `node` is
+        // not installed yet.
+        let myWriteEpoch: Int64
+        do {
+            myWriteEpoch = try database.currentBlockWriteEpoch(projectId: projectId)
+        } catch {
+            DebugLog.always(
+                "[BlockSync] write-stamp: could not read blockWriteEpoch (\(error)) - "
+                + "abandoning this poll BEFORE the fetch; the batch stays queued JS-side")
+            return nil
+        }
+        let node = ApplyChainNode()
+        applyChainTail = node
+        fetchSequence &+= 1
+        let myFetchSequence = fetchSequence
+        let stamp = BlockWriteStamp(epoch: myWriteEpoch, sequence: Int64(clamping: myFetchSequence))
+        return ApplyChainSlot(predecessor: predecessor, node: node, fetchSequence: myFetchSequence, stamp: stamp)
+    }
+
+    /// Empty-batch check, change-digest log, and stale-snapshot rejection, run as one
+    /// unit right after the fetch. Not a pure predicate: it also calls
+    /// `logChangeDigest` (which logs) and runs the stale-snapshot rejection check as
+    /// side effects before answering. MUST stay synchronous and non-throwing (no
+    /// `await`): it sits inside the "no cancellation-OBSERVING await between here and
+    /// `applyAndConfirm`" window documented on `doPollBlockChanges`'s fetch-boundary
+    /// comment. Returns `false` — nothing to apply — for an empty batch or a rejected
+    /// stale snapshot; the caller returns immediately either way.
+    private func batchNeedsApplying(_ changes: BlockChanges, database: ProjectDatabase, projectId: String, force: Bool) -> Bool {
+        // Skip if no actual changes
+        guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {
+            return false
+        }
+
+        logChangeDigest(changes, force: force)
+
+        if shouldRejectStaleSnapshot(changes, database: database, projectId: projectId) {
+            return false
+        }
+
+        return true
+    }
+
+    /// The apply-chain valve: waits (bounded by `chainWaitSeconds`) for `predecessor` to
+    /// finish, abandoning it if it doesn't. MUST stay `async` — never `async throws` —
+    /// and MUST NOT contain a `Task.checkCancellation()` or a throwing `Task.sleep`:
+    /// this guarantees no `CancellationError` can propagate out of it, which is exactly
+    /// what the "no cancellation-OBSERVING await between here and `applyAndConfirm`"
+    /// invariant documented on `doPollBlockChanges`'s fetch-boundary comment requires of
+    /// this step. The `withCheckedContinuation` inside `awaitWithTimeout` races two
+    /// fresh, unstructured tasks that this cycle's cancellation cannot reach, so
+    /// awaiting it here is likewise safe.
+    private func awaitPredecessorOrAbandon(_ predecessor: ApplyChainNode?) async {
+        guard let predecessor else { return }
+        let finished = await Self.awaitWithTimeout(seconds: chainWaitSeconds) {
+            await predecessor.wait()
+        }
+        if !finished {
+            // Mark the slow predecessor ABANDONED: when it reaches the sequence
+            // check in `doPollBlockChanges` it will MERGE its (older) batch per
+            // block — landing only the blocks no newer batch has written — instead
+            // of applying it wholesale after ours. If its `Task.detached` write is
+            // already in flight, nothing here can recall it — residual L11.
+            predecessor.abandon()
+            DebugLog.always(
+                "[BlockSync] apply chain: predecessor did not apply within "
+                + "\(chainWaitSeconds)s — marking it abandoned and proceeding"
+            )
+        }
+    }
+
+    /// Post-apply bookkeeping: logs an own-batch-abandoned merge, bumps the DEBUG
+    /// counter, and advances `lastAppliedFetchSequence` — called unconditionally right
+    /// after `applyAndConfirm`. MUST stay synchronous and non-throwing (no `await`):
+    /// the "no cancellation-OBSERVING await between here and `applyAndConfirm`"
+    /// invariant documented on `doPollBlockChanges`'s fetch-boundary comment covers
+    /// everything from the fetch boundary onward — including steps, like this one,
+    /// that run after the apply; the window does not end AT `applyAndConfirm`. This
+    /// runs right before the DEBUG `testAfterApplyHook`, which stays in the caller.
+    private func recordApplyOutcome(_ result: EditorApplyResult?, chainNode: ApplyChainNode, fetchSequence: UInt64) {
+        // Written ONLY after a SUCCESSFUL apply (A10) — the DB write, not the intent.
+        // A failed write must not publish its stamp, or a later, genuinely newer batch
+        // would be rejected as "older" against a stamp that never landed. `max` keeps
+        // it monotonic even though the valve can let two applies overlap — and it is
+        // still right for a MERGED apply: `lastAppliedFetchSequence` already holds the
+        // successor's newer stamp, so `max` deliberately keeps that newer value rather
+        // than moving it back to this (older) cycle's stamp.
+        guard let result else { return }
+        if chainNode.isAbandoned {
+            DebugLog.always(
+                "[BlockSync] apply chain: own batch arrived after a successor applied - "
+                + "merged=\(result.writtenCount) superseded=\(result.droppedCount) "
+                + "(fetchSeq=\(fetchSequence))")
+            #if DEBUG
+            testOwnBatchAbandonCount += 1
+            #endif
+        }
+        lastAppliedFetchSequence = max(lastAppliedFetchSequence, fetchSequence)
     }
 }
