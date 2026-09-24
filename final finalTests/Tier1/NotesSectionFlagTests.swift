@@ -15,14 +15,19 @@
 //  `blocks` to replace them -- real footnote TEXT loss, not just a placeholder.
 //
 //  FIX (mirrors the already-shipped isBibliography fix):
-//  - `parseHeaders` now defers the "existingNotesTitle != nil" branch's decision instead of
-//    latching immediately on bare title match (MUST-FIX 1): it adds the heading as an ordinary
-//    boundary and only retroactively flags it `isNotes` once real footnote-definition evidence
-//    ("[^N]:") is found beneath it, exactly like the pre-existing "existingNotesTitle == nil"
-//    import-auto-detection branch already did. Headers after the candidate are never swallowed
-//    either way, closing the unbounded-swallow bug (see test 6). The `selectBibliographyOpeningOffset`
-//    pre-scan's own separate `inAutoNotes` copy is fixed too, via level-scoped closing (the
-//    smaller, more surgical mirror given that function has no multi-line lookahead available).
+//  - `parseHeaders` now defers the decision instead of latching immediately on bare title match
+//    (MUST-FIX 1): it adds the heading as an ordinary boundary and only retroactively flags it
+//    `isNotes` once real footnote-definition evidence ("[^N]:") is found beneath it. At the time
+//    of this fix, the "existingNotesTitle != nil" custom-title case and the pre-existing
+//    "existingNotesTitle == nil" import-auto-detection case were two separate branches that both
+//    deferred this way; a later cyclomatic-complexity refactor merged them into one
+//    `header.title == notesHeaderName` branch (see `SectionSyncService+Parsing.swift`'s inline
+//    comment on that branch's ternary for the one behavioral asymmetry -- whether the match
+//    updates `lastActualHeaderLevel` -- preserved unchanged across the merge). Headers after the
+//    candidate are never swallowed either way, closing the unbounded-swallow bug (see test 6).
+//    The `selectBibliographyOpeningOffset` pre-scan's own separate `inAutoNotes` copy is fixed
+//    too, via level-scoped closing (the smaller, more surgical mirror given that function has no
+//    multi-line lookahead available).
 //  - `SectionReconciler` routes flagged Notes headers through a dedicated match path
 //    (`findNotesMatch`, mirroring `findBibliographyMatch` exactly -- no unbounded title tier,
 //    no pure-proximity fallback) and a `notesGone` two-signal escape hatch mirroring
@@ -104,8 +109,9 @@ struct NotesSectionFlagTests {
         [^1]: A real footnote with genuine evidence beneath the heading.
         """
 
-        // existingNotesTitle: "Notes" exercises the specific branch MUST-FIX 1 fixes (the
-        // "existingNotesTitle != nil" branch), not the import-auto-detection sibling.
+        // existingNotesTitle: "Notes" exercises the specific case MUST-FIX 1 fixes (the
+        // "existingNotesTitle != nil" case of the merged `header.title == notesHeaderName`
+        // branch), not the import-auto-detection sibling case.
         let headers = SectionSyncService.parseHeaders(from: markdown, existingNotesTitle: "Notes")
 
         let notesHeader = headers.first { $0.title == "Notes" }
@@ -271,7 +277,7 @@ struct NotesSectionFlagTests {
         """
 
         // First pass: no existing Notes title yet -- a real first-ever sync, exercising the
-        // "existingNotesTitle == nil" import-auto-detection branch to establish the initial
+        // "existingNotesTitle == nil" import-auto-detection case to establish the initial
         // Section rows (Notes flagged, Appendix an ordinary section).
         let firstHeaders = SectionSyncService.parseHeaders(from: markdown)
         let firstChanges = reconciler.reconcile(headers: firstHeaders, dbSections: [], projectId: pid)
@@ -287,13 +293,14 @@ struct NotesSectionFlagTests {
         #expect(!appendixRowBefore.isNotes, "Appendix must not be swallowed into the notes latch on the first pass")
 
         // Second pass: existingNotesTitle is now non-nil ("Notes") -- this is the SPECIFIC
-        // branch MUST-FIX 1 fixes. Before the fix, latching `inAutoNotes` here with no closing
-        // condition would swallow every boundary from "# Notes" to end-of-document, so
-        // `headers` would never contain an "Appendix" entry, and the reconciler's delete sweep
-        // would remove its Section row entirely -- real, silent data loss.
+        // case MUST-FIX 1 fixes (the "existingNotesTitle != nil" case). Before the fix, latching
+        // `inAutoNotes` here with no closing condition would swallow every boundary from
+        // "# Notes" to end-of-document, so `headers` would never contain an "Appendix" entry,
+        // and the reconciler's delete sweep would remove its Section row entirely -- real,
+        // silent data loss.
         let dbSections = try db.fetchSections(projectId: pid)
         let existingNotesTitle = dbSections.first(where: { $0.isNotes })?.title
-        #expect(existingNotesTitle == "Notes", "Precondition: existingNotesTitle must be non-nil to exercise MUST-FIX 1's branch")
+        #expect(existingNotesTitle == "Notes", "Precondition: existingNotesTitle must be non-nil to exercise MUST-FIX 1's existingNotesTitle != nil case")
 
         let secondHeaders = SectionSyncService.parseHeaders(from: markdown, existingNotesTitle: existingNotesTitle)
         let appendixHeader = secondHeaders.first { $0.title == "Appendix" }

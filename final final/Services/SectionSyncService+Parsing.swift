@@ -107,9 +107,7 @@ extension SectionSyncService {
             let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
 
             // Track code blocks
-            if trimmed.hasPrefix("```") {
-                inCodeBlock = !inCodeBlock
-            }
+            inCodeBlock = codeFenceState(after: trimmed, wasInCodeBlock: inCodeBlock)
 
             // Legacy marker support: still detect marker if present in old content. This is NOT
             // an independent detection mechanism -- it defers entirely to the shared-selector-
@@ -185,7 +183,7 @@ extension SectionSyncService {
                             isBibliography: true,
                             isNotes: false
                         ))
-                    } else if header.title == notesHeaderName && existingNotesTitle != nil {
+                    } else if header.title == notesHeaderName {
                         // MUST-FIX 1: bare title equality alone is NOT evidence a real
                         // machine-managed Notes section opens here -- unlike bibliography,
                         // which only latches via an offset the pre-scan selected using
@@ -193,31 +191,36 @@ extension SectionSyncService {
                         // unconditionally on title match alone, with no closing condition at
                         // all, silently swallowing every boundary from here to end-of-document
                         // on the next parse (real, silent Section-row data loss for any
-                        // document with a heading literally titled "Notes"). Fixed by
-                        // deferring the decision exactly like the import-auto-detection branch
-                        // just below: add as an ordinary (unflagged) boundary for now --
-                        // headers after this point are still recognized normally either way --
-                        // and record its index so the shared post-loop evidence check (below
-                        // the main loop) can retroactively flag it once real footnote content
-                        // ([^N]: pattern) is confirmed beneath it. Deliberately does NOT set
-                        // `inAutoNotes` here (unlike the old, buggy version of this branch), and
-                        // deliberately does NOT update `lastActualHeaderLevel` either --
-                        // pre-existing asymmetry versus the branch below, out of scope to change.
-                        boundaries.append(SectionBoundary(
-                            startOffset: currentOffset,
-                            level: header.level,
-                            title: header.title,
-                            isPseudoSection: false,
-                            isBibliography: false,
-                            isNotes: false
-                        ))
-                        pendingNotesCandidates.append(
-                            PendingNotesCandidate(offset: currentOffset, boundaryIndex: boundaries.count - 1)
-                        )
-                    } else if header.title == "Notes" && existingNotesTitle == nil {
-                        // Import auto-detection: tentatively add as regular section,
-                        // but record its index so we can flag it isNotes if content has [^N]: patterns
-                        lastActualHeaderLevel = header.level
+                        // document with a heading literally titled "Notes"). Fixed by deferring
+                        // the decision the same way regardless of which case applies -- this
+                        // single branch now handles both the `existingNotesTitle != nil`
+                        // custom-title case and the `existingNotesTitle == nil`
+                        // import-auto-detection case, merged here by a later
+                        // cyclomatic-complexity refactor: add as an ordinary (unflagged)
+                        // boundary for now -- headers after this point are still recognized
+                        // normally either way -- and record its index so the shared post-loop
+                        // evidence check (below the main loop) can retroactively flag it once
+                        // real footnote content ([^N]: pattern) is confirmed beneath it.
+                        // Deliberately does NOT set `inAutoNotes` here (unlike the old, buggy
+                        // version of this branch).
+                        //
+                        // The ternary below preserves a pre-existing ASYMMETRY between this
+                        // branch's two cases: when `existingNotesTitle` is nil (the import
+                        // auto-detection case), `lastActualHeaderLevel` updates from this
+                        // heading like any ordinary heading; when `existingNotesTitle` is
+                        // non-nil (a match on an already-known custom notes title),
+                        // `lastActualHeaderLevel` is left unchanged instead. This asymmetry has
+                        // no known reason and predates this refactor -- it is kept exactly as-is
+                        // here only so this refactor changes no behavior; either case's heading
+                        // can equally be confirmed or rejected later by the footnote-evidence
+                        // check below, so a match alone is not, on its own, evidence for or
+                        // against either side of this ternary. Merging it away silently (e.g.
+                        // always updating, or never updating) would change behavior for one of
+                        // the two cases without any visible failure until a pseudo-section's
+                        // inherited level was wrong. Case B in
+                        // `ParseHeadersLoopCharacterizationTests` pins this asymmetry as
+                        // observed, not endorsed, behavior.
+                        lastActualHeaderLevel = existingNotesTitle == nil ? header.level : lastActualHeaderLevel
                         boundaries.append(SectionBoundary(
                             startOffset: currentOffset,
                             level: header.level,
@@ -246,14 +249,16 @@ extension SectionSyncService {
             currentOffset += lineStr.count + 1 // +1 for newline
         }
 
-        // Evidence check, shared by BOTH the "existingNotesTitle != nil" (MUST-FIX 1) and the
-        // "existingNotesTitle == nil" (import auto-detection) tentative-heading branches above.
-        // Extracted below (`confirmNotesCandidates`) as a self-contained POST-LOOP pass -- it
-        // reads only `boundaries`/`markdown`/offset lists and touches no latch, so it's safe to
-        // pull out even though the main loop above it is off limits. `inAutoNotes` is otherwise
-        // unread for the rest of this function (a DEAD WRITE -- deliberately kept, not this
-        // task's call to make) so the helper reports back whether anything was confirmed and the
-        // assignment stays here, faithfully.
+        // Evidence check for the `header.title == notesHeaderName` tentative-heading branch
+        // above, which covers both the "existingNotesTitle != nil" (MUST-FIX 1) and
+        // "existingNotesTitle == nil" (import auto-detection) cases -- `notesHeaderName` itself
+        // already resolves to the right name for whichever case applies, so one branch condition
+        // serves both. Extracted below (`confirmNotesCandidates`) as a self-contained POST-LOOP
+        // pass -- it reads only `boundaries`/`markdown`/offset lists and touches no latch, so
+        // it's safe to pull out even though the main loop's own latch transitions are unchanged
+        // by this refactor. `inAutoNotes` is otherwise unread for the rest of this function (a
+        // DEAD WRITE -- deliberately kept, not this task's call to make) so the helper reports
+        // back whether anything was confirmed and the assignment stays here, faithfully.
         let anyNotesConfirmed = confirmNotesCandidates(
             pendingNotesCandidates,
             boundaries: &boundaries,
@@ -272,18 +277,26 @@ extension SectionSyncService {
         )
     }
 
-    /// Shared evidence check for BOTH the "existingNotesTitle != nil" (MUST-FIX 1) and the
-    /// "existingNotesTitle == nil" (import auto-detection) tentative-heading branches in the main
-    /// loop above. The real invariant (MUST-FIX 4): ACROSS the two branches, exactly one can ever
-    /// fire for a single `parseHeaders` call, since `existingNotesTitle` is a single constant for
-    /// the whole call -- that part of the old comment was correct. But WITHIN a single branch,
+    /// Toggles the main loop's code-fence latch for one line: a ``` line flips it, any other
+    /// line leaves it exactly as it was. Pure and side-effect-free (no captured state) purely to
+    /// shave a branch off `parseHeaders`' cyclomatic complexity -- behavior is identical to the
+    /// inline `if trimmed.hasPrefix("```") { inCodeBlock = !inCodeBlock }` this replaces.
+    private nonisolated static func codeFenceState(after trimmed: String, wasInCodeBlock: Bool) -> Bool {
+        trimmed.hasPrefix("```") ? !wasInCodeBlock : wasInCodeBlock
+    }
+
+    /// Shared evidence check for the main loop's single `header.title == notesHeaderName`
+    /// tentative-heading branch above, whose condition covers both the "existingNotesTitle !=
+    /// nil" (MUST-FIX 1) and "existingNotesTitle == nil" (import auto-detection) cases --
+    /// `notesHeaderName` itself already resolves to whichever name applies for the call, so one
+    /// branch handles both. The real invariant (MUST-FIX 4) is about repetition, not branching:
     /// the SAME branch can fire once per matching heading, so a document with two headings
     /// sharing the notes title produces two entries in `pendingNotesCandidates`, not one --
-    /// sharing pending state between the branches was never actually the risk; overwriting one
-    /// candidate's state with another's, within a single branch, was. Each candidate is therefore
-    /// evaluated independently here, against its OWN content span, so a later same-titled heading
-    /// with no real evidence can never suppress an earlier one that has it (see
-    /// `pendingNotesCandidates`'s doc comment for the concrete data-loss scenario this avoids).
+    /// overwriting one candidate's state with another's was the actual risk. Each candidate is
+    /// therefore evaluated independently here, against its OWN content span, so a later
+    /// same-titled heading with no real evidence can never suppress an earlier one that has it
+    /// (see `pendingNotesCandidates`'s doc comment for the concrete data-loss scenario this
+    /// avoids).
     /// Checks whether each candidate's own content contains [^N]: footnote-definition patterns to
     /// avoid false positives on a heading that merely shares the notes title/name with no real
     /// footnote content beneath it. Flags confirmed boundaries in place and appends to
@@ -361,7 +374,8 @@ extension SectionSyncService {
     /// found, clamping each section's end offset at the next boundary (or at whichever managed
     /// bibliography/notes section starts within it). Reads only `boundaries`/`markdown`/offset
     /// lists and touches no latch, so -- like `confirmNotesCandidates` above -- it's safe to pull
-    /// out as a self-contained POST-LOOP pass even though the main loop is off limits.
+    /// out as a self-contained POST-LOOP pass even though the main loop's own latch transitions
+    /// are unchanged by this refactor.
     private nonisolated static func buildParsedHeaders(
         markdown: String,
         boundaries: [SectionBoundary],
@@ -435,10 +449,11 @@ extension SectionSyncService {
     ///   (a) the main loop also skips every heading while it is inside the bibliography region
     ///       (`inAutoBibliography`) and closes that region at the terminator; neither mechanic
     ///       is modeled here at all.
-    ///   (b) the main loop's OWN `inAutoNotes`-closing condition (its `existingNotesTitle !=
-    ///       nil` branch) is evidence-gated — it defers the decision to a multi-line
-    ///       footnote-pattern check against the section's actual content, closing only once
-    ///       that check runs after the whole document is seen. This pre-scan has no multi-line
+    ///   (b) the main loop's OWN `inAutoNotes`-closing condition (the `header.title ==
+    ///       notesHeaderName` branch's `existingNotesTitle != nil` case) is evidence-gated — it
+    ///       defers the decision to a multi-line footnote-pattern check against the section's
+    ///       actual content, closing only once that check runs after the whole document is seen.
+    ///       This pre-scan has no multi-line
     ///       lookahead buffer (it only ever sees one line at a time), so item 3's fix below
     ///       approximates evidence-gating with a level comparison against the next heading
     ///       instead — a genuinely different closing mechanism, not a re-implementation of the
@@ -468,7 +483,8 @@ extension SectionSyncService {
     ///    `existingNotesTitle != nil`, and CLOSED (MUST-FIX 1) at the next heading whose level
     ///    is <= the level of the heading that opened it — a level-scoped mirror of the main
     ///    `parseHeaders` loop's own evidence-gated fix to this same bug (see that function's
-    ///    doc comment on its `existingNotesTitle != nil` branch), chosen here instead because
+    ///    doc comment on its `header.title == notesHeaderName` branch and the ternary inside it
+    ///    gated on `existingNotesTitle`), chosen here instead because
     ///    this function has no multi-line lookahead buffer to run a footnote-pattern evidence
     ///    check against -- it only ever sees one line at a time. Before this fix, the latch was
     ///    open-and-never-close: once a bare-title "Notes" match set it, every remaining line was
