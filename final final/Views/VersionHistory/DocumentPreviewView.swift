@@ -118,7 +118,7 @@ struct SnapshotSectionViewModel: Identifiable, Equatable {
     /// includes the terminator that `BlockParser.assembleMarkdownForEditor` appended to
     /// `editorState.content` — the exact text `SectionSyncService.syncNow` reconciles into the
     /// `Section` table on every debounced sync and before every snapshot
-    /// (`ContentView+ProjectLifecycle.swift`'s `handleSaveVersion`). An `isBibliography`-gated strip
+    /// (`ContentView+VersionHistory.swift`'s `handleSaveVersion`). An `isBibliography`-gated strip
     /// would silently never fire for those older/unreconciled rows, so this strips unconditionally
     /// instead — a pure substring removal, a no-op on the 99%+ of sections that never contain the
     /// marker text at all.

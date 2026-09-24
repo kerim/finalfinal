@@ -10,9 +10,12 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct ExportPreferencesPane: View {
-    @State private var settingsManager = ExportSettingsManager.shared
-    @State private var pandocStatus: PandocStatus = .notFound
-    @State private var isCheckingPandoc = false
+    // Internal (not private) because ExportPreferencesPane+Pandoc.swift, an extension of
+    // this struct in a separate file, reads/writes these -- same pattern as
+    // AppearancePreferencesPane's state (PreferencesView.swift) for the same reason.
+    @State internal var settingsManager = ExportSettingsManager.shared
+    @State internal var pandocStatus: PandocStatus = .notFound
+    @State internal var isCheckingPandoc = false
 
     /// Local draft of the custom-CSL-style path text field, separate from
     /// `settingsManager.customCSLStylePath`. Typing here does NOT push to `settingsManager`
@@ -109,108 +112,9 @@ struct ExportPreferencesPane: View {
         }
     }
 
-    // MARK: - Pandoc Rows
-
-    @ViewBuilder
-    private var pandocStatusRow: some View {
-        HStack {
-            Text("Status")
-            Spacer()
-            if isCheckingPandoc {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else {
-                pandocStatusBadge
-            }
-            Button("Refresh") {
-                Task {
-                    await checkPandocStatus()
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(isCheckingPandoc)
-        }
-    }
-
-    @ViewBuilder
-    private var pandocStatusBadge: some View {
-        switch pandocStatus {
-        case .found(_, let version):
-            HStack(spacing: 4) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("v\(version)")
-                    .foregroundStyle(.secondary)
-            }
-        case .notFound:
-            HStack(spacing: 4) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.red)
-                Text("Not installed")
-                    .foregroundStyle(.secondary)
-            }
-        case .invalidPath(let msg):
-            HStack(spacing: 4) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(msg)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        case .executionFailed(let msg):
-            HStack(spacing: 4) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(msg)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var pandocPathRow: some View {
-        HStack {
-            Text("Custom Path")
-            Spacer()
-            TextField("Auto-detect", text: Binding(
-                get: { settingsManager.customPandocPath ?? "" },
-                set: { settingsManager.customPandocPath = $0.isEmpty ? nil : $0 }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 200)
-
-            Button("Browse...") {
-                browseForPandoc()
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
-    @ViewBuilder
-    private var installInstructionsRow: some View {
-        if case .notFound = pandocStatus {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Install Pandoc to enable export:")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 16) {
-                    Button("Install via Homebrew") {
-                        copyHomebrewCommand()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Download Installer") {
-                        NSWorkspace.shared.open(PandocLocator.downloadURL)
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-
-    }
+    // pandocStatusRow, pandocStatusBadge, pandocPathRow, and installInstructionsRow (MARK: -
+    // Pandoc Rows) live in ExportPreferencesPane+Pandoc.swift, moved there to keep this
+    // struct's body under SwiftLint's type_body_length limit.
 
     // MARK: - Zotero Rows
 
@@ -342,31 +246,8 @@ struct ExportPreferencesPane: View {
 
     // MARK: - Actions
 
-    private func checkPandocStatus() async {
-        isCheckingPandoc = true
-        defer { isCheckingPandoc = false }
-
-        let pandocLocator = PandocLocator()
-        if let customPath = settingsManager.customPandocPath {
-            await pandocLocator.setCustomPath(customPath)
-        }
-        pandocStatus = await pandocLocator.locate()
-    }
-
-    private func browseForPandoc() {
-        let panel = NSOpenPanel()
-        panel.title = "Select Pandoc Executable"
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-
-        if panel.runModal() == .OK, let url = panel.url {
-            settingsManager.customPandocPath = url.path
-            Task {
-                await checkPandocStatus()
-            }
-        }
-    }
+    // checkPandocStatus(), browseForPandoc(), and copyHomebrewCommand() live in
+    // ExportPreferencesPane+Pandoc.swift, next to the Pandoc rows that are their only callers.
 
     private func browseForLuaScript() {
         let panel = NSOpenPanel()
@@ -481,14 +362,6 @@ struct ExportPreferencesPane: View {
         }
     }
 
-    private func copyHomebrewCommand() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(PandocLocator.homebrewCommand, forType: .string)
-
-        // Show feedback (could use a toast, but for now just print)
-        DebugLog.log(.fileOps, "[ExportPreferencesPane] Copied to clipboard: \(PandocLocator.homebrewCommand)")
-    }
 }
 
 #Preview {

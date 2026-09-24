@@ -4,6 +4,10 @@
 //
 //  LanguageTool HTTP API provider for spelling + grammar + style checking.
 //
+//  Companion files:
+//    - LanguageToolProvider+ResponseParsing.swift — JSON matches -> SpellCheckResult
+//    - LanguageToolProvider+Chunking.swift         — segment consolidation, oversized-doc chunking
+//
 
 import AppKit
 
@@ -17,8 +21,15 @@ enum LTConnectionStatus: Equatable {
 
 @MainActor
 final class LanguageToolProvider: ProofingProvider {
-    private let settings = ProofingSettings.shared
-    private var ignoredWords: Set<String> = []
+    // Not private: read from LanguageToolProvider+ResponseParsing.swift
+    // (parseResponse's picky-mode check), and Swift's `private` is file-scoped.
+    let settings = ProofingSettings.shared
+    // Not private: read from LanguageToolProvider+ResponseParsing.swift
+    // (parseResponse's ignored-word filter), and Swift's `private` is file-scoped.
+    // private(set), not plain `var`: every write must go through `learnWord`/
+    // `ignoreWord` in this file, which also invalidate the dedup cache above --
+    // a write from anywhere else would bypass that and leave stale cached results.
+    private(set) var ignoredWords: Set<String> = []
     private(set) var connectionStatus: LTConnectionStatus = .disconnected
 
     // MARK: - Deduplication State
@@ -223,8 +234,10 @@ final class LanguageToolProvider: ProofingProvider {
 
     /// A single LanguageTool request's worth of consolidated text — either the
     /// whole document (the common case) or one slice of it when the document is
-    /// too large for a single request (see `buildChunks`).
-    private struct RequestChunk {
+    /// too large for a single request (see `buildChunks`). Not private: referenced
+    /// from LanguageToolProvider+Chunking.swift's `buildChunks(from:)`, and Swift's
+    /// `private` is file-scoped.
+    struct RequestChunk {
         let fullText: String
         let offsetMap: [SegmentMapping]
         let segmentCount: Int
@@ -303,153 +316,10 @@ final class LanguageToolProvider: ProofingProvider {
         return CheckOutcome(results: mergedResults, succeeded: allSucceeded)
     }
 
-    // MARK: - Response Parsing
-
-    struct ParseDiagnostics {
-        var rawMatches: Int = 0
-        var droppedMissingFields: Int = 0
-        var droppedZeroLength: Int = 0
-        var droppedNoSegment: Int = 0
-        var droppedBoundary: Int = 0
-        var droppedIgnored: Int = 0
-        var droppedNonLatin: Int = 0
-        var rawOffsetsDiag: [String] = []
-    }
-
-    struct ParsedResponse {
-        let results: [SpellCheckService.SpellCheckResult]
-        let diagnostics: ParseDiagnostics
-    }
-
-    func parseResponse(
-        data: Data,
-        offsetMap: [SegmentMapping]
-    ) -> ParsedResponse {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let matches = json["matches"] as? [[String: Any]] else {
-            return ParsedResponse(results: [], diagnostics: ParseDiagnostics())
-        }
-
-        var results: [SpellCheckService.SpellCheckResult] = []
-        var diag = ParseDiagnostics()
-        diag.rawMatches = matches.count
-        var rawOffsets: [String] = []
-
-        for match in matches {
-            guard let offset = match["offset"] as? Int,
-                  let length = match["length"] as? Int else {
-                diag.droppedMissingFields += 1
-                continue
-            }
-            rawOffsets.append("\(offset)")
-            if length <= 0 {
-                diag.droppedZeroLength += 1
-                continue
-            }
-
-            // Find which segment this match belongs to
-            guard let mapping = findSegment(for: offset, in: offsetMap) else {
-                diag.droppedNoSegment += 1
-                continue
-            }
-
-            let localOffset = offset - mapping.fullTextOffset
-
-            // Skip matches that span across same-block segment boundaries — these cross
-            // the injected space between segments and are almost always false positives.
-            // Per-scan drop count is logged under .proofing as `[LT] matches: … boundary=N`;
-            // measured ~20% of raw matches on prose with citations/footnotes/annotations.
-            let segmentTextLength = (mapping.segment.text as NSString).length
-            if localOffset + length > segmentTextLength {
-                diag.droppedBoundary += 1
-                continue
-            }
-
-            let word = extractWord(from: mapping.segment.text, offset: localOffset, length: length)
-
-            // Skip ignored words
-            if ignoredWords.contains(word) {
-                diag.droppedIgnored += 1
-                continue
-            }
-
-            // Skip matches targeting non-Latin text (CJK, Arabic, Devanagari, etc.)
-            if containsNonLatinScript(word) {
-                diag.droppedNonLatin += 1
-                continue
-            }
-
-            // Map to editor positions
-            let editorFrom = mapping.segment.from + localOffset
-            let editorTo = mapping.segment.from + localOffset + length
-
-            // Classify error type
-            let type = classifyMatch(match)
-            let isPicky = (match["ignoreForIncompleteSentence"] as? Bool) == true
-                || (type == "style" && settings.pickyMode)
-
-            // Extract suggestions
-            let replacements = match["replacements"] as? [[String: Any]] ?? []
-            let suggestions = replacements.compactMap { $0["value"] as? String }
-
-            // Extract rule ID and message
-            let rule = match["rule"] as? [String: Any]
-            let ruleId = rule?["id"] as? String
-            let message = match["message"] as? String
-            let shortMessage = match["shortMessage"] as? String
-
-            results.append(SpellCheckService.SpellCheckResult(
-                from: editorFrom, to: editorTo, word: word,
-                type: type, suggestions: Array(suggestions.prefix(5)),
-                message: message, shortMessage: shortMessage,
-                ruleId: ruleId, isPicky: isPicky))
-        }
-
-        diag.rawOffsetsDiag = rawOffsets
-        return ParsedResponse(results: results, diagnostics: diag)
-    }
-
-    private func findSegment(
-        for offset: Int,
-        in offsetMap: [SegmentMapping]
-    ) -> SegmentMapping? {
-        var best: SegmentMapping?
-        for mapping in offsetMap {
-            if mapping.fullTextOffset <= offset {
-                best = mapping
-            } else {
-                break
-            }
-        }
-        return best
-    }
-
-    private func extractWord(from text: String, offset: Int, length: Int) -> String {
-        let nsString = text as NSString
-        let range = NSRange(location: offset, length: length)
-        guard NSMaxRange(range) <= nsString.length else { return "" }
-        return nsString.substring(with: range)
-    }
-
-    private func classifyMatch(_ match: [String: Any]) -> String {
-        if let rule = match["rule"] as? [String: Any],
-           let category = rule["category"] as? [String: Any],
-           let categoryId = category["id"] as? String {
-            if categoryId == "TYPOS" || categoryId == "SPELLING" {
-                return "spelling"
-            }
-        }
-        if let rule = match["rule"] as? [String: Any],
-           let issueType = rule["issueType"] as? String {
-            if issueType == "misspelling" {
-                return "spelling"
-            }
-            if issueType == "style" || issueType == "typographical" {
-                return "style"
-            }
-        }
-        return "grammar"
-    }
+    // ParseDiagnostics, ParsedResponse, parseResponse(data:offsetMap:), findSegment(for:in:),
+    // extractWord(from:offset:length:), and classifyMatch(_:) -- response parsing -- live in
+    // LanguageToolProvider+ResponseParsing.swift, moved there to keep this class's body under
+    // SwiftLint's type_body_length limit.
 
     // MARK: - Request Construction
 
@@ -566,27 +436,8 @@ final class LanguageToolProvider: ProofingProvider {
 
     // MARK: - Helpers
 
-    /// Returns true if the text contains non-Latin alphabetic characters (CJK, Arabic, etc.)
-    /// Used to filter false positives from LanguageTool on non-English scripts.
-    private static let latinLetters: CharacterSet = {
-        // Basic Latin + Latin-1 Supplement + Latin Extended A/B + Additional
-        var set = CharacterSet(charactersIn: "\u{0041}"..."\u{005A}")  // A-Z
-        set.formUnion(.init(charactersIn: "\u{0061}"..."\u{007A}"))  // a-z
-        set.formUnion(.init(charactersIn: "\u{00C0}"..."\u{024F}"))  // Latin Extended A/B
-        set.formUnion(.init(charactersIn: "\u{1E00}"..."\u{1EFF}"))  // Latin Extended Additional
-        set.formUnion(.init(charactersIn: "\u{2C60}"..."\u{2C7F}"))  // Latin Extended-C
-        set.formUnion(.init(charactersIn: "\u{A720}"..."\u{A7FF}"))  // Latin Extended-D
-        return set
-    }()
-
-    private func containsNonLatinScript(_ text: String) -> Bool {
-        for scalar in text.unicodeScalars {
-            if CharacterSet.letters.contains(scalar) && !Self.latinLetters.contains(scalar) {
-                return true
-            }
-        }
-        return false
-    }
+    // containsNonLatinScript(_:) and its latinLetters character set live in
+    // LanguageToolProvider+ResponseParsing.swift, next to parseResponse (their only caller).
 
     /// Encodes a single `application/x-www-form-urlencoded` field value. `.urlQueryAllowed`
     /// is the wrong character set for this: it leaves `&`, `+`, and `=` unescaped (they're
@@ -603,345 +454,5 @@ final class LanguageToolProvider: ProofingProvider {
 
     private func urlEncode(_ string: String) -> String {
         string.addingPercentEncoding(withAllowedCharacters: Self.formFieldSafeCharacters) ?? string
-    }
-}
-
-// Split out of the class body to keep type_body_length under the error threshold; nothing here is a stored instance property.
-extension LanguageToolProvider {
-    // MARK: - Segment Consolidation
-
-    struct SegmentMapping {
-        let index: Int
-        let fullTextOffset: Int
-        let segment: SpellCheckService.TextSegment
-    }
-
-    private static let noSpaceBeforePunctuation: Set<Character> = [
-        ".", ",", ";", ":", "!", "?", ")", "]", "}"
-    ]
-
-    /// LanguageTool's own per-request character budget is roughly 40-60K depending
-    /// on deployment, but consolidation can add joiners and the request is also
-    /// form-urlencoded (which inflates non-ASCII/punctuation-heavy text well beyond
-    /// its raw character count) — 18,000 UTF-16 units leaves comfortable headroom
-    /// under the tightest known limit rather than chasing the server's actual ceiling.
-    private static let maxRequestChars = 18_000
-
-    /// Normalizes segments before consolidation: when a segment starts with
-    /// punctuation that conventionally takes no preceding space, trims trailing
-    /// whitespace from the nearest preceding same-block segment with real content —
-    /// dropping any whitespace-only segments consumed along the way (artifacts of
-    /// extractSegments flushing on every skipped inline atom: citations, footnotes,
-    /// section breaks, annotations, hard breaks). This runs entirely on the
-    /// `[TextSegment]` array, before fullText/offsetMap construction, so the
-    /// existing single-pass consolidation loop and parseResponse's boundary check
-    /// need no changes: segment.text already reflects what will actually be written.
-    ///
-    /// Note: a trimmed segment's `to` position is intentionally left unchanged
-    /// (still reflects the original, untrimmed editor range) — nothing downstream
-    /// reads `to` for offset arithmetic (only `from` + a LanguageTool match's own
-    /// `length` are used), so this is safe, but keep it in mind if that changes.
-    func normalizeSegmentsForElisionSeams(
-        _ segments: [SpellCheckService.TextSegment]
-    ) -> [SpellCheckService.TextSegment] {
-        guard !segments.isEmpty else { return segments }
-        var result = segments
-
-        for i in 0..<result.count {
-            guard let firstChar = result[i].text.first,
-                  Self.noSpaceBeforePunctuation.contains(firstChar) else { continue }
-            var precedingIndex = i - 1
-            // Require non-nil blockId equality here, matching consolidateSegments'
-            // own same-block test (`if let bid = segment.blockId, bid == lastBlockId`)
-            // where a nil blockId is always treated as a different block. Without
-            // this guard, two segments that both happen to have a nil blockId would
-            // be treated as "same block" here but not there — a latent
-            // inconsistency, even though in practice blockId is always populated
-            // from a real ProseMirror position on the JS side and never nil.
-            while precedingIndex >= 0, let precedingBid = result[precedingIndex].blockId, let iBid = result[i].blockId, precedingBid == iBid {
-                if result[precedingIndex].text.allSatisfy(\.isWhitespace) {
-                    // Whitespace-only segment (e.g. from a skipped annotation/hard
-                    // break sandwiched between this seam and the previous real
-                    // content) — fully absorbed by the elision, drop it.
-                    if !result[precedingIndex].text.isEmpty {
-                        result[precedingIndex] = SpellCheckService.TextSegment(
-                            text: "", from: result[precedingIndex].from, to: result[precedingIndex].to, blockId: result[precedingIndex].blockId)
-                    }
-                    precedingIndex -= 1
-                    continue
-                }
-                // Found the nearest real content — trim its trailing whitespace and stop.
-                var text = result[precedingIndex].text
-                while let last = text.last, last.isWhitespace {
-                    text.removeLast()
-                }
-                result[precedingIndex] = SpellCheckService.TextSegment(
-                    text: text, from: result[precedingIndex].from, to: result[precedingIndex].to, blockId: result[precedingIndex].blockId)
-                break
-            }
-        }
-
-        return result.filter { !$0.text.isEmpty }
-    }
-
-    func consolidateSegments(
-        _ segments: [SpellCheckService.TextSegment]
-    ) -> (String, [SegmentMapping]) {
-        let segments = normalizeSegmentsForElisionSeams(segments)
-        var fullText = ""
-        var offsetMap: [SegmentMapping] = []
-        var lastBlockId: Int?
-
-        for (i, segment) in segments.enumerated() {
-            if !fullText.isEmpty {
-                if let bid = segment.blockId, bid == lastBlockId {
-                    // Same paragraph. If this segment starts with no-preceding-space
-                    // punctuation, normalization above already stripped the
-                    // preceding segment's trailing whitespace, so no joiner is
-                    // needed (and none should be added, or the artifact would come
-                    // right back). Otherwise, only insert a joiner space if neither
-                    // side already has whitespace at the seam, to avoid
-                    // concatenating two real words into a bogus token.
-                    let nextStartsWithNoSpacePunctuation = segment.text.first
-                        .map { Self.noSpaceBeforePunctuation.contains($0) } ?? false
-                    if !nextStartsWithNoSpacePunctuation {
-                        let prevEndsWithWhitespace = fullText.last?.isWhitespace ?? false
-                        let nextStartsWithWhitespace = segment.text.first?.isWhitespace ?? false
-                        if !prevEndsWithWhitespace && !nextStartsWithWhitespace {
-                            fullText += " "
-                        }
-                    }
-                } else {
-                    fullText += "\n\n"
-                }
-            }
-            offsetMap.append(SegmentMapping(
-                index: i,
-                fullTextOffset: fullText.utf16.count,
-                segment: segment))
-            fullText += segment.text
-            lastBlockId = segment.blockId
-        }
-
-        return (fullText, offsetMap)
-    }
-
-    // MARK: - Chunking for Oversized Documents
-
-    /// Splits `segments` into chunk-sized groups when the consolidated document
-    /// exceeds LanguageTool's per-request budget, or returns the single unsplit
-    /// chunk otherwise (the common case, and byte-for-byte the old behavior). Each
-    /// returned chunk is independently run through `consolidateSegments` — the same
-    /// text-joining logic as the normal single-request path — so chunking never
-    /// changes what a single request's payload looks like, only how many requests
-    /// the whole logical check ends up being split across.
-    private func buildChunks(from segments: [SpellCheckService.TextSegment]) -> [RequestChunk] {
-        let (fullText, offsetMap) = consolidateSegments(segments)
-        guard fullText.utf16.count > Self.maxRequestChars else {
-            return [RequestChunk(fullText: fullText, offsetMap: offsetMap, segmentCount: segments.count)]
-        }
-
-        DebugLog.log(.proofing,
-            "[LT] chunking: consolidated text \(fullText.utf16.count) chars exceeds " +
-            "\(Self.maxRequestChars) — splitting into multiple requests")
-
-        let normalized = normalizeSegmentsForElisionSeams(segments)
-        let splitSafe = splitOversizedSegments(normalized, limit: Self.maxRequestChars)
-        let groups = groupIntoChunks(splitSafe)
-
-        return groups.map { group in
-            let (groupText, groupOffsetMap) = consolidateSegments(group)
-            return RequestChunk(fullText: groupText, offsetMap: groupOffsetMap, segmentCount: group.count)
-        }
-    }
-
-    /// Packs already-split-safe segments (see `splitOversizedSegments` — every
-    /// segment here is individually guaranteed to fit within `maxRequestChars`)
-    /// into groups that each fit once consolidated. Segments are first collapsed
-    /// into contiguous same-`blockId` runs (a nil `blockId` never joins a run,
-    /// matching `consolidateSegments`'s own same-block test); a chunk is closed
-    /// between two runs — never inside one — whenever possible, and only falls
-    /// back to closing mid-run, at a plain segment boundary, when a single run's
-    /// segments alone don't fit in one chunk. Every length check carries a small
-    /// (+2 per segment) slack for the "\n\n" or " " joiner `consolidateSegments`
-    /// may insert at a seam, so the actual consolidated text for any returned
-    /// group is guaranteed to fit even though this function never calls
-    /// `consolidateSegments` itself.
-    private func groupIntoChunks(
-        _ segments: [SpellCheckService.TextSegment]
-    ) -> [[SpellCheckService.TextSegment]] {
-        guard !segments.isEmpty else { return [] }
-
-        var runs: [[SpellCheckService.TextSegment]] = []
-        for segment in segments {
-            if let bid = segment.blockId, let lastBid = runs.last?.last?.blockId, bid == lastBid {
-                runs[runs.count - 1].append(segment)
-            } else {
-                runs.append([segment])
-            }
-        }
-
-        func projectedLength(of run: [SpellCheckService.TextSegment]) -> Int {
-            run.reduce(0) { $0 + $1.text.utf16.count + 2 }
-        }
-
-        var groups: [[SpellCheckService.TextSegment]] = []
-        var current: [SpellCheckService.TextSegment] = []
-        var currentLength = 0
-
-        func closeCurrent() {
-            guard !current.isEmpty else { return }
-            groups.append(current)
-            current = []
-            currentLength = 0
-        }
-
-        for run in runs {
-            let runLength = projectedLength(of: run)
-            if !current.isEmpty && currentLength + runLength > Self.maxRequestChars {
-                closeCurrent()
-            }
-            if runLength > Self.maxRequestChars {
-                // This one block's segments alone don't fit in a chunk — fall back
-                // to packing at plain segment boundaries within the run (never
-                // mid-segment: splitOversizedSegments already guarantees no single
-                // segment alone exceeds the budget).
-                for segment in run {
-                    let segmentLength = segment.text.utf16.count + 2
-                    if !current.isEmpty && currentLength + segmentLength > Self.maxRequestChars {
-                        closeCurrent()
-                    }
-                    current.append(segment)
-                    currentLength += segmentLength
-                }
-            } else {
-                current.append(contentsOf: run)
-                currentLength += runLength
-            }
-        }
-        closeCurrent()
-        return groups
-    }
-
-    /// Cuts any segment whose text exceeds `limit` UTF-16 units into sub-segments
-    /// that each fit, preserving exact editor-offset accounting: a running
-    /// `cursor` (starting at the original segment's `from`) is advanced by each
-    /// emitted piece's own UTF-16 length, so `to - from == text.utf16.count` holds
-    /// for every piece regardless of how the cut points were chosen. Segments at
-    /// or under `limit` pass through unchanged. Production call sites always pass
-    /// `maxRequestChars`; tests pass a much smaller value to exercise the
-    /// splitting logic at test scale. (No default value here: a default
-    /// argument expression is evaluated in a nonisolated context, but
-    /// `maxRequestChars` is `@MainActor`-isolated as a static member of this
-    /// class — the caller supplies it explicitly instead.)
-    func splitOversizedSegments(
-        _ segments: [SpellCheckService.TextSegment],
-        limit: Int
-    ) -> [SpellCheckService.TextSegment] {
-        var result: [SpellCheckService.TextSegment] = []
-        for segment in segments {
-            guard segment.text.utf16.count > limit else {
-                result.append(segment)
-                continue
-            }
-            result.append(contentsOf: splitOversizedSegment(segment, limit: limit))
-        }
-        return result
-    }
-
-    private func splitOversizedSegment(
-        _ segment: SpellCheckService.TextSegment,
-        limit: Int
-    ) -> [SpellCheckService.TextSegment] {
-        var pieces: [SpellCheckService.TextSegment] = []
-        var remaining = Substring(segment.text)
-        var cursor = segment.from
-
-        while remaining.utf16.count > limit {
-            let cut = cutIndex(in: remaining, utf16Limit: limit)
-            let piece = remaining[remaining.startIndex..<cut]
-            let pieceCount = piece.utf16.count
-            pieces.append(SpellCheckService.TextSegment(
-                text: String(piece), from: cursor, to: cursor + pieceCount, blockId: segment.blockId))
-            cursor += pieceCount
-            remaining = remaining[cut...]
-        }
-
-        let pieceCount = remaining.utf16.count
-        pieces.append(SpellCheckService.TextSegment(
-            text: String(remaining), from: cursor, to: cursor + pieceCount, blockId: segment.blockId))
-
-        return pieces
-    }
-
-    /// Picks where to cut `text` at or before `utf16Limit`: prefers the last
-    /// sentence boundary (". ", "! ", "? "), else the last whitespace run, else a
-    /// grapheme-safe hard cut (logged, since a hard cut with no natural boundary
-    /// at all is the silent-degradation case this whole feature exists to catch).
-    private func cutIndex(in text: Substring, utf16Limit: Int) -> String.Index {
-        if let idx = lastSentenceBoundary(in: text, utf16Limit: utf16Limit) {
-            return idx
-        }
-        if let idx = lastWhitespaceBoundary(in: text, utf16Limit: utf16Limit) {
-            return idx
-        }
-        DebugLog.log(.proofing, "[LT] hard-split oversized segment with no boundary at \(utf16Limit)")
-        return Self.hardCutIndex(in: text, utf16Limit: utf16Limit)
-    }
-
-    /// Returns the index just after the last ". "/"! "/"? " occurring at or before
-    /// `utf16Limit`, or nil if none exists in range.
-    private func lastSentenceBoundary(in text: Substring, utf16Limit: Int) -> String.Index? {
-        let sentenceEnders: Set<Character> = [".", "!", "?"]
-        var count = 0
-        var candidate: String.Index?
-        var previousWasEnder = false
-
-        for i in text.indices {
-            let ch = text[i]
-            let utf16Length = ch.utf16.count
-            if count + utf16Length > utf16Limit { break }
-            count += utf16Length
-            if previousWasEnder && ch == " " {
-                candidate = text.index(after: i)
-            }
-            previousWasEnder = sentenceEnders.contains(ch)
-        }
-        return candidate
-    }
-
-    /// Returns the index just after the last whitespace character occurring at or
-    /// before `utf16Limit`, or nil if none exists in range.
-    private func lastWhitespaceBoundary(in text: Substring, utf16Limit: Int) -> String.Index? {
-        var count = 0
-        var candidate: String.Index?
-
-        for i in text.indices {
-            let ch = text[i]
-            let utf16Length = ch.utf16.count
-            if count + utf16Length > utf16Limit { break }
-            count += utf16Length
-            if ch.isWhitespace {
-                candidate = text.index(after: i)
-            }
-        }
-        return candidate
-    }
-
-    /// Grapheme-safe last resort when no sentence or whitespace boundary exists
-    /// before the limit: walks whole `Character`s (always full grapheme-cluster
-    /// boundaries) so the cut can never land inside a surrogate pair or otherwise
-    /// split a multi-code-unit character (e.g. an emoji) in half. Always advances
-    /// by at least one character when `text` is non-empty, guaranteeing forward
-    /// progress even if a single character alone exceeds `utf16Limit`.
-    private static func hardCutIndex(in text: Substring, utf16Limit: Int) -> String.Index {
-        var count = 0, cut = text.startIndex
-        for i in text.indices {
-            let utf16Length = text[i].utf16.count
-            if count + utf16Length > utf16Limit { break }
-            count += utf16Length; cut = text.index(after: i)
-        }
-        if cut == text.startIndex, !text.isEmpty { cut = text.index(after: cut) }
-        return cut
     }
 }

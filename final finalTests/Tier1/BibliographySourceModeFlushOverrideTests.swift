@@ -25,7 +25,7 @@ extension BibliographySourceModeFlushTests {
     /// calls `flushAllPendingContent()` then, immediately after, `editorState.
     /// flushPendingBibliographyAndFootnoteSync()` -- reaching this same flush hook while
     /// `editorState.content` is DELIBERATELY stale for the whole duration of that function
-    /// (see `ContentView+ProjectLifecycle.swift`'s `flushAllPendingContent` doc comment).
+    /// (see `ContentView+VersionHistory.swift`'s `flushAllPendingContent` doc comment).
     /// Before the fix, the hook always read `editorState.content` directly and had no way
     /// to receive the fresher value `flushAllPendingContent()` had just flushed moments
     /// earlier, so this second flush clobbered those fresh blocks with a stale

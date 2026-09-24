@@ -6,7 +6,8 @@
 //  marker detection (`<!-- ::break:: -->`) was tightened from substring
 //  `.contains(...)` to `BlockParser.isSectionBreakMarker(_:)` (marker alone,
 //  OR marker as a block's first line followed by body content) at
-//  BlockParser.swift's `parse()`/`detectBlockType()` and
+//  BlockParser.swift's `parse()` (calling `detectBlockType()` in
+//  BlockParser+Classification.swift) and
 //  Database+Blocks.swift's in-place paragraph->section_break UPDATE branch.
 //
 //  Two failure modes were in play, and both need their own regression case:

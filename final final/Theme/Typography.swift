@@ -49,8 +49,9 @@ enum TypeScale {
     // They preserve the existing density of disclosure chevrons and card metadata.
     //
     // 9 call sites use these two tokens today. 5 are SF Symbol glyphs, not text — a
-    // text-size floor doesn't govern icon glyphs: StatusBar.swift:46 (the outline
-    // chevron), AnnotationPanel.swift:312 (disclosure chevron), ChevronButton.swift:42
+    // text-size floor doesn't govern icon glyphs: StatusBar.swift's outline-popover
+    // disclosure chevron (`chevron.down`, in the button that toggles
+    // `showOutlinePopover`), AnnotationPanel.swift:312 (disclosure chevron), ChevronButton.swift:42
     // (chevron), and AnnotationCardView.swift:106/:164 (xmark, chevron). The other 4
     // are genuinely below-floor readable TEXT — the actual debt — all in
     // SectionCardView.swift's Word Goals popover (lines 292, 304, 313, 325: "Section
