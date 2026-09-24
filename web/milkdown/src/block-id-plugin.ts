@@ -524,23 +524,29 @@ export function isBlankDueToExemptAtom(node: Node): boolean {
   return found;
 }
 
+/** Pure result of `alignTopLevelIds` — see that function's doc comment. */
+export interface AlignedTopLevelIds {
+  blockIds: Map<number, string>;
+  blockTypes: Map<number, string>;
+  assigned: Array<{ i: number; id: string; offset: number; type: string }>;
+  mismatches: Array<{ index: number; offset: number; reason: string }>;
+  /** How many orderedIds slots were actually walked (index-in-lockstep count) — compare
+   * against `orderedIds.length` for the parity check the caller logs. */
+  walked: number;
+}
+
 /**
- * Set block IDs for top-level nodes from an ordered array of IDs.
- * Matches BlockParser.parse() which creates one block per top-level node.
- * Uses doc.forEach() (top-level only, NOT doc.descendants()).
- *
- * `expected` (optional, 3rd param) is a per-id ground-truth array from the Swift side
- * (BlockParser.alignmentPairs) enabling an alignment sanity check beyond the pre-existing
- * count-parity check below: for each slot, if the expected PM type doesn't match the actual
- * node's type, or the expected non-blank text doesn't match an actually-blank node (net of the
- * atomic/citation exemptions), the id is WITHHELD rather than assigned — see the loop body for
- * why withholding (not aliasing) is the safe choice. Omitting `expected` (2-arg call, or passing
- * undefined explicitly) skips this check entirely and preserves the pre-existing behavior.
+ * Pure alignment core extracted from `setBlockIdsForTopLevel` (no behavior change) — computes
+ * the id/type maps an ordered id array aligns to on `doc`, without touching module state or
+ * logging. `setBlockIdsForTopLevel` below is now a thin wrapper: it calls this, commits the
+ * result into `currentBlockIds`/`currentBlockTypes`, and does the existing logging. Exported so
+ * tests and other pure callers (e.g. a future merge/diff helper) can compute an alignment
+ * without any of this module's side effects.
  */
-export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node, expected?: ExpectedBlockMeta[]): void {
+export function alignTopLevelIds(orderedIds: string[], doc: Node, expected?: ExpectedBlockMeta[]): AlignedTopLevelIds {
   let index = 0;
-  // [SYNC-DIAG Round 2] Collect a sample of (i, id, offset, nodeType) for correlation
-  // with Swift's block-array shape. Cap at 5 head + 5 tail entries to bound volume.
+  const blockIds = new Map<number, string>();
+  const blockTypes = new Map<number, string>();
   const assigned: Array<{ i: number; id: string; offset: number; type: string }> = [];
   const mismatches: Array<{ index: number; offset: number; reason: string }> = [];
   doc.forEach((node, offset) => {
@@ -564,15 +570,15 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node, expected
         }
       }
       if (ok) {
-        currentBlockIds.set(offset, orderedIds[index]);
-        currentBlockTypes.set(offset, node.type.name);
+        blockIds.set(offset, orderedIds[index]);
+        blockTypes.set(offset, node.type.name);
         if (SYNC_DIAG_DETAIL) {
           assigned.push({ i: index, id: orderedIds[index], offset, type: node.type.name });
         }
       } else {
         mismatches.push({ index, offset, reason });
-        // Deliberately NOT calling currentBlockIds.set/currentBlockTypes.set here — the id is
-        // WITHHELD, not aliased onto the wrong node. This slot gets a fresh temp id on the next
+        // Deliberately NOT recording into blockIds/blockTypes here — the id is WITHHELD, not
+        // aliased onto the wrong node. This slot gets a fresh temp id on the next
         // assignBlockIds pass (safe — see plan notes on the withheld-id trace), instead of
         // silently attaching a real DB row's identity to content it doesn't belong to.
       }
@@ -580,6 +586,45 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node, expected
       // must stay in lockstep or every later comparison desyncs.
     }
   });
+  return { blockIds, blockTypes, assigned, mismatches, walked: index };
+}
+
+/**
+ * Set block IDs for top-level nodes from an ordered array of IDs.
+ * Matches BlockParser.parse() which creates one block per top-level node.
+ * Uses doc.forEach() (top-level only, NOT doc.descendants()) — via `alignTopLevelIds`, above.
+ *
+ * `expected` (optional, 3rd param) is a per-id ground-truth array from the Swift side
+ * (BlockParser.alignmentPairs) enabling an alignment sanity check beyond the pre-existing
+ * count-parity check below: for each slot, if the expected PM type doesn't match the actual
+ * node's type, or the expected non-blank text doesn't match an actually-blank node (net of the
+ * atomic/citation exemptions), the id is WITHHELD rather than assigned. Omitting `expected`
+ * (2-arg call, or passing undefined explicitly) skips this check entirely and preserves the
+ * pre-existing behavior.
+ */
+export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node, expected?: ExpectedBlockMeta[]): void {
+  const result = alignTopLevelIds(orderedIds, doc, expected);
+  // IN-PLACE, SELECTIVE `.set()` -- two separate invariants, both load-bearing, neither
+  // satisfied by a naive clear-then-repopulate:
+  //
+  // 1. Same Map OBJECTS, never reassigned: `redecorateBlockIds`'s whole safety argument
+  //    (api-content.ts) depends on `currentBlockIds`/`currentBlockTypes` staying the SAME Map
+  //    objects the block-id plugin's own internal state (`pluginState.blockIds`, read by
+  //    `decorations(state)`) captured a reference to at the last real (docChanged) transaction.
+  //
+  // 2. NO `.clear()` before repopulating: a WITHHELD (mismatched-`expected`) slot must keep
+  //    whatever id was already on record for that offset, not lose it. `syncBlockIds()` (the
+  //    only caller that reaches this function WITHOUT a preceding `clearBlockIds()`) depends on
+  //    this -- a `.clear()` here wipes every withheld slot's pre-existing entry, dropping its
+  //    `data-block-id` decoration from the DOM entirely (block count changes) instead of simply
+  //    leaving that slot's REAL, un-mismatched id in place. Regression caught by
+  //    `BlockIdAlignmentHardeningLiveTests.testMismatchedExpectedMetadata_idWithheldNotAliased_mismatchReported`.
+  //    Callers that DO want a full reset (`setContentWithBlockIds`, `applyBlocks`) already call
+  //    `clearBlockIds()` themselves immediately before this function -- this function must not
+  //    duplicate that decision on their behalf, since `syncBlockIds()` deliberately never makes it.
+  for (const [offset, id] of result.blockIds) currentBlockIds.set(offset, id);
+  for (const [offset, type] of result.blockTypes) currentBlockTypes.set(offset, type);
+  const { assigned, mismatches, walked: index } = result;
   if (mismatches.length > 0) {
     const wholesale = mismatches.length >= 3 && mismatches.length > orderedIds.length * 0.3;
     const tag = wholesale
@@ -608,6 +653,37 @@ export function setBlockIdsForTopLevel(orderedIds: string[], doc: Node, expected
     const head = assigned.slice(0, 5).map(fmt).join(',');
     const tail = assigned.length > 10 ? `,…,${assigned.slice(-5).map(fmt).join(',')}` : '';
     syncLog('BlockId:setTopLevel', `totalAssigned=${assigned.length}/${orderedIds.length} entries=[${head}${tail}]`);
+  }
+}
+
+/**
+ * Rewrite ONLY `currentBlockIds`/`currentBlockTypes` from an ordered array of ids that is
+ * already known to align 1:1 with `doc`'s top-level `isBlockType` nodes, in order — no
+ * type/content alignment check (unlike `setBlockIdsForTopLevel`/`alignTopLevelIds`), because the
+ * caller (`mergeManagedBlocks`'s consumer, api-content.ts's `setContentWithBlockIds` under
+ * `options.preserveUserBlocks`) already built `idsByIndex` by construction: each user entry
+ * keeps its own prior id, each managed entry gets its freshly-pushed id — there is nothing left
+ * to validate. Wholesale replace (like `setBlockIdsForTopLevel`), not a merge onto the existing
+ * maps: a stale offset from a differently-shaped previous doc must not survive.
+ */
+export function replaceTopLevelIds(idsByIndex: string[], doc: Node): void {
+  const blockIds = new Map<number, string>();
+  const blockTypes = new Map<number, string>();
+  let index = 0;
+  doc.forEach((node, offset) => {
+    if (isBlockType(node) && index < idsByIndex.length) {
+      blockIds.set(offset, idsByIndex[index]);
+      blockTypes.set(offset, node.type.name);
+      index++;
+    }
+  });
+  // IN-PLACE, not a reassignment -- see setBlockIdsForTopLevel's matching comment above for why.
+  currentBlockIds.clear();
+  for (const [offset, id] of blockIds) currentBlockIds.set(offset, id);
+  currentBlockTypes.clear();
+  for (const [offset, type] of blockTypes) currentBlockTypes.set(offset, type);
+  if (index !== idsByIndex.length) {
+    syncLog('BlockId:replaceTopLevelIds', `PARITY MISMATCH: assigned ${index} of ${idsByIndex.length} ids`);
   }
 }
 

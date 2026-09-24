@@ -71,3 +71,6 @@ docs/course/
 
 # Misplaced sibling worktree (belongs at /Users/niyaro/Code/ff-dev)
 ff-dev/
+
+# Python bytecode cache from running docs/architecture/tla/run_tlc.py
+docs/architecture/tla/__pycache__/

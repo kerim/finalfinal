@@ -62,8 +62,8 @@ final class HeadingManagedBlockIdSyncTests: XCTestCase {
     }
 
     @MainActor
-    private func makeStack() async throws -> EditorStack {
-        let db = try TestFixtureFactory.createTemporary(content: Self.doc)
+    private func makeStack(content: String = HeadingManagedBlockIdSyncTests.doc) async throws -> EditorStack {
+        let db = try TestFixtureFactory.createTemporary(content: content)
         let pid = try TestFixtureFactory.getProjectId(from: db)
         let helper = EditorTestHelper(editorType: .milkdown)
 
@@ -123,6 +123,102 @@ final class HeadingManagedBlockIdSyncTests: XCTestCase {
             unmanagedIsFlagged,
             "a heading NOT named in managedBlockIds must NOT carry data-managed -- otherwise " +
                 "the ⌘-hover zoom hint (styles.css) would wrongly stay hidden on every heading"
+        )
+    }
+
+    // MARK: - preserveUserBlocks plumbing (t-6a0d195d)
+
+    /// Round-3 review (#18): the previous version of this test only asserted non-nil/nil,
+    /// which every `preserveUserBlocks` code path returns on SOME leg (the pending-content
+    /// stash, the empty-content branch, the ordinary fallback, AND a genuine merge) -- it
+    /// proved the flag reached the page, not that the MERGE branch specifically ran. This
+    /// version proves that directly: place the caret in a live, real WKWebView document,
+    /// type a real in-window edit via the SAME public bridge calls
+    /// `CitationRevertScrollBridgeTests.swift` uses for cursor placement
+    /// (`setCursorPosition`/here, `insertAtCursor`), THEN push a rebuild whose db markdown
+    /// still has the pre-edit text for that block but fresh managed content -- and assert the
+    /// RETURNED merged markdown contains the live edit. Only a genuine merge (not the ordinary
+    /// fallback, which returns the unmerged db markdown verbatim) could produce that.
+    private static let mergeDoc = "# Heading\n\nP.\n\n## Bibliography\n\nOld entry."
+    private static let mergeHeadingId = "merge-heading-id"
+    private static let mergeParagraphId = "merge-p-id"
+    private static let mergeBibHeadingId = "merge-bib-heading-id"
+    private static let mergeBibEntryOldId = "merge-bib-entry-old-id"
+    private static let mergeBibEntryNewId = "merge-bib-entry-new-id"
+
+    @MainActor
+    func testSetContentWithBlockIds_preserveUserBlocks_mergeBranchPreservesLiveInWindowEdit() async throws {
+        let stack = try await makeStack(content: Self.mergeDoc)
+        let (helper, sync) = (stack.helper, stack.sync)
+
+        await sync.setContentWithBlockIds(
+            markdown: Self.mergeDoc,
+            blockIds: [Self.mergeHeadingId, Self.mergeParagraphId, Self.mergeBibHeadingId, Self.mergeBibEntryOldId],
+            managedBlockIds: [Self.mergeBibHeadingId, Self.mergeBibEntryOldId]
+        )
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // Place the caret at the end of "P." (line 3, column 2 -- 1-indexed markdown line,
+        // same setCursorPosition({line, column}) bridge call CitationRevertScrollBridgeTests
+        // uses) and type a real, live edit via insertAtCursor -- exactly the scenario the
+        // merge exists to protect.
+        _ = try await helper.webView.evaluateJavaScript(
+            "window.FinalFinal.setCursorPosition({line: 3, column: 2})"
+        )
+        _ = try await helper.webView.evaluateJavaScript(
+            "window.FinalFinal.insertAtCursor(' EDITED')"
+        )
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        // The rebuild push: the database still has P's OLD text (hasn't caught up with the
+        // live edit above), but a freshly regenerated bibliography entry -- same shape as
+        // rebuild-preserve-user-blocks.test.ts's (a)/(a2).
+        let dbMarkdown = "# Heading\n\nP.\n\n## Bibliography\n\nNew entry."
+        let merged = await sync.setContentWithBlockIds(
+            markdown: dbMarkdown,
+            blockIds: [Self.mergeHeadingId, Self.mergeParagraphId, Self.mergeBibHeadingId, Self.mergeBibEntryNewId],
+            managedBlockIds: [Self.mergeBibHeadingId, Self.mergeBibEntryNewId],
+            preserveUserBlocks: true
+        )
+
+        XCTAssertNotNil(merged, "the merge branch must have run and returned merged markdown")
+        XCTAssertTrue(
+            merged?.contains("P. EDITED") ?? false,
+            "the merge must preserve the LIVE, in-window edit to P -- this is what proves the " +
+                "MERGE branch specifically ran, not merely that some preserveUserBlocks path " +
+                "returned non-nil. Got: \(merged ?? "nil")"
+        )
+        XCTAssertTrue(
+            merged?.contains("New entry.") ?? false,
+            "the merge must also carry in the freshly-pushed managed (bibliography) content. " +
+                "Got: \(merged ?? "nil")"
+        )
+        XCTAssertFalse(
+            merged?.contains("Old entry.") ?? true,
+            "the stale managed content must not survive the merge. Got: \(merged ?? "nil")"
+        )
+    }
+
+    /// Companion to the merge-branch test above: every pre-existing call site (omitting
+    /// `preserveUserBlocks`) must keep returning nil, exactly as before this flag existed.
+    @MainActor
+    func testSetContentWithBlockIds_preserveUserBlocksOmitted_returnsNil() async throws {
+        let stack = try await makeStack()
+        let sync = stack.sync
+
+        let omitted = await sync.setContentWithBlockIds(
+            markdown: Self.doc,
+            blockIds: [
+                Self.managedHeadingId, Self.managedParagraphId,
+                Self.unmanagedHeadingId, Self.unmanagedParagraphId,
+            ],
+            managedBlockIds: [Self.managedHeadingId]
+        )
+        XCTAssertNil(
+            omitted,
+            "every pre-existing call site omits preserveUserBlocks and must keep returning nil, " +
+                "exactly as before this flag existed -- a non-nil return here means the flag " +
+                "leaked into a push that never asked for it"
         )
     }
 }

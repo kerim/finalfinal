@@ -10,6 +10,28 @@
 import SwiftUI
 
 extension ContentView {
+    /// UI-test-only: widens a rebuild handler's flush window (the gap between
+    /// `fetchBlocksWithIds()` reading the rebuilt content and that content being pushed back
+    /// to the editor) by `TestMode.uiTestingRebuildPushDelayMilliseconds`, so an e2e test can
+    /// type into the window deterministically -- proving a rebuild's own push can overwrite
+    /// words typed during it (t-6a0d195d). A no-op whenever that value is 0, which is always
+    /// true outside a UI test that explicitly sets `FF_UI_TESTING_REBUILD_PUSH_DELAY_MS`; see
+    /// that property's doc comment.
+    @MainActor
+    func holdRebuildFlushWindowForUITesting() async {
+        let delayMs = TestMode.uiTestingRebuildPushDelayMilliseconds
+        guard delayMs > 0 else { return }
+        // Round-3 review (#20): a log marker with real wall-clock bounds, proving the held-open
+        // window actually spans the time an e2e test types into it -- not merely trusting that a
+        // fixed typing cadence PROBABLY lands inside a fixed delay. NSLog (not DebugLog, whose
+        // `.sync` category is disabled by default -- see DebugLog.enabled) so this always reaches
+        // the unified log stream the XCUITest run captures, right alongside the matching
+        // "typed chunk" markers RebuildFlushTypingRaceE2ETests.swift logs from its own process.
+        NSLog("[RebuildFlushRace] hold-window START delayMs=\(delayMs)")
+        try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+        NSLog("[RebuildFlushRace] hold-window END")
+    }
+
     /// Bibliography section was updated in the database - rebuild editor content
     @MainActor
     func handleBibliographySectionChanged() {
@@ -92,13 +114,30 @@ extension ContentView {
             // cause scenario). Must go through the settle-window guard, never force through.
             updateSourceContentIfNeeded()
 
-            await blockSyncService.setContentWithBlockIds(
+            await holdRebuildFlushWindowForUITesting()
+
+            let merged = await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds)
+                managedBlockIds: result.managedBlockIds,
+                preserveUserBlocks: true)
+            // t-6a0d195d: the push merges the rebuild's content with whatever the live editor
+            // held for user blocks, so the markdown actually pushed can differ from
+            // result.markdown (typing in the window between the DB read above and this push
+            // landing survives instead of being overwritten). Reflect that back into
+            // editorState.content now, while still inside this same notification's handling --
+            // NOT the stale, pre-merge value assigned before the push.
+            if let merged, merged != result.markdown {
+                editorState.content = merged
+                // #12 (round-3 review): keep the Markdown-mode source copy from going stale --
+                // it was already updated once above from the PRE-merge `result.markdown`; the
+                // merge can change what's actually on screen (an in-window edit surviving), so
+                // it must run again against the value editorState.content holds now.
+                updateSourceContentIfNeeded()
+            }
             editorState.isResettingContent = false
             editorState.contentState = .idle
 
@@ -262,13 +301,22 @@ extension ContentView {
             // resync -- same reasoning as handleBibliographySectionChanged above.
             updateSourceContentIfNeeded()
 
-            await blockSyncService.setContentWithBlockIds(
+            await holdRebuildFlushWindowForUITesting()
+
+            let merged = await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds)
+                managedBlockIds: result.managedBlockIds,
+                preserveUserBlocks: true)
+            // t-6a0d195d: see handleBibliographySectionChanged's matching comment above -- the
+            // merged push's actual markdown can differ from result.markdown.
+            if let merged, merged != result.markdown {
+                editorState.content = merged
+                updateSourceContentIfNeeded() // #12: keep the Markdown-mode source copy in sync
+            }
             editorState.isResettingContent = false
             editorState.contentState = .idle
 
@@ -437,20 +485,34 @@ extension ContentView {
             // bypassing it.
             updateSourceContentIfNeeded()
 
-            // Known residual limitation (left as-is, not fixed here): keystrokes typed in
-            // the window between the flush above and setContentWithBlockIds below are still
-            // lost the same way, since that push resets pending-change tracking. Narrower
-            // window than before the reorder, but not eliminated.
+            // Formerly a "known residual limitation": a keystroke typed in the window between
+            // the flush above and setContentWithBlockIds below used to be lost the same way the
+            // bibliography/Notes rebuilds could lose one (t-6a0d195d) -- that push replaced
+            // every block that differed from the freshly-read DB content, including a user edit
+            // the DB hadn't caught up with yet. Fixed the same way: `preserveUserBlocks: true`
+            // below merges the push instead of replacing wholesale, so a block the user is
+            // still typing in keeps its live-editor identity and content. See
+            // mergeManagedBlocks's doc comment (api-content.ts) for the merge algorithm.
+
+            await holdRebuildFlushWindowForUITesting()
 
             // Push fresh content with real block IDs atomically
             // (same pattern as bibliography — prevents temp ID race)
-            await blockSyncService.setContentWithBlockIds(
+            let merged = await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
                 cursorBoundary: result.bibBoundaryIndex,
                 cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds)
+                managedBlockIds: result.managedBlockIds,
+                preserveUserBlocks: true)
+            // t-6a0d195d: see handleBibliographySectionChanged's matching comment -- the merged
+            // push's actual markdown can differ from result.markdown. pendingImageMeta (set just
+            // above) is kept regardless -- image metadata isn't affected by which markdown wins.
+            if let merged, merged != result.markdown {
+                editorState.content = merged
+                updateSourceContentIfNeeded() // #12: keep the Markdown-mode source copy in sync
+            }
 
             editorState.isResettingContent = false
             editorState.contentState = .idle

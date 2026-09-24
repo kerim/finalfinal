@@ -121,6 +121,23 @@ enum TestMode {
         return value
     }
 
+    /// UI-test-only artificial delay (milliseconds), held open in each of the three rebuild
+    /// handlers (`handleBibliographySectionChanged`, `handleNotesSectionChanged`,
+    /// `handleFootnoteInsertedImmediate` in `ContentView+NotificationHandlers.swift`) between
+    /// `fetchBlocksWithIds()` and the push of the rebuilt content back to the editor. Exists
+    /// ONLY to widen that window wide enough for an e2e test to type into it deterministically
+    /// -- proving a rebuild's own flush window can overwrite words typed during it -- not a
+    /// production behavior switch. `nil`/unset/unparseable/<= 0 leaves the real (effectively
+    /// instant) rebuild push untouched. Same `isUITesting &&` guard as every sibling flag here,
+    /// for the same reason: without it, a value left in a shell profile for unrelated testing
+    /// would silently delay every rebuild's editor push outside any UI test too.
+    static var uiTestingRebuildPushDelayMilliseconds: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_REBUILD_PUSH_DELAY_MS"],
+              let value = Int(raw), value > 0 else { return 0 }
+        return value
+    }
+
     /// UI-test-only deterministic main-window width, consumed by
     /// `FinalFinalApp.defaultWindowPlacement` and, as a backstop once the window exists, by
     /// `AppDelegate.applyUITestingWindowWidthOverride(to:)`. Exists because the Outline sidebar's

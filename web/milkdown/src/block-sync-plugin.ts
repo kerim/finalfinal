@@ -1213,6 +1213,98 @@ export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, Bl
 }
 
 /**
+ * Like `detectPausedEditsAndSnapshot`, but deliberately does NOT clear
+ * `pendingUpdates`/`pendingInserts`/`pendingDeletes` before diffing. Used by
+ * `setContentWithBlockIds`'s `preserveUserBlocks` push (api-content.ts, t-6a0d195d): that push
+ * already reconciled the EXISTING pending queue itself, surgically, via
+ * `reconcilePendingQueueAfterManagedRebuild` below (stripping only entries keyed by a managed
+ * id, and re-pointing any pending insert's stale `afterBlockId`) — a plain user edit queued
+ * before the rebuild landed, on a block that isn't part of the managed run, must survive this
+ * call untouched, not be wiped the way a wholesale `.clear()` would.
+ *
+ * `baseline` has the same contract as `detectPausedEditsAndSnapshot`'s: a snapshot the caller
+ * captured at the moment its own paused push settled.
+ */
+export function detectPausedEditsKeepingPending(doc: Node, baseline: Map<string, BlockSnapshot>): void {
+  if (!currentState) return;
+  if (detectTimer) {
+    clearTimeout(detectTimer);
+    detectTimer = null;
+    pendingOldSnapshot = null;
+    pendingNewSnapshot = null;
+  }
+  pendingIdRemap.clear();
+
+  const newSnapshot = snapshotBlocks(doc);
+  detectChanges(baseline, newSnapshot, currentState);
+  currentState.lastSnapshot = newSnapshot;
+}
+
+/**
+ * Reconciles the pending block-sync queue after a `preserveUserBlocks` rebuild push
+ * (`setContentWithBlockIds`'s merge-then-diff path, api-content.ts, via `mergeManagedBlocks`,
+ * t-6a0d195d). Two independent corrections:
+ *
+ * 1. Any pending update/delete keyed by an id that was managed in THIS push (old or new —
+ *    `managedIdsThisPush`) is dropped: that block's content was just authoritatively replaced
+ *    by the rebuild itself, so a stale pending update/delete referencing it would be wrong to
+ *    replay against whatever the rebuild just wrote.
+ * 2. Any pending INSERT whose `afterBlockId` names an id that is no longer present in the
+ *    merged document (`mergedIds`, the final top-level id array in doc order) is re-pointed to
+ *    the id immediately preceding the insert's OWN tempId in that same array — i.e. the nearest
+ *    surviving id, found by walking backward from the insert's actual position in the merged
+ *    document, not from wherever its old `afterBlockId` used to sit. `undefined` when the
+ *    insert's tempId is now first in `mergedIds` (doc start) or isn't found there at all
+ *    (shouldn't happen — a pending insert's temp id is always a user id, which
+ *    `mergeManagedBlocks` always preserves).
+ */
+export function reconcilePendingQueueAfterManagedRebuild(
+  managedIdsThisPush: ReadonlySet<string>,
+  mergedIds: readonly string[]
+): void {
+  if (!currentState) return;
+  for (const id of managedIdsThisPush) {
+    currentState.pendingUpdates.delete(id);
+    currentState.pendingDeletes.delete(id);
+  }
+  if (currentState.pendingInserts.size === 0) return;
+  const survivingSet = new Set(mergedIds);
+  for (const [tempId, insert] of currentState.pendingInserts) {
+    if (insert.afterBlockId === undefined || survivingSet.has(insert.afterBlockId)) continue;
+    const idx = mergedIds.indexOf(tempId);
+    if (idx <= 0) {
+      // #6 (round-3 review): re-pointing to "no afterBlockId" alone isn't enough -- Swift's
+      // insert-placement (BlockSyncService) reads atDocumentStart, not merely an absent
+      // afterBlockId, to mean "insert at the start of the document." Without this, a
+      // re-pointed insert that lands at index 0 gets appended at the END of the document
+      // instead.
+      currentState.pendingInserts.set(tempId, { ...insert, afterBlockId: undefined, atDocumentStart: true });
+      syncLog(
+        'BlockSync:reconcile',
+        `re-pointed pending insert tempId=${tempId.slice(0, 13)} afterBlockId ${insert.afterBlockId.slice(0, 8)}→(doc start, atDocumentStart=true)`
+      );
+    } else {
+      const repointed = mergedIds[idx - 1];
+      currentState.pendingInserts.set(tempId, { ...insert, afterBlockId: repointed });
+      syncLog(
+        'BlockSync:reconcile',
+        `re-pointed pending insert tempId=${tempId.slice(0, 13)} afterBlockId ${insert.afterBlockId.slice(0, 8)}→${repointed.slice(0, 8)}`
+      );
+    }
+  }
+}
+
+/** #8 (round-3 review): whether `id` currently has a pending, not-yet-synced update queued.
+ * `mergeManagedBlocks`'s caller (api-content.ts) uses this to keep an in-window local edit to a
+ * managed-FLAGGED node (a footnote-definition body, or ordinary user prose that happens to live
+ * inside the Notes section -- `managedBlockIds` today covers the whole `isBibliography ||
+ * isNotes` row set, not just the machine-generated heading/entries) from being silently
+ * discarded the same way this task's own bug discarded edits before the fix. */
+export function hasPendingUpdateForId(id: string): boolean {
+  return currentState?.pendingUpdates.has(id) ?? false;
+}
+
+/**
  * Fully clear module state (call when destroying editor instance)
  */
 export function destroyBlockSyncState(): void {
