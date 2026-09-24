@@ -229,6 +229,37 @@ class EditorViewState {
     /// early.
     var suppressBibliographyRebuildsDuringSwitch = false
 
+    /// Suppresses `.bibliographySectionChanged` AND `.notesSectionChanged` handling for
+    /// the duration of quit -- same CHECKED-not-consumed shape as
+    /// `suppressBibliographyRebuildsDuringSwitch` above, mirrored rather than reinvented,
+    /// but covering both rebuild handlers (the switch flag only ever guarded the
+    /// bibliography one -- `ContentView.handleNotesSectionChanged()` has no equivalent
+    /// guard today, and still doesn't for the switch case; this property is quit-only).
+    ///
+    /// Armed at the very top of `EditorViewState.flushForQuit()`, BEFORE
+    /// `stopPollingAndDrain()` and the rest of the flush. Closes the gap
+    /// `stopPollingAndDrain()` leaves open: that call only stops the periodic poll
+    /// Timer and drains whatever unforced cycle is already in flight -- it has no idea
+    /// `flushAllSync()` (via `flushPendingBibliographyAndFootnoteSync()`) is about to
+    /// force a still-pending, debounced bibliography/Notes update to run, which (if
+    /// it writes a new section) posts `.bibliographySectionChanged` /
+    /// `.notesSectionChanged`. Unsuppressed, either handler would set
+    /// `contentState`/`isResettingContent` and spawn its own untracked `Task` that
+    /// calls `pollBlockChangesNowForDatabaseRebuild()` -- a FORCED poll that bypasses
+    /// `stopPollingAndDrain()`'s drain entirely and can re-apply a still-unconfirmed
+    /// insert on top of the row `flushForQuit()`'s own flush just wrote (the same
+    /// duplicate-paragraph shape as Finding #8, reached through a citation- or
+    /// footnote-bearing paragraph instead of a plain one).
+    ///
+    /// Deliberately never cleared: unlike the switch window (which must reopen for the
+    /// NEXT project), quit has no "after" -- `flushForQuit()`'s only caller
+    /// (`AppDelegate.applicationShouldTerminate`) proceeds straight to the auto-backup
+    /// wait and then terminates the process. The rebuild's only job is refreshing what
+    /// the editor SHOWS, which no one is about to look at again; the bibliography/Notes
+    /// database writes those handlers would have re-read already happened via
+    /// `flushPendingBibliographyAndFootnoteSync()` itself, independently of this poll.
+    var suppressRebuildsForQuit = false
+
     /// IDs of sections included in the zoom (root + descendants)
     var zoomedSectionIds: Set<String>?
 

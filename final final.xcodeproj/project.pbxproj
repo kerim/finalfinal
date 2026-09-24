@@ -392,9 +392,11 @@
 		BF25AA707A567763D04A46EA /* ZoteroLibraryScopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B74C8F818689D9A62910CDD8 /* ZoteroLibraryScopeTests.swift */; };
 		BF3262499946BF393105A3F8 /* ProofingProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB67FDEBDA369B54F8FED127 /* ProofingProvider.swift */; };
 		BF459DFF02929F143D8965F8 /* NotesOpeningSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6914887A36B33AD2D7EA0599 /* NotesOpeningSelectorTests.swift */; };
+		BF5FBC6676E3EEF6DF3ACC31 /* QuitFlushDuplicateInsertTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BE6319878380099726DB009 /* QuitFlushDuplicateInsertTests.swift */; };
 		BF885754EC7326FB0630BAFF /* ToggleStateRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A542568D1C451A7F96F0D89 /* ToggleStateRegressionTests.swift */; };
 		BFA5CE12F838AA2D8D79851F /* SectionHierarchy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F642D94EBF86690533E19050 /* SectionHierarchy.swift */; };
 		C05D12CC52ACB19417D54136 /* FirstProjectOpenBlankMarginsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2117CD53989EA1313D169A52 /* FirstProjectOpenBlankMarginsE2ETests.swift */; };
+		C0B5446E00D9FF04A556628A /* EditorViewState+Quit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D909D668F0B5314B6DD2449 /* EditorViewState+Quit.swift */; };
 		C0E760CE768475ED3892F91E /* ZoteroService+GroupLibraryScopes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46C64FA43C1A9398AE726AF /* ZoteroService+GroupLibraryScopes.swift */; };
 		C159A53B94C631C2BCB6C829 /* BibliographyRegenerationPositionTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734A1698357BF2B6C27A498D /* BibliographyRegenerationPositionTestSupport.swift */; };
 		C20DE040A1F0645D4D42C83F /* Database+SectionOps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088E1684775FDAA8145804FE /* Database+SectionOps.swift */; };
@@ -638,6 +640,7 @@
 		2C25DB913B058AA1C927E6E8 /* SidebarRerenderCountE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarRerenderCountE2ETests.swift; sourceTree = "<group>"; };
 		2C35368F8803D097BE31BCE4 /* WindowFrameCoalescerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowFrameCoalescerTests.swift; sourceTree = "<group>"; };
 		2CC0A169990C1E32FBB84D01 /* AnnotationDeleteE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationDeleteE2ETests.swift; sourceTree = "<group>"; };
+		2D909D668F0B5314B6DD2449 /* EditorViewState+Quit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+Quit.swift"; sourceTree = "<group>"; };
 		2DCF8B3C43019E1484AD2A3F /* BibliographyOpeningSelectorCrossCheckTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyOpeningSelectorCrossCheckTests.swift; sourceTree = "<group>"; };
 		2DD3C85888561DD4D3991151 /* ContentView+EditorPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView+EditorPresentation.swift"; sourceTree = "<group>"; };
 		2DF03FED8A179BEDA3520FDF /* HeadingZoomClickRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingZoomClickRouter.swift; sourceTree = "<group>"; };
@@ -817,6 +820,7 @@
 		7934C3CFC3DB5223ABD429C6 /* BibliographyRegenerationEdgeCaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyRegenerationEdgeCaseTests.swift; sourceTree = "<group>"; };
 		7A4947E787A1E091BE060589 /* DiagnosticsSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsSettingsTests.swift; sourceTree = "<group>"; };
 		7AA6DC5ACC81011348A9C17F /* PreferencesTabRouterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesTabRouterTests.swift; sourceTree = "<group>"; };
+		7BE6319878380099726DB009 /* QuitFlushDuplicateInsertTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuitFlushDuplicateInsertTests.swift; sourceTree = "<group>"; };
 		7C20C6E92294CD47FFE7539F /* MarkdownUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownUtils.swift; sourceTree = "<group>"; };
 		7C7B9F8522719986121AA309 /* AnnotationDisplaySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationDisplaySettings.swift; sourceTree = "<group>"; };
 		7E16C04BF596FF92B87F80CE /* VersionHistoryRestoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionHistoryRestoreTests.swift; sourceTree = "<group>"; };
@@ -1176,6 +1180,7 @@
 				DF99C08B4A3A904443B5BC4E /* EditorViewState+ObservableListDiff.swift */,
 				2F039973B5702A66E5CB0093 /* EditorViewState+ProjectOpen.swift */,
 				4F8236DBF123893D2CEFD1FC /* EditorViewState+ProjectReset.swift */,
+				2D909D668F0B5314B6DD2449 /* EditorViewState+Quit.swift */,
 				7544369438608030586F0022 /* EditorViewState+Sections.swift */,
 				4841F7F108760152AC98A47B /* EditorViewState+Types.swift */,
 				D7CDE9D1D9ECA8A2C882564D /* EditorViewState+Zoom.swift */,
@@ -1559,6 +1564,7 @@
 				78A94C62B1F250F4A5F1DE23 /* MilkdownEditorReadyGateTests.swift */,
 				547942135791365F536F7DFA /* PasteAboveHeadingOrderBugTests.swift */,
 				6496027A3F7CD0097F05A189 /* ProjectLifecycleTests.swift */,
+				7BE6319878380099726DB009 /* QuitFlushDuplicateInsertTests.swift */,
 				71A4323A1557FDB03B354C28 /* RecentProjectsTests.swift */,
 				4BC102D235DE4565B6B31042 /* ReferenceOdtStyleParityTests.swift */,
 				68F200750F8B56BA3448474F /* SectionMetadataTests.swift */,
@@ -2172,6 +2178,7 @@
 				A882A9761FB7DBA60CE42F93 /* ProjectRepairServiceTests+AdvancedScenarios.swift in Sources */,
 				FF68398B6345837AE88A9AB1 /* ProjectRepairServiceTests.swift in Sources */,
 				A71F6F6F23B0C0FB2BCF8375 /* ProjectSwitchStaleContentPushTests.swift in Sources */,
+				BF5FBC6676E3EEF6DF3ACC31 /* QuitFlushDuplicateInsertTests.swift in Sources */,
 				AC18864E5B0C5D5BC7A44533 /* RawFontSizeLiteralTests.swift in Sources */,
 				880B34EE08B27AC4F8128AE0 /* RecentProjectsTests.swift in Sources */,
 				7AFAC77BC78AE053CDD14485 /* ReferenceOdtStyleParityTests.swift in Sources */,
@@ -2374,6 +2381,7 @@
 				2EAA83141CE0D5824018921C /* EditorViewState+ObservableListDiff.swift in Sources */,
 				5BC6BA15F6849A2B3A10260F /* EditorViewState+ProjectOpen.swift in Sources */,
 				890AA06467EF1F85654E9D36 /* EditorViewState+ProjectReset.swift in Sources */,
+				C0B5446E00D9FF04A556628A /* EditorViewState+Quit.swift in Sources */,
 				1EF711E3DFA4F90BF31B36EC /* EditorViewState+Sections.swift in Sources */,
 				6DCDEAA6E72ACBE2572AA9F3 /* EditorViewState+Types.swift in Sources */,
 				A63A6CAA68FA3A786C2E8B9F /* EditorViewState+Zoom.swift in Sources */,

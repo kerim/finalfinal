@@ -642,6 +642,10 @@ class BlockSyncService {
     /// `pollBlockChanges(force:)`), so a test can only read it through this seam.
     var testInFlightPollIsNil: Bool { inFlightPoll == nil }
 
+    /// Test-only observation of the periodic poll timer. True while a scheduled,
+    /// still-valid timer exists (i.e. a future periodic tick can still fire).
+    var testPollTimerIsArmed: Bool { pollTimer?.isValid == true }
+
     /// Test-only replacement for the four poll-path `webView.evaluateJavaScript`
     /// calls routed through `evaluateJS(_:in:)` (checkForChanges,
     /// getBlockChanges, flushPendingJSChanges, confirmBlockIds). Lets a test script

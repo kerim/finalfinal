@@ -515,13 +515,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         Task { @MainActor in
-            // Fetch fresh content from the active WebView with 2s timeout
-            if let freshContent = await editorState.blockSyncService?.fetchContentFromWebView(),
-               !freshContent.isEmpty {
-                editorState.content = freshContent
-            }
-
-            await editorState.flushAllSync()
+            // Stop/drain the poll, fetch fresh content from the active WebView, then flush --
+            // mirrors performProjectClose()'s drain-before-flush order (see EditorViewState+Quit.swift).
+            await editorState.flushForQuit()
 
             // Create final auto-backup with timeout to avoid blocking termination
             await withTaskGroup(of: Void.self) { group in

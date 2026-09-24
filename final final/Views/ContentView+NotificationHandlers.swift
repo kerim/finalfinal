@@ -73,6 +73,17 @@ extension ContentView {
             DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (project switch in progress)")
             return
         }
+        // Skip every bibliography notification for the duration of quit -- see
+        // `EditorViewState.suppressRebuildsForQuit`'s doc comment. Returning here, before
+        // `isResettingContent` is ever set true below, also keeps
+        // `ViewNotificationModifiers.withResettingContentRecovery`'s OWN forced-poll
+        // trigger (`pollBlockChangesNow()`, fired when `isResettingContent` clears) from
+        // ever arming for this handler's would-be rebuild -- there is no toggle for it to
+        // react to.
+        guard !editorState.suppressRebuildsForQuit else {
+            DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (quitting)")
+            return
+        }
 
         // Atomic content+IDs push to prevent temp ID race condition.
         // Without this, setContent() triggers assignBlockIds() which creates temp IDs,
@@ -270,6 +281,13 @@ extension ContentView {
             return
         }
         guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Skip every Notes notification for the duration of quit -- see
+        // `EditorViewState.suppressRebuildsForQuit`'s doc comment (mirrors the
+        // bibliography handler's matching guard above).
+        guard !editorState.suppressRebuildsForQuit else {
+            DebugLog.log(.bib, "[ContentView] notesSectionChanged suppressed (quitting)")
+            return
+        }
 
         // Atomic content+IDs push (same pattern as bibliography)
         editorState.contentState = .bibliographyUpdate  // Reuse same state
