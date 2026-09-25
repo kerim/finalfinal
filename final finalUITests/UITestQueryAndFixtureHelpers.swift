@@ -466,14 +466,10 @@ extension XCUIElement {
 // MARK: - App File Helpers
 
 /// Reads files the APP writes (logs, exports) from inside the test runner.
-/// The runner is unsandboxed for this project (see
-/// `final finalUITests/final finalUITests.entitlements`, wired via the
-/// `CODE_SIGN_ENTITLEMENTS` build setting in `project.yml`), so
-/// `NSHomeDirectory()` and
-/// `FileManager.default.homeDirectoryForCurrentUser` now resolve to the
-/// real host home directory, the same one the app sees. The multiple
-/// candidate roots below are kept as defensive redundancy, not because
-/// either API points at a sandboxed container.
+/// The runner's own home is containerized: `NSHomeDirectory()` and
+/// `FileManager.default.homeDirectoryForCurrentUser` point at the xctrunner
+/// container, not the app's home — a read helper built on either silently
+/// returns nothing.
 enum AppFileHelper {
     struct ReadError: Error, CustomStringConvertible {
         let relativePath: String
@@ -486,12 +482,10 @@ enum AppFileHelper {
 
     /// Candidate locations for an app-written path relative to the app's home
     /// (e.g. "Library/Application Support/com.kerim.final-final/..."), as
-    /// home roots in the order worth trying: the real user home by name,
-    /// the home implied by the standard Application Support lookup, then
-    /// `FileManager.default.homeDirectoryForCurrentUser` as a last resort —
-    /// redundant now that the runner is unsandboxed (see this enum's doc
-    /// comment above), kept for defense rather than because it resolves
-    /// somewhere different.
+    /// home roots in the order worth trying: the real user home by name
+    /// (works around the runner's containerized home), the home implied by
+    /// the standard Application Support lookup, then the runner's own idea
+    /// of home as a last resort.
     static func candidateURLs(appRelativePath: String) -> [URL] {
         let fm = FileManager.default
         var homes: [URL] = [URL(fileURLWithPath: "/Users/\(NSUserName())")]

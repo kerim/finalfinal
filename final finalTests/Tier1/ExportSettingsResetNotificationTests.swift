@@ -34,10 +34,12 @@
 //  other settings mutation. `.serialized` orders this suite's own tests only (Swift Testing
 //  runs suites concurrently by default); that pointer swap is guarded across suites by
 //  `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`), shared with the other suites
-//  that swap the same process-wide static -- `BibliographyRenameGraceNameTests`,
-//  `BlockParserBibliographyHeaderNameTests`, and `ExportSettingsBibliographyRenameTests` --
-//  closing a race between any two that was previously only documented as latent, then actually
-//  reproduced. Each `defer` below restores
+//  that swap the same process-wide static -- `BibliographyRenameGraceNameTests.graceListCapsAt50`
+//  and `ExportSettingsBibliographyRenameTests` -- closing a race between any two that was
+//  previously only documented as latent, then actually reproduced.
+//  `BlockParserBibliographyHeaderNameTests` swapped the store too until its tests moved onto
+//  `BlockParser.isBibliographyHeading`'s explicit parameters instead -- see that file's own
+//  doc comment; it no longer touches this lock. Each `defer` below restores
 //  `manager.settings` FIRST, while the throwaway store is still installed -- `manager.update`
 //  calls `save()` internally, and restoring it only after `ExportSettings.userDefaults` is
 //  already back to the real store would persist that restore into the user's REAL

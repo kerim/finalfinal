@@ -68,12 +68,8 @@ extension XCUIApplication {
     /// This replaces `-ApplePersistenceIgnoreState YES` which prevents
     /// SwiftUI's WindowGroup from creating any window at all.
     ///
-    /// Note: the test runner is unsandboxed for this project (see
-    /// `final finalUITests/final finalUITests.entitlements`, wired via the
-    /// `CODE_SIGN_ENTITLEMENTS` build setting in `project.yml`), so
-    /// NSHomeDirectory() there now resolves to the same real user home the
-    /// app sees. Both paths are still cleaned as belt-and-braces, not
-    /// because they currently differ.
+    /// Note: NSHomeDirectory() in the test runner may differ from the app's home.
+    /// We clean both the test runner's home AND the real user home to be safe.
     private static func cleanSavedApplicationState() {
         // The Test action builds the app as com.kerim.final-final.testhost
         // (project.yml's DebugTest config), so only the testhost domain is
@@ -268,44 +264,47 @@ enum E2EShotDir {
     /// `attachEvidenceScreenshot(_:name:)` (above) instead.
     ///
     /// This type's WRITE path (a plain `FileManager`/`Data.write(to:)` call
-    /// from inside a UI test method) now succeeds for any absolute path,
-    /// including one outside the runner's own home. The XCUITest runner
-    /// process for this project is unsandboxed (see
-    /// `final finalUITests/final finalUITests.entitlements`, wired via the
-    /// `CODE_SIGN_ENTITLEMENTS` build setting in `project.yml`), unlike
-    /// Xcode's shipped default (app-sandbox=true, read-only "/"), which
-    /// used to confine writes to
-    /// `NSHomeDirectory()`/`NSTemporaryDirectory()` and fail with "Operation
-    /// not permitted" on any target outside that — including `vmtest`'s
-    /// `/tmp/vmtest-e2e-shots` (below), which sits outside the runner's own
-    /// home. That old failure is why screenshot evidence was routed through
-    /// `attachEvidenceScreenshot(_:name:)` (above) instead — XCTest's own
-    /// privileged `XCTAttachment` export path. Evidence should still go
-    /// that way, and `FF_E2E_SHOT_DIR`/`E2EShotDir` remains the contract
-    /// for writers other than the runner process itself (e.g. host-side
-    /// tooling) — but a direct write from the runner now works too, should
-    /// one ever be added.
+    /// from inside a UI test method) works only when the resolved path sits
+    /// inside the runner's own sandbox container — it fails whenever the
+    /// target is outside it. Xcode's own RunnerEntitlements.plist sandboxes
+    /// every macOS XCUITest runner (app-sandbox=true, read-only "/"), so the
+    /// runner process can write to `NSHomeDirectory()`/`NSTemporaryDirectory()`
+    /// (inside its own container) but nowhere outside that. `vmtest`'s
+    /// `/tmp/vmtest-e2e-shots` (below) sits outside the container, which is
+    /// why a write there fails — not because the path happens to be
+    /// absolute; an absolute path under the container (e.g.
+    /// `NSTemporaryDirectory()` itself) writes successfully. Confirmed live,
+    /// two instrumented VM runs, 2026-09-12. Screenshot evidence goes
+    /// through `attachEvidenceScreenshot(_:name:)` (above) instead, which
+    /// uses XCTest's own privileged `XCTAttachment` export path.
+    /// `FF_E2E_SHOT_DIR`/`E2EShotDir` remains the contract only for writers
+    /// that are NOT the sandboxed runner process (e.g. host-side tooling).
     ///
     /// Reads `FF_E2E_SHOT_DIR` from the process environment — set by
     /// `vmtest` (as `TEST_RUNNER_FF_E2E_SHOT_DIR`, which xcodebuild forwards
     /// to the runner process with the prefix stripped).
     ///
     /// Two cases, deliberately distinct:
-    /// - Unset → `NSTemporaryDirectory()` (already relied on by
-    ///   `TestFixtureHelper.fixturePath` above). This is the safe default
-    ///   when nobody wired anything up.
+    /// - Unset → `NSTemporaryDirectory()`, which the runner can always write
+    ///   to because it sits inside the runner's own container (already
+    ///   relied on by `TestFixtureHelper.fixturePath` above). This is the
+    ///   safe default when nobody wired anything up.
     /// - Set to an absolute path (starts with "/") → used as-is. `vmtest`
     ///   sets it to an absolute path under `/tmp/` (e.g.
     ///   `/tmp/vmtest-e2e-shots`), the same convention its video-recording
-    ///   feature already uses, and a write there from the runner now
-    ///   succeeds since the runner is unsandboxed. History: before the
-    ///   runner's entitlements were fixed, an earlier convention had
-    ///   `vmtest` pass a bare relative name for the runner to resolve
-    ///   against its own (then-sandboxed) `NSHomeDirectory()` — that write
-    ///   succeeded, but still produced no usable evidence, because an
-    ///   external SSH session could not read into the runner's sandboxed
-    ///   container afterward. Confirmed live, two instrumented VM runs,
-    ///   2026-09-12 (the run that diagnosed the sandbox as the cause).
+    ///   feature already uses. That particular path sits OUTSIDE the
+    ///   runner's container, so a write to it from the runner process fails
+    ///   — see this type's opening paragraph; what determines success is
+    ///   inside-vs-outside the container, not the path's form. An earlier
+    ///   convention had `vmtest` pass a bare relative name for the runner to
+    ///   resolve against its own sandboxed `NSHomeDirectory()` — that write
+    ///   actually succeeded (`NSHomeDirectory()` is inside the container),
+    ///   but still produced no usable evidence, for a different reason: an
+    ///   external SSH session cannot read into another app's sandboxed
+    ///   container over SSH, so nothing could be pulled back out afterward.
+    ///   Both conventions end up with no usable evidence reaching the host,
+    ///   but for two different reasons — the old one wrote successfully and
+    ///   failed on read-back, today's fails to write at all.
     ///
     /// A bare relative value (no leading "/") still resolves against
     /// `NSHomeDirectory()` rather than silently falling back to the temp

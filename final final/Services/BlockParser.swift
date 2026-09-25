@@ -117,9 +117,9 @@ enum BlockParser {
             bibliographyHeaderName = explicitBibliographyHeaderName
             bibliographyGraceNames = explicitGraceNames
         } else {
-            let bibliographySettings = ExportSettings.load()
-            bibliographyHeaderName = explicitBibliographyHeaderName ?? bibliographySettings.effectiveBibliographyHeaderName
-            bibliographyGraceNames = explicitGraceNames ?? bibliographySettings.previousBibliographyHeaderNames
+            let derived = bibliographyNames(from: ExportSettings.load())
+            bibliographyHeaderName = explicitBibliographyHeaderName ?? derived.headerName
+            bibliographyGraceNames = explicitGraceNames ?? derived.graceNames
         }
 
         // Pre-scan: select the ONE raw-block index (if any) that opens the bibliography
@@ -401,12 +401,27 @@ enum BlockParser {
             effectiveHeaderName = bibliographyHeaderName
             effectiveGraceNames = graceNames
         } else {
-            let settings = ExportSettings.load()
-            effectiveHeaderName = bibliographyHeaderName ?? settings.effectiveBibliographyHeaderName
-            effectiveGraceNames = graceNames ?? settings.previousBibliographyHeaderNames
+            let derived = bibliographyNames(from: ExportSettings.load())
+            effectiveHeaderName = bibliographyHeaderName ?? derived.headerName
+            effectiveGraceNames = graceNames ?? derived.graceNames
         }
         let titles = ["References", "Bibliography", effectiveHeaderName] + effectiveGraceNames
         return titles.contains { trimmed == "# \($0)" || trimmed == "## \($0)" }
+    }
+
+    /// Derives the effective bibliography header name and grace-name list from an already-loaded
+    /// `ExportSettings` value -- the exact pair `parse`'s once-per-parse hoist and
+    /// `isBibliographyHeading`'s own default-argument fallback each need from a fresh
+    /// `ExportSettings.load()`, in one place instead of inlined separately at both call sites.
+    /// Trivial today (`effectiveBibliographyHeaderName` already trims/defaults;
+    /// `previousBibliographyHeaderNames` is returned as-is), but existing purely so the two
+    /// fallback sites above can call one shared derivation rather than duplicate it -- keeping
+    /// them identical by construction rather than by two authors independently getting it
+    /// right. Not `private`: this file's own Tier1 test suite
+    /// (`BlockParserBibliographyHeaderNameTests`) calls it directly to exercise the derivation
+    /// in isolation, without touching `ExportSettings.load()`/`UserDefaults` at all.
+    static func bibliographyNames(from settings: ExportSettings) -> (headerName: String, graceNames: [String]) {
+        (settings.effectiveBibliographyHeaderName, settings.previousBibliographyHeaderNames)
     }
 
     /// Marker-only bibliography-heading test: does this fragment carry the machine-managed
