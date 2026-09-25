@@ -254,7 +254,15 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
         const rawSyntax = attrs.rawSyntax || `[@${citekeys.join('; @')}]`;
         dom.textContent = rawSyntax;
         dom.title = rawSyntax;
-        dom.className = 'ff-citation source-mode-citation';
+        // Targeted class ops (not wholesale `dom.className = ...`), matching
+        // annotation-plugin.ts's NodeView update fix: this only adds/removes the
+        // classes this plugin itself owns, so a future decoration-applied class
+        // (e.g. `Decoration.node()`, same mechanism annotation-display-plugin.ts
+        // uses) survives a redraw instead of being wiped every render. 'ff-citation'
+        // itself is never removed -- it's set once at NodeView creation and stays
+        // for the node's lifetime.
+        dom.classList.add('source-mode-citation');
+        dom.classList.remove('ff-citation-resolved', 'ff-citation-unresolved');
         dom.dataset.citekeys = attrs.citekeys;
         dom.dataset.rawsyntax = attrs.rawSyntax;
         return;
@@ -323,7 +331,9 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
       // Update DOM
       dom.textContent = displayText;
       dom.title = tooltipText;
-      dom.className = `ff-citation ${isResolved ? 'ff-citation-resolved' : 'ff-citation-unresolved'}`;
+      // Targeted class ops -- see the source-mode branch above for why.
+      dom.classList.remove('source-mode-citation', 'ff-citation-resolved', 'ff-citation-unresolved');
+      dom.classList.add(isResolved ? 'ff-citation-resolved' : 'ff-citation-unresolved');
       dom.dataset.citekeys = attrs.citekeys;
       dom.dataset.rawsyntax = attrs.rawSyntax;
     };
