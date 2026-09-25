@@ -289,7 +289,7 @@ class BlockSyncService {
             needsEpochBump = false
         } catch {
             needsEpochBump = true
-            DebugLog.always("[BlockSync] configure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
+            DebugLog.alwaysPersisted("[BlockSync] configure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
         }
         // A6: a fresh WebView means any node still on the chain belongs to the OLD
         // editor, so a new cycle must not adopt it and wait out its valve. The fetch
@@ -344,7 +344,7 @@ class BlockSyncService {
             needsEpochBump = false
         } catch {
             needsEpochBump = true
-            DebugLog.always("[BlockSync] reconfigure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
+            DebugLog.alwaysPersisted("[BlockSync] reconfigure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
         }
         self.confirmedTempIds.removeAll()
         // A6: a project switch must not let the first cycle of the NEW project adopt
@@ -966,7 +966,7 @@ class BlockSyncService {
             testPollTimeoutForceFlags.append(force)
             testPollTimeoutHandler?()
             #endif
-            DebugLog.always(
+            DebugLog.alwaysPersisted(
                 "[BlockSync] Poll cycle TIMED OUT after \(watchdogSeconds)s (likely a wedged WebKit call) — "
                 + "force=\(force). A cycle that timed out before its batch was fetched is cancelled and "
                 + "unwinds at its next checkpoint; one that already holds a consumed batch is left to "
@@ -1195,7 +1195,7 @@ class BlockSyncService {
         // carries is one NO newer apply wrote, so landing it cannot resurrect newer text —
         // the only hazard this guard exists to catch.
         guard chainNode.isAbandoned || slot.fetchSequence > lastAppliedFetchSequence else {
-            DebugLog.always(
+            DebugLog.alwaysPersisted(
                 "[BlockSync] apply chain: ABANDONED batch from an older fetch "
                 + "(fetchSeq=\(slot.fetchSequence), lastApplied=\(lastAppliedFetchSequence)) — "
                 + "a newer batch already landed; applying this one would resurrect older text")
@@ -1326,7 +1326,7 @@ class BlockSyncService {
             // log and count it once, at whichever checkpoint reaches it first.
             if !alreadyKeptForRebuild {
                 alreadyKeptForRebuild = true
-                DebugLog.always(
+                DebugLog.alwaysPersisted(
                     "[SYNC-DIAG:BlockPoll] KEPT: reason=databaseRebuildPending stage=\(stage) " +
                     "generationAtPoll=\(generationAtPoll) current=\(String(describing: editorState?.contentGeneration))"
                 )
@@ -1336,7 +1336,7 @@ class BlockSyncService {
             }
             return false
         }
-        DebugLog.always(
+        DebugLog.alwaysPersisted(
             "[SYNC-DIAG:BlockPoll] REJECTED: reason=generationChangedMidFlight stage=\(stage) " +
             "generationAtPoll=\(generationAtPoll) wasWired=\(wasWiredAtPoll) " +
             "current=\(String(describing: editorState?.contentGeneration)) force=\(force)"
@@ -1887,20 +1887,20 @@ extension BlockSyncService {
                 // net regression, not a fix; left for a follow-up that addresses both together.
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
                 if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
-                    DebugLog.always(
+                    DebugLog.alwaysPersisted(
                         "[SYNC-DIAG:BlockPoll] REJECTED: reason=\(reason) " +
                         "d=\(changes.deletes.count) i=\(changes.inserts.count) blockCount=\(blockCount)"
                     )
                     return true
                 }
                 if changes.deletes.count > blockCount / 2 && blockCount > 2 {
-                    DebugLog.always(
+                    DebugLog.alwaysPersisted(
                         "[SYNC-DIAG:BlockPoll] WARNING: Mass delete detected " +
                         "(\(changes.deletes.count)/\(blockCount) blocks). May indicate stale snapshot."
                     )
                 }
                 if Self.hasBalancedMassiveChurnSignature(changes: changes, blockCount: blockCount) {
-                    DebugLog.always(
+                    DebugLog.alwaysPersisted(
                         "[SYNC-DIAG:BlockPoll] WARNING: Balanced massive churn signature " +
                         "(d=\(changes.deletes.count) i=\(changes.inserts.count) u=\(changes.updates.count) " +
                         "blockCount=\(blockCount)). If this fires frequently, a regression of the " +
@@ -2039,7 +2039,7 @@ extension BlockSyncService {
                 _ = try database.bumpBlockWriteEpoch(projectId: projectId)
                 needsEpochBump = false
             } catch {
-                DebugLog.always(
+                DebugLog.alwaysPersisted(
                     "[BlockSync] write-stamp: retry of the deferred blockWriteEpoch bump failed (\(error)) - "
                     + "deferring this poll BEFORE the fetch; the batch stays queued JS-side")
                 return nil
@@ -2063,7 +2063,7 @@ extension BlockSyncService {
         do {
             myWriteEpoch = try database.currentBlockWriteEpoch(projectId: projectId)
         } catch {
-            DebugLog.always(
+            DebugLog.alwaysPersisted(
                 "[BlockSync] write-stamp: could not read blockWriteEpoch (\(error)) - "
                 + "abandoning this poll BEFORE the fetch; the batch stays queued JS-side")
             return nil
@@ -2120,7 +2120,7 @@ extension BlockSyncService {
             // of applying it wholesale after ours. If its `Task.detached` write is
             // already in flight, nothing here can recall it — residual L11.
             predecessor.abandon()
-            DebugLog.always(
+            DebugLog.alwaysPersisted(
                 "[BlockSync] apply chain: predecessor did not apply within "
                 + "\(chainWaitSeconds)s — marking it abandoned and proceeding"
             )
@@ -2145,7 +2145,7 @@ extension BlockSyncService {
         // than moving it back to this (older) cycle's stamp.
         guard let result else { return }
         if chainNode.isAbandoned {
-            DebugLog.always(
+            DebugLog.alwaysPersisted(
                 "[BlockSync] apply chain: own batch arrived after a successor applied - "
                 + "merged=\(result.writtenCount) superseded=\(result.droppedCount) "
                 + "(fetchSeq=\(fetchSequence))")
