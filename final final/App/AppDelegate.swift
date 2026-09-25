@@ -5,7 +5,6 @@
 
 import AppKit
 import GRDB
-import WebKit
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -120,51 +119,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     "[AppDelegate] UI test mode: wiped \(standardDomain.count) persisted default(s) from \(bundleID)")
             }
             AppDefaults.wipeTestDomainForUITesting()
-        }
-
-        // Hermetic UI-test launches, WebKit half: the Milkdown/CodeMirror editors share
-        // `WKWebsiteDataStore.default()` (see MilkdownEditor.swift, CodeMirrorEditor.swift,
-        // EditorPreloader.swift), which is disk-backed and outlives the process -- so anything a
-        // web editor writes to localStorage (e.g. citation-search.ts's `ff-citation-library`
-        // cache, populated via `FF_UI_TESTING_ZOTERO_MOCK`) survives from one UI test's app
-        // launch to the next, same suite-order-pollution class as the UserDefaults wipe above
-        // (commit 7d67d8b3), just through WebKit instead. Wiping ALL website data types here,
-        // not just localStorage, matches that wipe's "everything, not a hand-maintained key
-        // list" approach -- it also catches IndexedDB, caches, and cookies any current or future
-        // editor code stores.
-        // Deliberately NOT blocked on synchronously (a DispatchSemaphore.wait() would deadlock:
-        // `removeData`'s completion handler is itself always redispatched onto the main
-        // thread/queue, so synchronously blocking the main thread -- which we're on -- would
-        // starve the very queue the completion needs to run on).
-        //
-        // Fire-and-forget is safe in practice, but NOT for the reason an earlier version of this
-        // comment gave: it claimed this call runs "before EditorPreloader starts" and that the
-        // earliest a web editor WKWebView can be created is "well after" this point. Both are
-        // false in UI-test mode -- `EditorPreloader.startPreloading()` (called below) guards on
-        // `!TestMode.isTesting` and returns immediately without ever creating a WebView, so there
-        // is no preload-timing gap here to point to. The real reasons this ordering holds:
-        // - The localStorage cache this call targets is only ever READ by
-        //   `restoreCitationLibrary()` (citation-search.ts), called from Milkdown's
-        //   `initEditor()` as part of editor setup -- hundreds of milliseconds after launch, long
-        //   after this removal request has already been issued. (Swift confirms that setup has
-        //   actually finished via `window.FinalFinal.isEditorReady()`, polled by
-        //   `notifyWebViewReadyWhenEditorReady` in MilkdownCoordinator+MessageHandlers.swift.)
-        // - WebKit services a removal request and any later storage read through the same
-        //   network-process serial queue, so in practice the removal is very likely to be fully
-        //   processed before a read issued after it reaches that queue. WebKit does not formally
-        //   document or promise this ordering, though -- it is the accepted residual risk of this
-        //   fire-and-forget approach, not a guarantee.
-        // Safe to wipe wholesale for the same reason as the UserDefaults wipe above: test
-        // builds run under the separate `com.kerim.final-final.testhost` bundle identity, whose
-        // `WKWebsiteDataStore.default()` is its own per-container store, so this never touches
-        // the real app's WebKit data on the VM or a host.
-        if TestMode.isUITesting {
-            WKWebsiteDataStore.default().removeData(
-                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                modifiedSince: .distantPast
-            ) {
-                DebugLog.log(.lifecycle, "[AppDelegate] UI test mode: cleared WKWebsiteDataStore (all data types)")
-            }
         }
 
         // Snapshot which split-view divider positions a PREVIOUS session saved. It has to be taken

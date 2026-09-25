@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The auto-generated entitlements Xcode gives an unconfigured UI-test
+         target sandbox the test-runner process (com.apple.security.app-sandbox
+         = true, no write exception), even though the main app itself is
+         explicitly unsandboxed (see final final/final final.entitlements).
+         That silently breaks every disposable e2e test's writes to an
+         arbitrary path (e.g. app.screenshot().pngRepresentation.write(to:)
+         into a superdev run-notes folder) with
+         NSPOSIXErrorDomain Code=1 "Operation not permitted". Mirror the main
+         app's unsandboxed choice here so runner-process file writes work. -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>

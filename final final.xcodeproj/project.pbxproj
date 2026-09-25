@@ -960,6 +960,7 @@
 		A85601DB766C7F746FEE509A /* SnapshotBackupFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotBackupFlushTests.swift; sourceTree = "<group>"; };
 		A8A8B0915B9E016AF46A8E39 /* ZoomRenameFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomRenameFlushTests.swift; sourceTree = "<group>"; };
 		A97DAA603C9EB29DE79FB8EB /* PreferencesView+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreferencesView+Actions.swift"; sourceTree = "<group>"; };
+		AA847A9555F940CB721EE300 /* final finalUITests.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "final finalUITests.entitlements"; sourceTree = "<group>"; };
 		AABAA974FA6CC968A6C933C6 /* AnnotationDisplayPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationDisplayPersistenceTests.swift; sourceTree = "<group>"; };
 		AB07852511C8C9657C3D8103 /* FootnoteSyncReconcileMixedOpsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncReconcileMixedOpsTests.swift; sourceTree = "<group>"; };
 		AB26408FC5CF1E991EFAD81E /* MilkdownCoordinator+Images.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MilkdownCoordinator+Images.swift"; sourceTree = "<group>"; };
@@ -1569,6 +1570,7 @@
 				B0E9E13B3AFAC1038A00CD04 /* EscapeLadderE2ETestsHelpers.swift */,
 				2FC14F79B7F49B4C41970EB2 /* EscapeLadderFindBarAndFullScreenE2ETests.swift */,
 				8226F7868A6381751072F38C /* EscapeLadderPopupAndLatencyE2ETests.swift */,
+				AA847A9555F940CB721EE300 /* final finalUITests.entitlements */,
 				2117CD53989EA1313D169A52 /* FirstProjectOpenBlankMarginsE2ETests.swift */,
 				96FCCDBFE9A2D0FB7A0544BA /* FocusModeInlineAnnotationsE2ETests.swift */,
 				9C98B0C69690A281ADF16EEE /* FootnoteCursorPlacementDBAndClickTests.swift */,
@@ -2769,6 +2771,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "final finalUITests/final finalUITests.entitlements";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -2845,6 +2848,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "final finalUITests/final finalUITests.entitlements";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -2935,6 +2939,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "final finalUITests/final finalUITests.entitlements";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;

@@ -449,3 +449,11 @@ targets:
         TEST_TARGET_NAME: final final
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
+        # Without an explicit entitlements file, Xcode auto-generates one for
+        # the UI-test-runner process with com.apple.security.app-sandbox =
+        # true and no write exception — even though the main app is
+        # explicitly unsandboxed (see final final/final final.entitlements).
+        # That silently breaks every disposable e2e test's writes to an
+        # arbitrary path (e.g. screenshot writes into a superdev run-notes
+        # folder) with NSPOSIXErrorDomain Code=1 "Operation not permitted".
+        CODE_SIGN_ENTITLEMENTS: final finalUITests/final finalUITests.entitlements

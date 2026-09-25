@@ -110,9 +110,11 @@ final class ProjectSwitchMarginsE2ETests: XCTestCase {
     /// and attaches its tail as evidence. The app is not sandboxed, so this resolves to the same
     /// real file both processes see -- no cross-container copying needed.
     private func attachDiagnosticLog() {
-        // Try every plausible location: the test runner's own container may not be the app's
-        // real home in a VM guest (NSHomeDirectory() is documented elsewhere in this suite as
-        // differing between the two), so don't assume just one.
+        // Try every plausible location: the runner is unsandboxed (see
+        // `final finalUITests/final finalUITests.entitlements`, wired via the
+        // `CODE_SIGN_ENTITLEMENTS` build setting in `project.yml`),
+        // so NSHomeDirectory() now resolves to the same real home the app sees -- these
+        // candidates are kept as belt-and-braces, not because the runner's home is containerized.
         var candidates: [URL] = []
         for base in FileManager.default.urls(for: .applicationSupportDirectory, in: .allDomainsMask) {
             candidates.append(base.appendingPathComponent("com.kerim.final-final/Diagnostics/diagnostic.log"))
