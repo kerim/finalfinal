@@ -227,7 +227,7 @@ final class GlossarySweepE2ETests: XCTestCase {
         XCTAssertTrue(appearanceTab.waitForExistence(timeout: 10), "Appearance tab should be selectable")
         appearanceTab.click()
 
-        // `settingRow(label:)` (AppearancePreferencesPane.swift) renders a plain `Text(label)`,
+        // `settingRow(label:)` (PreferencesView.swift:355-382) renders a plain `Text(label)`,
         // which may not expose a `label` attribute on its AX StaticText (only a `value`) --
         // same OR-form pattern this file already uses for the sidebar bibliography card
         // (see `testSidebarCitationBadgeReadsCitationsNotRefs` below, ~line 264).

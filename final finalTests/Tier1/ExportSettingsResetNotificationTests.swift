@@ -18,8 +18,7 @@
 //  Why a plain unit test, not an e2e/UI test: nothing in the app calls
 //  ExportSettingsManager.resetToDefaults() today -- no Preferences pane wires a "Reset to
 //  Defaults" button to it for export settings, unlike Appearance/Focus/Goal settings (see
-//  AppearancePreferencesPane.swift's `presetsColumn`, which hosts the "Reset Appearance
-//  Settings" button). With no user-visible flow to drive, there's nothing for an
+//  PreferencesView+Presets.swift). With no user-visible flow to drive, there's nothing for an
 //  XCUITest to click through -- and XCUITest itself drives the app out-of-process, over the
 //  accessibility tree, so even a disposable UI test could not call this internal method
 //  directly either way. This exercises the method itself instead.

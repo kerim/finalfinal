@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 /// Tab identifiers for preferences
 enum PreferencesTab: String, CaseIterable, Identifiable {
@@ -105,6 +106,297 @@ struct PreferencesView: View {
             selectedTab = requested
         }
     }
+}
+
+/// Appearance preferences pane with theme and typography settings
+struct AppearancePreferencesPane: View {
+    @Environment(ThemeManager.self) var themeManager
+    @State internal var appearanceManager = AppearanceSettingsManager.shared
+
+    // Local state for editing
+    @State internal var fontSize: CGFloat = AppearanceSettingsManager.defaultFontSize
+    @State internal var selectedLineHeight: LineHeightPreset = .normal
+    @State internal var selectedFontFamily: String = ""
+    @State internal var textColor: Color = .primary
+    @State internal var headerColor: Color = .primary
+    @State internal var accentColor: Color = .blue
+    @State internal var selectedColumnWidth: ColumnWidthPreset = .normal
+
+    // Preset management
+    @State internal var showingSavePresetSheet = false
+    @State internal var newPresetName = ""
+    @State internal var selectedPresetId: UUID?
+
+    // Destructive-confirmation state (see DestructiveConfirmation.swift). Internal (not
+    // private) because PreferencesView+Presets.swift, an extension of this struct in a
+    // separate file, both reads and writes these.
+    @State internal var showingResetConfirmation = false
+    @State internal var presetPendingDeletion: AppearancePreset?
+
+    // Available fonts
+    let availableFonts: [String]
+
+    init() {
+        let fonts = NSFontManager.shared.availableFontFamilies.sorted()
+        self.availableFonts = fonts
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Left column: Presets
+            VStack(alignment: .leading, spacing: 16) {
+                presetsColumn
+            }
+            .frame(width: 200)
+            .padding()
+
+            Divider()
+
+            // Right column: Settings
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    themeSection
+                    typographySection
+                    colorsSection
+                    layoutSection
+                }
+                .padding()
+            }
+        }
+        .onAppear {
+            loadCurrentSettings()
+        }
+        .sheet(isPresented: $showingSavePresetSheet) {
+            savePresetSheet
+        }
+    }
+
+    // MARK: - Theme Section
+
+    @ViewBuilder
+    private var themeSection: some View {
+        GroupBox("Theme") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Theme", selection: Binding(
+                    get: { themeManager.currentTheme.id },
+                    set: { newId in
+                        // Preserve appearance overrides when changing theme via Settings
+                        themeManager.setTheme(byId: newId)
+                        loadCurrentSettings()
+                    }
+                )) {
+                    ForEach(AppColorScheme.all) { scheme in
+                        Text(scheme.name).tag(scheme.id)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text("Appearance overrides are preserved. Use View → Theme menu to reset to defaults.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(8)
+        }
+    }
+
+    // MARK: - Typography Section
+
+    @ViewBuilder
+    private var typographySection: some View {
+        GroupBox("Typography") {
+            VStack(alignment: .leading, spacing: 12) {
+                // Font Size
+                settingRow(
+                    label: "Font Size",
+                    isOverridden: appearanceManager.isFontSizeOverridden(),
+                    onReset: {
+                        appearanceManager.clearFontSize()
+                        fontSize = AppearanceSettingsManager.defaultFontSize
+                    },
+                    content: {
+                    HStack {
+                        Text("\(Int(fontSize)) pt")
+                            .monospacedDigit()
+                            .frame(width: 50, alignment: .trailing)
+                        Stepper("", value: $fontSize, in: 12...32, step: 1)
+                            .labelsHidden()
+                            .onChange(of: fontSize) { _, newValue in
+                                updateFontSize(newValue)
+                            }
+                    }
+                })
+
+                // Line Height
+                settingRow(
+                    label: "Line Height",
+                    isOverridden: appearanceManager.isLineHeightOverridden(),
+                    onReset: {
+                        appearanceManager.clearLineHeight()
+                        selectedLineHeight = .normal
+                    },
+                    content: {
+                    Picker("", selection: $selectedLineHeight) {
+                        ForEach(LineHeightPreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                    .labelsHidden()
+                    .onChange(of: selectedLineHeight) { _, newValue in
+                        updateLineHeight(newValue)
+                    }
+                })
+
+                // Font Family
+                settingRow(
+                    label: "Font",
+                    isOverridden: appearanceManager.isFontFamilyOverridden(),
+                    onReset: {
+                        appearanceManager.clearFontFamily()
+                        selectedFontFamily = ""
+                    },
+                    content: {
+                    Picker("", selection: $selectedFontFamily) {
+                        Text("System Font").tag("")
+                        Divider()
+                        ForEach(availableFonts, id: \.self) { font in
+                            Text(font).tag(font)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 200)
+                    .labelsHidden()
+                    .onChange(of: selectedFontFamily) { _, newValue in
+                        updateFontFamily(newValue)
+                    }
+                })
+            }
+            .padding(8)
+        }
+    }
+
+    // MARK: - Colors Section
+
+    @ViewBuilder
+    private var colorsSection: some View {
+        GroupBox("Colors") {
+            VStack(alignment: .leading, spacing: 12) {
+                // Text Color
+                settingRow(
+                    label: "Text Color",
+                    isOverridden: appearanceManager.isTextColorOverridden(),
+                    onReset: {
+                        appearanceManager.clearTextColor()
+                        textColor = themeManager.currentTheme.editorText
+                    },
+                    content: {
+                    ColorPicker("", selection: $textColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .onChange(of: textColor) { _, newValue in
+                            updateTextColor(newValue)
+                        }
+                })
+
+                // Header Color
+                settingRow(
+                    label: "Heading Color",
+                    isOverridden: appearanceManager.isHeaderColorOverridden(),
+                    onReset: {
+                        appearanceManager.clearHeaderColor()
+                        headerColor = themeManager.currentTheme.editorHeaderText
+                    },
+                    content: {
+                    ColorPicker("", selection: $headerColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .onChange(of: headerColor) { _, newValue in
+                            updateHeaderColor(newValue)
+                        }
+                })
+
+                // Accent Color
+                settingRow(
+                    label: "Accent Color",
+                    isOverridden: appearanceManager.isAccentColorOverridden(),
+                    onReset: {
+                        appearanceManager.clearAccentColor()
+                        accentColor = themeManager.currentTheme.accentColor
+                    },
+                    content: {
+                    ColorPicker("", selection: $accentColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .onChange(of: accentColor) { _, newValue in
+                            updateAccentColor(newValue)
+                        }
+                })
+            }
+            .padding(8)
+        }
+    }
+
+    // MARK: - Layout Section
+
+    @ViewBuilder
+    private var layoutSection: some View {
+        GroupBox("Layout") {
+            VStack(alignment: .leading, spacing: 12) {
+                settingRow(
+                    label: "Column Width",
+                    isOverridden: appearanceManager.isColumnWidthOverridden(),
+                    onReset: {
+                        appearanceManager.clearColumnWidth()
+                        selectedColumnWidth = .normal
+                    },
+                    content: {
+                    Picker("", selection: $selectedColumnWidth) {
+                        ForEach(ColumnWidthPreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 300)
+                    .labelsHidden()
+                    .onChange(of: selectedColumnWidth) { _, newValue in
+                        updateColumnWidth(newValue)
+                    }
+                })
+            }
+            .padding(8)
+        }
+    }
+
+    // MARK: - Helper Views
+
+    @ViewBuilder
+    private func settingRow<Content: View>(
+        label: String,
+        isOverridden: Bool,
+        onReset: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack {
+            Text(label)
+                .frame(width: 100, alignment: .leading)
+            Spacer()
+            content()
+            if isOverridden {
+                Button {
+                    onReset()
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help("Reset to theme default")
+            } else {
+                // Invisible placeholder to maintain alignment
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.caption)
+                    .opacity(0)
+            }
+        }
+    }
+
 }
 
 #Preview {
