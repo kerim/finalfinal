@@ -151,6 +151,7 @@
 		3C01E547EFAD7C50604AEB10 /* VersionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E99D04B51EB859A1BD1A73BB /* VersionListView.swift */; };
 		3CCD23FA0FAA8B8B1247B0B5 /* ZoteroExportDecodeResultTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8EE2BE4643241D9AD43EABF /* ZoteroExportDecodeResultTests.swift */; };
 		3D23A81479DA40290201F248 /* OutlineSidebarRenderKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 952B3DF6A10C6798293D96FB /* OutlineSidebarRenderKeyTests.swift */; };
+		3D5A170FAF7204DA9CF2E04B /* WebKitStorageClearE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86F277728423469E2B06B516 /* WebKitStorageClearE2ETests.swift */; };
 		3DA06D6186948A1D8C37F4F5 /* StructuralUndoControllerSectionConvergenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F569F356EFDD50A2160DD63 /* StructuralUndoControllerSectionConvergenceTests.swift */; };
 		3DA3790542ECDD535F31F2AC /* ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EB965A709E352A6DD796F0 /* ToastCenter.swift */; };
 		3F0D8CBBB9C6DB3712432584 /* ToastCenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9FAFA1873D6BF2ED7547A8F /* ToastCenterTests.swift */; };
@@ -898,6 +899,7 @@
 		846D908D309523173314CAD4 /* BibliographyTerminatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyTerminatorTests.swift; sourceTree = "<group>"; };
 		8640BE3D04308721BF56E100 /* PandocCitationParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PandocCitationParsingTests.swift; sourceTree = "<group>"; };
 		86A46F4701A4F13FB110CE54 /* BlockParser+Splitting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockParser+Splitting.swift"; sourceTree = "<group>"; };
+		86F277728423469E2B06B516 /* WebKitStorageClearE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebKitStorageClearE2ETests.swift; sourceTree = "<group>"; };
 		87026C4D0F2AEB394A0A85D9 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		8787EE28839E44DAAF698741 /* Database+BlocksObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksObservation.swift"; sourceTree = "<group>"; };
 		879345BDC47D8C35185DE723 /* ChromeTypographyE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromeTypographyE2ETests.swift; sourceTree = "<group>"; };
@@ -961,6 +963,7 @@
 		A6D0392785BD97CBA2E0B4A7 /* BibliographyOpeningSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyOpeningSelectorTests.swift; sourceTree = "<group>"; };
 		A85601DB766C7F746FEE509A /* SnapshotBackupFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotBackupFlushTests.swift; sourceTree = "<group>"; };
 		A8A8B0915B9E016AF46A8E39 /* ZoomRenameFlushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomRenameFlushTests.swift; sourceTree = "<group>"; };
+		AA847A9555F940CB721EE300 /* final finalUITests.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "final finalUITests.entitlements"; sourceTree = "<group>"; };
 		AABAA974FA6CC968A6C933C6 /* AnnotationDisplayPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationDisplayPersistenceTests.swift; sourceTree = "<group>"; };
 		AB07852511C8C9657C3D8103 /* FootnoteSyncReconcileMixedOpsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootnoteSyncReconcileMixedOpsTests.swift; sourceTree = "<group>"; };
 		AB26408FC5CF1E991EFAD81E /* MilkdownCoordinator+Images.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MilkdownCoordinator+Images.swift"; sourceTree = "<group>"; };
@@ -1572,6 +1575,7 @@
 				B0E9E13B3AFAC1038A00CD04 /* EscapeLadderE2ETestsHelpers.swift */,
 				2FC14F79B7F49B4C41970EB2 /* EscapeLadderFindBarAndFullScreenE2ETests.swift */,
 				8226F7868A6381751072F38C /* EscapeLadderPopupAndLatencyE2ETests.swift */,
+				AA847A9555F940CB721EE300 /* final finalUITests.entitlements */,
 				2117CD53989EA1313D169A52 /* FirstProjectOpenBlankMarginsE2ETests.swift */,
 				96FCCDBFE9A2D0FB7A0544BA /* FocusModeInlineAnnotationsE2ETests.swift */,
 				9C98B0C69690A281ADF16EEE /* FootnoteCursorPlacementDBAndClickTests.swift */,
@@ -1596,6 +1600,7 @@
 				547B735C32F85280F996A93B /* UnifiedUndoE2ETests.swift */,
 				1B92CF36856E2AA322B31A8E /* UnifiedUndoE2ETests+Helpers.swift */,
 				6D128C0036B76D947CC1A43D /* UnifiedUndoEvictionCapE2ETests.swift */,
+				86F277728423469E2B06B516 /* WebKitStorageClearE2ETests.swift */,
 			);
 			path = "final finalUITests";
 			sourceTree = "<group>";
@@ -2432,6 +2437,7 @@
 				CA49805CB5D62D30984AA622 /* UnifiedUndoE2ETests+Helpers.swift in Sources */,
 				00895CE4F27DF083DC792D2E /* UnifiedUndoE2ETests.swift in Sources */,
 				4A3DC4A93B24B9823CC7FA18 /* UnifiedUndoEvictionCapE2ETests.swift in Sources */,
+				3D5A170FAF7204DA9CF2E04B /* WebKitStorageClearE2ETests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2773,6 +2779,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "final finalUITests/final finalUITests.entitlements";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -2849,6 +2856,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "final finalUITests/final finalUITests.entitlements";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -2941,6 +2949,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "final finalUITests/final finalUITests.entitlements";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
