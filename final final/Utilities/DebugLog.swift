@@ -120,9 +120,6 @@ enum DebugLog {
     /// - Mass-delete safety guards (data loss prevention)
     /// - Truly critical errors where silence risks data corruption
     /// Do NOT use for routine error logging — use log() instead.
-    /// Console only — this does not reach the persistent `DiagnosticLogFile`. If the signal
-    /// also needs to survive there (e.g. a user's "Generate Diagnostic Report…" bundle), use
-    /// `alwaysPersisted(_:)` below instead, which does everything `always()` does plus that.
     @inline(__always)
     static func always(_ message: @autoclosure () -> String) {
         let text = message()
@@ -137,17 +134,6 @@ enum DebugLog {
         alwaysSinkLock.unlock()
         sink?(text)
         #endif
-    }
-
-    /// `always(_:)` plus the persistent DiagnosticLogFile (subject to the user's Diagnostics
-    /// toggle — `append` gates itself). Reserved for block-sync data-loss / timeout signals.
-    /// Goes through `always`, so console output and the DEBUG `alwaysSink` are unchanged.
-    @inline(__always)
-    static func alwaysPersisted(_ message: @autoclosure () -> String,
-                                to logFile: DiagnosticLogFile = .shared) {
-        let text = message()
-        always(text)
-        logFile.append("[always] \(text)")
     }
 
     #if DEBUG

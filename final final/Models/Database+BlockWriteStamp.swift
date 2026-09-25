@@ -181,7 +181,7 @@ extension ProjectDatabase {
                 result.droppedUpdateIds = changes.updates.map(\.id)
                 result.droppedDeleteIds = changes.deletes
                 // `result.idMapping` stays EMPTY and `processEditorInserts` never runs.
-                DebugLog.alwaysPersisted(
+                DebugLog.always(
                     "[BlockWriteStamp] REJECTED WHOLE BATCH: reason=staleEpoch "
                     + "batchEpoch=\(batchStamp.epoch) currentEpoch=\(currentEpoch) "
                     + "batchSequence=\(batchStamp.sequence) "
@@ -195,7 +195,7 @@ extension ProjectDatabase {
             // read from this same DB and only ever increases. Log and fall through to the
             // per-row rules rather than trapping.
             if !batchStamp.isUnguarded && batchStamp.epoch > currentEpoch {
-                DebugLog.alwaysPersisted(
+                DebugLog.always(
                     "[BlockWriteStamp] ANOMALY: batch epoch \(batchStamp.epoch) exceeds current "
                     + "\(currentEpoch) - applying per-row rather than refusing")
             }
@@ -224,7 +224,7 @@ extension ProjectDatabase {
                 }
             }
             if result.droppedCount > 0 {
-                DebugLog.alwaysPersisted(
+                DebugLog.always(
                     "[BlockWriteStamp] REJECTED ROWS: reason=supersededByNewerWrite "
                     + "batchEpoch=\(batchStamp.epoch) batchSequence=\(batchStamp.sequence) "
                     + "currentEpoch=\(currentEpoch) "

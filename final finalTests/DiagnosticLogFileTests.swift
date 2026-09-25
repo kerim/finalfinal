@@ -72,41 +72,6 @@ struct DiagnosticLogFileTests {
         #expect(contents?.contains("hello world") == true)
     }
 
-    /// `DebugLog.alwaysPersisted` forwards to the given `DiagnosticLogFile` instance's
-    /// `append(_:)`, prefixed `[always]`, when logging is enabled. Passes the instance
-    /// explicitly via `to:` rather than relying on `.shared`, matching every other test
-    /// in this suite's use of an isolated temp-directory instance.
-    @Test func alwaysPersistedWritesLineWhenLoggingEnabled() {
-        let tempDir = makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logFile = DiagnosticLogFile(logDirectory: tempDir, maxFileSize: 2000, maxRotatedFiles: 1)
-
-        withLoggingEnabled(true) {
-            DebugLog.alwaysPersisted("block sync data loss detected", to: logFile)
-        }
-
-        let activeURL = tempDir.appendingPathComponent("diagnostic.log")
-        #expect(FileManager.default.fileExists(atPath: activeURL.path))
-        let contents = try? String(contentsOf: activeURL, encoding: .utf8)
-        #expect(contents?.contains("[always] block sync data loss detected") == true)
-    }
-
-    /// `alwaysPersisted` still prints via `always()` when logging is disabled (unchanged
-    /// console behavior), but must write nothing to the `DiagnosticLogFile` instance --
-    /// `append(_:)`'s own enabled gate no-ops the write.
-    @Test func alwaysPersistedWritesNothingWhenLoggingDisabled() {
-        let tempDir = makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logFile = DiagnosticLogFile(logDirectory: tempDir, maxFileSize: 2000, maxRotatedFiles: 1)
-
-        withLoggingEnabled(false) {
-            DebugLog.alwaysPersisted("block sync data loss detected", to: logFile)
-        }
-
-        #expect(logFile.existingLogFileURLs().isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("diagnostic.log").path))
-    }
-
     @Test func rotationNeverExceedsMaxRotatedFilesPlusOne() {
         let tempDir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: tempDir) }
