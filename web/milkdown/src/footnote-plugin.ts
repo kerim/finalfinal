@@ -346,18 +346,13 @@ const footnoteDefNodeView = $view(footnoteDefNode, (_ctx: Ctx) => {
       if (isSourceModeEnabled()) {
         // Source mode: show raw markdown syntax
         dom.textContent = `[^${attrs.label}]:`;
-        // Targeted class op (not wholesale `dom.className = ...`), matching
-        // annotation-plugin.ts's NodeView update fix: only adds/removes the class
-        // this plugin owns, so an externally-applied class (e.g. a future
-        // Decoration.node()) survives a redraw. 'ff-footnote-def' itself is never
-        // removed -- set once at NodeView creation and kept for the node's lifetime.
-        dom.classList.add('source-mode-footnote-def');
+        dom.className = 'ff-footnote-def source-mode-footnote-def';
         return;
       }
 
       // WYSIWYG mode: show number in pill
       dom.textContent = attrs.label;
-      dom.classList.remove('source-mode-footnote-def');
+      dom.className = 'ff-footnote-def';
       dom.dataset.label = attrs.label;
     };
 
@@ -430,14 +425,13 @@ const footnoteRefNodeView = $view(footnoteRefNode, (_ctx: Ctx) => {
       if (isSourceModeEnabled()) {
         // Source mode: show raw markdown syntax
         dom.textContent = `[^${attrs.label}]`;
-        // Targeted class op -- see footnoteDefNodeView's matching comment above.
-        dom.classList.add('source-mode-footnote');
+        dom.className = 'ff-footnote-ref source-mode-footnote';
         return;
       }
 
       // WYSIWYG mode: show superscript number
       dom.textContent = attrs.label;
-      dom.classList.remove('source-mode-footnote');
+      dom.className = 'ff-footnote-ref';
       dom.dataset.label = attrs.label;
     };
 
