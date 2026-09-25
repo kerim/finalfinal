@@ -339,11 +339,27 @@ extension EscapeLadderE2ETests {
         // closely as possible (this bug reproduced with the slash menu as the only other layer
         // open). Bounded retry (up to 3 attempts, mirroring this suite's other keystroke-retry
         // helpers -- e.g. `typeTextVerifyingLanded`, `toggleWysiwygToSource`): if the trigger
-        // doesn't land, press Esc to clear any partial "/" state and re-click before trying
-        // again, rather than failing on the very first miss.
+        // doesn't land, delete any partial "/" state and re-click before trying again, rather
+        // than failing on the very first miss.
+        //
+        // Deliberately clicks the seeded paragraph's own rendered text (`editorStaticText`),
+        // not the generic `clickIntoEditor()` fixed-offset click used elsewhere in this file:
+        // ROOT CAUSE (superdev-diagnostician, screen recording) -- `clickIntoEditor()`'s fixed
+        // normalized offset landed on blank space below this test's single short paragraph,
+        // which drops keyboard focus out of the editor entirely (caret gone for ~10s, nothing
+        // typed afterward has any effect). The retry loop's old unconditional Esc then found
+        // nothing open to close and exited native full-screen Focus Mode instead -- corrupting
+        // this test's own precondition before the Esc under test below ever ran. Clicking real
+        // text keeps focus in the editor; deleting any stray "/" (instead of pressing Esc)
+        // means a failed attempt can no longer reach for the full-screen-exit shortcut this
+        // test exists to guard.
         var slashMenuOpened = false
         for attempt in 1...3 {
-            clickIntoEditor()
+            guard let bodyTextElement = app.editorStaticText(startingWith: bodyText, timeout: 5) else {
+                XCTFail("Seeded paragraph \"\(bodyText)\" should be findable as editor static text")
+                return
+            }
+            bodyTextElement.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
             app.typeKey(.downArrow, modifierFlags: .command)
             app.typeKey(.return, modifierFlags: [])
             app.activateAndWaitForForeground()
@@ -354,17 +370,29 @@ extension EscapeLadderE2ETests {
             }
             if attempt < 3 {
                 app.activateAndWaitForForeground()
-                app.typeKey(.escape, modifierFlags: [])
+                if app.editorContainsText("/", timeout: 1) {
+                    app.typeKey(.delete, modifierFlags: [])
+                }
                 // Why this sleep is exempt from the fixed-wait lint: fixed back-off between retries
-                // of this 3-attempt slash-menu loop, not a wait for a condition: after pressing
-                // Escape to clear partial "/" state, nothing observable marks that teardown as
-                // "done" before the next click/keystroke attempt, so there is nothing here to
-                // poll for.
+                // of this 3-attempt slash-menu loop, not a wait for a condition: after clearing any
+                // partial "/" state, nothing observable marks that teardown as "done" before the
+                // next click/keystroke attempt, so there is nothing here to poll for.
                 // e2e-lint: allow sleep -- fixed back-off between retries, not a wait for a condition; nothing to poll for
                 Thread.sleep(forTimeInterval: 0.5)
             }
         }
         XCTAssertTrue(slashMenuOpened, "Slash menu should open with its command list within 3 attempts")
+
+        // Precondition: confirm the retry loop above left the app genuinely still in Focus Mode
+        // and still in real native full screen before firing the one Esc press under test --
+        // this is exactly the invariant the old unconditional-Esc retry (see root-cause comment
+        // above) could silently break, which would otherwise make the assertions below pass or
+        // fail for the wrong reason.
+        XCTAssertFalse(app.groups["status-bar"].exists, "Precondition: still in Focus Mode before the Esc under test")
+        XCTAssertTrue(
+            isMainWindowNativeFullScreen(),
+            "Precondition: window should still be in genuine native full screen before the Esc under test"
+        )
 
         // The one Esc press under test -- matches the user's exact repro.
         app.activateAndWaitForForeground()
