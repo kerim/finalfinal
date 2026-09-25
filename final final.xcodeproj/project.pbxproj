@@ -79,7 +79,6 @@
 		1784E7C8015865BB9C8F2BFE /* BatchWordCountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A0D16851E9898C0E58C16F /* BatchWordCountsTests.swift */; };
 		17AB96D7BFD6332A523C0438 /* StructuralUndoControllerReorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F8DE6DFBB989519468D19D /* StructuralUndoControllerReorderTests.swift */; };
 		18C0E9CAB3F73CAC8E6FE93E /* BibliographyHeadingRenamerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C581824FC747D4FDF8D1765 /* BibliographyHeadingRenamerTests.swift */; };
-		1964D6CE5D365A59F395D6F5 /* BlockSyncPollWatchdogTests+TempIdAfterValve.swift in Sources */ = {isa = PBXBuildFile; fileRef = 623E52FC5CE3EA697396347C /* BlockSyncPollWatchdogTests+TempIdAfterValve.swift */; };
 		19CC4AF5EFC8BCF449A95A7F /* SectionReconciler+DeleteSweep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109CBEFDB3EFDA13C5639BAB /* SectionReconciler+DeleteSweep.swift */; };
 		1B4016EE846284CD234D7453 /* BibliographyRegenerationAnchorHijackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 489D81C798F92573EB2BF785 /* BibliographyRegenerationAnchorHijackTests.swift */; };
 		1BEA272BD36333760DE55EC2 /* ExportDiagnosticCaptureGatingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA20F98EFC97B6FDEE93DFA /* ExportDiagnosticCaptureGatingTests.swift */; };
@@ -817,7 +816,6 @@
 		60CFF2A0901E63F233E65B32 /* EditorViewState+AnnotationDisplayLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+AnnotationDisplayLoading.swift"; sourceTree = "<group>"; };
 		61DE6BB00F5D1EF8A75439EB /* SectionReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionReconciler.swift; sourceTree = "<group>"; };
 		621214D7AF8029CB872C0562 /* DiagnosticReportGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticReportGenerator.swift; sourceTree = "<group>"; };
-		623E52FC5CE3EA697396347C /* BlockSyncPollWatchdogTests+TempIdAfterValve.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockSyncPollWatchdogTests+TempIdAfterValve.swift"; sourceTree = "<group>"; };
 		6253961779E064C92D1B172E /* AnnotationSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationSyncService.swift; sourceTree = "<group>"; };
 		62FE8A26E8E2C0863AA8BC78 /* BibliographySectionFlagTests+DeleteSweepIntegrity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BibliographySectionFlagTests+DeleteSweepIntegrity.swift"; sourceTree = "<group>"; };
 		6307057E40BC11F1495156DB /* IntegrityResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntegrityResolution.swift; sourceTree = "<group>"; };
@@ -1644,7 +1642,6 @@
 				C0F329FF9416B93E41F3AE2A /* BlockSyncPollWatchdogTests.swift */,
 				3BD1D08751729BC9E4B339C7 /* BlockSyncPollWatchdogTests+EpochBarrier.swift */,
 				38253288A80BF62423945A6F /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift */,
-				623E52FC5CE3EA697396347C /* BlockSyncPollWatchdogTests+TempIdAfterValve.swift */,
 				16D654EA23E3A5795647A363 /* BlockSyncProjectSwitchDrainTests.swift */,
 				59C494C6F45F9B2C4EB019EB /* CAYWConcurrentInsertTests.swift */,
 				FC1C9D22BBFE109FF028FC72 /* CAYWConcurrentInsertTestsHelpers.swift */,
@@ -2216,7 +2213,6 @@
 				8E5B8B36419386E92D16A1E5 /* BlockSyncGenerationGuardTests.swift in Sources */,
 				D6A69E6D49A78269EFDF72A2 /* BlockSyncPollWatchdogTests+EpochBarrier.swift in Sources */,
 				4BF6457E54A539D332F2D0E6 /* BlockSyncPollWatchdogTests+RebuildKeepsBatch.swift in Sources */,
-				1964D6CE5D365A59F395D6F5 /* BlockSyncPollWatchdogTests+TempIdAfterValve.swift in Sources */,
 				5912438A8A3155C77DC6219D /* BlockSyncPollWatchdogTests.swift in Sources */,
 				623A514928E10DD695655F2F /* BlockSyncProjectSwitchDrainTests.swift in Sources */,
 				1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */,

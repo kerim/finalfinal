@@ -1168,6 +1168,8 @@ class BlockSyncService {
 
         guard batchNeedsApplying(changes, database: database, projectId: projectId, force: force) else { return }
 
+        let resolvedChanges = resolvingStaleTempIds(changes)
+
         await awaitPredecessorOrAbandon(slot.predecessor)
         // A successor gave up on THIS cycle, so our batch is strictly older than the one
         // it applied. Do NOT drop the batch: the persisted (epoch, sequence) stamp in the
@@ -1188,10 +1190,10 @@ class BlockSyncService {
         // The MERGE path is deliberately exempt: a merged batch is by construction
         // OLDER than the successor that advanced lastAppliedFetchSequence, so this
         // stamp-level guard would always drop it — defeating the merge entirely. It
-        // is safe to skip precisely because the batch this cycle is about to write is
-        // filtered row by row in the write transaction against the persisted stamp: every
-        // id it still carries is one NO newer apply wrote, so landing it cannot resurrect
-        // newer text — the only hazard this guard exists to catch.
+        // is safe to skip precisely because `resolvedChanges` is already filtered row by
+        // row in the write transaction against the persisted stamp: every id it still
+        // carries is one NO newer apply wrote, so landing it cannot resurrect newer text —
+        // the only hazard this guard exists to catch.
         guard chainNode.isAbandoned || slot.fetchSequence > lastAppliedFetchSequence else {
             DebugLog.alwaysPersisted(
                 "[BlockSync] apply chain: ABANDONED batch from an older fetch "
@@ -1203,8 +1205,7 @@ class BlockSyncService {
         // M1/A1: the valve above widened the pre-write window from one scheduling hop
         // to up to `chainWaitSeconds`, and it sits AFTER the last generation re-check
         // (the postFetch one). Re-run the guard here — the last point before the DB
-        // write, with no `await` between it and `applyAndConfirm` (only the synchronous
-        // temp-id resolution) — so a mode toggle /
+        // write, with nothing between it and `applyAndConfirm` — so a mode toggle /
         // zoom / bibliography-or-notes rebuild / project switch landing during the
         // park (none of which drain the poll) cannot get this pre-rewrite batch
         // written over it. Abandoning here is not lossless (the batch was consumed
@@ -1219,13 +1220,6 @@ class BlockSyncService {
         ) {
             return
         }
-
-        // Resolution must run AFTER the valve, not before: a predecessor's applyAndConfirm()
-        // merges its pendingConfirmations into confirmedTempIds BEFORE its chain node
-        // finishes (the node is released by doPollBlockChanges's defer), and
-        // awaitPredecessorOrAbandon above parked this cycle until then — resolving any
-        // earlier misses that mapping.
-        let resolvedChanges = resolvingStaleTempIds(changes)
 
         let result = await applyAndConfirm(resolvedChanges, database: database, projectId: projectId,
                                            webView: webView, stamp: slot.stamp)
@@ -1920,8 +1914,7 @@ extension BlockSyncService {
         return false
     }
 
-    /// Resolve stale temp IDs using cumulative confirmation mapping (defense-in-depth).
-    /// Must run after the apply-chain valve — see the call site in `doPollBlockChanges`.
+    /// Resolve stale temp IDs using cumulative confirmation mapping (defense-in-depth)
     private func resolvingStaleTempIds(_ changes: BlockChanges) -> BlockChanges {
         var resolvedChanges = changes
         resolvedChanges.updates = changes.updates.map { update in

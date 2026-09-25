@@ -975,7 +975,23 @@ export function assignBlockIds(
       }
 
       const sameType = candidates.filter((c) => existingTypes.get(c.pos) === d.nodeType);
-      const best = sameType.length > 0 ? sameType.sort((a, b) => a.distance - b.distance)[0] : null;
+      // Sort by distance ascending, tiebreak by pos (stable ordering) — matches
+      // the structural branch's tiebreak above (`a.distance - b.distance ||
+      // a.oldPos - b.oldPos`). `pos` here is the old position, the same value
+      // as `oldPos` there. Without this tiebreak, a tie is broken by the
+      // existingIds Map's insertion order — this branch does not scramble its
+      // own output (its own assignments and temp ids are interleaved in
+      // document/deferred order); the scramble comes from a *previous*
+      // transaction that went through the structural branch: the previous
+      // structural pass's Phase 2 (distance order), then its temp ids. That
+      // order then gets carried forward as `currentBlockIds` into the next,
+      // non-structural transaction — so an ordinary "type a character back"
+      // edit after a split can swap two blocks' ids through this branch. (A
+      // keystroke can still swap two blocks' ids a different way, through
+      // Phase 1: see F1a, and the adjacent-atoms case — one keystroke before
+      // two back-to-back figures/rules/section breaks swaps them via Phase 1
+      // — tracked separately.)
+      const best = sameType.length > 0 ? sameType.sort((a, b) => a.distance - b.distance || a.pos - b.pos)[0] : null;
 
       if (best) {
         // This branch is only reached when structureChanged is false (its

@@ -4,10 +4,14 @@
 // Scope, as approved by the judge: the code does NOT yet satisfy "every
 // block keeps its id" — a prior fuzz-probe found 5 real bugs (F1a, F1b, F2,
 // F3, F4; all misattribution — an id lands on the wrong block — never a
-// duplicate or missing id). Rather than assert the full (currently false)
-// claim, this file ships two properties scoped to what the code actually
-// guarantees today, plus 5 pinned regressions (below) that pin the known
-// gaps so a fix flips them, not silently reopens them.
+// duplicate or missing id). F1b (the "structure unchanged" per-block match
+// picking the first same-distance candidate in Map iteration order, instead
+// of a stable tiebreak) is now FIXED — see block-id-plugin.ts's per-block
+// matching branch and the P-C property test below. Rather than assert the
+// full (currently still false, pending F1a/F2/F3/F4) claim, this file ships
+// two properties scoped to what the code actually guarantees today, plus 4
+// remaining pinned regressions (below) that pin the known gaps so a fix
+// flips them, not silently reopens them.
 //
 //   P-A (safety):   no duplicate ids, no missing ids — across the FULL edit
 //                   vocabulary (typeChar, typeRun, deleteChars, split, join,
@@ -17,7 +21,15 @@
 //                   structural edits (split, join, deleteBlocks, insertBlock,
 //                   confirm), explicitly excluding the text-edit paths
 //                   (typeChar/typeRun/deleteChars/deleteAcross/setType)
-//                   where F1a/F1b live.
+//                   where F1a lives (F1b, formerly here too, is fixed).
+//                   typeChar, typeRun and deleteChars stay excluded even
+//                   after the F1b fix: F1a's multi-character shifts and the
+//                   adjacent-atom case (one keystroke before two back-to-back
+//                   figures/rules/section breaks, which swaps ids via Phase 1
+//                   rather than the branch F1b fixed) still reach them.
+//   P-C (order independence): a block-count-preserving edit assigns ids the
+//                   same way regardless of the existing-ids map's insertion
+//                   order — the property whose absence was F1b's root cause.
 //
 // Determinism (judge must-fix #2): the default `pnpm test` / `vitest run`
 // invocation NEVER touches Math.random() or wall-clock entropy — every run
@@ -26,12 +38,24 @@
 // default (no env vars) is always this same fixed range.
 import { Transform } from '@milkdown/kit/prose/transform';
 import { describe, expect, it } from 'vitest';
-import { assignBlockIds, getRecentlySplitEmptyIds, isBlockType, resetBlockIdState } from '../block-id-plugin';
 import {
+  alignTopLevelIds,
+  assignBlockIds,
+  getRecentlySplitEmptyIds,
+  isBlockType,
+  resetBlockIdState,
+  setBlockIdZoomMode,
+} from '../block-id-plugin';
+import {
+  applyOpDescriptor,
+  buildDoc,
   formatRepro,
+  generateInitialBlocks,
+  mulberry32,
   type OpKind,
   propSchema,
   type RecordedCase,
+  randomOpDescriptor,
   replayCase,
   runRandomCase,
   type StepChecker,
@@ -202,11 +226,117 @@ describe('P-B: identity — content-bearing blocks keep their id (structural edi
 });
 
 // ============================================================================
-// Pinned regressions for F1a, F1b, F2, F3, F4.
+// P-C: order independence — the property whose absence was F1b's root cause.
+// The "structure unchanged" per-block matching branch (assignBlockIds) used
+// to pick the first same-distance candidate in `existingIds` Map iteration
+// order; the fix sorts by distance then old position, so the outcome no
+// longer depends on the map's insertion order. This runs the REAL call
+// first (carried forward exactly as runEngine/the app does) and a
+// comparison-only call on a document-order copy of the same map, asserting
+// they agree whenever the real map's order was scrambled relative to the
+// document and the block count didn't change (the branch this bug lived
+// in). See the file header (P-C) and the flipped F1b test above.
+// ============================================================================
+
+describe("P-C: order independence — a block-count-preserving edit assigns ids regardless of the id map's insertion order", () => {
+  it('matches a document-order copy of the map on every such step', () => {
+    const ops: readonly OpKind[] = [
+      'typeChar',
+      'typeRun',
+      'deleteChars',
+      'split',
+      'join',
+      'deleteBlocks',
+      'deleteAcross',
+      'insertBlock',
+      'setType',
+    ];
+    let outOfOrderSteps = 0;
+    for (let seed = BASE_SEED; seed < BASE_SEED + RUNS; seed++) {
+      const rnd = mulberry32(seed);
+      let tidN = 0;
+      resetBlockIdState();
+      setBlockIdZoomMode(false); // defensive: a leaked zoom mode would suppress temp ids identically in both calls below and hide nothing
+      const initial = generateInitialBlocks(rnd, { paragraphsOnly: false });
+      let doc = buildDoc(initial);
+      const seeded = alignTopLevelIds(
+        initial.map((_, i) => `seed-id-${i}`),
+        doc
+      );
+      let ids = seeded.blockIds;
+      let types = seeded.blockTypes;
+      for (let step = 0; step < STEPS; step++) {
+        const desc = randomOpDescriptor(doc, ids, {
+          rnd,
+          allowedOps: ops,
+          paragraphsOnly: false,
+          nextTid: () => `ntid-${tidN++}`,
+          nextPermId: () => 'unused',
+          maxDocSize: 400,
+        });
+        if (!desc) continue;
+        const applied = applyOpDescriptor(doc, desc);
+        if (!applied || applied.tr.doc.content.size > 400) continue;
+        // Gate on isBlockType, matching assignBlockIds's own `blockCount`
+        // (block-id-plugin.ts: `if (isBlockType(node)) blockCount++;`), so
+        // this stays in lockstep with the plugin's structureChanged
+        // computation even if propSchema ever grows a non-block top-level
+        // node.
+        let count = 0;
+        applied.tr.doc.forEach((node) => {
+          if (isBlockType(node)) count++;
+        });
+        const keys = [...ids.keys()];
+        const outOfOrder = keys.some((k, i) => i > 0 && k < keys[i - 1]);
+        const oldDoc = doc;
+        // 1. REAL call first — this result is what the walk carries forward, exactly as runEngine does.
+        const [fromReal, realTypes] = assignBlockIds(applied.tr.doc, ids, types, oldDoc, applied.tr.mapping);
+        if (count === ids.size && outOfOrder) {
+          outOfOrderSteps++;
+          // 2. Comparison-only call on a document-order copy. The plugin exposes no marker-set setter
+          //    (getRecentlySplitEmptyIds, block-id-plugin.ts's returns-a-copy getter), so instead of
+          //    restoring we assert the call left the markers untouched.
+          const markersBefore = getRecentlySplitEmptyIds();
+          const sortedIds = new Map([...ids.entries()].sort((a, b) => a[0] - b[0]));
+          const sortedTypes = new Map([...types.entries()].sort((a, b) => a[0] - b[0]));
+          const [fromSorted] = assignBlockIds(applied.tr.doc, sortedIds, sortedTypes, oldDoc, applied.tr.mapping);
+          // Compare ids FIRST: an id mismatch is the real regression signal.
+          // Checking it before the marker-perturbation assertion below means
+          // a real regression is reported as an id mismatch, not misread as
+          // "comparison call perturbed markers" (a real id-mismatch's own
+          // marker-pruning side effects could trip that assertion instead).
+          for (const [offset, id] of fromReal) {
+            const other = fromSorted.get(offset) ?? '';
+            if (id.startsWith('temp-') && other.startsWith('temp-')) continue; // fresh temp ids are random
+            expect(id, `seed=${seed} step=${step} op=${JSON.stringify(desc)} offset=${offset}`).toBe(other);
+          }
+          expect(fromSorted.size, `seed=${seed} step=${step}: fromSorted/fromReal size mismatch`).toBe(fromReal.size);
+          expect(getRecentlySplitEmptyIds(), `seed=${seed} step=${step}: comparison call perturbed markers`).toEqual(
+            markersBefore
+          );
+        }
+        doc = applied.tr.doc;
+        ids = fromReal;
+        types = realTypes;
+      }
+    }
+    // Floor, not just > 0: proves real scale, not a single accidental
+    // comparison. The plan measured 836 eligible steps at this seed range;
+    // 100 leaves headroom for harness/seed drift while still failing loudly
+    // if the eligible-step count collapsed to a handful.
+    expect(outOfOrderSteps).toBeGreaterThanOrEqual(100);
+  });
+});
+
+// ============================================================================
+// Pinned regressions for F1a, F2, F3, F4. (F1b, formerly pinned here too, is
+// FIXED — its test above has been flipped to assert the correct outcome
+// instead of the bug, per the note below, and is no longer a pinned
+// regression.)
 //
 // Judge must-fix #1: `it.fails` passes on ANY thrown error, which would
 // silently count a broken repro (a setup bug) as "bug confirmed". None of the
-// 6 tests below uses `it.fails` for that reason — each is an ordinary `it()`
+// 5 tests below uses `it.fails` for that reason — each is an ordinary `it()`
 // that asserts the EXACT wrong outcome as a specific, checkable fact (which
 // block now holds which other block's former id), plus a setup-precondition
 // assertion proving the scenario is wired the way its comment claims. Every
@@ -214,28 +344,34 @@ describe('P-B: identity — content-bearing blocks keep their id (structural edi
 // today. When the underlying bug is fixed, the assertion will start
 // FAILING — at that point flip it to assert the CORRECT outcome (removing
 // the "pinned bug" framing) rather than deleting the test; the coverage of
-// that scenario should stay.
+// that scenario should stay. (This is exactly what happened to F1b: its test
+// above now asserts the fixed outcome rather than the former bug.)
 //
 // Every scenario below was verified by directly running it against the real
 // `assignBlockIds` (not reasoned about in the abstract) before being pinned.
 // ============================================================================
 
-describe('pinned regression: F1b — an ordinary keystroke silently moves ids (map-order dependent)', () => {
-  it("a single character typed near a run of empty paragraphs rotates 3 blocks' ids when the id map was not built in document order", () => {
+describe('regression (fixed): F1b — a single-character edit no longer swaps ids through the per-block tie branch (see F1a below for multi-character shifts)', () => {
+  it("a single character typed near a run of empty paragraphs leaves all 3 blocks' ids untouched, regardless of the id map's insertion order", () => {
     // `currentBlockIds` is a plain Map; its iteration order is INSERTION
-    // order, not document order. `setBlockIdsForTopLevel`/`alignTopLevelIds`
-    // happen to build it in doc order, but `syncBlockIds` (api-content.ts)
-    // can `.set()` onto the EXISTING map between transactions without a
-    // preceding `clearBlockIds()` (see block-id-plugin.ts's own comment on
-    // `setBlockIdsForTopLevel`'s in-place, non-clearing update) — an existing
-    // key's `.set()` does NOT move it in iteration order, so a map built up
-    // through several such partial updates can end up in an order that has
+    // order, not document order. That order can legitimately be scrambled
+    // relative to the document: it's `assignBlockIds`'s OWN output ordering,
+    // not primarily `syncBlockIds`'s doing — after a document has been
+    // through the structural branch (e.g. a split), `newIds` gets its
+    // entries in the previous structural pass's Phase 2 (distance order),
+    // then its temp ids. `apply()` stores that Map as the next
+    // `currentBlockIds`, Swift confirming temp ids only updates keys already
+    // in the Map (order survives), and a selection-only transaction returns
+    // early (order survives moving the cursor too) — so a document that has
+    // been through even one split ends up with a map whose order has
     // nothing to do with the document. Phase 2's non-structural branch
-    // (`assignBlockIds`'s "structure unchanged" per-block matching) iterates
-    // `existingIds` directly and picks the FIRST same-distance candidate it
-    // sees — so when a keystroke shifts several same-type, same-distance
-    // empty siblings at once, the map's happenstance order — not the
-    // document's — decides which id lands where.
+    // (`assignBlockIds`'s "structure unchanged" per-block matching) now
+    // sorts same-distance candidates by old position (block-id-plugin.ts,
+    // the `sameType.sort` tiebreak) instead of picking the first one Map
+    // iteration happens to offer — so when a keystroke shifts several
+    // same-type, same-distance empty siblings at once, each one still gets
+    // its own id, not whichever the map's happenstance order used to hand
+    // out.
     resetBlockIdState();
     const doc0 = propSchema.nodes.doc.create(null, [para('A', 'abc'), para('E1', ''), para('E2', ''), para('B', 'x')]);
     const offsets: number[] = [];
@@ -267,22 +403,21 @@ describe('pinned regression: F1b — an ordinary keystroke silently moves ids (m
     });
 
     // Setup precondition: A is untouched (still the exact same offset) and
-    // correctly keeps its own id — the bug only affects the siblings AFTER
-    // the edit point, not the edited block itself.
+    // correctly keeps its own id — this was never in question; the bug only
+    // ever affected the siblings AFTER the edit point.
     expect(after.get(byTid.get('A')!)).toBe('id-A');
 
-    // The wrong outcome, stated as specific facts: E1, E2, and B each end up
-    // holding a DIFFERENT block's former id, not their own — a 3-way
-    // rotation triggered by nothing more than where each id happened to sit
-    // in the Map, not by anything about the edit itself.
-    expect(after.get(byTid.get('E1')!)).toBe('id-E2'); // E1 now holds E2's old id
-    expect(after.get(byTid.get('E2')!)).toBe('id-B'); // E2 now holds B's old id
-    expect(after.get(byTid.get('B')!)).toBe('id-E1'); // B now holds E1's old id
+    // The correct outcome: E1, E2, and B each keep their OWN former id — no
+    // rotation, even though the id map's insertion order is scrambled and
+    // has nothing to do with the document.
+    expect(after.get(byTid.get('E1')!)).toBe('id-E1');
+    expect(after.get(byTid.get('E2')!)).toBe('id-E2');
+    expect(after.get(byTid.get('B')!)).toBe('id-B');
 
-    // Precondition/control check: with the id map built in DOCUMENT order
-    // instead, the exact same keystroke is harmless — every block keeps its
-    // own id. This proves the difference above is the map's iteration order,
-    // not something about the edit itself.
+    // Control check: the id map built in DOCUMENT order gives the identical
+    // result. Together with the scrambled case above, this shows the fix
+    // makes the outcome independent of the map's iteration order, not merely
+    // different.
     resetBlockIdState();
     const idsInDocOrder = new Map<number, string>();
     const typesInDocOrder = new Map<number, string>();
@@ -295,6 +430,58 @@ describe('pinned regression: F1b — an ordinary keystroke silently moves ids (m
     expect(afterControl.get(byTid.get('E1')!)).toBe('id-E1');
     expect(afterControl.get(byTid.get('E2')!)).toBe('id-E2');
     expect(afterControl.get(byTid.get('B')!)).toBe('id-B');
+  });
+
+  it("a single character deleted from block A leaves all 3 following blocks' ids untouched, regardless of the id map's insertion order (delete direction)", () => {
+    // Review finding #3: "lower position wins" for a delete relies on the
+    // shifted-away position already being claimed (by Phase 1, or earlier in
+    // this branch's own document-order loop) — not on the tiebreak alone —
+    // and nothing pinned that direction before this test. Same fixture and
+    // same per-block "structure unchanged" branch as the insert-direction
+    // test above, but exercising a one-character DELETE in A instead of an
+    // insert.
+    resetBlockIdState();
+    const doc0 = propSchema.nodes.doc.create(null, [para('A', 'abc'), para('E1', ''), para('E2', ''), para('B', 'x')]);
+    const offsets: number[] = [];
+    const tids: string[] = [];
+    doc0.forEach((n, off) => {
+      offsets.push(off);
+      tids.push(n.attrs.tid);
+    });
+    // Deliberately SCRAMBLED insertion order (E2, E1, A, B) rather than
+    // document order (A, E1, E2, B).
+    const ids = new Map<number, string>();
+    const types = new Map<number, string>();
+    for (const i of [2, 1, 0, 3]) {
+      ids.set(offsets[i], `id-${tids[i]}`);
+      types.set(offsets[i], 'paragraph');
+    }
+
+    // One ordinary edit: delete a single character from A's content
+    // ('abc' -> 'bc'). This does not change the block count (structureChanged
+    // stays false), so this exercises the same per-block branch as the
+    // insert-direction test, but shifts the following siblings BACKWARD
+    // instead of forward.
+    const tr = new Transform(doc0).delete(1, 2);
+    const [after] = assignBlockIds(tr.doc, ids, types, doc0, tr.mapping);
+
+    const byTid = new Map<string, number>();
+    tr.doc.forEach((n, off) => {
+      byTid.set(n.attrs.tid, off);
+    });
+
+    // Setup precondition: A really did shrink by one character and kept its
+    // own id — this was never in question; the bug only ever affected the
+    // siblings after the edit point.
+    expect(tr.doc.nodeAt(byTid.get('A')!)?.textContent).toBe('bc');
+    expect(after.get(byTid.get('A')!)).toBe('id-A');
+
+    // The correct outcome: E1, E2, and B each keep their OWN former id — no
+    // rotation, even though the id map's insertion order is scrambled and
+    // has nothing to do with the document.
+    expect(after.get(byTid.get('E1')!)).toBe('id-E1');
+    expect(after.get(byTid.get('E2')!)).toBe('id-E2');
+    expect(after.get(byTid.get('B')!)).toBe('id-B');
   });
 });
 
