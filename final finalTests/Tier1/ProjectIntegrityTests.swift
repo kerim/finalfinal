@@ -19,10 +19,10 @@ struct ProjectIntegrityTests {
     // MARK: - Helpers
 
     /// Creates a .ff package directory with a valid database inside
-    private func createHealthyPackage() throws -> (url: URL, db: ProjectDatabase) {
+    private func createHealthyPackage() throws -> URL {
         let url = URL(fileURLWithPath: "/tmp/claude/integrity-test-\(UUID().uuidString).ff")
-        let db = try TestFixtureFactory.createFixture(at: url)
-        return (url, db)
+        try TestFixtureFactory.createFixture(at: url)
+        return url
     }
 
     /// Creates a .ff package directory without a database file
@@ -34,7 +34,7 @@ struct ProjectIntegrityTests {
     }
 
     /// Creates a .ff package with a database that has no project record
-    private func createPackageWithoutProjectRecord() throws -> (url: URL, dbQueue: DatabaseQueue) {
+    private func createPackageWithoutProjectRecord() throws -> URL {
         let url = URL(fileURLWithPath: "/tmp/claude/integrity-noproj-\(UUID().uuidString).ff")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         TestFixtureCleanup.register(url)
@@ -73,11 +73,11 @@ struct ProjectIntegrityTests {
             """)
             // No rows inserted — project table exists but is empty
         }
-        return (url, dbQueue)
+        return url
     }
 
     /// Creates a .ff package with orphaned sections
-    private func createPackageWithOrphanedSections() throws -> (url: URL, db: ProjectDatabase, rawDb: DatabaseQueue) {
+    private func createPackageWithOrphanedSections() throws -> URL {
         let url = URL(fileURLWithPath: "/tmp/claude/integrity-orphan-\(UUID().uuidString).ff")
         // Start with a healthy fixture
         let db = try TestFixtureFactory.createFixture(at: url)
@@ -104,15 +104,14 @@ struct ProjectIntegrityTests {
                 arguments: [UUID().uuidString, projectId, "nonexistent-parent-id", 99, 2, "Orphaned Section", "Content", "next", now, now]
             )
         }
-        return (url, db, rawDb)
+        return url
     }
 
     // MARK: - Tests
 
     @Test("Healthy database reports no issues")
     func healthyDatabaseReportsNoIssues() throws {
-        let (url, db) = try createHealthyPackage()
-        defer { TestDatabaseTeardown.closeThenCleanUp(url, db) }
+        let url = try createHealthyPackage()
         let checker = ProjectIntegrityChecker(packageURL: url)
         let report = try checker.validate()
         #expect(report.isHealthy, "Valid fixture should report no issues")
@@ -121,7 +120,6 @@ struct ProjectIntegrityTests {
     @Test("Missing database detected with critical severity")
     func missingDatabaseDetected() throws {
         let url = try createEmptyPackage()
-        defer { try? FileManager.default.removeItem(at: url) }
         let checker = ProjectIntegrityChecker(packageURL: url)
         let report = try checker.validate()
         #expect(!report.isHealthy)
@@ -133,11 +131,7 @@ struct ProjectIntegrityTests {
 
     @Test("Missing project record detected")
     func missingProjectRecordDetected() throws {
-        let (url, dbQueue) = try createPackageWithoutProjectRecord()
-        defer { try? FileManager.default.removeItem(at: url) }
-        // Declared after the defer above, so it runs FIRST (Swift defers execute
-        // LIFO) -- the connection closes before the directory is removed.
-        defer { TestDatabaseTeardown.close(dbQueue) }
+        let url = try createPackageWithoutProjectRecord()
         let checker = ProjectIntegrityChecker(packageURL: url)
         let report = try checker.validate()
         #expect(!report.isHealthy)
@@ -147,12 +141,7 @@ struct ProjectIntegrityTests {
 
     @Test("Orphaned sections detected")
     func orphanedSectionsDetected() throws {
-        let (url, db, rawDb) = try createPackageWithOrphanedSections()
-        defer { try? FileManager.default.removeItem(at: url) }
-        // Declared after the defer above, so these run FIRST (Swift defers
-        // execute LIFO) -- both connections close before the directory is removed.
-        defer { TestDatabaseTeardown.close(rawDb) }
-        defer { TestDatabaseTeardown.close(db.dbWriter) }
+        let url = try createPackageWithOrphanedSections()
         let checker = ProjectIntegrityChecker(packageURL: url)
         let report = try checker.validate()
         let orphanIssue = report.issues.first {
@@ -306,16 +295,12 @@ struct ProjectIntegrityTests {
     @MainActor
     func openProjectWithNonCriticalDriftReportsDrift() throws {
         ProjectOpenErrorState.shared.pending = nil
-        let (url, db, rawDb) = try createPackageWithOrphanedSections()
         defer {
             ProjectOpenErrorState.shared.pending = nil
-            TestDatabaseTeardown.closeProjectThenCleanUp(url, extra: [db])
+            DocumentManager.shared.closeProject()
         }
-        // Declared after the defer above, so it runs FIRST (Swift defers execute
-        // LIFO) -- this bare FK-bypass connection closes before the directory,
-        // and the other two connections, are torn down.
-        defer { TestDatabaseTeardown.close(rawDb) }
 
+        let url = try createPackageWithOrphanedSections()
         let projectId = try DocumentManager.shared.openProject(at: url)
         #expect(!projectId.isEmpty, "a non-critical-drift project must still open successfully")
 
