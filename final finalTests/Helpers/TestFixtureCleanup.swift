@@ -41,12 +41,32 @@
 //  fixtures under final finalTests/Fixtures/) are never registered — see
 //  the `register: false` call sites in FixtureGeneratorTests.swift.
 //
+//  A scoped `-only-testing` run of a single Swift Testing suite (no
+//  `XCTestCase` in the filtered run at all) used to crash the whole test
+//  host here: `bootstrap` registered `TestFixtureCleanupObserver` with
+//  `XCTestObservationCenter` lazily, from whichever test happened to call
+//  `register(_:)` first, on whatever thread that was — and that call raised
+//  an uncaught NSException in exactly that run shape. Two candidate
+//  explanations for why were never empirically confirmed against the
+//  actual raised exception: (a) the observation center genuinely isn't set
+//  up yet this early in a scoped run, or (b) `addTestObserver` is asserting
+//  because it's being called off the main thread (Swift Testing runs
+//  synchronous tests off the main thread by default, unlike XCTestCase).
+//  Rather than build a fix around whichever of those is right, observer
+//  registration was moved out of `bootstrap` entirely and into
+//  `TestFixtureCleanupPrincipal` (Helpers/TestFixtureCleanupPrincipal.swift),
+//  this bundle's `NSPrincipalClass` — Apple's documented mechanism for
+//  running setup on the main thread before any test in either framework
+//  executes. That's safe under both candidate explanations above, so
+//  `bootstrap` below no longer touches `XCTestObservationCenter` at all,
+//  and there is no exception-catching machinery left in this target.
+//
 
 import Foundation
 import Darwin
 import XCTest
 
-/// Registered with `XCTestObservationCenter` from `TestFixtureCleanup.bootstrap`
+/// Registered with `XCTestObservationCenter` from `TestFixtureCleanupPrincipal`
 /// so that `TestFixtureCleanup.cleanupOwn()` runs once, at the end of the test
 /// bundle's run — see the header comment above for why this replaced `atexit`.
 final class TestFixtureCleanupObserver: NSObject, XCTestObservation {
@@ -66,15 +86,22 @@ enum TestFixtureCleanup {
     private static let manifestFilenamePrefix = ".ff-test-owner-"
 
     /// One-shot per-process bootstrap. Reaps dead owners' leftovers FIRST,
-    /// then claims (creates/truncates) this process's own manifest, then
-    /// registers the `testBundleDidFinish` observer that triggers normal-exit
-    /// cleanup (see the header comment for why this isn't `atexit`).
+    /// then claims (creates/truncates) this process's own manifest.
     ///
     /// Ordering matters: if pid recycling handed this process a manifest
     /// filename left behind by a dead process with the same pid, and we
     /// truncated it before reaping, that dead process's fixtures would be
     /// unlinked from every record and leak permanently — exactly the
     /// failure this feature exists to prevent. Reap first, always.
+    ///
+    /// Does NOT register `TestFixtureCleanupObserver` with
+    /// `XCTestObservationCenter` (the `testBundleDidFinish` observer that
+    /// triggers normal-exit cleanup, see the header comment for why this
+    /// isn't `atexit`) — that now happens exactly once, earlier, on the
+    /// main thread, from `TestFixtureCleanupPrincipal` (this bundle's
+    /// `NSPrincipalClass`; see the file header above for why). By the time
+    /// anything reaches this property, on any thread, the observer is
+    /// already registered.
     private static let bootstrap: Void = {
         // On a freshly-swept machine /tmp/claude may not exist yet — create
         // it before claiming a manifest inside it. This is one-shot, so if
@@ -84,8 +111,6 @@ enum TestFixtureCleanup {
         reapDeadOwners()
 
         claimOwnManifest()
-
-        XCTestObservationCenter.shared.addTestObserver(TestFixtureCleanupObserver())
     }()
 
     /// Registers a fixture URL for cleanup — either by this process at
