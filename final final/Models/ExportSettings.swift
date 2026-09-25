@@ -173,15 +173,18 @@ struct ExportSettings: Codable, Sendable {
 
     // MARK: - Persistence
 
-    /// Test seam: `BlockParserBibliographyHeaderNameTests` overrides this to a per-test
-    /// isolated `UserDefaults(suiteName:)` instance so tests never read/write the real
+    /// Test seam: a handful of test suites override this to a per-test isolated
+    /// `UserDefaults(suiteName:)` instance so tests never read/write the real
     /// `UserDefaults.standard` domain -- a crash mid-test between a write and its cleanup
-    /// would otherwise permanently change the user's real bibliography header name.
+    /// would otherwise permanently change the user's real bibliography header name. See
+    /// `final finalTests/Helpers/ExportSettingsTestLock.swift`'s doc comment for the current,
+    /// accurate list of which suites do this and why -- it changes as tests are added, moved,
+    /// or migrated onto explicit parameters instead, so it isn't repeated here.
     /// Defaults to `AppDefaults.store` -- `.standard` in production, unchanged -- because
     /// unit tests run inside the real app process (see `AppDefaults.swift`'s doc comment):
     /// `UserDefaults.standard` during ANY test run is the user's live settings domain, not
-    /// a sandboxed double. Every OTHER path into `save()` besides this suite's own isolated
-    /// override -- the settings-pane setters, `resetToDefaults()`, etc. -- would otherwise
+    /// a sandboxed double. Every OTHER path into `save()` besides those suites' own isolated
+    /// overrides -- the settings-pane setters, `resetToDefaults()`, etc. -- would otherwise
     /// keep writing the user's real export settings for the whole duration of any test run.
     /// Same shape as `DiagnosticLogFile._userDefaults`/`.userDefaults` (see that file's doc
     /// comment); `nonisolated(unsafe)` because `load()`/`save()` below are plain,
