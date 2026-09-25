@@ -13,37 +13,25 @@
 //  this feature each shipped.
 //
 //  Isolation: same seam as `BlockParserBibliographyHeaderNameTests.swift` -- see that file's
-//  doc comment's "CROSS-SUITE RACE, CLOSED FOR THIS FILE" section for the full rationale
-//  (`.serialized` only orders this suite against its own tests, not against other suites
-//  running concurrently; that file's race is closed only for ITS OWN tests, not for this
-//  file's `graceListCapsAt50` below, which still swaps the same static). That race, once only
-//  documented as latent, was actually reproduced by a full-suite run against
-//  `staleReparseAfterRenameKeepsBibliographyFlags` below.
+//  doc comment for the full rationale, including the CROSS-SUITE RACE section (`.serialized`
+//  only orders this suite against its own tests, not against other suites running
+//  concurrently). That race, once only documented as latent, was actually reproduced by a
+//  full-suite run against `staleReparseAfterRenameKeepsBibliographyFlags` below -- so both of
+//  this file's swap sites acquire `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`)
+//  around the entire swap-to-restore window, shared with the three other suites that swap the
+//  same process-wide `ExportSettings.userDefaults` static.
 //
-//  Of this file's two tests that touch `ExportSettingsManager.shared`/
-//  `ExportSettings.userDefaults`, only `graceListCapsAt50` still needs the swap: it drives
-//  `ExportSettingsManager.shared` directly (`setBibliographyHeaderName`, the grace-list cap
-//  logic under test), so it has no way to avoid the global. `staleReparseAfterRenameKeepsBibliographyFlags`
-//  passes `bibliographyHeaderName`/`graceNames` explicitly to `BlockParser.parse` -- which, per
-//  that function's own doc comment, skips the `ExportSettings.load()` call entirely when both
-//  are supplied together -- and `replaceBlocks` below never touches `ExportSettings` either, so
-//  that test no longer needs the isolated store, the lock, or `ExportSettingsManager.shared` at
-//  all; its former swap/lock scaffolding was pure defense-in-depth for a read path the explicit
-//  parameters had already made unreachable, so it has been removed. `graceListCapsAt50` below
-//  still acquires `exportSettingsTestLock` (see `ExportSettingsTestLock.swift`) around its
-//  entire swap-to-restore window, shared with the other suites that swap the same process-wide
-//  `ExportSettings.userDefaults` static.
-//
-//  `graceListCapsAt50` reaches `ExportSettingsManager.shared` -- a process-wide singleton that
+//  Both tests below reach `ExportSettingsManager.shared` -- a process-wide singleton that
 //  builds `settings` LAZILY on first access (`private init` calls `ExportSettings.load()`)
-//  and does NOT re-read `ExportSettings.userDefaults` afterwards. It snapshots whatever the
+//  and does NOT re-read `ExportSettings.userDefaults` afterwards. Each snapshots whatever the
 //  singleton holds BEFORE swapping the store pointer, and restores EXACTLY that in teardown.
-//  The ordering is the whole point: a snapshot taken AFTER installing the throwaway suite would
-//  let the lazy init trigger against the THROWAWAY store if this ran first in the process, and
-//  teardown would then write that throwaway value back as if it were the real one, leaving it
-//  in place for every test that ran afterwards. Snapshotting before the swap (and under the
-//  lock, so a sibling suite cannot have the pointer aimed at its own throwaway store at that
-//  instant) is what actually reverses the mutation instead of laundering it.
+//  The ordering is the whole point, and this file previously had it backwards: both sites
+//  took their snapshot AFTER installing the throwaway suite, so whichever test ran first in
+//  the process triggered the lazy init against the THROWAWAY store -- and its teardown then
+//  wrote that throwaway value back as if it were the real one, leaving it in place for every
+//  test that ran afterwards. Snapshotting before the swap (and under the lock, so a sibling
+//  suite cannot have the pointer aimed at its own throwaway store at that instant) is what
+//  actually reverses the mutation instead of laundering it.
 //
 
 import Testing
@@ -67,7 +55,59 @@ struct BibliographyRenameGraceNameTests {
     }
 
     @Test("Stale re-parse after a custom-to-custom rename keeps bibliography flags")
+    @MainActor
     func staleReparseAfterRenameKeepsBibliographyFlags() throws {
+        // Isolation is INLINE here, matching `graceListCapsAt50` below, rather than living in
+        // a closure-taking `withIsolatedStore` helper. That helper took the whole test body as
+        // a `rethrows` non-escaping closure, and with the body nested inside it this test
+        // failed reporting a filtered-entry count that contradicted BOTH the database left on
+        // disk and the very array being filtered -- while adding any statement at all to the
+        // body made it pass again. Running the body straight in the test method removes that
+        // construct.
+        let suiteName = "com.kerim.final-final.tests.bibRenameGrace.\(UUID().uuidString)"
+        let suite = try #require(UserDefaults(suiteName: suiteName))
+
+        // Cross-suite lock (see ExportSettingsTestLock.swift): acquired before the very first
+        // write to the shared `ExportSettings.userDefaults` pointer below, and held until that
+        // pointer -- and the manager cache swapped alongside it -- are fully restored, or
+        // another suite's concurrently-running test could observe this throwaway store.
+        exportSettingsTestLock.lock()
+
+        // Snapshot the singleton BEFORE the store pointer is swapped, and under the lock.
+        // `ExportSettingsManager` builds `settings` lazily on first access (`private init`
+        // calls `ExportSettings.load()`), so a first touch taken AFTER the swap initialises it
+        // from the throwaway suite -- and teardown then "restores" that throwaway value into
+        // the process, poisoning every test that runs later. Taking the touch under the lock
+        // also stops a concurrently-running sibling suite from having the pointer aimed at ITS
+        // throwaway store at this moment.
+        let manager = ExportSettingsManager.shared
+        let previousManagerSettings = manager.settings
+
+        let previousStore = ExportSettings.userDefaults
+        ExportSettings.userDefaults = suite
+        defer {
+            // Restore the manager's cache FIRST, while `ExportSettings.userDefaults` still
+            // points at `suite`, so the `save()` inside `update` lands in the throwaway store
+            // and never the real one. Statements within a single `defer` body run top to
+            // bottom, so the ordering here is the ordering that happens.
+            manager.update { $0 = previousManagerSettings }
+            ExportSettings.userDefaults = previousStore
+            suite.removePersistentDomain(forName: suiteName)
+            // Release LAST, after both restores above have fully landed -- releasing any
+            // earlier would let another suite's concurrently-waiting test swap the pointer
+            // out from under one of those restore writes.
+            exportSettingsTestLock.unlock()
+        }
+
+        var settings = ExportSettings.default
+        settings.bibliographyHeaderName = "Sources"
+        settings.previousBibliographyHeaderNames = ["Works Cited"]
+        settings.save()
+        // Force-sync the singleton's in-memory cache to the isolated settings just saved
+        // above -- it caches `settings` once at first access and does not re-read
+        // `ExportSettings.userDefaults` on its own.
+        manager.update { $0 = settings }
+
         // Heading text STILL reads the OLD name ("Works Cited"), simulating a document
         // that hasn't been regenerated since the setting was renamed to "Sources" -- the
         // exact scenario the grace list exists to keep recognized.
@@ -75,17 +115,19 @@ struct BibliographyRenameGraceNameTests {
         // Unlike other fixture-backed tests, this one does NOT go through
         // `TestFixtureFactory.createFixture`: that convenience wrapper calls
         // `BlockParser.parse(markdown:projectId:)` with no bibliography-name arguments,
-        // which falls through to `ExportSettings.load()` -- a read of the process-wide
-        // `ExportSettings.userDefaults` static this file's doc comment documents as a
-        // cross-suite race (see `ExportSettingsTestLock.swift`). This test instead passes
-        // `bibliographyHeaderName`/`graceNames` explicitly to `BlockParser.parse` -- which,
-        // per that function's own doc comment, skips the `ExportSettings.load()` call
-        // entirely when both are supplied together -- and `replaceBlocks` below never reads
-        // `ExportSettings` either. So this test never touches `ExportSettings.userDefaults`
-        // or `ExportSettingsManager.shared` at all, and needs no isolated store, no swap, and
-        // no `exportSettingsTestLock`: an isolated-store/manager-sync setup here would only
-        // ever be written to, never read by anything this test actually exercises.
-        // Everything below (package creation, project/content insert, `replaceBlocks`)
+        // which falls through to `ExportSettings.load()` -- a read of the very
+        // process-wide `ExportSettings.userDefaults` static this file's doc comment
+        // documents as a cross-suite race (see `ExportSettingsTestLock.swift`).
+        // The inline setup above closes that race for THIS suite's own tests, but a
+        // full-suite run still reproduced a failure here, meaning something beyond this
+        // suite's own swap sites can still be mid-flight on that global while this parse
+        // runs. So this test passes `bibliographyHeaderName`/`graceNames` explicitly to
+        // `BlockParser.parse` -- which, per that function's own doc comment, skips the
+        // `ExportSettings.load()` call entirely when both are supplied together -- making
+        // the actual parse under test immune to the shared global altogether, not merely
+        // well-behaved around it. The isolated store is kept anyway as defense in depth;
+        // it no longer matters to this parse call but costs nothing to leave in place.
+        // Everything else below (package creation, project/content insert, `replaceBlocks`)
         // mirrors `TestFixtureFactory.createFixture` exactly -- only the `BlockParser.parse`
         // call itself differs, exercising the same `replaceBlocks` path production goes
         // through (not a hand-rolled block insert).
@@ -130,24 +172,24 @@ struct BibliographyRenameGraceNameTests {
     @Test("Grace list caps at 50 entries, oldest dropped first, no duplicates")
     @MainActor
     func graceListCapsAt50() throws {
-        // Isolation is inline: this test drives `ExportSettingsManager.shared`, a @MainActor
-        // singleton, directly, and has no explicit-parameter path around it the way
-        // `staleReparseAfterRenameKeepsBibliographyFlags` above does.
+        // Isolation is inline (see `staleReparseAfterRenameKeepsBibliographyFlags` above for
+        // the same shape): this test drives `ExportSettingsManager.shared`, a @MainActor
+        // singleton, directly.
         let suiteName = "com.kerim.final-final.tests.bibRenameGraceCap.\(UUID().uuidString)"
         let suite = try #require(UserDefaults(suiteName: suiteName))
-        // Cross-suite lock (see ExportSettingsTestLock.swift): must be acquired before the
-        // very first write to the shared `ExportSettings.userDefaults` pointer below, and
-        // held until it is fully restored. This function has two `defer` blocks below (LIFO:
-        // the second-declared one, restoring the manager cache, runs FIRST; this one runs
-        // LAST) -- the release belongs in THIS defer, since it's the one that runs last and
-        // therefore only after both restores have landed.
+        // Cross-suite lock (see ExportSettingsTestLock.swift): see the identical acquire in
+        // `staleReparseAfterRenameKeepsBibliographyFlags` above for the full rationale. This
+        // function has two `defer` blocks below (LIFO: the second-declared one, restoring the
+        // manager cache, runs FIRST; this one runs LAST) -- the release belongs in THIS defer,
+        // since it's the one that runs last and therefore only after both restores have landed.
         exportSettingsTestLock.lock()
 
-        // Snapshot the singleton BEFORE the store pointer is swapped, and under the lock:
-        // `ExportSettingsManager` builds `settings` lazily on first access, so a first touch
-        // taken after the swap would initialise it from this throwaway suite and teardown
-        // would then "restore" that throwaway value into the process for every test that runs
-        // afterwards.
+        // Snapshot the singleton BEFORE the store pointer is swapped, and under the lock --
+        // see the identical snapshot in `staleReparseAfterRenameKeepsBibliographyFlags` above
+        // for why the ordering is load-bearing: `ExportSettingsManager` builds `settings`
+        // lazily on first access, so a first touch taken after the swap would initialise it
+        // from this throwaway suite and teardown would then "restore" that throwaway value
+        // into the process for every test that runs afterwards.
         let manager = ExportSettingsManager.shared
         let previousManagerSettings = manager.settings
 
