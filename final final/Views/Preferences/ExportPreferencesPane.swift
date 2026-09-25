@@ -11,8 +11,7 @@ import UniformTypeIdentifiers
 
 struct ExportPreferencesPane: View {
     // Internal (not private) because ExportPreferencesPane+Pandoc.swift, an extension of
-    // this struct in a separate file, reads/writes these -- same pattern as
-    // AppearancePreferencesPane's state (PreferencesView.swift) for the same reason.
+    // this struct in a separate file, reads/writes these.
     @State internal var settingsManager = ExportSettingsManager.shared
     @State internal var pandocStatus: PandocStatus = .notFound
     @State internal var isCheckingPandoc = false
