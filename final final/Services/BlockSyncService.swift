@@ -384,8 +384,9 @@ class BlockSyncService {
 
     /// `stopPolling()` followed by draining any in-flight poll cycle. Use this
     /// (not bare `stopPolling()`) at any call site whose very next synchronous
-    /// step also writes to the database — e.g. `handleProjectOpened()`'s
-    /// `flushAllPendingContent()`, or `performProjectClose()`'s `flushAllSync()` —
+    /// step also writes to the database — e.g. `handleProjectOpened()`'s or
+    /// `performProjectClose()`'s shared `flushAllPendingContent()` (review round 2:
+    /// close no longer calls `flushAllSync()` at all) —
     /// so that cycle is BEST-EFFORT no longer running (and about to write)
     /// underneath that later write. The drain narrows that window; it does not
     /// close it: a cycle wedged inside a bare `evaluateJavaScript` cannot be forced

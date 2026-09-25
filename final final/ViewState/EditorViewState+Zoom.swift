@@ -732,13 +732,20 @@ extension EditorViewState {
     /// replays the `fullContent` string captured when its debounce was originally
     /// scheduled, so it has no stale-content hazard for this to close.
     ///
-    /// `ContentView.handleProjectOpened()` is the one caller that passes a non-nil value --
-    /// the SAME content its own `flushAllPendingContent()` call just flushed -- to prevent
-    /// a pending bibliography update's flush hook from re-reading `editorState.content`,
-    /// which is deliberately stale for the duration of that function (review round 1
-    /// must-fix: the bibliography-flush clobber). `flushAllSync()` below passes `nil`,
-    /// preserving its existing behavior: by the time it runs (project close / quit),
-    /// `editorState.content` is already current.
+    /// `ContentView.handleProjectOpened()` and `ContentView.performProjectClose(fetchContent:)`
+    /// (review round 2, close's own version of this same fix -- TLA+ Finding #5) are the two
+    /// callers that pass a non-nil value -- in both cases the SAME content their own
+    /// `flushAllPendingContent()` call just flushed -- to prevent a pending bibliography
+    /// update's flush hook from re-reading `editorState.content`, which is deliberately stale
+    /// for the duration of both functions (review round 1 must-fix for switch: the
+    /// bibliography-flush clobber; the same hazard, now also reachable from close). Close no
+    /// longer routes through `flushAllSync()` below AT ALL -- `performProjectClose` calls
+    /// this function directly with that override, bypassing `flushAllSyncCore()`'s own
+    /// `editorState.content` read entirely. `flushAllSync()` below still passes `nil`, but its
+    /// only remaining caller is quit (`EditorViewState+Quit.swift`'s `flushForQuit()`), which
+    /// assigns the freshly-fetched content to `editorState.content` itself just before calling
+    /// it -- so "already current" still holds there. It no longer holds for close, because
+    /// close isn't a caller of this function at all anymore.
     func flushPendingBibliographyAndFootnoteSync(overrideContent: String? = nil) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
