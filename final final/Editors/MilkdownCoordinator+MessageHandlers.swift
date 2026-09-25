@@ -113,6 +113,7 @@ extension MilkdownEditor.Coordinator {
             if ready {
                 self.hasNotifiedWebViewReady = true
                 DebugLog.log(.editor, "[MilkdownEditor] editor-ready gate satisfied at attempt \(attempt)")
+                self.logCitationCacheSizeForUITesting(webView)
                 self.onWebViewReady?(webView)
             } else {
                 // [weak webView] (M13): a strong `webView` ref carried through this scheduled
@@ -125,6 +126,26 @@ extension MilkdownEditor.Coordinator {
                     self.notifyWebViewReadyWhenEditorReady(webView, attempt: attempt + 1)
                 }
             }
+        }
+    }
+
+    /// e2e evidence hook (ui-test-webkit-storage-clear task): logs the citation cache's size
+    /// (`window.FinalFinal.getCitationCount()`) at the exact moment `notifyWebViewReadyWhenEditorReady`
+    /// confirms the editor is ready -- which is guaranteed to be AFTER `restoreCitationLibrary()`
+    /// (citation-search.ts) has already run during Milkdown's `initEditor()` (main.ts sets
+    /// `isEditorReady()`'s backing flag only after that restore, never before -- see
+    /// AppDelegate.applicationWillFinishLaunching's WKWebsiteDataStore-clear comment for why that
+    /// ordering matters). "0" here means the localStorage cache genuinely came back empty (the
+    /// WebKit clear worked); a positive count means it carried over from a previous launch.
+    ///
+    /// `.lifecycle`-gated (enabled by default) and only evaluated under `TestMode.isUITesting`,
+    /// so this adds no work to a normal launch -- purely a UI-test-only observability seam, not a
+    /// behavior change.
+    func logCitationCacheSizeForUITesting(_ webView: WKWebView) {
+        guard TestMode.isUITesting else { return }
+        webView.evaluateJavaScript("window.FinalFinal.getCitationCount()") { result, _ in
+            let count = (result as? NSNumber)?.intValue ?? -1
+            DebugLog.log(.lifecycle, "[MilkdownEditor] citation cache size at editor-ready: \(count)")
         }
     }
 
