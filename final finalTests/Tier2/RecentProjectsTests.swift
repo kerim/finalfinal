@@ -32,10 +32,6 @@ struct RecentProjectsTests {
         return url
     }
 
-    private func cleanup(_ dir: URL) {
-        try? FileManager.default.removeItem(at: dir)
-    }
-
     @MainActor
     private func resetRecentProjects() {
         TestMode.clearTestState()
@@ -60,7 +56,7 @@ struct RecentProjectsTests {
         DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
         defer {
-            cleanup(dir)
+            TestDatabaseTeardown.closeThenCleanUp(dir)
             resetRecentProjects()
         }
 
@@ -88,7 +84,7 @@ struct RecentProjectsTests {
     @Test("URL.normalizedProjectPath treats a symlinked path and its real path as equal")
     func normalizedProjectPathResolvesSymlinks() throws {
         let dir = try makeTempDir()
-        defer { cleanup(dir) }
+        defer { TestDatabaseTeardown.closeThenCleanUp(dir) }
 
         let realURL = try makeDummyProject(named: "Real", in: dir)
         let linkURL = dir.appendingPathComponent("Link.ff")
@@ -117,7 +113,7 @@ struct RecentProjectsTests {
         DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
         defer {
-            cleanup(dir)
+            TestDatabaseTeardown.closeThenCleanUp(dir)
             resetRecentProjects()
         }
 
@@ -149,7 +145,7 @@ struct RecentProjectsTests {
         DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
         defer {
-            cleanup(dir)
+            TestDatabaseTeardown.closeThenCleanUp(dir)
             resetRecentProjects()
         }
 
@@ -188,7 +184,7 @@ struct RecentProjectsTests {
         DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
         defer {
-            cleanup(dir)
+            TestDatabaseTeardown.closeThenCleanUp(dir)
             resetRecentProjects()
         }
 
@@ -221,7 +217,7 @@ struct RecentProjectsTests {
         DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
         defer {
-            cleanup(dir)
+            TestDatabaseTeardown.closeThenCleanUp(dir)
             resetRecentProjects()
         }
 
@@ -258,7 +254,7 @@ struct RecentProjectsTests {
         DocumentManager.shared.excludedRecentProjectRoots = []
         let dir = try makeTempDir()
         defer {
-            cleanup(dir)
+            TestDatabaseTeardown.closeThenCleanUp(dir)
             resetRecentProjects()
         }
 
