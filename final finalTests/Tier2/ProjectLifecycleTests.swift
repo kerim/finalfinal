@@ -34,9 +34,9 @@ struct ProjectLifecycleTests {
     @MainActor
     func newProjectCreatesPackage() throws {
         TestMode.clearTestState()
-        defer { cleanUp() }
 
         let url = tempProjectURL()
+        defer { TestDatabaseTeardown.closeProjectThenCleanUp(url) }
         let projectId = try DocumentManager.shared.newProject(at: url, title: "Test Project")
 
         #expect(!projectId.isEmpty)
@@ -56,10 +56,10 @@ struct ProjectLifecycleTests {
     @MainActor
     func openProjectLoadsFixture() throws {
         TestMode.clearTestState()
-        defer { cleanUp() }
 
         // Create a fixture first
         let url = tempProjectURL()
+        defer { TestDatabaseTeardown.closeProjectThenCleanUp(url) }
         _ = try TestFixtureFactory.createFixture(at: url, title: "Open Test")
 
         let projectId = try DocumentManager.shared.openProject(at: url)
@@ -79,6 +79,11 @@ struct ProjectLifecycleTests {
         let url = tempProjectURL()
         _ = try DocumentManager.shared.newProject(at: url, title: "Close Test")
         #expect(DocumentManager.shared.hasOpenProject)
+        // Captured before closeProject() below drops DocumentManager's own reference,
+        // so the connection can still be closed explicitly (deterministically) rather
+        // than left to whenever ARC happens to deinit it.
+        let db = try #require(DocumentManager.shared.projectDatabase)
+        defer { TestDatabaseTeardown.closeThenCleanUp(url, db) }
 
         DocumentManager.shared.closeProject()
 
@@ -110,17 +115,25 @@ struct ProjectLifecycleTests {
     @MainActor
     func copyProjectPackage() throws {
         TestMode.clearTestState()
-        defer { cleanUp() }
 
         // Create original project
         let originalURL = tempProjectURL()
+        defer { try? FileManager.default.removeItem(at: originalURL) }
         _ = try DocumentManager.shared.newProject(at: originalURL, title: "Original")
 
-        // Close first to release DB locks (flushes WAL)
+        // Capture the original database's reference before closeProject() drops it,
+        // then close that captured reference explicitly (deterministically) so the
+        // WAL is flushed and the pool is fully closed before we copy the package --
+        // closeProject() alone only drops DocumentManager's own reference and leaves
+        // the actual close to whenever ARC happens to deinit it, which the plain
+        // removeItem in the defer above can otherwise race.
+        let originalDb = try #require(DocumentManager.shared.projectDatabase)
         DocumentManager.shared.closeProject()
+        TestDatabaseTeardown.close(originalDb.dbWriter)
 
         // Copy the package
         let copyURL = tempProjectURL()
+        defer { TestDatabaseTeardown.closeProjectThenCleanUp(copyURL) }
         try FileManager.default.copyItem(at: originalURL, to: copyURL)
 
         // Verify copy is independently openable
@@ -139,9 +152,9 @@ struct ProjectLifecycleTests {
     @MainActor
     func loadContentAfterNew() throws {
         TestMode.clearTestState()
-        defer { cleanUp() }
 
         let url = tempProjectURL()
+        defer { TestDatabaseTeardown.closeProjectThenCleanUp(url) }
         _ = try DocumentManager.shared.newProject(at: url, title: "Content Test", initialContent: "# Hello\n\nWorld.")
 
         let content = try DocumentManager.shared.loadContent()

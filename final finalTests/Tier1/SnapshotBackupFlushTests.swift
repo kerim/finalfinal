@@ -142,13 +142,6 @@ struct SnapshotBackupFlushTests {
         editorState.content = postMoveMarkdown
 
         let backupService = AutoBackupService()
-        // contentDidChange() below arms restartIdleTimer()'s real 60s Task (plain `Task { }`,
-        // @MainActor-isolated -- not `Task.detached`), which captures `self` strongly and would
-        // touch the snapshot service/GRDB pool if it ever fired. This test drives the
-        // idle-timeout path directly instead of waiting for it, so reset() the service (which
-        // cancels that Task) before the outer defer closes the pool -- declared after
-        // backupService exists, this defer runs first (LIFO), ahead of the pool close.
-        defer { backupService.reset() }
         backupService.configure(database: db, projectId: projectId)
         backupService.editorState = editorState
         backupService.contentDidChange()
@@ -178,10 +171,6 @@ struct SnapshotBackupFlushTests {
         editorState.content = postMoveMarkdown
 
         let backupService = AutoBackupService()
-        // Same idle-timeout Task hazard as the flush test above: reset() the service (which
-        // cancels that Task) before the outer defer closes the pool. Declared after
-        // backupService exists, this defer runs first (LIFO), ahead of the pool close.
-        defer { backupService.reset() }
         backupService.configure(database: db, projectId: projectId)
         backupService.editorState = editorState
         backupService.contentDidChange()
