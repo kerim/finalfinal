@@ -437,7 +437,6 @@
 		C59F90520C96450B216B4CC4 /* EditorFocusRestorationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9CD0347EA91CD29929398D5 /* EditorFocusRestorationTests.swift */; };
 		C6029A52F469EF653330FF43 /* BibliographyBareTitleSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 606547FDF06EACECDE151F9C /* BibliographyBareTitleSelectionTests.swift */; };
 		C63065FEE9261025A22945D6 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 6D1C9C394433400E8BE7F59C /* Fixtures */; };
-		C67772FD1B05161A5B70A269 /* TestFixtureCleanupPrincipal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933E25E1915285223119C1C2 /* TestFixtureCleanupPrincipal.swift */; };
 		C6B9E151FB9DD711E72960B8 /* ViewNotificationModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E673DA14AB0CE672FD60FB47 /* ViewNotificationModifiers.swift */; };
 		C7444C0D030F9A992761997C /* BibliographyBareTitleCurativeFixAndTerminatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D47AB3C5EDE59D007BEF61F /* BibliographyBareTitleCurativeFixAndTerminatorTests.swift */; };
 		C7514431B731F10B61E750AA /* BibliographyTerminatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846D908D309523173314CAD4 /* BibliographyTerminatorTests.swift */; };
@@ -919,7 +918,6 @@
 		92CC77CF95BEB70922D6893E /* OutlineSidebarPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineSidebarPane.swift; sourceTree = "<group>"; };
 		930DF60CEBBDE92143C20DA5 /* ToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastView.swift; sourceTree = "<group>"; };
 		93141FCBB4923D0F28E8C236 /* TestFixtureFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFixtureFactory.swift; sourceTree = "<group>"; };
-		933E25E1915285223119C1C2 /* TestFixtureCleanupPrincipal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFixtureCleanupPrincipal.swift; sourceTree = "<group>"; };
 		93660FF9498CD64DE4C5F5A7 /* Database+BlockParents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlockParents.swift"; sourceTree = "<group>"; };
 		944062D49633F32557CC7161 /* DocumentPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPreviewView.swift; sourceTree = "<group>"; };
 		94F8DE6DFBB989519468D19D /* StructuralUndoControllerReorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuralUndoControllerReorderTests.swift; sourceTree = "<group>"; };
@@ -1247,7 +1245,6 @@
 				5C33378897F65499D03AAF65 /* ExportSettingsTestLock.swift */,
 				0B8B7AFBFF578FE16F03F733 /* TestDatabaseTeardown.swift */,
 				430F492EB36053A043044C37 /* TestFixtureCleanup.swift */,
-				933E25E1915285223119C1C2 /* TestFixtureCleanupPrincipal.swift */,
 				93141FCBB4923D0F28E8C236 /* TestFixtureFactory.swift */,
 			);
 			path = Helpers;
@@ -2347,7 +2344,6 @@
 				52883B68239FA8048679DF5E /* TableRoundtripTests.swift in Sources */,
 				507C48F61AF05AE18075A35F /* TestDatabaseTeardown.swift in Sources */,
 				D9895552ECC052DF23786726 /* TestFixtureCleanup.swift in Sources */,
-				C67772FD1B05161A5B70A269 /* TestFixtureCleanupPrincipal.swift in Sources */,
 				B13377F7F836B3262ACD5830 /* TestFixtureCleanupTests.swift in Sources */,
 				914908877FE1D091C7241247 /* TestFixtureFactory.swift in Sources */,
 				3F0D8CBBB9C6DB3712432584 /* ToastCenterTests.swift in Sources */,
@@ -2873,7 +2869,6 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSPrincipalClass = TestFixtureCleanupPrincipal;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -2894,7 +2889,6 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSPrincipalClass = TestFixtureCleanupPrincipal;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -3189,7 +3183,6 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSPrincipalClass = TestFixtureCleanupPrincipal;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

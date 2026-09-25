@@ -426,12 +426,6 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        # TestFixtureCleanupPrincipal (Helpers/) is this bundle's NSPrincipalClass —
-        # Apple's documented mechanism for running setup on the main thread before
-        # any test (XCTest or Swift Testing) executes, regardless of run shape. It
-        # registers TestFixtureCleanup's XCTestObservation observer; see
-        # TestFixtureCleanup.swift's header comment for the crash this replaced.
-        INFOPLIST_KEY_NSPrincipalClass: "TestFixtureCleanupPrincipal"
 
   final finalUITests:
     type: bundle.ui-testing
