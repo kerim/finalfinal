@@ -41,6 +41,9 @@ struct AutoBackupServiceTests {
     func contentDidChangeSetsUnsavedFlag() throws {
         let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, _) = try configureService(db: db)
+        // contentDidChange() below arms the real 60s idle-timeout Task via restartIdleTimer();
+        // reset() cancels it so it can't fire against this service after the test ends.
+        defer { service.reset() }
 
         #expect(!service.hasUnsavedChanges)
         service.contentDidChange()
@@ -65,6 +68,10 @@ struct AutoBackupServiceTests {
     func projectWillCloseCreatesBackup() async throws {
         let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, pid) = try configureService(db: db)
+        // contentDidChange() below arms the real 60s idle-timeout Task via restartIdleTimer();
+        // projectWillClose()'s createBackupIfNeeded() path never cancels it, so reset() must,
+        // before the test ends.
+        defer { service.reset() }
 
         let countBefore = try snapshotCount(db: db, projectId: pid)
         service.contentDidChange()
@@ -91,6 +98,10 @@ struct AutoBackupServiceTests {
     func appWillQuitCreatesBackup() async throws {
         let db = try TestFixtureFactory.createTemporary(content: TestFixtureFactory.testContent)
         let (service, pid) = try configureService(db: db)
+        // contentDidChange() below arms the real 60s idle-timeout Task via restartIdleTimer();
+        // appWillQuit()'s createBackupIfNeeded() path never cancels it, so reset() must, before
+        // the test ends.
+        defer { service.reset() }
 
         let countBefore = try snapshotCount(db: db, projectId: pid)
         service.contentDidChange()
