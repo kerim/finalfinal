@@ -1,32 +1,55 @@
 // @vitest-environment jsdom
 // Property-based tests for block-id-plugin's id matching (t-fba5fdaa).
 //
-// Scope, as approved by the judge: the code does NOT yet satisfy "every
-// block keeps its id" — a prior fuzz-probe found 5 real bugs (F1a, F1b, F2,
-// F3, F4; all misattribution — an id lands on the wrong block — never a
-// duplicate or missing id). F1b (the "structure unchanged" per-block match
-// picking the first same-distance candidate in Map iteration order, instead
-// of a stable tiebreak) is now FIXED — see block-id-plugin.ts's per-block
-// matching branch and the P-C property test below. Rather than assert the
-// full (currently still false, pending F1a/F2/F3/F4) claim, this file ships
-// two properties scoped to what the code actually guarantees today, plus 4
-// remaining pinned regressions (below) that pin the known gaps so a fix
-// flips them, not silently reopens them.
+// Scope, as approved by the judge: a prior fuzz-probe found 5 real bugs
+// (F1a, F1b, F2, F3, F4; all misattribution — an id lands on the wrong
+// block — never a duplicate or missing id). All 5 are now FIXED for blocks
+// whose OLD START SURVIVED the mapping (not itself deleted) — every one of
+// the 5 is exactly that shape. A block whose start was itself deleted by the
+// mapping still takes the pre-existing raw same-offset fallback and can, in
+// principle, still collide by coincidental offset; see block-id-plugin.ts's
+// Phase 1 mapped-lookup comment (the "no matching swap vector" paragraph) for
+// that narrower, still-open case. F1b (the "structure unchanged" per-block
+// match picking the first same-distance candidate in Map iteration order,
+// instead of a stable tiebreak) was fixed first — see block-id-plugin.ts's
+// per-block matching branch and the P-C property test below. F1a, F2, F3, the
+// F3-join variant, and F4 are fixed together by assignBlockIds's Phase 1
+// mapped lookup: Phase 1 now follows each existing id to the position
+// `tr.mapping` actually carried its old start to, instead of trusting that a
+// block sharing its numeric offset is the same block (`oldByNewOffset`/
+// `tracked` in block-id-plugin.ts). The 5 regressions below are kept, flipped
+// to assert the now-correct outcome instead of the bug each used to pin —
+// see the note ahead of them.
+//
+// The code still does NOT satisfy "every block keeps its id, full stop":
+// two gaps survive the Phase 1 fix and are NOT covered by a pinned
+// regression here — any survivor, inside a structural transaction, whose
+// text changes by more than a prefix/suffix edit of its own old text (F2's
+// residual: `meaningfulTextOverlap` refuses the claim in Phase 1, and
+// `canClaimUnderStructuralChange` refuses it identically in Phase 2 —
+// independent of how close the old and new positions are, NOT specifically
+// tied to a 500+-position delete, which is merely the shape the original F2
+// fuzz-probe happened to find), and the `deleteAcross` content gate (a
+// separate, pre-existing issue, not touched by this fix — see
+// STRUCTURAL_VOCAB's comment below for the measured failure rate and which
+// build it is from). P-B's exclusions below are aimed at these two gaps, not
+// a claim that no other gap could exist.
 //
 //   P-A (safety):   no duplicate ids, no missing ids — across the FULL edit
 //                   vocabulary (typeChar, typeRun, deleteChars, split, join,
 //                   deleteBlocks, deleteAcross, insertBlock, setType,
 //                   confirm).
-//   P-B (identity): content-bearing blocks keep their ids — but ONLY across
-//                   structural edits (split, join, deleteBlocks, insertBlock,
-//                   confirm), explicitly excluding the text-edit paths
-//                   (typeChar/typeRun/deleteChars/deleteAcross/setType)
-//                   where F1a lives (F1b, formerly here too, is fixed).
-//                   typeChar, typeRun and deleteChars stay excluded even
-//                   after the F1b fix: F1a's multi-character shifts and the
-//                   adjacent-atom case (one keystroke before two back-to-back
-//                   figures/rules/section breaks, which swaps ids via Phase 1
-//                   rather than the branch F1b fixed) still reach them.
+//   P-B (identity): content-bearing blocks keep their ids — across split,
+//                   join, deleteBlocks, insertBlock, confirm, typeChar,
+//                   typeRun, and deleteChars. Widened by the Phase 1 fix: the
+//                   swap vectors that used to live in typeChar/typeRun/
+//                   deleteChars (F1a's multi-character shifts, and the
+//                   adjacent-atom case — one keystroke before two
+//                   back-to-back figures/rules/section breaks) are gone, so
+//                   those three ops now belong in P-B's vocabulary instead of
+//                   being excluded from it. `deleteAcross` and `setType`
+//                   stay excluded — see STRUCTURAL_VOCAB's comment below for
+//                   why.
 //   P-C (order independence): a block-count-preserving edit assigns ids the
 //                   same way regardless of the existing-ids map's insertion
 //                   order — the property whose absence was F1b's root cause.
@@ -110,6 +133,8 @@ const FULL_VOCAB: readonly OpKind[] = [
   'insertBlock',
   'setType',
   'confirm',
+  'wrap',
+  'lift',
 ];
 
 const checkSafety: StepChecker = ({ doc, ids }) => {
@@ -133,6 +158,8 @@ const checkSafety: StepChecker = ({ doc, ids }) => {
 
 describe('P-A: safety — no duplicate or missing block ids (full edit vocabulary)', () => {
   it('holds across 300 fixed-seed, 40-step random sequences', () => {
+    let wrapSteps = 0;
+    let liftSteps = 0;
     for (let i = 0; i < RUNS; i++) {
       const seed = BASE_SEED + i;
       const result = runRandomCase({
@@ -150,45 +177,81 @@ describe('P-A: safety — no duplicate or missing block ids (full edit vocabular
         check: checkSafety,
       });
       if (!result.ok) reportFailure('P-A safety', seed, result, checkSafety);
+      for (const op of result.case.ops) {
+        if (op.kind === 'wrap') wrapSteps++;
+        else if (op.kind === 'lift') liftSteps++;
+      }
     }
+    // Non-vacuity (review finding 8): prove wrap/lift are actually exercised
+    // at this seed range, not merely declared in the vocabulary and always
+    // skipped (e.g. because randomOpDescriptor's candidate list was empty on
+    // every attempt). Floor picked well under the observed count so harness/
+    // seed drift doesn't make this flaky the way P-C's floor comment explains.
+    expect(wrapSteps, 'wrap was never actually applied across the whole P-A seed range').toBeGreaterThan(10);
+    expect(liftSteps, 'lift was never actually applied across the whole P-A seed range').toBeGreaterThan(10);
   });
 });
 
 // ============================================================================
-// P-B: identity — content-bearing blocks keep their id, across structural
-// edits only.
+// P-B: identity — content-bearing blocks keep their id, across the widened
+// vocabulary below (structural edits plus the text-edit ops the Phase 1 fix
+// closed the swap vectors in). `deleteAcross` and `setType` stay excluded —
+// see this constant's own comment for why.
 // ============================================================================
 
-const STRUCTURAL_VOCAB: readonly OpKind[] = ['split', 'join', 'deleteBlocks', 'insertBlock', 'confirm'];
+// Name predates the Phase 1 fix (kept to minimize churn): this vocabulary
+// now also covers typeChar/typeRun/deleteChars, not structural ops alone —
+// see the file header's P-B paragraph for why those three were added.
+const STRUCTURAL_VOCAB: readonly OpKind[] = [
+  'split',
+  'join',
+  'deleteBlocks',
+  'insertBlock',
+  'confirm',
+  'typeChar',
+  'typeRun',
+  'deleteChars',
+  // `wrap`/`lift` (review finding 8, now that the wrap-containment fix above
+  // closes finding 1): a wrapped/lifted content-bearing block is exactly
+  // what this property claims should keep its id — the harness's `wrap` op
+  // gives the wrapper the wrapped block's own tid (production semantics),
+  // so checkIdentity below compares like for like across the nesting change.
+  'wrap',
+  'lift',
+  // `deleteAcross` stays OUT: 203/300 seeds fail with it included (STRUCTURAL_
+  // VOCAB's own ops plus deleteAcross, same seed range/steps/maxDocSize as
+  // the loop below) — a block merged across a selection fails the
+  // text-overlap check (canClaimUnderStructuralChange/meaningfulTextOverlap).
+  // Re-measured against THIS diff's own code (the wrap-containment fix and
+  // the O(n) pos->type map above included) via a scratch run of
+  // `runRandomCase` over the same seed range, not carried over from an
+  // earlier build — a separate, pre-existing issue this fix does not touch
+  // and is out of scope for it; it needs its own tracked fix, not just this
+  // comment.
+  // `setType` stays OUT too: a deliberate type conversion is exactly the
+  // in-place-edit shape phase1CanClaim's cross-type branch exists to admit,
+  // which is orthogonal to identity-preservation under position shifts —
+  // it belongs to its own property, not this one.
+];
 
-const checkIdentity: StepChecker = ({ before, after, op, recentlySplitEmptyIdsBefore }) => {
+const checkIdentity: StepChecker = ({ before, after, op }) => {
   const beforeByTid = new Map(before.map((b) => [b.tid, b]));
   for (const a of after) {
     const prev = beforeByTid.get(a.tid);
     if (!prev) continue; // brand-new tid (from split/insertBlock) — nothing to compare yet
 
-    // F3 GUARD (block-id-f3-split-bypass-overreach — see the pinned 'F3'
-    // regression below): P-B only asserts identity for CONTENT-BEARING
-    // blocks whose claim was NOT resolved via the split-then-fill bypass
-    // (canClaimViaRecentSplitBypass). That bypass is documented to apply
-    // only to a genuine split-then-immediate-fill of the SAME node, but F3
-    // shows it reaching further: a *different*, pre-existing content-bearing
-    // block can shift (via a later structural op such as `join`) onto the
-    // exact offset a "recently split, still empty" marker id used to occupy,
-    // and inherit THAT stale id instead of its own — losing its identity
-    // exactly the way an empty block does. `recentlySplitEmptyIdsBefore` is
-    // read BEFORE assignBlockIds runs for this step because assignBlockIds
-    // itself prunes a marker the instant a claim fills it (see
-    // block-id-plugin.ts's end-of-assignBlockIds pruning pass) — so checking
-    // it AFTER would always find the marker gone, even on exactly the claims
-    // this guard needs to catch. Excluding "empty prior text" alone (a
-    // narrower guard) is NOT enough — see the pinned "F3 (join variant)"
-    // regression below for a concrete content-bearing counter-example (a
-    // pre-existing, non-empty block shifted onto a stale marker's offset by
-    // an unrelated `join`) that only this broader guard correctly excludes.
-    // Every exclusion here is named, per the judge's must-fix: no silent
-    // filter.
-    if (prev.text === '' || recentlySplitEmptyIdsBefore.has(a.id)) continue;
+    // The F3 guard that used to sit here (excluding claims resolved via
+    // canClaimViaRecentSplitBypass, tracked through recentlySplitEmptyIdsBefore)
+    // is gone: F3 and its join variant are fixed by Phase 1's mapped lookup
+    // (block-id-plugin.ts's `oldByNewOffset`/`tracked`), which follows a
+    // shifted content-bearing block to its OWN mapped position before the
+    // bypass is ever consulted, so the bypass can no longer reach an
+    // unrelated block. Only the "empty prior text" exclusion remains, kept
+    // because P-B is scoped to CONTENT-BEARING blocks by definition — an
+    // originally-empty block's identity across a structural edit is not this
+    // property's claim (see the pinned regressions above for what still
+    // isn't fully covered: F2's residual, and deleteAcross).
+    if (prev.text === '') continue;
 
     if (a.id === prev.id) continue;
     return (
@@ -199,8 +262,10 @@ const checkIdentity: StepChecker = ({ before, after, op, recentlySplitEmptyIdsBe
   return null;
 };
 
-describe('P-B: identity — content-bearing blocks keep their id (structural edits only)', () => {
+describe('P-B: identity — content-bearing blocks keep their id (widened vocabulary)', () => {
   it('holds across 300 fixed-seed, 40-step random sequences (paragraphs only)', () => {
+    let wrapSteps = 0;
+    let liftSteps = 0;
     for (let i = 0; i < RUNS; i++) {
       const seed = BASE_SEED + i;
       const result = runRandomCase({
@@ -208,20 +273,26 @@ describe('P-B: identity — content-bearing blocks keep their id (structural edi
         steps: STEPS,
         allowedOps: STRUCTURAL_VOCAB,
         paragraphsOnly: true,
-        // F2 GUARD (block-id-f2-large-delete-fresh-ids — see the pinned 'F2'
-        // regression below): F2 fires when a single delete spans 500+
-        // positions, causing the plugin to mint a FRESH id instead of
-        // reattaching the correct existing one. deleteBlocks is P-B's only
-        // delete-shaped op, and a deleted span can be at most the total doc
-        // size — capping the doc itself well under 500 (small block counts x
-        // short random text, see generateInitialBlocks/randomOpDescriptor's
-        // insertBlock case) makes a 500+-position delete structurally
-        // impossible here, so P-B never re-triggers F2.
+        // maxDocSize stays capped well under 500: Phase 1's mapped lookup
+        // removed the old need for this cap to dodge F2 (deleteBlocks is
+        // P-B's only delete-shaped op, and Phase 1 now claims a shifted
+        // survivor by its mapped position, not by Phase 2's distance search)
+        // — but Phase 2's own `distance < 500` cap still applies to whatever
+        // Phase 1 defers (a genuinely NEW block, or a claim Phase 1 refused),
+        // so keeping the doc small here still avoids exercising that cap by
+        // accident and keeps each case's runtime bounded.
         maxDocSize: 150,
         check: checkIdentity,
       });
       if (!result.ok) reportFailure('P-B identity', seed, result, checkIdentity);
+      for (const op of result.case.ops) {
+        if (op.kind === 'wrap') wrapSteps++;
+        else if (op.kind === 'lift') liftSteps++;
+      }
     }
+    // Non-vacuity (review finding 8), same rationale as P-A's floor above.
+    expect(wrapSteps, 'wrap was never actually applied across the whole P-B seed range').toBeGreaterThan(10);
+    expect(liftSteps, 'lift was never actually applied across the whole P-B seed range').toBeGreaterThan(10);
   });
 });
 
@@ -485,17 +556,20 @@ describe('regression (fixed): F1b — a single-character edit no longer swaps id
   });
 });
 
-describe('pinned regression: F1a — pasting a new block silently moves existing ids (paste/delete path)', () => {
-  it("inserting one new empty paragraph into a run of empties cascades 3 blocks' ids one slot down", () => {
+describe('regression (fixed): F1a — pasting a new block no longer moves existing ids (paste/delete path)', () => {
+  it('inserting one new empty paragraph into a run of empties leaves every existing id in place; the new paragraph gets its own temp id', () => {
     // Structural equivalent of F1b: a paste (insert) — not a keystroke — into
-    // a run of same-size (empty), same-type siblings. Unlike F1b this is NOT
+    // a run of same-size (empty), same-type siblings. Unlike F1b this was NOT
     // about Map iteration order (Phase 2's structural branch sorts its
-    // candidate pairs deterministically by distance then old position); it's
-    // a coincidental-offset theft in Phase 1: the freshly-inserted node's
-    // FOLLOWING sibling ends up sitting at EXACTLY the offset an unrelated,
-    // later sibling used to occupy (all four paragraphs here share the same
-    // 2-position empty nodeSize), so the trivial empty===empty text check
-    // hands it that sibling's id outright, cascading down the chain.
+    // candidate pairs deterministically by distance then old position); it
+    // was a coincidental-offset theft in Phase 1: the freshly-inserted node's
+    // FOLLOWING sibling used to end up sitting at EXACTLY the offset an
+    // unrelated, later sibling used to occupy (all four paragraphs here share
+    // the same 2-position empty nodeSize), so the old trivial empty===empty
+    // text check handed it that sibling's id outright, cascading down the
+    // chain. Phase 1's mapped lookup (block-id-plugin.ts's `oldByNewOffset`/
+    // `tracked`) now follows each survivor to its OWN mapped position instead
+    // of trusting raw offset equality, so no sibling's id shifts.
     resetBlockIdState();
     const doc0 = propSchema.nodes.doc.create(null, [para('E1', ''), para('E2', ''), para('E3', ''), para('E4', '')]);
     const ids = new Map<number, string>();
@@ -519,30 +593,27 @@ describe('pinned regression: F1a — pasting a new block silently moves existing
     expect(after.get(byTid.get('E1')!)).toBe('id-E1');
     expect(after.get(byTid.get('E2')!)).toBe('id-E2');
 
-    // The wrong outcome: the brand-new pasted node N ends up holding E3's
-    // former id (instead of getting a fresh one of its own), E3 ends up
-    // holding E4's former id, and E4 — which never moved in the document's
-    // own terms, only shifted position — is left with NO trace of its real
-    // id at all: it gets a brand-new temp- id, meaning any annotation
-    // anchored to E4 is now silently orphaned.
-    expect(after.get(byTid.get('N')!)).toBe('id-E3'); // pasted content steals E3's id
-    expect(after.get(byTid.get('E3')!)).toBe('id-E4'); // E3 steals E4's id
-    const e4Id = after.get(byTid.get('E4')!)!;
-    expect(e4Id).not.toBe('id-E4');
-    expect(e4Id.startsWith('temp-')).toBe(true); // E4's real id is gone, not just moved
+    // The correct outcome: E3 and E4 both keep their OWN former ids — no
+    // cascade — and the brand-new pasted node N gets a fresh temp id of its
+    // own instead of stealing anyone else's.
+    expect(after.get(byTid.get('E3')!)).toBe('id-E3');
+    expect(after.get(byTid.get('E4')!)).toBe('id-E4');
+    const nId = after.get(byTid.get('N')!)!;
+    expect(nId).not.toBe('id-E3');
+    expect(nId.startsWith('temp-')).toBe(true);
   });
 });
 
-describe('pinned regression: F2 — a 500+-position delete mints fresh ids instead of reattaching real ones', () => {
-  it('deleting a 600-character block orphans both blocks that follow it', () => {
+describe('regression (fixed): F2 — a 500+-position delete no longer mints fresh ids for unrelated survivors', () => {
+  it('deleting a 600-character block leaves both blocks that follow it with their own ids', () => {
     // Phase 2's structural (greedy) matching only considers a candidate
     // within `distance < 500` of the node's new offset (assignBlockIds's
-    // hardcoded cutoff). Deleting one large leading block shifts every
-    // following block back by MORE than that cutoff, so their own, genuinely
-    // correct old ids are never even considered as candidates — the plugin
-    // gives up and mints brand-new temp ids instead. Unlike F1a/F1b this is
-    // not a SWAP (no other block ends up holding the lost id) — the id is
-    // simply discarded.
+    // hardcoded cutoff) — that cutoff is unchanged, but Phase 1's mapped
+    // lookup now resolves this case before Phase 2 is ever reached: deleting
+    // one large leading block shifts every following block back by MORE than
+    // that cutoff, but `tr.mapping` still says exactly where each survivor's
+    // old start landed, so Phase 1 claims them directly regardless of
+    // distance.
     resetBlockIdState();
     const big = 'x'.repeat(600);
     const doc0 = propSchema.nodes.doc.create(null, [para('BIG', big), para('P1', 'one'), para('P2', 'two')]);
@@ -562,30 +633,27 @@ describe('pinned regression: F2 — a 500+-position delete mints fresh ids inste
     });
 
     // Setup precondition: the delete really does shift both survivors by
-    // more than the 500-position cutoff this test is targeting.
+    // more than the 500-position cutoff this test originally targeted.
     expect(bigSize).toBeGreaterThan(500);
 
-    // The wrong outcome: both P1 and P2 — whose text is completely unchanged
-    // — lose their real ids and get fresh ones instead.
-    const p1Id = after.get(byTid.get('P1')!)!;
-    const p2Id = after.get(byTid.get('P2')!)!;
-    expect(p1Id).not.toBe('id-P1');
-    expect(p1Id.startsWith('temp-')).toBe(true);
-    expect(p2Id).not.toBe('id-P2');
-    expect(p2Id.startsWith('temp-')).toBe(true);
+    // The correct outcome: both P1 and P2 — whose text is completely
+    // unchanged — keep their own real ids.
+    expect(after.get(byTid.get('P1')!)).toBe('id-P1');
+    expect(after.get(byTid.get('P2')!)).toBe('id-P2');
   });
 });
 
-describe('pinned regression: F3 — the split-then-fill bypass reaches a content-bearing block it should not', () => {
-  it("inserting a block above a just-split empty line lets the ORIGINAL (content-bearing) block steal the empty line's marked id", () => {
+describe('regression (fixed): F3 — the split-then-fill bypass no longer reaches a content-bearing block it should not', () => {
+  it('inserting a block above a just-split empty line leaves the ORIGINAL (content-bearing) block with its own id', () => {
     // canClaimViaRecentSplitBypass exists so a split-then-IMMEDIATELY-fill of
     // the SAME empty node (Enter, then type into the new blank line) doesn't
-    // get refused by the anti-ID-theft empty-vs-non-empty guard. This pins
-    // the documented bypass reaching further: a completely unrelated,
+    // get refused by the anti-ID-theft empty-vs-non-empty guard. This used to
+    // pin the documented bypass reaching further: a completely unrelated,
     // ALREADY content-bearing block (P, never touched by the split at all)
-    // can end up claiming the marked empty node's id instead, via nothing
-    // more than an unrelated insert shifting offsets around — losing P's own
-    // real, original id in the process.
+    // could end up claiming the marked empty node's id instead, via nothing
+    // more than an unrelated insert shifting offsets around. Phase 1's mapped
+    // lookup now follows P to its OWN mapped position before the bypass is
+    // ever consulted, so P is never compared against E's marked id at all.
     resetBlockIdState();
     const d0 = propSchema.nodes.doc.create(null, [para('P', 'abcdef')]);
     let ids = new Map<number, string>([[0, 'id-P']]);
@@ -608,17 +676,18 @@ describe('pinned regression: F3 — the split-then-fill bypass reaches a content
       byTid.set(n.attrs.tid, off);
     });
 
-    // The wrong outcome: P -- whose text "abcdef" is completely unchanged --
-    // ends up holding E's marked (recently-split-empty) id instead of its
-    // own "id-P", and "id-P" survives nowhere in the resulting id set at all.
-    expect(after.get(byTid.get('P')!)).toBe(eId);
-    expect(after.get(byTid.get('P')!)).not.toBe('id-P');
-    expect(new Set(after.values()).has('id-P')).toBe(false); // "id-P" is gone, not just moved
+    // The correct outcome: P -- whose text "abcdef" is completely unchanged
+    // -- keeps its own "id-P"; E keeps its marked (recently-split-empty) id;
+    // and the brand-new block X gets a fresh id of its own.
+    expect(after.get(byTid.get('P')!)).toBe('id-P');
+    expect(after.get(byTid.get('E')!)).toBe(eId);
+    expect(after.get(byTid.get('X')!)).not.toBe(eId);
+    expect(after.get(byTid.get('X')!)).not.toBe('id-P');
   });
 });
 
-describe('pinned regression: F3 (join variant) — a join shifts a pre-existing content-bearing block onto a stale split-empty marker', () => {
-  it("joining away a just-split empty line lets the block that SHIFTS INTO its old offset steal the empty line's marked id", () => {
+describe('regression (fixed): F3 (join variant) — a join no longer shifts a pre-existing content-bearing block onto a stale split-empty marker', () => {
+  it('joining away a just-split empty line leaves the block that SHIFTS INTO its old offset with its own id', () => {
     // Same underlying bug as the F3 test above (a content-bearing block
     // landing, by pure offset coincidence, on the offset a "recently split,
     // still empty" marker id used to occupy) but reached via `join` instead
@@ -626,10 +695,9 @@ describe('pinned regression: F3 (join variant) — a join shifts a pre-existing 
     // (checkIdentity, above) points to. Here P is never touched by the
     // split at all; a LATER join elsewhere in the document (A absorbing
     // the still-empty E back into itself) shifts P backward by exactly E's
-    // old nodeSize, landing P's new offset exactly on E's old offset.
-    // Phase 1 then looks up that offset in the OLD id map -- finds E's
-    // marker id, not P's own -- and `canClaimViaRecentSplitBypass`
-    // (oldText==='' at that offset, id marked) waves it through.
+    // old nodeSize, landing P's new offset exactly on E's old offset. Phase 1
+    // now follows P to its own mapped position instead of doing a raw lookup
+    // at that offset, so it never finds E's marker id there for P.
     resetBlockIdState();
     const d0 = propSchema.nodes.doc.create(null, [para('A', 'abcdef'), para('P', 'xyz')]);
     const aSize = para('A', 'abcdef').nodeSize;
@@ -672,25 +740,31 @@ describe('pinned regression: F3 (join variant) — a join shifts a pre-existing 
     // the coincidence this test depends on is real, not assumed.
     expect(byTid.get('P')).toBe(eOffset);
 
-    // The wrong outcome: P -- whose text "xyz" is completely unchanged --
-    // ends up holding E's marked (recently-split-empty) id instead of its
-    // own "id-P", and "id-P" survives nowhere in the resulting id set at all.
-    expect(after.get(byTid.get('P')!)).toBe(eId);
-    expect(after.get(byTid.get('P')!)).not.toBe('id-P');
-    expect(new Set(after.values()).has('id-P')).toBe(false); // "id-P" is gone, not just moved
+    // The correct outcome: A and P both keep their own, real ids -- P is
+    // never compared against E's marked id at all, because Phase 1 followed
+    // it to its own mapped position rather than doing a raw lookup at the
+    // offset it happens to land on.
+    expect(after.get(byTid.get('A')!)).toBe('id-A');
+    expect(after.get(byTid.get('P')!)).toBe('id-P');
+
+    // E itself was joined away and no longer exists as a block -- its marker
+    // id must not have been handed to P, A, or any other surviving block.
+    expect([...after.values()]).not.toContain(eId);
   });
 });
 
-describe("pinned regression: F4 — a brand-new paragraph inherits a heading's id (cross-type theft on empty blocks)", () => {
-  it("inserting an empty paragraph above a run of empty headings lets it steal the first heading's id", () => {
+describe("regression (fixed): F4 — a brand-new paragraph no longer inherits a heading's id (cross-type theft on empty blocks)", () => {
+  it('inserting an empty paragraph above a run of empty headings leaves every heading with its own id; the new paragraph gets its own temp id', () => {
     // phase1CanClaim allows a cross-type claim (paragraph <-> heading, etc.)
     // specifically so an in-place input-rule conversion (e.g. typing "# " to
-    // turn a paragraph into a heading) keeps its id. This pins that same
-    // allowance reaching a case it should not: a BRAND NEW, unrelated
+    // turn a paragraph into a heading) keeps its id. This used to pin that
+    // same allowance reaching a case it should not: a BRAND NEW, unrelated
     // paragraph materializing (via insert, not a conversion) at an empty
-    // heading's old offset inherits that heading's id outright, purely
-    // because both are empty and the position coincides -- despite being a
-    // completely different node type.
+    // heading's old offset inherited that heading's id outright, purely
+    // because both were empty and the position coincided -- despite being a
+    // completely different node type. Phase 1's mapped lookup now follows H1
+    // to its own mapped position, so the brand-new N is never compared
+    // against H1's id at that offset at all.
     resetBlockIdState();
     const d0 = propSchema.nodes.doc.create(null, [
       para('A', 'abc'),
@@ -718,9 +792,15 @@ describe("pinned regression: F4 — a brand-new paragraph inherits a heading's i
     expect(tr.doc.nodeAt(byTid.get('N')!)!.type.name).toBe('paragraph');
     expect(after.get(byTid.get('A')!)).toBe('id-A');
 
-    // The wrong outcome: the new PARAGRAPH N ends up holding the HEADING
-    // H1's former id -- a cross-type identity theft, not a conversion.
-    expect(after.get(byTid.get('N')!)).toBe('id-H1');
+    // The correct outcome: H1, H2, and Q all keep their own, real ids -- no
+    // cross-type theft -- and the brand-new paragraph N gets a fresh temp id
+    // of its own instead of stealing H1's.
+    expect(after.get(byTid.get('H1')!)).toBe('id-H1');
+    expect(after.get(byTid.get('H2')!)).toBe('id-H2');
+    expect(after.get(byTid.get('Q')!)).toBe('id-Q');
+    const nId = after.get(byTid.get('N')!)!;
+    expect(nId).not.toBe('id-H1');
+    expect(nId.startsWith('temp-')).toBe(true);
     expect(tr.doc.nodeAt(byTid.get('H1')!)!.type.name).toBe('heading'); // and H1 is still, in fact, a heading
   });
 });

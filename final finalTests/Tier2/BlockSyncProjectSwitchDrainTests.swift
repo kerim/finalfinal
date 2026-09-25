@@ -279,9 +279,7 @@ extension ZoomWordCountSyncTests {
 
     /// Regression test for the OTHER call site of the drain primitive:
     /// `performProjectClose()` in `ContentView+ProjectLifecycle.swift` calls
-    /// `blockSyncService.stopPollingAndDrain()` BEFORE its content flush (review round 2,
-    /// close-fetch-fresh-content: `flushAllPendingContent()`, the same helper project switch
-    /// uses -- not `editorState.flushAllSync()`, which close no longer calls at all)
+    /// `blockSyncService.stopPollingAndDrain()` BEFORE `editorState.flushAllSync()`
     /// (drain-then-flush order — MF2, block-sync-poll-races review round 2: this
     /// used to run the other way around, which meant a poll cycle already in
     /// flight when the user clicked close could resume and land a stale write
@@ -329,8 +327,7 @@ extension ZoomWordCountSyncTests {
     /// finish in the right order by chance, but actually waited for the cycle's
     /// real work (including its DB write) to complete, which is what makes it
     /// safe for a caller to run its own database write immediately afterward
-    /// (exactly what `performProjectClose()` does with `flushAllPendingContent()`, review
-    /// round 2 -- no longer `flushAllSync()`, which close doesn't call anymore).
+    /// (exactly what `performProjectClose()` does with `flushAllSync()`).
     @MainActor
     func testStopPollingAndDrain_waitsForInFlightForcedPoll_beforeReturning() async throws {
         let stack = try await makeStack()

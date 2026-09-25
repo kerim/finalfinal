@@ -266,10 +266,12 @@ export function clearBlockIds(): void {
  * node can slide into a deleted node's old offset and would otherwise
  * unconditionally inherit its ID (the header-delete-merge bug). In that case
  * we additionally require `meaningfulTextOverlap` between the old node's text
- * (at this offset, in the previous doc) and the new node's text — i.e. the
- * claim must look like an in-place edit/conversion of the SAME content, not
- * an unrelated node that happened to land on the same offset. Atomic same-type
- * claims (figure/math_display) are exempt from the content check — their
+ * — read at `oldPos`, the MAPPED old position (see the `oldPos` paragraph
+ * below), not at bare offset equality with the new node — and the new node's
+ * text — i.e. the claim must look like an in-place edit/conversion of the
+ * SAME content, not an unrelated node that happened to land on the same
+ * offset. Atomic same-type claims (figure/math_display) are exempt from the
+ * content check — their
  * content (image src/alt, LaTeX) has no meaningful prefix/suffix relationship,
  * and same-type-atomic slot reuse under churn is a narrow, accepted risk.
  *
@@ -285,7 +287,18 @@ export function clearBlockIds(): void {
  * being textually indistinguishable when the citation paragraph itself was
  * deleted). Omitting them (callers with no transaction `Mapping` available)
  * preserves the exact pre-existing behavior, since an empty
- * `deletedOldPositions` never triggers the refusal.
+ * `deletedOldPositions` never triggers the refusal. `oldPos` may be the
+ * MAPPED old position `assignBlockIds`'s Phase 1 resolved via `tr.mapping`
+ * (its `oldByNewOffset`/`tracked` lookup), not necessarily numerically equal
+ * to the block's own new offset — this function only ever compares it
+ * against `deletedOldPositions`. That distinction DOES change outcomes here,
+ * not only for the caller's `oldText`: `deletedOldPositions` is keyed by OLD
+ * positions, and before Phase 1 followed the mapping, callers passed the
+ * bare NEW offset into this parameter — an old/new coordinate mismatch that
+ * made the `deletedOldPositions.has(oldPos)` check compare against the wrong
+ * space for any shifted block. Passing the mapped `oldPos` makes that
+ * refusal fire correctly for shifted blocks — a genuine behaviour change,
+ * not a no-op passthrough.
  * Exported for tests.
  */
 export function phase1CanClaim(
@@ -730,6 +743,29 @@ export function suppressTempIdInZoom(zoomMode: boolean, offset: number, notesBou
  * that function's doc comment. Omitted (the plugin's `init` call site, which
  * has no prior transaction) or absent, the guard never refuses anything —
  * identical to this function's pre-existing behavior.
+ *
+ * `mapping` also drives Phase 1 itself, independent of
+ * `canClaimUnderStructuralChange`: when both `mapping` and `oldDoc` are
+ * present, Phase 1 looks each existing id up at the position `tr.mapping`
+ * carried its old start to, not at the bare new offset — see the
+ * `oldByNewOffset`/`tracked` comment inside this function for the full
+ * mechanism and the note on collisions. Omitting `mapping` (or supplying it
+ * without `oldDoc`) falls back to the pre-existing bare-offset behavior
+ * entirely — Phase 1 trusts raw offset equality exactly as before.
+ *
+ * A single block replaced by a different block in one transaction with
+ * unchanged block count still keeps the old id with no content gate — its
+ * start is AT the start of the replaced range (not merely somewhere inside
+ * it — `deleted` comes from `pos == start` together with `pos != end`
+ * setting the DEL_SIDE case), so it takes the same-offset fallback. The "no
+ * content gate" part holds specifically BECAUSE structure is unchanged here
+ * — `phase1CanClaim`'s `!structureChanged` branch trusts position outright.
+ * Under a transaction where structure DOES change, the same-offset fallback
+ * is still gated by `canClaimUnderStructuralChange`/`meaningfulTextOverlap`
+ * like every other claim; it is not itself exempt. Skipping the gate when
+ * structure is unchanged is deliberate, because it is what keeps a
+ * whole-document replace (exactly this shape, at every block at once) from
+ * mass-deleting ids.
  * Exported for tests.
  */
 export function assignBlockIds(
@@ -779,15 +815,90 @@ export function assignBlockIds(
   // proof — a different-typed node could coincidentally occupy that offset
   // — so this also requires the resolved node's type to match the type on
   // record for that position.
+  // Shared O(n) index for the two stale-key checks below (this one, and
+  // Phase 1's mapped-lookup loop right after it): a single `oldDoc.forEach`
+  // pass over its top-level children, position -> type name. Both loops used
+  // to call `safeNodeAt(oldDoc, oldPos)` (== `Node.nodeAt`, which linearly
+  // scans `Fragment.findIndex` — verified against prosemirror-model's
+  // source) once per `existingIds` entry; Phase 1's loop runs on EVERY
+  // doc-changing transaction, keystrokes included (unlike this
+  // `structureChanged`-gated one), so that made the whole call O(n²) per
+  // keystroke, not O(n) as intended. One shared map keeps both checks O(1)
+  // each, for O(n) total. Built whenever `mapping && oldDoc` — Phase 1's own
+  // loop needs it unconditionally on that pair; gating it further on
+  // `structureChanged` here too would just rebuild it a second time below.
+  const oldTypeByPos = new Map<number, string>();
+  if (mapping && oldDoc) {
+    oldDoc.forEach((node, offset) => {
+      oldTypeByPos.set(offset, node.type.name);
+    });
+  }
+
   const deletedOldPositions = new Set<number>();
   if (mapping && structureChanged) {
     for (const oldPos of existingIds.keys()) {
-      const oldNode = safeNodeAt(oldDoc, oldPos);
-      if (!oldNode || oldNode.type.name !== existingTypes.get(oldPos)) continue;
+      if (oldTypeByPos.get(oldPos) !== existingTypes.get(oldPos)) continue;
       if (mapping.mapResult(oldPos + 1).deletedAcross) {
         deletedOldPositions.add(oldPos);
       }
     }
+  }
+
+  // Phase 1 mapped lookup (F1a fix): for every existing id, follow
+  // tr.mapping to the NEW position its OLD start actually landed at, instead
+  // of trusting that a block sharing its numeric offset is the same block.
+  // Without this, a same-type/same-shape sibling that slides onto another
+  // block's old offset (a multi-character insert/delete elsewhere in the
+  // doc, or one keystroke before two back-to-back atomic/leaf blocks) takes
+  // that other block's id via the old bare `existingIds.get(offset)` lookup
+  // — the F1a bug. `oldByNewOffset` maps each surviving old position's
+  // mapped NEW position back to that old position; `tracked` is every old
+  // position that survived the mapping at all.
+  const oldByNewOffset = new Map<number, number>(); // new offset -> old position
+  const tracked = new Set<number>(); // old positions
+  // old position -> the NEW position `tracked.add`'s own r.pos mapped it to
+  // — same values as `oldByNewOffset`'s keys, just indexed the other
+  // direction so Phase 1 can ask "where did THIS numeric old position end
+  // up?" in O(1). Feeds the wrap containment check below (review finding 1).
+  const trackedNewPos = new Map<number, number>();
+  if (mapping && oldDoc) {
+    const collided = new Set<number>();
+    for (const oldPos of existingIds.keys()) {
+      if (oldTypeByPos.get(oldPos) !== existingTypes.get(oldPos)) continue; // stale key: stays raw-eligible
+      const r = mapping.mapResult(oldPos, 1); // assoc=1: an insert exactly at a block's start pushes that block right
+      if (r.deleted) continue; // start was replaced: stays raw-eligible (fallback)
+      tracked.add(oldPos);
+      trackedNewPos.set(oldPos, r.pos);
+      if (oldByNewOffset.has(r.pos)) {
+        collided.add(r.pos);
+        continue;
+      }
+      oldByNewOffset.set(r.pos, oldPos);
+    }
+    // The `tracked` set, stated exactly:
+    //
+    // What it holds. `tracked` holds OLD positions: every `existingIds` key
+    // whose start survived the transaction per the mapping (valid key, not
+    // `deleted`).
+    //
+    // The mixing is intended. Phase 1's fallback below tests a NEW offset
+    // against this OLD-position set on purpose. The fallback is the old raw
+    // lookup `existingIds.get(offset)`, which already reads the old-position
+    // key that is numerically equal to the new offset. `tracked.has(offset)`
+    // asks one question: has the block that used to live at that number been
+    // accounted for somewhere by the mapping? If yes, the raw lookup would
+    // hand its id to whatever landed on its old number, which is exactly the
+    // F1a theft. So that raw lookup is refused.
+    //
+    // Collisions. When two surviving old positions map to the same new
+    // position, both stay in `tracked` and both are removed from
+    // `oldByNewOffset`. Neither can be claimed in Phase 1, either by mapped
+    // position or by raw offset. Their ids stay unclaimed and both blocks
+    // defer to Phase 2 (proximity). No real collision could be constructed
+    // for a test — mapping is monotonic, and a survivor never shares a
+    // mapped position with another survivor — so this is a defensive rule
+    // with no test.
+    for (const p of collided) oldByNewOffset.delete(p);
   }
 
   // [SYNC-DIAG Phase 0] Log when the existingIds baseline is empty — strong desync signal.
@@ -811,19 +922,47 @@ export function assignBlockIds(
   // Zoom mode: only the mini-Notes tail is exempt from temp IDs (see zoomNotesBoundary)
   const notesBoundary = blockIdZoomMode ? zoomNotesBoundary(doc) : Infinity;
 
-  // Phase 1: exact-position matches. `phase1CanClaim` enforces the type gate
-  // that prevents atomic-type (figure) theft from position-shifted paragraphs
-  // while still admitting legitimate input-rule conversions (paragraph↔heading,
-  // paragraph↔list, paragraph↔table, etc.).
+  // Phase 1: mapped-position matches. Each existing id is looked up at the
+  // position `tr.mapping` actually carried its old start to (`oldByNewOffset`/
+  // `tracked`, computed above), not at the bare new offset — see those
+  // structures' comment for why a raw-offset match would hand a shifted
+  // block's id to whatever else happens to land on its old number (F1a).
+  // `phase1CanClaim` then enforces the type gate that prevents atomic-type
+  // (figure) theft from position-shifted paragraphs while still admitting
+  // legitimate input-rule conversions (paragraph↔heading, paragraph↔list,
+  // paragraph↔table, etc.).
   doc.forEach((node, offset) => {
     if (isBlockType(node)) {
-      const existingId = existingIds.get(offset);
-      const existingType = existingTypes.get(offset);
+      // `oldByNewOffset.get(offset)` is the mapped-position match. Falling
+      // back to `offset` itself is only valid when no tracked old position
+      // claims this new offset at all — `tracked.has(offset)` true means
+      // SOME survivor's old position numerically equals this new offset, but
+      // its own mapped destination is elsewhere, so treating `offset` as
+      // that survivor's old position here would be exactly the F1a theft.
+      //
+      // Exception (review finding 1 — wrap): when the tracked old position
+      // numerically equal to `offset` mapped to somewhere STRICTLY inside
+      // the new node sitting at `offset` (`offset < mappedPos < offset +
+      // node.nodeSize`), that old block was WRAPPED, not displaced — Enter
+      // toggling a paragraph into a blockquote or list always leaves the
+      // wrapper starting at the wrapped block's own old offset, with the
+      // wrapped block itself now nested one or more levels deeper inside it.
+      // That is still `offset`'s own former occupant, so the raw fallback is
+      // safe here specifically. A neighbour merely pushed right by an insert
+      // lands exactly at `offset + node.nodeSize` (the sibling boundary, not
+      // "inside" it), so the strict bound keeps ordinary F1a theft refused.
+      const wrappedMappedPos = tracked.has(offset) ? trackedNewPos.get(offset) : undefined;
+      const wasWrapped =
+        wrappedMappedPos !== undefined && offset < wrappedMappedPos && wrappedMappedPos < offset + node.nodeSize;
+      const lookupPos = oldByNewOffset.get(offset) ?? (tracked.has(offset) && !wasWrapped ? undefined : offset);
+      const existingId = lookupPos === undefined ? undefined : existingIds.get(lookupPos);
+      const existingType = lookupPos === undefined ? undefined : existingTypes.get(lookupPos);
       // Only compute text content when it's actually needed (structureChanged gates
       // the content check inside phase1CanClaim — see meaningfulTextOverlap, which is
       // only reached when structureChanged is true) — keeps the dominant hot path
       // (ordinary keystrokes, structureChanged === false) free of these lookups.
-      const oldText = structureChanged ? safeNodeAt(oldDoc, offset)?.textContent : undefined;
+      const oldText =
+        structureChanged && lookupPos !== undefined ? safeNodeAt(oldDoc, lookupPos)?.textContent : undefined;
       const newText = structureChanged ? node.textContent : '';
       if (
         phase1CanClaim(
@@ -835,7 +974,7 @@ export function assignBlockIds(
           oldText,
           newText,
           recentlySplitEmptyIds,
-          offset,
+          lookupPos,
           deletedOldPositions
         )
       ) {
@@ -986,11 +1125,19 @@ export function assignBlockIds(
       // structural pass's Phase 2 (distance order), then its temp ids. That
       // order then gets carried forward as `currentBlockIds` into the next,
       // non-structural transaction — so an ordinary "type a character back"
-      // edit after a split can swap two blocks' ids through this branch. (A
-      // keystroke can still swap two blocks' ids a different way, through
-      // Phase 1: see F1a, and the adjacent-atoms case — one keystroke before
-      // two back-to-back figures/rules/section breaks swaps them via Phase 1
-      // — tracked separately.)
+      // edit after a split can swap two blocks' ids through this branch.
+      // (Phase 1 itself no longer has a matching swap vector for blocks
+      // WHOSE START SURVIVED THE MAPPING: F1a — a multi-character shift, or
+      // one keystroke before two back-to-back atomic/leaf siblings such as
+      // figures/rules/section breaks — is fixed by Phase 1's mapped lookup,
+      // above, which follows each such existing id to where `tr.mapping`
+      // actually carried its old start instead of trusting raw offset
+      // equality. A block whose start was itself DELETED by the mapping
+      // (`r.deleted`, see the tracked-loop comment above) still takes the
+      // raw same-offset fallback — a multi-block replace or paste that
+      // deletes two or more block starts while shifting offsets can still
+      // hand out an id by coincidental offset; that shape is not what this
+      // fix closes.)
       const best = sameType.length > 0 ? sameType.sort((a, b) => a.distance - b.distance || a.pos - b.pos)[0] : null;
 
       if (best) {

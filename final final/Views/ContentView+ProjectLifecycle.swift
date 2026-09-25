@@ -614,56 +614,14 @@ extension ContentView {
     }
 
     /// Handle project closed notification
-    ///
-    /// A2 (review round 2): captures `findBarState.activeWebView` as a STRONG reference
-    /// SYNCHRONOUSLY here, before the `Task` below starts -- not by reading the same
-    /// (`weak`, `FindBarState.swift`) property again from inside the `Task` after its own
-    /// suspension points. `FinalFinalApp.handleProjectClosed()` observes the same
-    /// `.projectDidClose` notification this function does and sets `appViewState = .picker`
-    /// synchronously as soon as it fires -- which can swap `ContentView` out of the SwiftUI
-    /// tree before this function's `Task` even starts running, let alone before
-    /// `performProjectClose`'s first `await`. Reading `findBarState.activeWebView` again
-    /// after that point made whether the close-time fetch reached a live web view depend on
-    /// SwiftUI teardown timing, with nothing to prove either way. Capturing the strong
-    /// reference here instead makes liveness hold BY CONSTRUCTION: `webView` below keeps the
-    /// `WKWebView` alive for the whole fetch regardless of what happens to
-    /// `findBarState.activeWebView` in the meantime -- the same guarantee
-    /// `fetchContentFromWebView()` gets implicitly by reading the (still-live) property
-    /// synchronously at its own call time, which only works there because that call always
-    /// happens BEFORE any teardown, unlike this one.
     func handleProjectClosed() {
-        let webView = findBarState.activeWebView
         Task {
-            await performProjectClose(fetchContent: {
-                guard let webView else {
-                    DebugLog.log(.lifecycle, "[ContentView] performProjectClose fetch: no web view captured")
-                    return nil
-                }
-                return await Self.raceContentFetch(timeout: .seconds(2)) {
-                    await withCheckedContinuation { continuation in
-                        webView.evaluateJavaScript("window.FinalFinal.getContent()") { result, error in
-                            if let error {
-                                DebugLog.log(.lifecycle, "[ContentView] performProjectClose fetch JS error: \(error)")
-                            }
-                            continuation.resume(returning: result as? String)
-                        }
-                    }
-                }
-            })
+            await performProjectClose()
         }
     }
 
-    /// `fetchContent` is injected (mirrors `flushAllPendingContent(fetchContent:)`'s own
-    /// parameter) so `ProjectCloseStaleContentTests` can drive this exact function -- the
-    /// real close call site -- with a stubbed fetch instead of a live WebView. Production's
-    /// real call site is `handleProjectClosed()` above, which builds its own web-view fetch
-    /// closure from a strong reference captured synchronously before that function's `Task`
-    /// starts -- see its own doc comment (A2, review round 2) for why. (There used to be an
-    /// intermediate zero-argument `performProjectClose()` wrapper passing
-    /// `fetchContentFromWebView` straight through; it's gone now that `handleProjectClosed()`
-    /// needs to build the closure itself from a value only it can capture at the right time,
-    /// and nothing else called it.)
-    func performProjectClose(fetchContent: () async -> String?) async {
+    /// Actually close the project and reset state
+    func performProjectClose() async {
         // Stop observation and drain any in-flight poll cycle FIRST, BEFORE the
         // flush below -- mirrors `handleProjectOpened()`'s drain-then-flush order
         // (MF2, block-sync-poll-races review round 2: this used to run the other
@@ -679,56 +637,9 @@ extension ContentView {
         editorState.stopObserving()
         await blockSyncService.stopPollingAndDrain()
 
-        // Fetch fresh content from the WebView before flushing, the same way project
-        // switch does (TLA+ Finding #5, GuardFetchOnClose in DocSyncCurrent.tla). The old
-        // `editorState.flushAllSync()` call here read `editorState.content` directly, which
-        // "is current" only if the last push landed -- but a push dropped mid-rebuild, zoom,
-        // or heading fix leaves `content` stale while the drain above has just saved the
-        // user's REAL, newer edit. Flushing that stale copy afterward silently reverted it,
-        // with no error surfaced anywhere. `flushAllPendingContent` (ContentView+
-        // VersionHistory.swift) never assigns the fetched content to `editorState.content`
-        // (nothing to publish into -- the WebView is closing), and stages
-        // `switchInProgressContent` so a bibliography debounce firing during
-        // `autoBackupService.projectWillClose()` below also sees the fresh copy;
-        // `resetForProjectSwitch()` clears that staged value afterward
-        // (EditorViewState+ProjectReset.swift).
-        //
-        // The fetch itself needs a live web view to reach, which is also the reason A2
-        // (review round 2) exists: `handleProjectClosed()` above captures
-        // `findBarState.activeWebView` as a strong reference SYNCHRONOUSLY, before its own
-        // `Task` (and therefore before `FinalFinalApp.handleProjectClosed()`'s synchronous
-        // `appViewState = .picker` can swap this view out of the tree) even starts, and
-        // builds the `fetchContent` closure passed in here from that captured reference --
-        // so by the time `fetchContent` actually runs, its liveness no longer depends on
-        // SwiftUI teardown timing at all.
-        // A6 (review round 2): `fetchContent` is wrapped, not called directly, purely to
-        // capture its raw result into `rawFetchResult` for the log line below -- the wrap
-        // does not change WHEN the fetch runs: `flushAllPendingContent` still calls this
-        // closure at the exact same point it always did (after staging
-        // `switchInProgressContent` from whatever's on hand, per that function's own doc
-        // comment), so the "stage before fetch" ordering that narrows the debounce-race
-        // window is unaffected. Nil/empty here can mean any of the outcomes
-        // `fetchContentFromWebView`/`raceContentFetch` already log individually at their own
-        // call sites (no web view, a JS error, or a real timeout) -- this line adds the one
-        // thing only this call site knows: whether the flush actually used the fetch's
-        // result or fell back to `editorState.content`, and how long each one was.
-        var rawFetchResult: String?
-        let flushedContent = await flushAllPendingContent(fetchContent: {
-            let value = await fetchContent()
-            rawFetchResult = value
-            return value
-        })
-        await editorState.flushPendingBibliographyAndFootnoteSync(overrideContent: flushedContent)
-        let fallbackLength = editorState.content.count
-        if let rawFetchResult, !rawFetchResult.isEmpty {
-            DebugLog.log(.lifecycle,
-                "[ContentView] performProjectClose: fetch outcome=fetched fetchedLength=\(rawFetchResult.count) "
-                + "fallbackLength=\(fallbackLength)")
-        } else {
-            DebugLog.log(.lifecycle,
-                "[ContentView] performProjectClose: fetch outcome=fallback fetchedLength=\(rawFetchResult?.count ?? 0) "
-                + "fallbackLength=\(fallbackLength)")
-        }
+        // Flush pending content synchronously before closing.
+        // editorState.content is current (JS 50ms debounce has fired by button click time).
+        await editorState.flushAllSync()
 
         // Create auto-backup before closing if there are unsaved changes (not for
         // Getting Started). Must stay AFTER the flush above -- `needsLiveFlush`

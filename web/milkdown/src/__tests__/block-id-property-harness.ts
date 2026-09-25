@@ -20,7 +20,7 @@
 // `tid` never exists in the production schema; it is a test-only oracle.
 import { type Node, Schema } from '@milkdown/kit/prose/model';
 import type { Mapping } from '@milkdown/kit/prose/transform';
-import { canJoin, Transform } from '@milkdown/kit/prose/transform';
+import { canJoin, findWrapping, liftTarget, Transform } from '@milkdown/kit/prose/transform';
 import {
   alignTopLevelIds,
   applyPendingConfirmations,
@@ -71,6 +71,20 @@ export const propSchema = new Schema({
       content: 'inline*',
       attrs: { tid: { default: '' }, level: { default: 1 } },
       toDOM: () => ['h1', 0],
+    },
+    // Wrap/lift-op-only container (review finding 8): a single-level wrapper
+    // around one paragraph or heading, mirroring block-id-phase1-mapping.test.ts's
+    // wrap-test schema. Own `tid` attr — the wrapper carries the wrapped
+    // block's tid (production semantics: the wrapper inherits the wrapped
+    // block's id), so the harness's identity oracle sees "the same block, now
+    // nested one level deeper" as one continuous tid rather than losing it.
+    // Never appears in an initial doc (buildDoc/BlockSpec never produce one) —
+    // only ever created by the 'wrap' op below.
+    blockquote: {
+      group: 'block',
+      content: 'block+',
+      attrs: { tid: { default: '' } },
+      toDOM: () => ['blockquote', 0],
     },
     text: { group: 'inline' },
   },
@@ -137,6 +151,19 @@ function topBlocks(doc: Node): Array<{ node: Node; offset: number }> {
   return arr;
 }
 
+/** Indices into `top` whose node is NOT a blockquote wrapper. Every op besides
+ * `wrap`/`lift` assumes its target top-level block is a flat, directly
+ * inline-content-bearing leaf (its generator does `content.size`-based
+ * arithmetic and its applier inserts/deletes/converts at that block's own
+ * offset+1) — none of that is valid one level inside a blockquote's `block+`
+ * content, so once `wrap` can produce a top-level blockquote, every other
+ * generator must skip it rather than risk an invalid-content Transform. */
+function nonBlockquoteIndices(top: ReadonlyArray<{ node: Node; offset: number }>): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < top.length; i++) if (top[i].node.type.name !== 'blockquote') out.push(i);
+  return out;
+}
+
 // ============================================================================
 // Operation vocabulary. Every kind here corresponds to one item in the task's
 // edit vocabulary: typeChar, typeRun, deleteChars, split, join, deleteBlocks,
@@ -157,7 +184,9 @@ export type OpKind =
   | 'deleteAcross'
   | 'insertBlock'
   | 'setType'
-  | 'confirm';
+  | 'confirm'
+  | 'wrap'
+  | 'lift';
 
 export type OpDescriptor =
   | { kind: 'typeChar'; blockIndex: number; at: number; char: string }
@@ -169,7 +198,9 @@ export type OpDescriptor =
   | { kind: 'deleteAcross'; fromBlock: number; fromOffsetInBlock: number; toBlock: number; toOffsetInBlock: number }
   | { kind: 'insertBlock'; atIndex: number; blockType: 'paragraph' | 'heading'; text: string; tid: string }
   | { kind: 'setType'; blockIndex: number }
-  | { kind: 'confirm'; mapping: Record<string, string> }; // temp id -> newly-assigned permanent id
+  | { kind: 'confirm'; mapping: Record<string, string> } // temp id -> newly-assigned permanent id
+  | { kind: 'wrap'; blockIndex: number } // wraps top-level block (must be paragraph/heading) into a blockquote
+  | { kind: 'lift'; blockIndex: number }; // lifts top-level blockquote's own (single) child back out
 
 export interface RecordedCase {
   seed: number;
@@ -204,17 +235,23 @@ export function randomOpDescriptor(doc: Node, ids: Map<number, string>, opts: Ge
 
   switch (kind) {
     case 'typeChar': {
-      const i = randInt(opts.rnd, top.length);
+      const candidates = nonBlockquoteIndices(top);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
       const at = randInt(opts.rnd, top[i].node.content.size + 1);
       return { kind, blockIndex: i, at, char: randomChar(opts.rnd) };
     }
     case 'typeRun': {
-      const i = randInt(opts.rnd, top.length);
+      const candidates = nonBlockquoteIndices(top);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
       const at = randInt(opts.rnd, top[i].node.content.size + 1);
       return { kind, blockIndex: i, at, text: randomText(opts.rnd, 2 + randInt(opts.rnd, 4)) };
     }
     case 'deleteChars': {
-      const i = randInt(opts.rnd, top.length);
+      const candidates = nonBlockquoteIndices(top);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
       const size = top[i].node.content.size;
       if (size === 0) return null;
       const from = randInt(opts.rnd, size);
@@ -222,13 +259,22 @@ export function randomOpDescriptor(doc: Node, ids: Map<number, string>, opts: Ge
       return { kind, blockIndex: i, from, to };
     }
     case 'split': {
-      const i = randInt(opts.rnd, top.length);
+      const candidates = nonBlockquoteIndices(top);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
       const at = randInt(opts.rnd, top[i].node.content.size + 1);
       return { kind, blockIndex: i, at, newTid: opts.nextTid() };
     }
     case 'join': {
       if (top.length < 2) return null;
       const i = 1 + randInt(opts.rnd, top.length - 1);
+      // `canJoin`'s `compatibleContent` pre-check is a loose reachability
+      // check, not a guarantee: for a block+ (blockquote) vs inline*
+      // (paragraph/heading) pair it can say "joinable" and the real join
+      // then throws at apply time ("Cannot join paragraph onto blockquote")
+      // — verified by running it. Exclude blockquote outright rather than
+      // trust canJoin here, same rationale as nonBlockquoteIndices above.
+      if (top[i - 1].node.type.name === 'blockquote' || top[i].node.type.name === 'blockquote') return null;
       if (!canJoin(doc, top[i].offset)) return null;
       return { kind, blockIndex: i };
     }
@@ -243,6 +289,10 @@ export function randomOpDescriptor(doc: Node, ids: Map<number, string>, opts: Ge
       if (top.length < 2) return null;
       const i = randInt(opts.rnd, top.length - 1);
       const j = i + 1 + randInt(opts.rnd, Math.min(2, top.length - 1 - i));
+      // A blockquote endpoint would need cross-depth content.size arithmetic
+      // this op was never designed for (see nonBlockquoteIndices) — skip
+      // rather than risk an invalid-content Transform.
+      if (top[i].node.type.name === 'blockquote' || top[j].node.type.name === 'blockquote') return null;
       const fromOffsetInBlock = randInt(opts.rnd, top[i].node.content.size + 1);
       const toOffsetInBlock = randInt(opts.rnd, top[j].node.content.size + 1);
       return { kind, fromBlock: i, fromOffsetInBlock, toBlock: j, toOffsetInBlock };
@@ -255,7 +305,9 @@ export function randomOpDescriptor(doc: Node, ids: Map<number, string>, opts: Ge
     }
     case 'setType': {
       if (opts.paragraphsOnly) return null; // P-B never converts types
-      const i = randInt(opts.rnd, top.length);
+      const candidates = nonBlockquoteIndices(top);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
       return { kind, blockIndex: i };
     }
     case 'confirm': {
@@ -266,6 +318,22 @@ export function randomOpDescriptor(doc: Node, ids: Map<number, string>, opts: Ge
       for (const t of temps) if (opts.rnd() < 0.5) mapping[t] = opts.nextPermId();
       if (Object.keys(mapping).length === 0) return null;
       return { kind, mapping };
+    }
+    case 'wrap': {
+      // Single-block wrap only (review finding 8's suggested scope) — target
+      // any top-level block that is not ITSELF already a blockquote (a
+      // paragraph or a heading; propSchema has no other block-group type).
+      const candidates = nonBlockquoteIndices(top);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
+      return { kind, blockIndex: i };
+    }
+    case 'lift': {
+      const candidates: number[] = [];
+      for (let i = 0; i < top.length; i++) if (top[i].node.type.name === 'blockquote') candidates.push(i);
+      if (candidates.length === 0) return null;
+      const i = candidates[randInt(opts.rnd, candidates.length)];
+      return { kind, blockIndex: i };
     }
   }
 }
@@ -372,6 +440,47 @@ export function applyOpDescriptor(doc: Node, desc: OpDescriptor): AppliedOp | nu
     case 'confirm':
       // Handled separately by the engine (no Transform involved) — see runEngine.
       return null;
+    case 'wrap': {
+      const b = top[desc.blockIndex];
+      if (!b || b.node.type.name === 'blockquote') return null;
+      // b.offset+1: the position just inside the block's own content —
+      // exactly block-id-phase1-mapping.test.ts's wrap-test resolve() point
+      // (that file's `doc.resolve(6)` for a block whose own offset is 5).
+      const $from = doc.resolve(b.offset + 1);
+      const range = $from.blockRange();
+      if (!range) return null;
+      const wrapping = findWrapping(range, propSchema.nodes.blockquote);
+      if (!wrapping) return null;
+      const tid = b.node.attrs.tid;
+      // Production semantics (review finding 1): the wrapper inherits the
+      // wrapped block's own id. Mirrored here by giving the wrapper the SAME
+      // tid, so the harness's identity oracle (snapshotByTid, top-level only)
+      // tracks "the same block, now inside a blockquote" as one continuous
+      // tid instead of losing it the moment the block nests a level deeper.
+      // The WRAPPED node's own tid is untouched by `Transform.wrap` (it moves
+      // the wrapped content unchanged into a new parent), so `lift` below
+      // needs no manual tid restoration — the inner block already has it.
+      const tr = new Transform(doc);
+      tr.wrap(
+        range,
+        wrapping.map((w) => ({ type: w.type, attrs: { ...(w.attrs ?? {}), tid } }))
+      );
+      return { tr };
+    }
+    case 'lift': {
+      const b = top[desc.blockIndex];
+      if (!b || b.node.type.name !== 'blockquote') return null;
+      // b.offset+2: one level inside the wrapper's own (single, by
+      // construction — 'wrap' above only ever wraps ONE block) child —
+      // mirrors block-id-phase1-mapping.test.ts's lift-then-rewrap case
+      // (`t0.doc.resolve(bqOffset0 + 2)`).
+      const $from = doc.resolve(b.offset + 2);
+      const range = $from.blockRange();
+      if (!range) return null;
+      const target = liftTarget(range);
+      if (target == null) return null;
+      return { tr: new Transform(doc).lift(range, target) };
+    }
   }
 }
 
