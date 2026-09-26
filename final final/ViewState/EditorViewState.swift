@@ -234,7 +234,8 @@ class EditorViewState {
     /// `suppressBibliographyRebuildsDuringSwitch` above, mirrored rather than reinvented,
     /// but covering both rebuild handlers (the switch flag only ever guarded the
     /// bibliography one -- `ContentView.handleNotesSectionChanged()` has no equivalent
-    /// guard today, and still doesn't for the switch case; this property is quit-only).
+    /// guard today, and still doesn't for the switch case; this property is quit-only --
+    /// see `suppressRebuildsForClose` below for the equivalent covering project close).
     ///
     /// Armed at the very top of `EditorViewState.flushForQuit()`, BEFORE
     /// `stopPollingAndDrain()` and the rest of the flush. Closes the gap
@@ -259,6 +260,64 @@ class EditorViewState {
     /// database writes those handlers would have re-read already happened via
     /// `flushPendingBibliographyAndFootnoteSync()` itself, independently of this poll.
     var suppressRebuildsForQuit = false
+
+    /// Suppresses `.bibliographySectionChanged` AND `.notesSectionChanged` handling for
+    /// the duration of project close -- same CHECKED-not-consumed shape as
+    /// `suppressRebuildsForQuit` above, mirrored rather than reinvented, and covering the
+    /// same two rebuild handlers.
+    ///
+    /// DEFENSIVE, not a bug this flag is likely to actually catch in the running app: the
+    /// only subscribers to either notification are `ContentView`'s own `.onReceive`
+    /// (`ContentView.swift`), and `FinalFinalApp.handleProjectClosed()` swaps `rootView` to
+    /// `.picker` synchronously as soon as `.projectDidClose` arrives -- before
+    /// `performProjectClose` even starts running. By the time
+    /// `flushPendingBibliographyAndFootnoteSync` posts either notification, after the drain
+    /// and up to a further 3s wait, SwiftUI has almost certainly already torn `ContentView`
+    /// (and its subscriptions) down. View teardown timing isn't a guarantee, though, and
+    /// `performProjectClose` keeps running regardless of whether the view is gone -- this
+    /// flag closes the reachable path outright rather than depending on that race.
+    ///
+    /// Armed synchronously in `ContentView.handleProjectClosed()`, before the `Task` that
+    /// calls `performProjectClose(fetchContent:)` even starts -- closing the gap between the
+    /// `.projectDidClose` notification arriving and that `Task`'s first run, where a debounce
+    /// firing in between could otherwise still reach an unguarded handler. Also kept as the
+    /// first statement inside `performProjectClose` itself: that function is also called
+    /// directly, with a stubbed fetch, by `ProjectCloseStaleContentTests`, which has no
+    /// `handleProjectClosed()` call to arm the flag first. Closes the same gap
+    /// `suppressRebuildsForQuit` closes for quit: `stopPollingAndDrain()` only stops the
+    /// periodic poll Timer and drains whatever unforced cycle is already in flight -- it has
+    /// no idea `performProjectClose` is about to call
+    /// `flushPendingBibliographyAndFootnoteSync(overrideContent:)` directly, which forces a
+    /// still-pending, debounced bibliography/Notes update to run right away. Unsuppressed,
+    /// either handler would spawn its own untracked `Task` that calls
+    /// `pollBlockChangesNowForDatabaseRebuild()` -- a FORCED poll that bypasses
+    /// `stopPollingAndDrain()`'s drain entirely and can re-apply a still-unconfirmed insert on
+    /// top of the row the close flush just wrote (the same duplicate-paragraph shape
+    /// `suppressRebuildsForQuit` guards against, reached through a citation- or
+    /// footnote-bearing paragraph instead of a plain one).
+    ///
+    /// Deliberately never cleared, for the same reason as `suppressRebuildsForQuit`: close
+    /// has no "after" for THIS `EditorViewState` to see. `EditorViewState` is `ContentView`'s
+    /// `@State`, and `performProjectClose`'s only caller discards `ContentView` (and with it
+    /// this `EditorViewState`): `FinalFinalApp.handleProjectClosed()` swaps `rootView` to
+    /// `.picker` synchronously as soon as `.projectDidClose` arrives -- before
+    /// `performProjectClose` even starts -- and `onProjectClosed` (called at the end of
+    /// `performProjectClose`) swaps it again. Reopening a project builds a brand-new
+    /// `ContentView` and `EditorViewState` with this flag back at its `false` default, so
+    /// there is no window left to reopen. Clearing at the end of close instead of never would
+    /// gain little: `flushPendingBibliographyAndFootnoteSync` stops WAITING after 3s, but an
+    /// update it gave up on can still post its notification later, after this function has
+    /// returned -- by then `resetForProjectSwitch()` has already set `content = ""`, and each
+    /// handler's OWN empty-content check (which runs before either suppress check) already
+    /// blocks that late post on its own. This flag only does real work in the narrower window
+    /// between the flush and that reset.
+    ///
+    /// INVARIANT this design depends on: every close discards this `ContentView`/
+    /// `EditorViewState` pair rather than reusing it. If a future change ever reuses an
+    /// `EditorViewState` across a close (instead of constructing a fresh one on reopen), that
+    /// change MUST also clear this flag somewhere in the reuse path, or every rebuild
+    /// notification handled by the reused instance would be silently suppressed forever.
+    var suppressRebuildsForClose = false
 
     /// IDs of sections included in the zoom (root + descendants)
     var zoomedSectionIds: Set<String>?

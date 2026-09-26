@@ -84,6 +84,13 @@ extension ContentView {
             DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (quitting)")
             return
         }
+        // Skip every bibliography notification for the duration of project close -- see
+        // `EditorViewState.suppressRebuildsForClose`'s doc comment (mirrors the quit guard
+        // immediately above).
+        guard !editorState.suppressRebuildsForClose else {
+            DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (closing)")
+            return
+        }
 
         // Atomic content+IDs push to prevent temp ID race condition.
         // Without this, setContent() triggers assignBlockIds() which creates temp IDs,
@@ -286,6 +293,13 @@ extension ContentView {
         // bibliography handler's matching guard above).
         guard !editorState.suppressRebuildsForQuit else {
             DebugLog.log(.bib, "[ContentView] notesSectionChanged suppressed (quitting)")
+            return
+        }
+        // Skip every Notes notification for the duration of project close -- see
+        // `EditorViewState.suppressRebuildsForClose`'s doc comment (mirrors the quit guard
+        // immediately above).
+        guard !editorState.suppressRebuildsForClose else {
+            DebugLog.log(.bib, "[ContentView] notesSectionChanged suppressed (closing)")
             return
         }
 

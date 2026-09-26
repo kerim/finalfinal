@@ -632,6 +632,16 @@ extension ContentView {
     /// synchronously at its own call time, which only works there because that call always
     /// happens BEFORE any teardown, unlike this one.
     func handleProjectClosed() {
+        // Judge round 1 (close-suppress-rebuilds, must-fix #6): arm the close-time rebuild
+        // suppression HERE, synchronously, before the `Task` below even starts -- not only at
+        // the top of `performProjectClose` (kept there too, for `ProjectCloseStaleContentTests`,
+        // which calls that function directly with no `handleProjectClosed()` call to arm it
+        // first). A debounced bibliography/Notes update firing in the gap between
+        // `.projectDidClose` arriving and this `Task`'s first run could otherwise still reach
+        // `handleBibliographySectionChanged`/`handleNotesSectionChanged` unguarded and start the
+        // forced re-poll this flag exists to block. See
+        // `EditorViewState.suppressRebuildsForClose`'s doc comment for the full mechanism.
+        editorState.suppressRebuildsForClose = true
         let webView = findBarState.activeWebView
         Task {
             await performProjectClose(fetchContent: {
@@ -664,6 +674,17 @@ extension ContentView {
     /// needs to build the closure itself from a value only it can capture at the right time,
     /// and nothing else called it.)
     func performProjectClose(fetchContent: () async -> String?) async {
+        // Arm the close-time rebuild suppression FIRST, before anything else in this
+        // function -- see `EditorViewState.suppressRebuildsForClose`'s doc comment for why
+        // this must be the very first statement (mirrors `flushForQuit()`'s own ordering
+        // for `suppressRebuildsForQuit`). `handleProjectClosed()` above already arms this
+        // same flag synchronously, before its own `Task` (which calls this function) even
+        // starts -- kept here too because this function is also called directly, with a
+        // stubbed fetch, by `ProjectCloseStaleContentTests`, which has no
+        // `handleProjectClosed()` call to arm it first. Setting an already-`true` flag again
+        // is harmless.
+        editorState.suppressRebuildsForClose = true
+
         // Stop observation and drain any in-flight poll cycle FIRST, BEFORE the
         // flush below -- mirrors `handleProjectOpened()`'s drain-then-flush order
         // (MF2, block-sync-poll-races review round 2: this used to run the other
