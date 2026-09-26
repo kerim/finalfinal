@@ -6,10 +6,14 @@
 // block — never a duplicate or missing id). All 5 are now FIXED for blocks
 // whose OLD START SURVIVED the mapping (not itself deleted) — every one of
 // the 5 is exactly that shape. A block whose start was itself deleted by the
-// mapping still takes the pre-existing raw same-offset fallback and can, in
-// principle, still collide by coincidental offset; see block-id-plugin.ts's
-// Phase 1 mapped-lookup comment (the "no matching swap vector" paragraph) for
-// that narrower, still-open case. F1b (the "structure unchanged" per-block
+// mapping still takes the pre-existing raw same-offset fallback, but as of
+// t-452ca407 that fallback claim is no longer trusted on position alone: when
+// the old occupant at that offset was wholly replaced, the claim is flagged
+// and routed through the same text-relatedness check every other structural
+// claim goes through (Phase 1's `flagged` computation and Phase 2's per-block
+// branch, both in block-id-plugin.ts) — see that fix's own doc comments for
+// what still collides (a coincidentally text-related but unrelated block, a
+// stale key, or an app-origin transaction). F1b (the "structure unchanged" per-block
 // match picking the first same-distance candidate in Map iteration order,
 // instead of a stable tiebreak) was fixed first — see block-id-plugin.ts's
 // per-block matching branch and the P-C property test below. F1a, F2, F3, the

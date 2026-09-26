@@ -193,22 +193,22 @@ describe('one transaction combining a text shift with a later setNodeMarkup (rev
   });
 });
 
-// Review finding 8: a "drag-move" -- delete a block, then insert a new one
-// elsewhere, in ONE transaction, net block count unchanged. Verified by
-// running it: structureChanged stays false (existingIds.size === new
-// blockCount), so this is decided by the per-block "structure unchanged"
-// proximity branch (block-id-plugin.ts), which has NO content-relatedness
-// check -- unlike the structural (Phase 2 greedy) branch. B's start was
-// itself deleted, so it is never `tracked`, leaving its id unclaimed and
-// available; N (brand-new content, unrelated to B) lands close enough to
-// B's old offset that the type-matching, no-content-check proximity search
-// hands N that orphaned id-B outright. This is a known, pre-existing gap in
-// that branch (see its own "No content-relatedness check here" comment) --
-// not something this fix touches or is meant to close -- pinned here as the
-// actual outcome rather than left undocumented.
-describe('drag-move: delete one block and insert a new one elsewhere in the same transaction (review finding 8)', () => {
-  it("pins the actual outcome: the new block inherits the deleted block's orphaned id by proximity", () => {
-    const { byTid, tr } = run(
+// Review finding 8 / t-452ca407: a "drag-move" -- delete a block, then insert
+// a new one elsewhere, in ONE transaction, net block count unchanged.
+// structureChanged stays false (existingIds.size === new blockCount), so
+// this is decided by the per-block "structure unchanged" proximity branch
+// (block-id-plugin.ts). B's start was itself deleted, so it is never
+// `tracked`, leaving its id unclaimed and available at B's old offset -- the
+// exact raw-fallback shape Phase 1 now flags. N (brand-new content, unrelated
+// to B) landing close enough to B's old offset used to inherit that orphaned
+// id-B by pure proximity, with no content check at all -- the actual bug
+// t-452ca407 fixes. Phase 1 flags N's raw-fallback claim (B's slot was wholly
+// deleted), N fails the text-relatedness check ("nnn" bears no relation to
+// "bbb"), and the same check now gates the per-block proximity branch too, so
+// N gets a fresh temp id instead and id-B goes to no one.
+describe('drag-move: delete one block and insert a new one elsewhere in the same transaction (review finding 8, t-452ca407)', () => {
+  it('the new block gets a fresh temp id; the deleted block’s id goes to no one', () => {
+    const { byTid, all, tr } = run(
       [block('paragraph', 'A', 'aaa'), block('paragraph', 'B', 'bbb'), block('paragraph', 'C', 'ccc')],
       (t) => {
         let bStart = -1;
@@ -238,11 +238,135 @@ describe('drag-move: delete one block and insert a new one elsewhere in the same
     expect(byTid.A).toBe('id-A');
     expect(byTid.C).toBe('id-C');
     // N is brand-new content (text "nnn", not "bbb") landing near B's old
-    // slot. The per-block proximity branch has no content-relatedness gate,
-    // so it hands N the orphaned id-B by pure proximity -- see the describe
-    // block's comment above for why this is a known, pre-existing gap, not
-    // something this fix touches or closes.
-    expect(byTid.N).toBe('id-B');
+    // slot. The text-relatedness check now gating this branch (t-452ca407)
+    // refuses the claim, so N mints its own temp id and id-B is orphaned for
+    // good, rather than being handed to unrelated content.
+    expect(byTid.N.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-B');
+  });
+});
+
+// t-452ca407: a deleted block's id must not be handed to an unrelated new
+// block just because the overall block count stayed the same. Both routes
+// that used to do this — Phase 1's raw same-offset fallback (the drag-move
+// shape above) and Phase 2's per-block proximity branch (no content check at
+// all) — are now gated by text relatedness, unless the transaction is
+// app-origin (a programmatic content push, which authored both sides and so
+// keeps position-only trust).
+describe("a deleted block's id is not reused by an unrelated new block (t-452ca407)", () => {
+  const abcd = () => [
+    block('paragraph', 'A', 'aaa'),
+    block('paragraph', 'B', 'bbb'),
+    block('paragraph', 'C', 'ccc'),
+    block('paragraph', 'D', 'ddd'),
+  ];
+  // offsets: A 0, B 5, C 10, D 15
+
+  it('multi-block replace: two unrelated new blocks over B..C both get temp ids', () => {
+    const { byTid, all, tr } = run(abcd(), (t) =>
+      t.replaceWith(5, 15, [block('paragraph', 'P', 'ppp'), block('paragraph', 'Q', 'qqq')])
+    );
+    expect(tr.doc.childCount).toBe(4);
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.D).toBe('id-D');
+    expect(byTid.P.startsWith('temp-')).toBe(true);
+    expect(byTid.Q.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-B');
+    expect(all).not.toContain('id-C');
+  });
+
+  it('multi-block replace that also shifts offsets: same outcome', () => {
+    const { byTid, all } = run(abcd(), (t) =>
+      t.replaceWith(5, 15, [block('paragraph', 'P', 'pppppp'), block('paragraph', 'Q', 'q')])
+    );
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.D).toBe('id-D');
+    expect(byTid.P.startsWith('temp-')).toBe(true);
+    expect(byTid.Q.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-B');
+    expect(all).not.toContain('id-C');
+  });
+
+  it('control (flagged path): replacing B..C with identical content keeps both ids', () => {
+    const { byTid } = run(abcd(), (t) =>
+      t.replaceWith(5, 15, [block('paragraph', 'B', 'bbb'), block('paragraph', 'C', 'ccc')])
+    );
+    expect(byTid).toEqual({ A: 'id-A', B: 'id-B', C: 'id-C', D: 'id-D' });
+  });
+
+  it('control (flagged path): heading -> paragraph via replaceWith (setHeading(0) shape) keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('heading', 'H', 'title'), block('paragraph', 'Q', 'x')],
+      (t) => t.replaceWith(5, 12, block('paragraph', 'H', 'title'))
+    );
+    expect(tr.doc.child(1).type.name).toBe('paragraph');
+    expect(byTid).toEqual({ A: 'id-A', H: 'id-H', Q: 'id-Q' });
+  });
+
+  // MF-2: this control CAN fail. setBlockType keeps P's inner content range
+  // (the ReplaceAround step never deletes across P+1), and the text is then
+  // replaced with something unrelated. So P must stay UNflagged and keep id-P.
+  // If it were wrongly flagged, 'hello' vs 'zzz' would fail the text check and P
+  // would get a temp id.
+  it('control (UNflagged path): setBlockType then unrelated inner-text replace keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('paragraph', 'P', 'hello'), block('paragraph', 'Q', 'x')],
+      (t) => {
+        t.setBlockType(6, 6, schema.nodes.heading, { tid: 'P' }); // P: 5..12, content 6..11
+        t.replaceWith(6, 11, schema.text('zzz')); // whole inner text -> unrelated
+      }
+    );
+    expect(tr.doc.child(1).type.name).toBe('heading');
+    expect(tr.doc.child(1).textContent).toBe('zzz');
+    expect(byTid).toEqual({ A: 'id-A', P: 'id-P', Q: 'id-Q' });
+  });
+
+  it('control: a real move (delete B, re-insert the same B after C) keeps id-B', () => {
+    const { byTid } = run(
+      [block('paragraph', 'A', 'aaa'), block('paragraph', 'B', 'bbb'), block('paragraph', 'C', 'ccc')],
+      (t) => {
+        t.delete(5, 10);
+        t.insert(10, block('paragraph', 'B', 'bbb'));
+      }
+    );
+    expect(byTid).toEqual({ A: 'id-A', B: 'id-B', C: 'id-C' });
+  });
+
+  it('parameter: assignBlockIds(..., appOrigin=true) keeps positional trust on the drag-move shape', () => {
+    resetBlockIdState();
+    const doc0 = schema.nodes.doc.create(null, [
+      block('paragraph', 'A', 'aaa'),
+      block('paragraph', 'B', 'bbb'),
+      block('paragraph', 'C', 'ccc'),
+    ]);
+    const ids = new Map<number, string>();
+    const types = new Map<number, string>();
+    doc0.forEach((n, off) => {
+      ids.set(off, `id-${n.attrs.tid}`);
+      types.set(off, n.type.name);
+    });
+    const tr = new Transform(doc0);
+    let bStart = -1;
+    let bEnd = -1;
+    tr.doc.forEach((n, off) => {
+      if (n.attrs.tid === 'B') {
+        bStart = off;
+        bEnd = off + n.nodeSize;
+      }
+    });
+    tr.delete(bStart, bEnd);
+    let cOffset = -1;
+    tr.doc.forEach((n, off) => {
+      if (n.attrs.tid === 'C') cOffset = off;
+    });
+    tr.insert(cOffset, block('paragraph', 'N', 'nnn'));
+
+    const [after] = assignBlockIds(tr.doc, ids, types, doc0, tr.mapping, true);
+    let nOffset = -1;
+    tr.doc.forEach((n, off) => {
+      if (n.attrs.tid === 'N') nOffset = off;
+    });
+    expect(after.get(nOffset)).toBe('id-B');
   });
 });
 
