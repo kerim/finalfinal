@@ -768,6 +768,47 @@ describe('regression (fixed): F3 (join variant) — a join no longer shifts a pr
   });
 });
 
+describe('positive control: split-then-fill still reclaims the split id under the live (mapped) path', () => {
+  it("Enter at the end of P, then typing into the new blank line (in a transaction that also changes structure) keeps the blank line's own marked id", () => {
+    // The F3/F3-join tests above pin that the bypass no longer reaches TOO
+    // FAR. This test pins the other side: the bypass must still reach far
+    // enough for its actual intended use case -- Enter then immediately
+    // typing into the fresh blank line -- to keep working on the LIVE
+    // (mapped) path real edits take. block-id-recent-split-bypass.test.ts's
+    // positive control calls assignBlockIds with no `mapping` argument at
+    // all, so it only ever exercises the old bare-offset path, never Phase
+    // 1's mapped lookup the real editor actually runs through. Here the
+    // second transaction also appends an unrelated paragraph Z, so
+    // `structureChanged` is true and this genuinely goes through the mapped,
+    // structural path (Phase 1 above, `canClaimUnderStructuralChange` below
+    // it) rather than the "structure unchanged" shortcut.
+    resetBlockIdState();
+    const d0 = propSchema.nodes.doc.create(null, [para('P', 'abcdef')]);
+    let ids = new Map<number, string>([[0, 'id-P']]);
+    let types = new Map<number, string>([[0, 'paragraph']]);
+
+    const t1 = new Transform(d0).split(7, 1, [{ type: propSchema.nodes.paragraph, attrs: { tid: 'E' } }]);
+    [ids, types] = assignBlockIds(t1.doc, ids, types, d0, t1.mapping);
+    const eOffset = para('P', 'abcdef').nodeSize;
+    const eId = ids.get(eOffset)!;
+    expect(getRecentlySplitEmptyIds().has(eId)).toBe(true);
+
+    const t2 = new Transform(t1.doc).insert(eOffset + 1, propSchema.text('typed'));
+    t2.insert(t2.doc.content.size, para('Z', 'zzz'));
+    const [after] = assignBlockIds(t2.doc, ids, types, t1.doc, t2.mapping);
+
+    const byTid = new Map<string, number>();
+    t2.doc.forEach((n, off) => {
+      byTid.set(n.attrs.tid, off);
+    });
+    expect(t2.doc.child(1).textContent).toBe('typed');
+    expect(after.get(byTid.get('E')!)).toBe(eId);
+    expect(after.get(byTid.get('P')!)).toBe('id-P');
+    expect(after.get(byTid.get('Z')!)).not.toBe(eId);
+    expect(getRecentlySplitEmptyIds().has(eId)).toBe(false);
+  });
+});
+
 describe("regression (fixed): F4 — a brand-new paragraph no longer inherits a heading's id (cross-type theft on empty blocks)", () => {
   it('inserting an empty paragraph above a run of empty headings leaves every heading with its own id; the new paragraph gets its own temp id', () => {
     // phase1CanClaim allows a cross-type claim (paragraph <-> heading, etc.)

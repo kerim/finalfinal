@@ -428,21 +428,29 @@ export function meaningfulTextOverlap(oldText: string | undefined, newText: stri
 
 /**
  * Whether an otherwise-refused empty→non-empty claim should be allowed
- * because `existingId` is a RECENTLY SPLIT node that is still empty — an
- * artifact of Enter creating a new empty paragraph, not evidence of
- * unrelated content sliding into its slot. This is the single source of
- * truth for the bypass condition; every structural claim site that would
+ * because `existingId` is a RECENTLY SPLIT node that is still empty.
+ * Intended shape: Enter splits off a new empty node and marks it; a later
+ * fill of that SAME node reclaims its marked id. This is the single source
+ * of truth for the bypass condition; every structural claim site that would
  * otherwise call `meaningfulTextOverlap` alone as its final gate must route
  * through this instead, so the sites cannot drift out of sync with each
  * other. Exported for tests.
  *
- * Residual, accepted risk (same class as this file's ATOMIC_BLOCK_TYPES
- * risk acceptances): if an unrelated, non-empty node happens to land at
- * exactly the marked node's old offset while the marked node itself
- * survives elsewhere, it could claim the marked id via this bypass. The
- * oldText==='' gate re-verifies against the real old doc, so any
- * misassigned identity provably belongs to a block that was empty — no
- * content loss results, only a same-empty-slot id reassignment.
+ * This predicate does not check WHICH block is doing the claiming — only
+ * that the old text is empty and the id is marked. The narrowness comes from
+ * the CALLER, not from here: `assignBlockIds`'s Phase 1 mapped-position
+ * lookup (00f10ef4) follows each existing id to where the transaction's
+ * mapping actually carried it before this bypass is ever consulted, so a
+ * block whose start survived the mapping is never compared against another
+ * block's marked id at all — this closed the former F3 misattribution (a
+ * content-bearing block losing its own id to a stale split marker). What
+ * still reaches this bypass by raw offset alone is a block whose own start
+ * did NOT survive the mapping (a brand-new block, or one replaced in place);
+ * such a block has no earlier id of its own to lose, so a same-empty-slot id
+ * reassignment there is harmless.
+ *
+ * Not independently re-verified by this pass: Phase 2's proximity-matching
+ * route to this same bypass, for deferred blocks — see task-inbox t-af5087af.
  */
 export function canClaimViaRecentSplitBypass(
   oldText: string | undefined,
