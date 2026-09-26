@@ -98,42 +98,14 @@ extension ContentView {
         }
     }
 
-    /// One-shot MainActor resume box for `raceContentFetch` below -- same shape as
-    /// `BlockSyncService.RaceBox` (private to that file, so not reusable directly), needed
-    /// because two independent, UNSTRUCTURED `Task`s race to resume the same continuation
-    /// and only one of them may actually do so.
-    @MainActor
-    private final class ContentFetchRaceBox {
-        private var continuation: CheckedContinuation<String?, Never>?
-
-        init(_ continuation: CheckedContinuation<String?, Never>) {
-            self.continuation = continuation
-        }
-
-        func resume(_ value: String?) {
-            guard let continuation else { return }
-            self.continuation = nil
-            continuation.resume(returning: value)
-        }
-    }
-
     /// Races `fetch` against `timeout`, returning `fetch`'s result if it finishes first, or
-    /// `nil` if the timeout elapses first. Not a `withTaskGroup` (the original shape here,
-    /// and `BlockSyncService.fetchContentFromWebView`'s own): a task group's `next()` only
-    /// picks whichever child finishes first, but the group itself does not return from its
-    /// closure -- and therefore does not let its caller's `await` return -- until EVERY
-    /// child task has finished, including the one it never awaited the result of. The
-    /// `evaluateJavaScript` child here is a `withCheckedContinuation` that only resumes when
-    /// WebKit calls back; `group.cancelAll()` marks that child cancelled but cannot force a
-    /// continuation to resume, so if WebKit never calls back, the "2s timeout" set by the
-    /// sibling child never actually lets this function return -- the group is still waiting
-    /// on the un-resumed continuation. Two independent, UNSTRUCTURED `Task`s racing to
-    /// resume the SAME continuation (the pattern in
-    /// `BlockSyncService.raceWithTimeout`/`awaitWithTimeout`) has no such join: whichever
-    /// task calls `box.resume` first is the one this function returns from, and the loser
-    /// (an orphaned, never-awaited `Task`) is simply left running -- exactly what makes the
-    /// timeout real.
-    /// When the timeout wins, that losing task stays alive holding a strong reference to its
+    /// `nil` if the timeout elapses first. Thin wrapper around the shared
+    /// `raceAgainstTimeout(_:_:)` (Services/TimeoutRace.swift) — see that function's doc
+    /// comment for why this needs two independent, UNSTRUCTURED `Task`s rather than a
+    /// `withTaskGroup`/`withThrowingTaskGroup` race (the original shape here, and
+    /// `BlockSyncService.fetchContentFromWebView`'s own, before both were migrated to the
+    /// shared helper), and for what a losing timeout race keeps alive.
+    /// When the timeout wins, the losing task stays alive holding a strong reference to its
     /// `WKWebView` (and its continuation) until WebKit calls back -- possibly for the rest of
     /// the process -- and since `handleProjectClosed()` (ContentView+ProjectLifecycle.swift)
     /// now captures the web view strongly for the close-time fetch, a torn-down editor's web
@@ -147,30 +119,13 @@ extension ContentView {
         timeout: Duration,
         _ fetch: @escaping @MainActor () async -> String?
     ) async -> String? {
-        var deadline: Task<Void, Never>?
-        let result = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-            let box = ContentFetchRaceBox(continuation)
-            Task { @MainActor in
-                let value = await fetch()
-                box.resume(value)
-            }
-            deadline = Task { @MainActor in
-                try? await Task.sleep(for: timeout)
-                // A6 (review round 2): only the timeout that actually WINS the race should
-                // log -- when `fetch` wins first, `deadline?.cancel()` below cancels this
-                // sleep, `try?` swallows the resulting CancellationError, and execution would
-                // otherwise reach here anyway (harmlessly no-op'd by `box.resume`'s own
-                // already-resumed guard) and log a false "timed out" on every ordinary
-                // success. `Task.isCancelled` after a cancelled sleep is exactly the signal
-                // that distinguishes "genuinely timed out" from "cancelled because the real
-                // fetch already won".
-                guard !Task.isCancelled else { return }
-                DebugLog.log(.lifecycle, "[ContentView] raceContentFetch: timed out after \(timeout)")
-                box.resume(nil)
-            }
+        switch await raceAgainstTimeout(timeout, fetch) {
+        case .finished(let value):
+            return value
+        case .timedOut:
+            DebugLog.log(.lifecycle, "[ContentView] raceContentFetch: timed out after \(timeout)")
+            return nil
         }
-        deadline?.cancel()
-        return result
     }
 
     /// Selects what the project-switch flush writes to the database. Pure and static so

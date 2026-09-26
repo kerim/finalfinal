@@ -9,30 +9,6 @@
 import Foundation
 import WebKit
 
-/// Resumes a `CheckedContinuation<Value, Never>` at most once (first resume
-/// wins; later ones are no-ops). Backs the two race primitives below —
-/// `awaitWithTimeout(seconds:operation:)` and `raceWithTimeout(seconds:work:)` —
-/// where two independent, UNSTRUCTURED `Task`s race to resume the same
-/// continuation (whichever finishes first). Without this guard, both sides
-/// resuming would be a runtime trap (and `Task.cancel()`/`CheckedContinuation`
-/// do not protect against it — only the continuation's own single-use contract
-/// does). `@MainActor`-isolated because both racing `Task`s run on MainActor,
-/// same as the rest of this file.
-@MainActor
-private final class RaceBox<Value> {
-    private var continuation: CheckedContinuation<Value, Never>?
-
-    init(_ continuation: CheckedContinuation<Value, Never>) {
-        self.continuation = continuation
-    }
-
-    func resume(_ value: Value) {
-        guard let continuation else { return }
-        self.continuation = nil
-        continuation.resume(returning: value)
-    }
-}
-
 /// Winner of `BlockSyncService.raceWithTimeout(seconds:work:)`.
 private enum PollCycleRaceOutcome {
     case finished
@@ -128,25 +104,24 @@ class BlockSyncService {
     private weak var webView: WKWebView?
     /// Fetch content from the active WebView with a timeout.
     /// Returns nil if WebView is unavailable, JS call fails, or timeout elapses.
+    ///
+    /// Races the JS call against `timeout` via the shared `raceAgainstTimeout(_:_:)`
+    /// (TimeoutRace.swift) rather than a `withThrowingTaskGroup` — see that
+    /// function's doc comment for why a task group's exit contract cannot bound a
+    /// wedged `webView.evaluateJavaScript` call (t-027c3835,
+    /// quitting-can-hang-if-the-editor-stops-responding: this was the root cause of
+    /// quit, Save Version, idle auto-backup, and structural undo all being able to
+    /// hang indefinitely against a stuck WebKit content process).
     func fetchContentFromWebView(timeout: Duration = .seconds(2)) async -> String? {
         guard let webView else { return nil }
-        do {
-            return try await withThrowingTaskGroup(of: String?.self) { group in
-                group.addTask { @MainActor in
-                    let result = try await webView.evaluateJavaScript(
-                        "window.FinalFinal.getContent()"
-                    )
-                    return result as? String
-                }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    return nil
-                }
-                let first = try await group.next() ?? nil
-                group.cancelAll()
-                return first
-            }
-        } catch {
+        let outcome = await raceAgainstTimeout(timeout) {
+            (try? await self.evaluateJS("window.FinalFinal.getContent()", in: webView)) as? String
+        }
+        switch outcome {
+        case .finished(let value):
+            return value
+        case .timedOut:
+            DebugLog.log(.lifecycle, "[BlockSyncService] fetchContentFromWebView: timed out after \(timeout)")
             return nil
         }
     }
@@ -830,39 +805,18 @@ class BlockSyncService {
     /// Races `operation` against a `seconds`-second timeout. Returns `true` if
     /// `operation` finished first, `false` if the timeout did.
     ///
-    /// Deliberately uses two independent, UNSTRUCTURED `Task`s rather than a
-    /// `withTaskGroup`/`withThrowingTaskGroup` race (still used by
-    /// `fetchContentFromWebView`) — a task group's exit still awaits every child,
-    /// including the loser, so it cannot bound an `operation` that never
-    /// completes. Here, whichever `Task` loses is simply never awaited, so it can
-    /// keep running (or never finish) without blocking this function's return.
-    /// `RaceBox` guards against the continuation being resumed twice — a runtime
-    /// trap — when both sides fire close together.
+    /// Thin wrapper around the shared `raceAgainstTimeout(_:_:)` (TimeoutRace.swift)
+    /// — see that function's doc comment for why two independent, UNSTRUCTURED
+    /// `Task`s (rather than a `withTaskGroup`/`withThrowingTaskGroup` race) are what
+    /// make the timeout real, and for what a losing `operation` keeps alive.
     ///
     /// Exactly one caller now: the apply-chain valve (`chainWaitSeconds`, whose
     /// release default is `applyChainWaitSeconds`) in `awaitPredecessorOrAbandon`. The
     /// poll cycle's own watchdog uses `raceWithTimeout(seconds:work:)` instead,
     /// because it needs the work task's handle to cancel the loser.
-    ///
-    /// Deadline hygiene (judge should-fix S3, mirroring `raceWithTimeout`): the
-    /// deadline task is captured and cancelled once the continuation resumes, so an
-    /// operation that wins the race does not leave a parked `Task.sleep` on MainActor
-    /// for the rest of the test/app session.
     private static func awaitWithTimeout(seconds: TimeInterval, operation: @escaping () async -> Void) async -> Bool {
-        var deadline: Task<Void, Never>?
-        let finished = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            let box = RaceBox(continuation)
-            Task { @MainActor in
-                await operation()
-                box.resume(true)
-            }
-            deadline = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(seconds))
-                box.resume(false)
-            }
-        }
-        deadline?.cancel()
-        return finished
+        if case .finished = await raceAgainstTimeout(.seconds(seconds), operation) { return true }
+        return false
     }
 
     /// Races the poll cycle's already-created `work` task against `seconds`,
@@ -878,7 +832,7 @@ class BlockSyncService {
     private static func raceWithTimeout(seconds: TimeInterval, work: Task<Void, Error>) async -> PollCycleRaceOutcome {
         var deadline: Task<Void, Never>?
         let outcome = await withCheckedContinuation { (continuation: CheckedContinuation<PollCycleRaceOutcome, Never>) in
-            let box = RaceBox(continuation)
+            let box = OneShotContinuation(continuation)
             Task { @MainActor in
                 do { try await work.value; box.resume(.finished) } catch { box.resume(.failed(error)) }
             }
@@ -1354,15 +1308,18 @@ class BlockSyncService {
         return true
     }
 
-    /// Poll-path `evaluateJavaScript`, funneled through one seam so a test can
-    /// script replies (including a one-shot wedge) without a real WKWebView.
+    /// Poll-path (plus `fetchContentFromWebView`) `evaluateJavaScript`, funneled
+    /// through one seam so a test can script replies (including a one-shot wedge)
+    /// without a real WKWebView.
     ///
-    /// Exactly four call sites route through here — `checkForChanges`,
-    /// `getBlockChanges`, `flushPendingJSChanges` and `confirmBlockIds`. The
-    /// push-side calls (`pushBlockIds`, `setContentWithBlockIds`,
-    /// `updateHeadingLevels`, `fetchContentFromWebView`) deliberately do NOT: they
-    /// are not part of the poll cycle the watchdog bounds, and routing them would
-    /// widen the seam past what the tests need.
+    /// Five call sites route through here — the four poll-cycle calls
+    /// (`checkForChanges`, `getBlockChanges`, `flushPendingJSChanges`,
+    /// `confirmBlockIds`) plus `fetchContentFromWebView`, included (t-027c3835) so a
+    /// test can wedge it the same way (`BlockSyncFetchContentTimeoutTests`). The
+    /// remaining push-side calls (`pushBlockIds`, `setContentWithBlockIds`,
+    /// `updateHeadingLevels`) still do NOT route through here: they are not part of
+    /// the poll cycle the watchdog bounds (nor of `fetchContentFromWebView`'s own
+    /// timeout), and routing them would widen the seam past what the tests need.
     private func evaluateJS(_ script: String, in webView: WKWebView) async throws -> Any? {
         #if DEBUG
         if let testJSEvaluator { return try await testJSEvaluator(script) }
