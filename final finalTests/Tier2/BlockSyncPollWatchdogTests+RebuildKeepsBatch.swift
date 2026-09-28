@@ -4,7 +4,7 @@
 //
 //  t-7c1d3fd8 (Finding #1, Calm_Bibliography, docs/architecture/tla/README.md): a save
 //  in flight when a bibliography/Notes/footnote rebuild starts used to be thrown away by
-//  BlockSyncService.checkGenerationGuard's postFetch/postChainWait discard, and the
+//  BlockSyncService.checkGenerationGuard's postFetch/postTurnWait discard, and the
 //  rebuild would then restore older text from the database over it. `beginDatabaseRebuild()`
 //  / `pollBlockChangesNowForDatabaseRebuild()` / `shouldKeepBatchForDatabaseRebuild` close
 //  that window for the narrow case where the pending generation transition IS the rebuild

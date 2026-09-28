@@ -465,7 +465,6 @@ extension ContentView {
 
         // Stop remaining services
         editorState.stopObserving()
-        blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
@@ -760,7 +759,6 @@ extension ContentView {
             await autoBackupService.projectWillClose()
         }
 
-        blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
