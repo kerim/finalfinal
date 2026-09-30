@@ -143,7 +143,10 @@ extension BlockSyncPollWatchdogTests {
     /// bound and gives up WITHOUT touching that hold. Once cycle 1's wedge is
     /// released, X applies late, mints `temp-X`, and the held "typed" update
     /// cascades onto it.
-    @Test("A rebuild's settlement wait times out without skipping or dropping anything; the held update still resolves once the late predecessor applies")
+    @Test("""
+        A rebuild's settlement wait times out without skipping or dropping anything; the held update still resolves once the \
+        late predecessor applies
+        """)
     func rebuildSettlementWait_timesOutWithoutLoss_thenHeldUpdateResolvesOnLateApply() async throws {
         let stack = try makeStack()
         let (db, sync, editorState) = (stack.db, stack.sync, stack.editorState)

@@ -36,7 +36,10 @@ import Testing
 extension DocumentWriterTests {
 
     // W15
-    @Test("A stuck sequence that never gets fetched is abandoned after the abandonment bound, counted lateAbandoned, and its abandon timer goes idle once nothing late-unfetched remains")
+    @Test("""
+        A stuck sequence that never gets fetched is abandoned after the abandonment bound, counted lateAbandoned, and its \
+        abandon timer goes idle once nothing late-unfetched remains
+        """)
     func abandonment_firesAfterBound_countsLateAbandoned() async throws {
         let (_, _, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -95,7 +98,10 @@ extension DocumentWriterTests {
     }
 
     // W17
-    @Test("Once holdingActive goes false but mintPossible stays true (an abandoned sequence remains open), a NEW insert is no longer held, but a new update on the same still-unresolved id still is")
+    @Test("""
+        Once holdingActive goes false but mintPossible stays true (an abandoned sequence remains open), a NEW insert is no \
+        longer held, but a new update on the same still-unresolved id still is
+        """)
     func holdingActiveVsMintPossible_splitsInsertFromUpdate() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -210,7 +216,10 @@ extension DocumentWriterTests {
     }
 
     // W19
-    @Test("A held delete supersedes an earlier held update on the same still-unresolved id, counted heldOpsSuperseded, leaving no row once the anchor mints")
+    @Test("""
+        A held delete supersedes an earlier held update on the same still-unresolved id, counted heldOpsSuperseded, leaving no \
+        row once the anchor mints
+        """)
     func coalescing_deleteSupersedesHeldUpdate() async throws {
         let (db, pid, writer, blockA, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -269,7 +278,10 @@ extension DocumentWriterTests {
     }
 
     // W20
-    @Test("A late insert whose anchor a newer batch deleted re-anchors via the tombstone chain instead of falling back, counted lateInsertsReanchored")
+    @Test("""
+        A late insert whose anchor a newer batch deleted re-anchors via the tombstone chain instead of falling back, counted \
+        lateInsertsReanchored
+        """)
     func tombstoneChain_reanchorsLateInsertAfterAnchorDeleted() async throws {
         let (db, pid, writer, blockA, blockB) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -319,7 +331,10 @@ extension DocumentWriterTests {
     }
 
     // W21
-    @Test("A late insert whose anchor was never a real row and is not in the tombstone chain is rejected, counted staleAnchorInsertsRejected, and does not land")
+    @Test("""
+        A late insert whose anchor was never a real row and is not in the tombstone chain is rejected, counted \
+        staleAnchorInsertsRejected, and does not land
+        """)
     func staleAnchor_notInTombstoneChain_isRejected() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -359,7 +374,10 @@ extension DocumentWriterTests {
     // W21b (judge must-fix, round 2 of this file: W21 only covered a never-tombstoned
     // anchor -- this covers the chain-walk DEAD END: the anchor IS in the tombstone
     // chain, but its own predecessor is neither live nor itself tombstoned)
-    @Test("A late insert's tombstone chain that dead-ends -- its anchor's own predecessor was removed outside the writer entirely, so it is neither live nor tombstoned -- is rejected too, counted staleAnchorInsertsRejected")
+    @Test("""
+        A late insert's tombstone chain that dead-ends -- its anchor's own predecessor was removed outside the writer entirely, \
+        so it is neither live nor tombstoned -- is rejected too, counted staleAnchorInsertsRejected
+        """)
     func staleAnchor_tombstoneChainDeadEnds_isRejected() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -428,7 +446,10 @@ extension DocumentWriterTests {
     // containment from its substitute anchor -- doing so would silently drop real user
     // text from exports, or wrongly protect/auto-delete it, the exact data-loss class
     // this whole addendum exists to close. Neither case is exercised by W1-W23/D1 above.
-    @Test("A re-anchored late insert does not inherit isNotes containment from its substitute anchor (Notes-adjacent: N is isNotes, X is unmanaged and gets deleted, C follows)")
+    @Test("""
+        A re-anchored late insert does not inherit isNotes containment from its substitute anchor (Notes-adjacent: N is isNotes, \
+        X is unmanaged and gets deleted, C follows)
+        """)
     func tombstoneReanchor_doesNotInheritNotesContainment() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -488,16 +509,20 @@ extension DocumentWriterTests {
 
         let after = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
         let y = try #require(after.first { $0.id == permanentId })
-        let n = try #require(after.first { $0.id == blockN.id })
-        let c = try #require(after.first { $0.id == blockC.id })
-        #expect(n.sortOrder < y.sortOrder && y.sortOrder < c.sortOrder,
+        let notesRow = try #require(after.first { $0.id == blockN.id })
+        let followRow = try #require(after.first { $0.id == blockC.id })
+        #expect(notesRow.sortOrder < y.sortOrder && y.sortOrder < followRow.sortOrder,
                 "Y must land where X used to be -- between N and C")
         #expect(y.isNotes == false,
                 "must NOT inherit isNotes from substitute anchor N -- would silently mis-flag real user text")
         #expect(y.isBibliography == false)
     }
 
-    @Test("A re-anchored late insert does not inherit isBibliography containment from its substitute anchor either (Bibliography-adjacent: B1 and B2 both flagged, X unmanaged between them gets deleted -- naive inheritance would wrongly infer containment from B1+B2 alone)")
+    @Test("""
+        A re-anchored late insert does not inherit isBibliography containment from its substitute anchor either \
+        (Bibliography-adjacent: B1 and B2 both flagged, X unmanaged between them gets deleted -- naive inheritance would wrongly \
+        infer containment from B1+B2 alone)
+        """)
     func tombstoneReanchor_doesNotInheritBibliographyContainment() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -569,7 +594,10 @@ extension DocumentWriterTests {
     // false, while a held UPDATE on the same id stays held (mintPossible still true).
     // The insert's misplacement is NOT repaired even once the abandoned sequence's own
     // reply finally arrives late -- a stated, judge-confirmed remaining loss.
-    @Test("An abandoned sequence's held insert releases unresolved to the document's end at the moment of abandonment, and stays there even once the sequence's own reply finally arrives late")
+    @Test("""
+        An abandoned sequence's held insert releases unresolved to the document's end at the moment of abandonment, and stays \
+        there even once the sequence's own reply finally arrives late
+        """)
     func abandonedSequence_releasesHeldInsertUnresolved_misplacementSurvivesLateReply() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -668,7 +696,11 @@ extension DocumentWriterTests {
     // applies as an ordinary late apply (an insert of its own, unrelated) -- and
     // that alone must release the held insert, unresolved, exactly once, with no
     // drop.
-    @Test("A held insert on a temp id nobody mints is released via the async releaseDueHolds() job when an ORDINARY late apply (not the abandon timer itself) is what makes holdingActive go false, with a separately-abandoned sequence still keeping mintPossible true")
+    @Test("""
+        A held insert on a temp id nobody mints is released via the async releaseDueHolds() job when an ORDINARY late apply (not \
+        the abandon timer itself) is what makes holdingActive go false, with a separately-abandoned sequence still keeping \
+        mintPossible true
+        """)
     func heldInsert_releasedByOrdinaryLateApply_notStranded_whileAbandonedSequenceKeepsMintPossibleTrue() async throws {
         let (db, pid, writer, blockA, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -761,7 +793,10 @@ extension DocumentWriterTests {
     }
 
     // W22
-    @Test("awaitSettled(through:timeout:) times out on an open sequence without skipping it, dropping any held op, or moving the frontier -- the sequence remains perfectly usable afterwards")
+    @Test("""
+        awaitSettled(through:timeout:) times out on an open sequence without skipping it, dropping any held op, or moving the \
+        frontier -- the sequence remains perfectly usable afterwards
+        """)
     func awaitSettled_timesOutWithoutMutatingAnything() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         _ = writer.reserve()   // seq 1: reserved, never fetched, never settled
@@ -813,7 +848,10 @@ extension DocumentWriterTests {
     }
 
     // D1
-    @Test("drainForLifecycle does not wait on an abandoned sequence -- it settles it immediately (counted skippedUnfetched, tagged .lifecycleDrain) instead of riding out its own full timeout")
+    @Test("""
+        drainForLifecycle does not wait on an abandoned sequence -- it settles it immediately (counted skippedUnfetched, tagged \
+        .lifecycleDrain) instead of riding out its own full timeout
+        """)
     func drainForLifecycle_doesNotWaitOnAbandonedSequence() async throws {
         let (_, _, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -858,7 +896,10 @@ extension DocumentWriterTests {
     // on this path never recorded the permanent id IT ITSELF minted. Any further op
     // already held on that insert's OWN not-yet-resolved temp id would then sit
     // stranded forever -- never cascaded into, and never revisited by anything else.
-    @Test("An insert released via the insert-only path mints its OWN id, so a separate held op waiting on that same id cascades and resolves once the insert releases")
+    @Test("""
+        An insert released via the insert-only path mints its OWN id, so a separate held op waiting on that same id cascades and \
+        resolves once the insert releases
+        """)
     func insertOnlyRelease_mintsOwnId_cascadesToSeparatelyHeldOp() async throws {
         let (db, pid, writer, _, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05
@@ -935,7 +976,10 @@ extension DocumentWriterTests {
     // whichever op arrived LAST win, with no comparison against the existing held
     // entry's stamp -- but late sequences apply out of order, so an older sequence's
     // reply can arrive AFTER a newer sequence's held op is already coalesced in.
-    @Test("Held-op coalescing compares stamps, not arrival order: an older sequence's reply arriving after a newer sequence's held update must not silently replace it")
+    @Test("""
+        Held-op coalescing compares stamps, not arrival order: an older sequence's reply arriving after a newer sequence's held \
+        update must not silently replace it
+        """)
     func coalescing_comparesStampsNotArrivalOrder() async throws {
         let (db, pid, writer, blockA, _) = try makeWriterStack()
         writer.testLateAfterSeconds = 0.05

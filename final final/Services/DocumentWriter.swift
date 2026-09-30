@@ -26,6 +26,7 @@
 //
 
 import Foundation
+import GRDB
 import Synchronization
 
 // MARK: - Public types
@@ -93,6 +94,11 @@ enum SkipReason: Sendable, Equatable {
     /// `drainTimeout`, so held-op drops it causes are tagged `.lifecycleDrain` too
     /// (see `HeldOpsDropReason`), not lumped in with an actual timeout's.
     case lifecycleDrain
+    /// Phase 2 (t-94369a83), §1.2: the I-SYS backstop -- a system write reserved its
+    /// turn but never reached `applySystemWrite` within `systemStallAfterSeconds` of
+    /// becoming the frontier. Recorded per-sequence in `WriterState.skipReasons` (system
+    /// sequences only) so `performSystemWrite` can read back exactly why it was skipped.
+    case systemStalled
 }
 
 /// Why held ops were dropped rather than resolved.
@@ -144,6 +150,11 @@ enum WriterEvent: Sendable, Equatable {
     // Addendum A2 §2:
     case insertReanchored(tempId: String)
     case insertRejected(UInt64, Int)
+    // Phase 2 (t-94369a83), §1: system writes (bibliography/Notes/heading-level).
+    case systemApplied(UInt64)
+    case systemSkipped(UInt64, SkipReason)
+    case systemStalled(UInt64)
+    case systemReservationAbandoned(UInt64)
 }
 
 /// Per-writer counters (item 2, "logged and counted"). Every loss-carrying increment
@@ -178,6 +189,18 @@ struct LossLedger: Sendable, Equatable {
     /// same temp id before either ever applied -- telemetry only (nothing is
     /// lost; the newer one wins and still applies).
     var heldOpsSuperseded = 0      // telemetry only, not loss
+    // Phase 2 (t-94369a83), §1.2: system writes (bibliography/Notes/heading-level),
+    // all telemetry only except `systemWritesStalled` (a real, counted loss -- the
+    // write never happened).
+    var systemWritesApplied = 0        // telemetry only, not loss
+    // Review fix (finding #13): the old comment here claimed this was "already counted
+    // via the ordinary skip path" -- backwards. `skip(upTo:reason:)` explicitly EXCLUDES
+    // system sequences from `skippedConsumed`/`skippedUnfetched` (the ordinary path)
+    // specifically so a system-write skip gets its OWN dedicated counter here instead,
+    // never double-counted against the editor-batch ones.
+    var systemWritesSkipped = 0        // telemetry only, not loss -- counted here, NOT via skippedConsumed/skippedUnfetched
+    var systemWritesStalled = 0        // I-SYS backstop fired -- a real loss
+    var systemReservationsAbandoned = 0 // a reservation was never applied or explicitly settled -- a real loss
 }
 
 // MARK: - Internal state
@@ -267,6 +290,43 @@ private struct WriterState {
     /// observe I-HOLD violated: an op counted in `heldOpsTotal` but sitting in
     /// neither `held` nor any settled bucket.
     var heldOpsInFlight = 0
+    // Phase 2 (t-94369a83), §1.2: system-write bookkeeping.
+    /// Sequences reserved via `reserveSystem()` rather than `reserve()` -- lets the
+    /// I-SYS backstop (`rearmStallLocked`) and `skip()`'s per-sequence reason
+    /// recording (`skipReasons`) distinguish a system write from an editor batch
+    /// without a separate phase enum case.
+    var systemSeqs: Set<UInt64> = []
+    /// The `SkipReason` a given (system) sequence was actually skipped for --
+    /// `performSystemWrite` reads this back after `waitForTurnAsync` returns
+    /// `.skipped` so it can report the real reason rather than guessing. Recorded
+    /// for system sequences only (see `skip(upTo:reason:)`); editor sequences don't
+    /// need it since the poll cycle never inspects the reason.
+    ///
+    /// Review fix (finding #13, and its own regression fix): entries must not
+    /// accumulate for the writer's entire lifetime (sequences are never reused, and
+    /// nothing else ever removes one once written), so every entry is eventually
+    /// removed -- but not by either *read* site. `systemSkipReason(_:)` only peeks,
+    /// and `applySystemWrite`'s admission check pops one specific case (a direct
+    /// call reaching an already-skipped sequence without going through
+    /// `waitForTurnAsync` first). The `waitForTurnAsync`-detected case is retired by
+    /// `discardSystemSkipReason(_:)`, which `performSystemWrite` calls once it has
+    /// actually consumed the peeked value -- see that function's doc comment for why
+    /// the peek and the discard are two separate steps rather than one pop: a test
+    /// (or any other caller) inspecting the recorded reason via `systemSkipReason`
+    /// must not silently blind a *different*, still-pending reader of the same
+    /// entry (`applySystemWrite`'s own admission check) that has not run yet.
+    var skipReasons: [UInt64: SkipReason] = [:]
+    var stallTask: Task<Void, Never>?
+    var stallArmedSeq: UInt64?
+    var stallToken: UInt64 = 0
+    var testSystemStallAfterSeconds: TimeInterval?
+    /// Set by `retire(reason:)`. `applySystemWrite` refuses `.writerRetired` once
+    /// this is true, distinct from an ordinary out-of-turn/skipped refusal -- the
+    /// editor path doesn't need an equivalent flag because a retired writer's
+    /// editor sequences are already all skipped by `retire`'s own `skipAllReserved`
+    /// call, and no NEW editor sequence is ever reserved through a retired writer
+    /// (the owning `BlockSyncService` always swaps in a fresh instance first).
+    var retired = false
 }
 
 /// What a locked transition wants performed to the expiry timer, decided under the
@@ -286,6 +346,15 @@ private enum AbandonAction {
     case start(seq: UInt64, delay: Duration, token: UInt64)
 }
 
+/// Phase 2 (t-94369a83), §1.2: the I-SYS backstop's own action, mirroring
+/// `ExpiryAction`/`AbandonAction` exactly but targeting the frontier only while it is
+/// a system sequence still in `.fetched` -- see `rearmStallLocked`.
+private enum StallAction {
+    case none
+    case cancelOnly
+    case start(seq: UInt64, delay: Duration, token: UInt64)
+}
+
 /// Everything a locked transition produced that must happen AFTER the lock is
 /// released: continuations to resume, events to emit, an expiry action, and whether
 /// to kick off an orphaned-hold release task.
@@ -295,6 +364,7 @@ private struct Signal {
     var resumes: [(CheckedContinuation<TurnResult, Never>, TurnResult)] = []
     var expiryAction: ExpiryAction = .none
     var abandonAction: AbandonAction = .none
+    var stallAction: StallAction = .none
     var scheduleRelease = false
     /// Set only when `events` carries `.abandoned(_:)` -- the effective (possibly
     /// test-overridden) bound that actually governed THIS abandonment, captured
@@ -308,6 +378,16 @@ private enum AdmissionResult {
     case refuse(RefuseReason)
 }
 
+/// Phase 2 (t-94369a83), §1.2: `applySystemWrite`'s own admission result -- mirrors
+/// `AdmissionResult` but refuses with a `SystemRefuseReason` (a different, wider enum
+/// than the editor path's `RefuseReason`). Declared at file scope rather than nested
+/// inside `applySystemWrite` itself because Swift does not allow a type to be nested
+/// inside a GENERIC function.
+private enum SystemAdmission {
+    case proceed(wasLate: Bool)
+    case refuse(SystemRefuseReason)
+}
+
 // MARK: - DocumentWriter
 
 actor DocumentWriter {
@@ -317,6 +397,9 @@ actor DocumentWriter {
     nonisolated static let lateAfterSeconds: TimeInterval = 3.0    // turn-stall expiry
     nonisolated static let drainTimeoutSeconds: TimeInterval = 2.0 // lifecycle drain bound
     nonisolated static let lateAbandonAfterSeconds: TimeInterval = 30.0  // addendum A2 §3
+    /// Phase 2 (t-94369a83), §1.2: the I-SYS backstop -- a system write that has
+    /// become the frontier (in `.fetched`) but never reached `applySystemWrite`.
+    nonisolated static let systemStallAfterSeconds: TimeInterval = 5.0
 
     private nonisolated let state: Mutex<WriterState>
     private nonisolated let clock = ContinuousClock()
@@ -349,6 +432,11 @@ actor DocumentWriter {
     /// Non-locking, same discipline as `effectiveLateAfter` above.
     private nonisolated func effectiveLateAbandonAfter(_ writerState: WriterState) -> TimeInterval {
         writerState.testLateAbandonAfterSeconds ?? Self.lateAbandonAfterSeconds
+    }
+
+    /// Non-locking, same discipline as `effectiveLateAfter` above.
+    private nonisolated func effectiveSystemStallAfter(_ writerState: WriterState) -> TimeInterval {
+        writerState.testSystemStallAfterSeconds ?? Self.systemStallAfterSeconds
     }
 
     #if DEBUG
@@ -389,6 +477,14 @@ actor DocumentWriter {
     }
     nonisolated var testArmedAbandonSeq: UInt64? {
         state.withLock { $0.abandonArmedSeq }
+    }
+    // Phase 2 (t-94369a83), §1.2: I-SYS DEBUG seams, mirroring the abandon timer's own.
+    nonisolated var testSystemStallAfterSeconds: TimeInterval? {
+        get { state.withLock { $0.testSystemStallAfterSeconds } }
+        set { state.withLock { $0.testSystemStallAfterSeconds = newValue } }
+    }
+    nonisolated var testArmedStallSeq: UInt64? {
+        state.withLock { $0.stallArmedSeq }
     }
     #endif
 
@@ -457,6 +553,22 @@ actor DocumentWriter {
             }
             if !stillCurrent { task.cancel() }
         }
+        switch signal.stallAction {
+        case .none, .cancelOnly:
+            break
+        case .start(let seq, let delay, let token):
+            let task = Task { [weak self] in
+                try? await Task.sleep(for: delay)
+                self?.stallFired(seq: seq, token: token)
+            }
+            // Same discipline as the expiry/abandon task stores above.
+            let stillCurrent = state.withLock { writerState -> Bool in
+                guard writerState.stallToken == token else { return false }
+                writerState.stallTask = task
+                return true
+            }
+            if !stillCurrent { task.cancel() }
+        }
         if signal.scheduleRelease {
             Task { [weak self] in await self?.releaseDueHolds() }
         }
@@ -497,6 +609,11 @@ actor DocumentWriter {
         case .insertRejected(let seq, let count):
             DebugLog.alwaysPersisted("[DocumentWriter] sequence \(seq): \(count) insert(s) rejected "
                 + "-- anchor missing and not resolvable via the tombstone chain")
+        case .systemStalled(let seq):
+            DebugLog.alwaysPersisted("[DocumentWriter] system write \(seq) hit the I-SYS stall backstop and was skipped")
+        case .systemReservationAbandoned(let seq):
+            DebugLog.alwaysPersisted("[DocumentWriter] system reservation \(seq) was released without ever applying "
+                + "(deinit safety net)")
         case .settleWaitTimedOut(let seqs):
             // Addendum A2 §1: `awaitSettled` timing out changes NOTHING -- no skip,
             // no held-op drop, no ledger change, no frontier move -- so this log
@@ -771,6 +888,77 @@ actor DocumentWriter {
         return .cancelOnly
     }
 
+    /// Phase 2 (t-94369a83), §1.2: I-SYS backstop. Arms a fresh `systemStallAfterSeconds`
+    /// timer the moment the frontier BECOMES a system sequence still in `.fetched`
+    /// (mirroring `rearmExpiryLocked`'s "leave an already-correctly-targeted timer
+    /// alone" rule -- a re-arm call that finds the SAME seq already armed does not
+    /// restart the clock); cancels it otherwise. Unlike the turn-stall expiry, a
+    /// system reservation carries no separate `.reserved`/`.fetched` distinction (it
+    /// is set directly to `.fetched` by `reserveSystem()`), so there is no `since`
+    /// timestamp to measure a deadline from -- the bound is simply "how long has this
+    /// been the un-applied frontier", counted from the moment THIS function first
+    /// notices the condition.
+    private nonisolated func rearmStallLocked(_ writerState: inout WriterState, _ sig: inout Signal) {
+        defer { checkSystemStallInvariantLocked(writerState) }
+        let frontier = writerState.frontier
+        guard writerState.systemSeqs.contains(frontier), writerState.phase[frontier] == .fetched else {
+            sig.stallAction = cancelStallLocked(&writerState)
+            return
+        }
+        if writerState.stallArmedSeq == frontier {
+            sig.stallAction = .none
+            return
+        }
+        writerState.stallTask?.cancel()
+        writerState.stallArmedSeq = frontier
+        writerState.stallToken += 1
+        let delay = Duration.seconds(effectiveSystemStallAfter(writerState))
+        sig.stallAction = .start(seq: frontier, delay: delay, token: writerState.stallToken)
+    }
+
+    /// Phase 2 (t-94369a83), §1.2: a system sequence is never `.reserved` (it is set
+    /// directly to `.fetched` by `reserveSystem()`) and never `.late(fetched: false)`
+    /// (the turn-stall expiry only ever transitions a `.reserved` frontier -- see
+    /// `expiryFired`'s own guard -- which a system sequence can never be in). `assert`
+    /// (no-op in Release), matching this file's existing runtime-invariant convention.
+    private nonisolated func checkSystemStallInvariantLocked(_ writerState: WriterState) {
+        for seq in writerState.systemSeqs {
+            let phase = writerState.phase[seq]
+            let violated: Bool
+            switch phase {
+            case .reserved, .late(fetched: false, since: _): violated = true
+            default: violated = false
+            }
+            assert(!violated, "I-SYS violated: system sequence \(seq) was \(String(describing: phase))")
+        }
+    }
+
+    private nonisolated func cancelStallLocked(_ writerState: inout WriterState) -> StallAction {
+        guard writerState.stallArmedSeq != nil || writerState.stallTask != nil else { return .none }
+        writerState.stallTask?.cancel()
+        writerState.stallTask = nil
+        writerState.stallArmedSeq = nil
+        return .cancelOnly
+    }
+
+    /// Phase 2 (t-94369a83), §1.2: the shared tail every transition that CLOSES a
+    /// sequence (settles, applies, or skips it) must run -- factored out of
+    /// `applyEditorBatch`'s two tails (success and failure) so the system-write path
+    /// (`applySystemWrite`, `abandonSystemReservation`, `settleSystemNotWanted`,
+    /// `stallFired`) uses the exact same sequence-closing logic rather than a
+    /// hand-copied duplicate. Callers are responsible for the sequence-specific part
+    /// (removing it from `phase`, inserting into `resolvedAhead`, bumping whichever
+    /// ledger counter applies) BEFORE calling this.
+    private nonisolated func finishSequenceLocked(_ writerState: inout WriterState, _ sig: inout Signal) {
+        advanceFrontierLocked(&writerState)
+        sig.resumes = collectReadyWaitersLocked(&writerState)
+        maybeScheduleReleaseLocked(&writerState, &sig)
+        maybeClearTombstonesLocked(&writerState)
+        rearmExpiryLocked(&writerState, &sig)
+        rearmAbandonLocked(&writerState, &sig)
+        rearmStallLocked(&writerState, &sig)
+    }
+
     /// (v3, B) Addendum A2 §3: schedules `releaseDueHolds()` (does not run it; the
     /// caller starts the actual `Task` from `perform(_:)`) once `holdingActive`
     /// goes false -- i.e. as soon as there's nothing left that could still mint an
@@ -810,6 +998,7 @@ actor DocumentWriter {
             var sig = Signal(handler: writerState.testEventHandler)
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -837,6 +1026,7 @@ actor DocumentWriter {
             }
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -857,6 +1047,7 @@ actor DocumentWriter {
                 }
                 rearmExpiryLocked(&writerState, &sig)
                 rearmAbandonLocked(&writerState, &sig)
+                rearmStallLocked(&writerState, &sig)
                 return sig
             }
             perform(signal)
@@ -884,6 +1075,7 @@ actor DocumentWriter {
             maybeClearTombstonesLocked(&writerState)
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -904,6 +1096,7 @@ actor DocumentWriter {
             maybeClearTombstonesLocked(&writerState)
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -933,6 +1126,34 @@ actor DocumentWriter {
             maybeClearTombstonesLocked(&writerState)
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+    }
+
+    /// Phase 2 (t-94369a83), §1.2: the I-SYS backstop fires -- a system write became
+    /// the frontier (still `.fetched`) and stayed there for `systemStallAfterSeconds`
+    /// without ever reaching `applySystemWrite`. Mirrors `expiryFired`/`abandonFired`
+    /// exactly: validate the armed seq/token still match (another transition may
+    /// already have re-armed or resolved this one), then move it into `skipped`
+    /// (NOT `resolvedAhead` -- this is a skip, like `skip(upTo:reason:)`'s own
+    /// `.fetched` case, not an ordinary settle) and record why.
+    private nonisolated func stallFired(seq: UInt64, token: UInt64) {
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            guard writerState.stallArmedSeq == seq, writerState.stallToken == token,
+                  writerState.frontier == seq, writerState.phase[seq] == .fetched,
+                  writerState.systemSeqs.contains(seq) else {
+                return sig
+            }
+            writerState.phase.removeValue(forKey: seq)
+            writerState.skipped.insert(seq)
+            writerState.skipReasons[seq] = .systemStalled
+            writerState.systemSeqs.remove(seq)
+            writerState.ledger.systemWritesStalled += 1
+            sig.events.append(.systemStalled(seq))
+            finishSequenceLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -952,32 +1173,57 @@ actor DocumentWriter {
             var affected: [UInt64] = []
             for seq in writerState.phase.keys.sorted() where seq <= watermark {
                 guard let phase = writerState.phase[seq] else { continue }
-                switch phase {
-                case .reserved:
-                    writerState.ledger.skippedUnfetched += 1
-                case .fetched:
-                    writerState.ledger.skippedConsumed += 1
-                case .late(let fetched, _):
-                    // A late sequence that never actually got its batch fetched (the
-                    // `.late(fetched: false)` case `expiryFired` produces) was never
-                    // consumed -- counting it as `skippedConsumed` overstated how much
-                    // work was thrown away after being pulled from the editor.
-                    if fetched {
-                        writerState.ledger.skippedConsumed += 1
-                    } else {
+                if case .applying = phase { continue }   // milliseconds from finishing on the actor; leave it
+                // Bug fix (round 2 of this dispatch, per driver's must-fix): a system
+                // sequence is a DIFFERENT kind of loss from an editor batch -- it has
+                // its own dedicated counter (`systemWritesSkipped`) precisely so
+                // `skippedConsumed`/`skippedUnfetched` ("editor-batch accounting", per
+                // the plan's own §1.2 wording) stay unchanged when a system write is
+                // what got skipped. `writerState.systemSeqs.contains(seq)` is checked
+                // BEFORE choosing which counter to bump, not after -- the two are
+                // mutually exclusive per sequence, never both. (A system sequence is
+                // never `.reserved`/`.late`/`.abandoned` per the I-SYS invariant --
+                // `reserveSystem()` always sets `.fetched` directly -- so only the
+                // `.fetched` arm is reachable for one in practice, but every arm is
+                // still guarded here rather than relying on that invariant silently.)
+                let isSystem = writerState.systemSeqs.contains(seq)
+                if !isSystem {
+                    switch phase {
+                    case .reserved:
                         writerState.ledger.skippedUnfetched += 1
+                    case .fetched:
+                        writerState.ledger.skippedConsumed += 1
+                    case .late(let fetched, _):
+                        // A late sequence that never actually got its batch fetched (the
+                        // `.late(fetched: false)` case `expiryFired` produces) was never
+                        // consumed -- counting it as `skippedConsumed` overstated how much
+                        // work was thrown away after being pulled from the editor.
+                        if fetched {
+                            writerState.ledger.skippedConsumed += 1
+                        } else {
+                            writerState.ledger.skippedUnfetched += 1
+                        }
+                    case .abandoned:
+                        // Only ever reached from `.late(fetched: false)` (see `SeqPhase`'s
+                        // doc comment) -- so it was never fetched either; count it the
+                        // same way.
+                        writerState.ledger.skippedUnfetched += 1
+                    case .applying:
+                        break   // unreachable (handled by the `continue` above)
                     }
-                case .abandoned:
-                    // Only ever reached from `.late(fetched: false)` (see `SeqPhase`'s
-                    // doc comment) -- so it was never fetched either; count it the
-                    // same way.
-                    writerState.ledger.skippedUnfetched += 1
-                case .applying:
-                    continue   // milliseconds from finishing on the actor; leave it
                 }
                 writerState.phase.removeValue(forKey: seq)
                 writerState.skipped.insert(seq)
                 affected.append(seq)
+                // Phase 2 (t-94369a83), §1.1 step 6: recorded for system sequences
+                // only -- `performSystemWrite` reads this back after `waitForTurn()`
+                // reports `.skipped` so it can report the REAL reason instead of
+                // guessing one. The editor path never inspects it.
+                if isSystem {
+                    writerState.skipReasons[seq] = reason
+                    writerState.systemSeqs.remove(seq)
+                    writerState.ledger.systemWritesSkipped += 1
+                }
             }
             if writerState.frontier <= watermark { writerState.frontier = watermark + 1 }
             advanceFrontierLocked(&writerState)
@@ -1005,6 +1251,7 @@ actor DocumentWriter {
             maybeClearTombstonesLocked(&writerState)
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
             affectedResult = affected
             return sig
         }
@@ -1021,12 +1268,16 @@ actor DocumentWriter {
         skipAllReserved(reason: reason)
         let signal = state.withLock { writerState -> Signal in
             var sig = Signal(handler: writerState.testEventHandler)
+            writerState.retired = true
             writerState.expiryTask?.cancel()
             writerState.expiryTask = nil
             writerState.expiryArmedSeq = nil
             writerState.abandonTask?.cancel()
             writerState.abandonTask = nil
             writerState.abandonArmedSeq = nil
+            writerState.stallTask?.cancel()
+            writerState.stallTask = nil
+            writerState.stallArmedSeq = nil
             var dropped = 0
             for ops in writerState.held.values { dropped += ops.count }
             writerState.held.removeAll()
@@ -1355,6 +1606,7 @@ actor DocumentWriter {
                 maybeClearTombstonesLocked(&writerState)
                 rearmExpiryLocked(&writerState, &sig)
                 rearmAbandonLocked(&writerState, &sig)
+                rearmStallLocked(&writerState, &sig)
                 return sig
             }
             perform(signal)
@@ -1376,6 +1628,213 @@ actor DocumentWriter {
                 maybeClearTombstonesLocked(&writerState)
                 rearmExpiryLocked(&writerState, &sig)
                 rearmAbandonLocked(&writerState, &sig)
+                rearmStallLocked(&writerState, &sig)
+                return sig
+            }
+            perform(signal)
+            return .failed(error)
+        }
+    }
+
+    // MARK: - System writes (Phase 2, t-94369a83, §1)
+
+    /// Reserves a turn for a non-editor (bibliography/Notes/heading-level) write.
+    /// Unlike `reserve()`, the phase is set directly to `.fetched` -- a system write
+    /// has no separate "fetch" step to wait on, it is ready to apply the moment its
+    /// turn comes -- and the sequence is recorded in `systemSeqs` so the I-SYS
+    /// backstop (`rearmStallLocked`) and `skip()`'s reason bookkeeping can recognize
+    /// it. Called from `performSystemWrite`'s step 4 ("Reserve"), wrapped immediately
+    /// in a self-settling `SystemReservation`.
+    nonisolated func reserveSystem() -> SystemTicket {
+        var seq: UInt64 = 0
+        let signal = state.withLock { writerState -> Signal in
+            seq = writerState.nextSeq
+            writerState.nextSeq += 1
+            writerState.phase[seq] = .fetched
+            writerState.systemSeqs.insert(seq)
+            var sig = Signal(handler: writerState.testEventHandler)
+            rearmExpiryLocked(&writerState, &sig)
+            rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+        return SystemTicket(writer: self, seq: seq)
+    }
+
+    /// Whether `seq` (an EDITOR sequence) still has an open phase entry -- i.e. its
+    /// batch has been reserved but not yet applied/failed/skipped. Backs
+    /// `SystemWriteScope.heldEditorSeq`'s "still open" check (§1.3): an inherited
+    /// task-local value is refused as `.nested` only while the sequence it names is
+    /// genuinely still in flight, not merely because it was present at Task-spawn time.
+    nonisolated func isOpen(_ seq: UInt64) -> Bool {
+        state.withLock { $0.phase[seq] != nil }
+    }
+
+    /// Reads back the REAL reason a system sequence was skipped, recorded by
+    /// `skip(upTo:reason:)`/`stallFired` -- `performSystemWrite` calls this after
+    /// `waitForTurnAsync` reports `.skipped` rather than guessing a reason.
+    ///
+    /// Regression fix (this dispatch): deliberately a PEEK, not a pop. The prior
+    /// round-2 fix (finding #13) popped the entry here on the theory that this was
+    /// the only reader for a `waitForTurnAsync`-detected skip -- but `applySystemWrite`
+    /// has its own, independent admission-check read of the SAME entry for the other
+    /// case (a direct call landing on an already-skipped sequence), and nothing
+    /// stops a caller (a test asserting the stall backstop recorded the right
+    /// reason, for instance) from reading this one first and then still needing
+    /// `applySystemWrite`'s own read to see the value too. Popping here silently
+    /// blinded that second, unrelated read. `performSystemWrite` retires the entry
+    /// itself via `discardSystemSkipReason(_:)` once it has actually consumed the
+    /// value, which keeps the dict bounded without making this accessor destructive.
+    nonisolated func systemSkipReason(_ seq: UInt64) -> SkipReason? {
+        state.withLock { writerState in
+            writerState.skipReasons[seq]
+        }
+    }
+
+    /// Removes a system sequence's recorded skip reason once the caller that just
+    /// read it via `systemSkipReason(_:)` is truly done with it -- `performSystemWrite`
+    /// calls this immediately after using the peeked value to build its own
+    /// `.refused(.skipped(reason))` outcome, so the entry doesn't linger for the
+    /// writer's entire lifetime. Kept as a separate step from the read itself (rather
+    /// than folded into one pop, as `systemSkipReason` used to be) so a caller that
+    /// only wants to *inspect* the value -- without asserting ownership of ending its
+    /// lifetime -- can do so safely, even when `applySystemWrite`'s own admission
+    /// check still needs to read the same entry afterward. A no-op if the entry is
+    /// already gone (e.g. `applySystemWrite`'s admission check got there first).
+    nonisolated func discardSystemSkipReason(_ seq: UInt64) {
+        state.withLock { writerState in
+            _ = writerState.skipReasons.removeValue(forKey: seq)
+        }
+    }
+
+    /// `SystemReservation`'s deinit safety net (§1.1): settles a system sequence that
+    /// was reserved but never applied, failed, or explicitly settled -- e.g. an early
+    /// return from `performSystemWrite` on a refusal that (like `applyEditorBatch`'s
+    /// own out-of-turn/retired refusal) does not itself remove the phase entry. A
+    /// no-op (counted in `testRedundantSettleCount`) if the sequence is already
+    /// settled by the time this runs. Synchronous and nonisolated -- callable
+    /// directly from `deinit`, which cannot `await` an actor hop.
+    nonisolated func abandonSystemReservation(_ seq: UInt64) {
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            guard writerState.phase[seq] != nil else {
+                writerState.testRedundantSettleCount += 1
+                return sig
+            }
+            writerState.phase.removeValue(forKey: seq)
+            writerState.resolvedAhead.insert(seq)
+            writerState.systemSeqs.remove(seq)
+            writerState.ledger.systemReservationsAbandoned += 1
+            sig.events.append(.systemReservationAbandoned(seq))
+            finishSequenceLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+    }
+
+    /// `performSystemWrite`'s step 7 ("re-check after the wait", only reachable when
+    /// no `prepare` closure was supplied): the caller no longer wants this write, but
+    /// unlike the pre-reserve `.notWanted` check, the sequence HAS been reserved and
+    /// may be the frontier or late by now -- it must be actively settled (advancing
+    /// the frontier, resuming any waiter behind it) rather than merely abandoned.
+    nonisolated func settleSystemNotWanted(_ seq: UInt64) {
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            guard writerState.phase[seq] != nil else {
+                writerState.testRedundantSettleCount += 1
+                return sig
+            }
+            writerState.phase.removeValue(forKey: seq)
+            writerState.resolvedAhead.insert(seq)
+            writerState.systemSeqs.remove(seq)
+            finishSequenceLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+    }
+
+    /// Actor-isolated (serialized against every editor and system write), NOT async
+    /// itself -- the caller's `await` is only for the actor hop, matching
+    /// `applyEditorBatch`'s own shape. Admits only the frontier or a late/abandoned
+    /// sequence (mirroring `applyEditorBatch`'s admission exactly); refuses a retired
+    /// writer, an identity mismatch, a skipped sequence, or an out-of-turn one WITHOUT
+    /// settling the phase entry -- `SystemReservation`'s deinit is the safety net that
+    /// eventually does, exactly as `applyEditorBatch`'s own out-of-turn refusal relies
+    /// on the poll cycle's `defer { ticket.settleIfOpen(.noBatch) }`. No stamping
+    /// (§1.4): the single `dbWriter.write` transaction runs the caller's `body`
+    /// directly, with no persisted (epoch, sequence) coordinate attached to the rows
+    /// it touches.
+    func applySystemWrite<R: Sendable>(
+        _ seq: UInt64,
+        kind: SystemWriteKind,
+        identity: SystemWriteIdentity,
+        body: @escaping @Sendable (Database) throws -> SystemWriteBody<R>
+    ) -> SystemWriteOutcome<R> {
+        guard identity.database === database, identity.projectId == projectId else {
+            return .refused(.identityMismatch)
+        }
+        let admission: SystemAdmission = state.withLock { writerState in
+            if writerState.retired { return .refuse(.writerRetired) }
+            if writerState.skipped.contains(seq) {
+                // Review fix (finding #13) still pops here, not peeks -- this IS a safe
+                // pop, unlike `systemSkipReason`'s: this is the OTHER path a skipped
+                // system sequence's reason can be read from (a direct `applySystemWrite`
+                // call reaching an already-skipped sequence without going through
+                // `waitForTurnAsync`'s own `.skipped` detection first), and a given
+                // sequence is only ever passed to `applySystemWrite` once -- there is no
+                // second reader downstream of THIS call that still needs the value, the
+                // way `systemSkipReason`'s peek had to leave room for this very read.
+                let reason = writerState.skipReasons.removeValue(forKey: seq) ?? .writerReplaced
+                return .refuse(.skipped(reason))
+            }
+            let late = isPassableLateLocked(seq, writerState)
+            guard seq == writerState.frontier || late else { return .refuse(.outOfTurn) }
+            writerState.phase[seq] = .applying
+            return .proceed(wasLate: late)
+        }
+        switch admission {
+        case .refuse(let reason):
+            // Review fix (finding #13): the `Signal` this used to build here (a
+            // `testEventHandler` reference with NO events, NO resumes, and the default
+            // `.none` expiry action) was a genuine no-op -- `perform(_:)` iterates
+            // `resumes`/`events`/`handler` calls/`expiryAction`, all empty or `.none`
+            // for this signal, so the call did nothing observable. Removed rather than
+            // kept as dead ceremony.
+            return .refused(reason)
+        case .proceed:
+            break
+        }
+
+        do {
+            let bodyResult = try database.dbWriter.write { db in try body(db) }
+            let signal = state.withLock { writerState -> Signal in
+                var sig = Signal(handler: writerState.testEventHandler)
+                // Addendum A2 §2's own merge rule, reused here unmodified: only
+                // while `mintPossible` still holds could anything still running
+                // need one of these anchors to re-anchor an insert through.
+                if mintPossibleLocked(writerState) {
+                    for (id, anchor) in bodyResult.deletedAnchors { writerState.tombstones[id] = anchor }
+                }
+                writerState.phase.removeValue(forKey: seq)
+                writerState.resolvedAhead.insert(seq)
+                writerState.systemSeqs.remove(seq)
+                writerState.ledger.systemWritesApplied += 1
+                sig.events.append(.systemApplied(seq))
+                finishSequenceLocked(&writerState, &sig)
+                return sig
+            }
+            perform(signal)
+            return .applied(bodyResult.value)
+        } catch {
+            DebugLog.alwaysPersisted("[DocumentWriter] failed to apply system write \(seq) (\(kind)): \(error)")
+            let signal = state.withLock { writerState -> Signal in
+                var sig = Signal(handler: writerState.testEventHandler)
+                writerState.phase.removeValue(forKey: seq)
+                writerState.resolvedAhead.insert(seq)
+                writerState.systemSeqs.remove(seq)
+                writerState.ledger.failedWrites += 1
+                finishSequenceLocked(&writerState, &sig)
                 return sig
             }
             perform(signal)

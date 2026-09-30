@@ -18,7 +18,7 @@ enum BibliographyHeadingRenamer {
     /// instead be a no-op. Replaces a bare `Bool` (three prior real-user reports of the same
     /// silent failure trace back to that boolean: the caller had no way to tell "nothing
     /// needed renaming" apart from "a collision blocked it," so neither ever reached the UI).
-    enum RenameOutcome: Equatable {
+    enum RenameOutcome: Equatable, Sendable {
         /// The one matching heading was retitled.
         case renamed
         /// Nothing was changed -- see `NoOpReason` for why.
@@ -30,7 +30,7 @@ enum BibliographyHeadingRenamer {
     /// nested inside it (SwiftLint's nesting-depth limit is one level) -- `RenameOutcome.noOp`'s
     /// associated-value type still reads naturally as `NoOpReason` at every call site via
     /// Swift's contextual type inference.
-    enum NoOpReason: Equatable {
+    enum NoOpReason: Equatable, Sendable {
         /// Zero heading-shaped, bibliography-flagged blocks matched any name in `oldNames`.
         case noCandidate
         /// Judge-round must-fix: the one matching candidate's recovered title already
@@ -148,87 +148,115 @@ enum BibliographyHeadingRenamer {
     ) -> RenameOutcome {
         do {
             return try database.write { db in
-                // Single indexed fetch feeds BOTH the candidate query and the collision check
-                // below -- judge-round fix: the old code ran a second full-table fetch for the
-                // collision guard alone. `.heading` covers ordinary headings at any level;
-                // `.bibliography` covers the marker-glued shape (must-fix 5 above) -- entry
-                // paragraphs and every other block type never carry either type, so this stays
-                // narrowly scoped to heading-shaped rows.
-                let headingLike = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .filter(
-                        Block.Columns.blockType == BlockType.heading.rawValue
-                            || Block.Columns.blockType == BlockType.bibliography.rawValue
-                    )
-                    .order(Block.Columns.sortOrder)
-                    .fetchAll(db)
-
-                let candidates = headingLike.filter { $0.isBibliography && matchesAnyName($0, in: oldNames) }
-
-                guard candidates.count == 1, var target = candidates.first else {
-                    DebugLog.log(.bib, "[BibliographyHeadingRenamer] \(candidates.count) candidate(s) matched " +
-                        "\(oldNames) in project \(projectId) -- no-op (need exactly one)")
-                    return .noOp(candidates.isEmpty ? .noCandidate : .ambiguousCandidates(count: candidates.count))
-                }
-
-                // Judge-round must-fix: the candidate is already titled `newName` -- nothing to
-                // do. Checked BEFORE the collision guard and BEFORE any write/DebugLog-worthy
-                // work: on `ExportSettingsManager.setBibliographyHeaderName`'s
-                // reconciliation-only path, `newName` is always also present in `oldNames`
-                // (see `NoOpReason.alreadyCorrect`'s doc comment above), so the
-                // single matching candidate found above is routinely the document's OWN
-                // already-correct heading. Returning here -- with no DB write and no collision
-                // check -- is what makes reconciliation genuinely free on a healthy document
-                // (no `updatedAt` bump, no `.bibliographySectionChanged` post, no editor
-                // rebuild) instead of merely "no-op but still expensive." It also prevents a
-                // false-positive collision: without this early return, an unrelated, harmless
-                // second heading elsewhere that happens to already share this exact title would
-                // trip the collision guard below against the document's OWN correctly-named
-                // heading, even though nothing is actually wrong.
-                if headingShape(of: target)?.title == newName {
-                    DebugLog.log(.bib, "[BibliographyHeadingRenamer] candidate in project \(projectId) is already " +
-                        "titled \"\(newName)\" -- no-op, nothing to rename")
-                    return .noOp(.alreadyCorrect)
-                }
-
-                // Collision guard: renaming into a title some OTHER heading already carries
-                // would let a later full re-parse cross-assign the bibliography flag/id onto
-                // that heading instead, since replaceBlocks' preservation matching is keyed
-                // by title -- and, being level-blind itself, that hazard applies at ANY
-                // heading level, not just `#`/`##` (judge-round fix).
-                let collision = headingLike.contains { $0.id != target.id && matchesAnyName($0, in: [newName]) }
-                guard !collision else {
-                    DebugLog.log(.bib, "[BibliographyHeadingRenamer] target name \"\(newName)\" collides with an " +
-                        "existing heading in project \(projectId) -- no-op")
-                    return .noOp(.collision(existingTitle: newName))
-                }
-
-                // `target` matched `matchesAnyName` above, so `headingShape(of:)` is
-                // guaranteed non-nil here -- the `?? ` fallback is unreachable defensive cover,
-                // not a real fallback path.
-                let shape = headingShape(of: target) ?? HeadingShape(level: target.headingLevel ?? 1, title: newName)
-                target.wordCount = MarkdownUtils.wordCount(for: newName)
-                target.updatedAt = Date()
-
-                let prefix = String(repeating: "#", count: shape.level)
-                if target.blockType == .heading {
-                    target.textContent = newName
-                    target.markdownFragment = "\(prefix) \(newName)"
-                } else {
-                    // Glued-marker `.bibliography` shape: preserve blockType/headingLevel
-                    // exactly as parsed (this rename deliberately does not repair the
-                    // classification -- see this function's doc comment), and rebuild the ONE
-                    // fragment that carries marker+heading together, mirroring exactly what a
-                    // fresh `BlockParser.parse()` would produce for this shape (textContent ==
-                    // markdownFragment, since `extractTextContent` never strips anything for
-                    // `.bibliography`-typed content).
-                    let rebuilt = "\(BlockParser.bibliographyStartMarker)\(prefix) \(newName)"
-                    target.textContent = rebuilt
-                    target.markdownFragment = rebuilt
-                }
-                try target.update(db)
-                return .renamed
+                renameInTransaction(db: db, projectId: projectId, from: oldNames, to: newName)
             }
+        } catch {
+            // `renameInTransaction` below never itself throws (see its own doc comment) --
+            // this branch only covers `database.write`'s own transaction-level failure
+            // (e.g. opening the write connection), kept for parity with this function's
+            // pre-Phase-2 signature/behavior. Still the direct entry point for tests and
+            // any caller outside the system-write queue.
+            DebugLog.log(.bib, "[BibliographyHeadingRenamer] Failed to rename in project \(projectId): \(error)")
+            return .noOp(.databaseError)
+        }
+    }
+
+    /// Phase 2 (t-94369a83), §2.2: the transaction body itself, callable directly with
+    /// an already-open `db` -- used both by `rename(in:projectId:from:to:)` above
+    /// (wraps its own `database.write`) and by `performBibliographyHeaderNameChange`'s
+    /// system-write body (runs inside `DocumentWriter.applySystemWrite`'s own already-
+    /// open transaction, which must never see a Swift throw escape a `.noOp` case --
+    /// see that call site's own comment on why `.noOp` still settles `.applied`).
+    /// Catches its own GRDB errors internally and returns `.noOp(.databaseError)`
+    /// rather than throwing, for exactly that reason -- a throw here would make
+    /// `applySystemWrite` roll back (harmless, nothing would have committed for this op
+    /// anyway) but ALSO settle the write `.failed` rather than `.applied`, which is not
+    /// what a `.noOp` means (a `.noOp` is a normal, expected outcome of this write, not
+    /// a lost one).
+    nonisolated static func renameInTransaction(
+        db: Database, projectId: String, from oldNames: [String], to newName: String
+    ) -> RenameOutcome {
+        do {
+            // Single indexed fetch feeds BOTH the candidate query and the collision check
+            // below -- judge-round fix: the old code ran a second full-table fetch for the
+            // collision guard alone. `.heading` covers ordinary headings at any level;
+            // `.bibliography` covers the marker-glued shape (must-fix 5 above) -- entry
+            // paragraphs and every other block type never carry either type, so this stays
+            // narrowly scoped to heading-shaped rows.
+            let headingLike = try Block
+                .filter(Block.Columns.projectId == projectId)
+                .filter(
+                    Block.Columns.blockType == BlockType.heading.rawValue
+                        || Block.Columns.blockType == BlockType.bibliography.rawValue
+                )
+                .order(Block.Columns.sortOrder)
+                .fetchAll(db)
+
+            let candidates = headingLike.filter { $0.isBibliography && matchesAnyName($0, in: oldNames) }
+
+            guard candidates.count == 1, var target = candidates.first else {
+                DebugLog.log(.bib, "[BibliographyHeadingRenamer] \(candidates.count) candidate(s) matched " +
+                    "\(oldNames) in project \(projectId) -- no-op (need exactly one)")
+                return .noOp(candidates.isEmpty ? .noCandidate : .ambiguousCandidates(count: candidates.count))
+            }
+
+            // Judge-round must-fix: the candidate is already titled `newName` -- nothing to
+            // do. Checked BEFORE the collision guard and BEFORE any write/DebugLog-worthy
+            // work: on `ExportSettingsManager.setBibliographyHeaderName`'s
+            // reconciliation-only path, `newName` is always also present in `oldNames`
+            // (see `NoOpReason.alreadyCorrect`'s doc comment above), so the
+            // single matching candidate found above is routinely the document's OWN
+            // already-correct heading. Returning here -- with no DB write and no collision
+            // check -- is what makes reconciliation genuinely free on a healthy document
+            // (no `updatedAt` bump, no `.bibliographySectionChanged` post, no editor
+            // rebuild) instead of merely "no-op but still expensive." It also prevents a
+            // false-positive collision: without this early return, an unrelated, harmless
+            // second heading elsewhere that happens to already share this exact title would
+            // trip the collision guard below against the document's OWN correctly-named
+            // heading, even though nothing is actually wrong.
+            if headingShape(of: target)?.title == newName {
+                DebugLog.log(.bib, "[BibliographyHeadingRenamer] candidate in project \(projectId) is already " +
+                    "titled \"\(newName)\" -- no-op, nothing to rename")
+                return .noOp(.alreadyCorrect)
+            }
+
+            // Collision guard: renaming into a title some OTHER heading already carries
+            // would let a later full re-parse cross-assign the bibliography flag/id onto
+            // that heading instead, since replaceBlocks' preservation matching is keyed
+            // by title -- and, being level-blind itself, that hazard applies at ANY
+            // heading level, not just `#`/`##` (judge-round fix).
+            let collision = headingLike.contains { $0.id != target.id && matchesAnyName($0, in: [newName]) }
+            guard !collision else {
+                DebugLog.log(.bib, "[BibliographyHeadingRenamer] target name \"\(newName)\" collides with an " +
+                    "existing heading in project \(projectId) -- no-op")
+                return .noOp(.collision(existingTitle: newName))
+            }
+
+            // `target` matched `matchesAnyName` above, so `headingShape(of:)` is
+            // guaranteed non-nil here -- the `?? ` fallback is unreachable defensive cover,
+            // not a real fallback path.
+            let shape = headingShape(of: target) ?? HeadingShape(level: target.headingLevel ?? 1, title: newName)
+            target.wordCount = MarkdownUtils.wordCount(for: newName)
+            target.updatedAt = Date()
+
+            let prefix = String(repeating: "#", count: shape.level)
+            if target.blockType == .heading {
+                target.textContent = newName
+                target.markdownFragment = "\(prefix) \(newName)"
+            } else {
+                // Glued-marker `.bibliography` shape: preserve blockType/headingLevel
+                // exactly as parsed (this rename deliberately does not repair the
+                // classification -- see this function's doc comment), and rebuild the ONE
+                // fragment that carries marker+heading together, mirroring exactly what a
+                // fresh `BlockParser.parse()` would produce for this shape (textContent ==
+                // markdownFragment, since `extractTextContent` never strips anything for
+                // `.bibliography`-typed content).
+                let rebuilt = "\(BlockParser.bibliographyStartMarker)\(prefix) \(newName)"
+                target.textContent = rebuilt
+                target.markdownFragment = rebuilt
+            }
+            try target.update(db)
+            return .renamed
         } catch {
             DebugLog.log(.bib, "[BibliographyHeadingRenamer] Failed to rename in project \(projectId): \(error)")
             return .noOp(.databaseError)

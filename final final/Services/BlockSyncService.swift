@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import GRDB
 import WebKit
 
 /// Winner of `BlockSyncService.raceWithTimeout(seconds:work:)`.
@@ -747,6 +748,16 @@ class BlockSyncService {
     /// replies — including a one-shot wedge — without a real WKWebView or a run loop.
     var testJSEvaluator: ((String) async throws -> Any?)?
 
+    /// Test-only hook, awaited immediately after `ticket.noteFetched()` -- i.e.,
+    /// while this cycle's editor sequence is genuinely OPEN (`SystemWriteScope.
+    /// heldEditorSeq` is already set to it, and `DocumentWriter.isOpen(_:)` reports
+    /// `true`) but before `waitForTurn()`/`applyAndConfirm` have run. Lets a test
+    /// park a real poll cycle deterministically inside that window (W34) to drive
+    /// `performSystemWrite`'s A5 nesting check against a REAL open editor sequence
+    /// -- not a synthetic stand-in -- from a concurrent `Task`. No cost in release
+    /// builds (property doesn't exist).
+    var testAfterFetchHook: (() async -> Void)?
+
     /// Test-only hook awaited immediately AFTER the apply step (the writer's
     /// `applyEditorBatch` call, plus any `confirmBlockIds` round-trip). Tests must
     /// NEVER park in it: parking here would hold up nothing on THIS cycle's own
@@ -1206,109 +1217,132 @@ class BlockSyncService {
         try Task.checkCancellation()
 
         guard let (ticket, stamp) = reserveWriterTurn(database: database, projectId: projectId) else { return }
-        // Idempotent (S2/S3): a no-op once `applyAndConfirm` below has already
-        // settled this sequence, on every path below including an early return.
-        defer { ticket.settleIfOpen(.noBatch) }
 
-        // Get the changes
-        let changes: BlockChanges
-        switch await getBlockChanges(webView: webView) {
-        case .success(let fetched):
-            changes = fetched
-        case .noData:
-            return
-        case .decodeFailed:
-            // The JS call succeeded (the batch was consumed, JS-side queues cleared)
-            // but decoding it on the Swift side failed -- a real, counted loss, not
-            // the uncounted `.noBatch` the `defer` above would otherwise settle it as
-            // (item 7, plan's S6 settlement rule).
-            ticket.settleIfOpen(.discarded(.decodeFailed))
-            return
+        // Phase 2 (t-94369a83), §1.3: this editor sequence is open -- reserved and
+        // (about to be) fetched -- from here through `applyAndConfirm` returning or
+        // the `defer` below settling it. `SystemWriteScope.heldEditorSeq` names it for
+        // that whole window so `performSystemWrite`'s nesting check (A5) can refuse
+        // `.nested` rather than deadlock if something reachable from inside this
+        // window ever tries to start a system write against the SAME writer this
+        // cycle is holding a turn on. This wraps the EXISTING body verbatim in
+        // `withValue(_:operation:)` -- a synchronous save/restore of the task-local
+        // around the same `await`s already here -- and changes NOTHING about control
+        // flow, suspension points, or the INVARIANT documented above
+        // `reserveWriterTurn` (no cancellation-observing `await` between the fetch and
+        // `applyAndConfirm`): `withValue` itself introduces no suspension of its own.
+        await SystemWriteScope.$heldEditorSeq.withValue(ticket.seq) {
+            // Idempotent (S2/S3): a no-op once `applyAndConfirm` below has already
+            // settled this sequence, on every path below including an early return.
+            defer { ticket.settleIfOpen(.noBatch) }
+
+            // Get the changes
+            let changes: BlockChanges
+            switch await getBlockChanges(webView: webView) {
+            case .success(let fetched):
+                changes = fetched
+            case .noData:
+                return
+            case .decodeFailed:
+                // The JS call succeeded (the batch was consumed, JS-side queues cleared)
+                // but decoding it on the Swift side failed -- a real, counted loss, not
+                // the uncounted `.noBatch` the `defer` above would otherwise settle it as
+                // (item 7, plan's S6 settlement rule).
+                ticket.settleIfOpen(.discarded(.decodeFailed))
+                return
+            }
+            // M3/A5: from here the batch is CONSUMED — the JS side cleared its queues when
+            // `getBlockChanges()` ran — so this cycle is no longer a pre-fetch orphan for
+            // back-pressure purposes, and a timeout from here on is left to finish rather
+            // than cancelled (A16). Recorded in the same synchronous region as
+            // `logFetchedUpdates`, immediately after the guard.
+            progress?.hasFetchedBatch = true
+            // Addendum A1 (t-94369a83): a fetch just returned, so the content process can
+            // complete the call that wedges -- every orphan outstanding right now is a
+            // lost reply, not a wedge THIS process is currently in. Deliberately recorded
+            // here, not in `checkForChanges`'s cheap `hasBlockChanges` pre-check: that
+            // call proves nothing about the heavier call that actually wedges, and a
+            // process stuck specifically on `getBlockChanges` could otherwise look
+            // "responsive" forever. See `orphansToleratedWhileResponsive`'s own doc
+            // comment for the full guard this feeds.
+            orphansToleratedWhileResponsive = outstandingPrefetchOrphans
+            ticket.noteFetched()
+            logFetchedUpdates(changes, force: force)
+            #if DEBUG
+            await testAfterFetchHook?()
+            #endif
+
+            // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
+            // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
+            // already cleared the JS-side pendingUpdates/pendingInserts/pendingDeletes, so this
+            // batch will not be re-offered on a later poll — returning now genuinely discards
+            // it. That's still the right call for a mode toggle, zoom, or project switch: there
+            // is no lossless option inside this window, and the alternative — re-queuing the
+            // already-fetched batch for a later poll — would mean writing pre-rewrite content
+            // against a document that's actively being rebuilt from the DB, corrupting the
+            // rebuild instead of just dropping one already-stale batch.
+            //
+            // ONE EXCEPTION (Finding #1, Calm_Bibliography, t-7c1d3fd8): a bibliography/Notes/
+            // footnote rebuild is different in kind from those other rewrites — for THOSE, the
+            // database is the FRESHER copy and this parked batch is the stale one; for a
+            // database rebuild, this parked batch is the FRESHER copy (it may hold the very
+            // citation/footnote edit that triggered the rebuild) and the database — which the
+            // rebuild is about to read via `fetchBlocksWithIds()` — is the OLDER one. Discarding
+            // here would let the rebuild overwrite the editor with its own stale pre-edit text.
+            // `allowDatabaseRebuildKeep: true` lets `checkGenerationGuard` below KEEP (not
+            // abandon) a batch in that one specific case — see that function's doc comment for
+            // why it's safe: the rebuild cannot read the database until ITS forced flush
+            // returns, and that forced flush awaits this very poll cycle first, so a kept batch
+            // is normally written before the rebuild's read (see that doc comment's KNOWN
+            // RESIDUAL for the narrow hung-WebKit-watchdog window where it is not).
+            if checkGenerationGuard(
+                generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+                stage: "postFetch", force: force, allowDatabaseRebuildKeep: true,
+                alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+            ) {
+                ticket.settleIfOpen(.discarded(.generationChanged("postFetch")))
+                return
+            }
+
+            switch classifyBatch(changes, database: database, projectId: projectId, force: force) {
+            case .apply:
+                break
+            case .empty:
+                ticket.settleIfOpen(.empty)
+                return
+            case .staleSnapshot:
+                ticket.settleIfOpen(.discarded(.staleSnapshot))
+                return
+            }
+
+            // A non-`.go` result means the writer's own `skip()` call already logged
+            // (`DebugLog.alwaysPersisted`, item 1) and counted this sequence in its ledger.
+            guard await ticket.waitForTurn() == .go else { return }
+
+            // Writer jobs cannot slip into this gap: the writer admits seq+1 only after
+            // seq settles. A MainActor write that does NOT bump the epoch can still
+            // land while `await applyEditorBatch` is suspended. Review fix (finding
+            // #12): bibliography/Notes/heading-level writes no longer belong on this
+            // list -- Phase 2 (t-94369a83) routed them through `performSystemWrite`,
+            // the same ordered queue. What's still genuinely outside it: `SectionOps`,
+            // `SectionReconciler`, and `StructuralUndoController`'s own direct
+            // `reorderAllBlocks` call (see `Database+BlockWriteStamp.swift`'s own
+            // comment for the authoritative, up-to-date list). That is the same
+            // residual documented on `applyChanges`, not yet closed for those
+            // remaining writers.
+            if checkGenerationGuard(
+                generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+                stage: "postTurnWait", force: force, allowDatabaseRebuildKeep: true,
+                alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+            ) {
+                ticket.settleIfOpen(.discarded(.generationChanged("postTurnWait")))
+                return
+            }
+
+            await applyAndConfirm(ticket, changes, webView: webView, stamp: stamp)
+            #if DEBUG
+            await testAfterApplyHook?()
+            #endif
         }
-        // M3/A5: from here the batch is CONSUMED — the JS side cleared its queues when
-        // `getBlockChanges()` ran — so this cycle is no longer a pre-fetch orphan for
-        // back-pressure purposes, and a timeout from here on is left to finish rather
-        // than cancelled (A16). Recorded in the same synchronous region as
-        // `logFetchedUpdates`, immediately after the guard.
-        progress?.hasFetchedBatch = true
-        // Addendum A1 (t-94369a83): a fetch just returned, so the content process can
-        // complete the call that wedges -- every orphan outstanding right now is a
-        // lost reply, not a wedge THIS process is currently in. Deliberately recorded
-        // here, not in `checkForChanges`'s cheap `hasBlockChanges` pre-check: that
-        // call proves nothing about the heavier call that actually wedges, and a
-        // process stuck specifically on `getBlockChanges` could otherwise look
-        // "responsive" forever. See `orphansToleratedWhileResponsive`'s own doc
-        // comment for the full guard this feeds.
-        orphansToleratedWhileResponsive = outstandingPrefetchOrphans
-        ticket.noteFetched()
-        logFetchedUpdates(changes, force: force)
-
-        // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
-        // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
-        // already cleared the JS-side pendingUpdates/pendingInserts/pendingDeletes, so this
-        // batch will not be re-offered on a later poll — returning now genuinely discards
-        // it. That's still the right call for a mode toggle, zoom, or project switch: there
-        // is no lossless option inside this window, and the alternative — re-queuing the
-        // already-fetched batch for a later poll — would mean writing pre-rewrite content
-        // against a document that's actively being rebuilt from the DB, corrupting the
-        // rebuild instead of just dropping one already-stale batch.
-        //
-        // ONE EXCEPTION (Finding #1, Calm_Bibliography, t-7c1d3fd8): a bibliography/Notes/
-        // footnote rebuild is different in kind from those other rewrites — for THOSE, the
-        // database is the FRESHER copy and this parked batch is the stale one; for a
-        // database rebuild, this parked batch is the FRESHER copy (it may hold the very
-        // citation/footnote edit that triggered the rebuild) and the database — which the
-        // rebuild is about to read via `fetchBlocksWithIds()` — is the OLDER one. Discarding
-        // here would let the rebuild overwrite the editor with its own stale pre-edit text.
-        // `allowDatabaseRebuildKeep: true` lets `checkGenerationGuard` below KEEP (not
-        // abandon) a batch in that one specific case — see that function's doc comment for
-        // why it's safe: the rebuild cannot read the database until ITS forced flush
-        // returns, and that forced flush awaits this very poll cycle first, so a kept batch
-        // is normally written before the rebuild's read (see that doc comment's KNOWN
-        // RESIDUAL for the narrow hung-WebKit-watchdog window where it is not).
-        if checkGenerationGuard(
-            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
-            stage: "postFetch", force: force, allowDatabaseRebuildKeep: true,
-            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
-        ) {
-            ticket.settleIfOpen(.discarded(.generationChanged("postFetch")))
-            return
-        }
-
-        switch classifyBatch(changes, database: database, projectId: projectId, force: force) {
-        case .apply:
-            break
-        case .empty:
-            ticket.settleIfOpen(.empty)
-            return
-        case .staleSnapshot:
-            ticket.settleIfOpen(.discarded(.staleSnapshot))
-            return
-        }
-
-        // A non-`.go` result means the writer's own `skip()` call already logged
-        // (`DebugLog.alwaysPersisted`, item 1) and counted this sequence in its ledger.
-        guard await ticket.waitForTurn() == .go else { return }
-
-        // Writer jobs cannot slip into this gap: the writer admits seq+1 only after
-        // seq settles. A MainActor write that does NOT bump the epoch (SectionOps,
-        // reorder, bibliography/footnote sync) can still land while
-        // `await applyEditorBatch` is suspended. That is the same residual documented
-        // on `applyChanges`, not closed until Phases 2–4 route those writers through
-        // the queue.
-        if checkGenerationGuard(
-            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
-            stage: "postTurnWait", force: force, allowDatabaseRebuildKeep: true,
-            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
-        ) {
-            ticket.settleIfOpen(.discarded(.generationChanged("postTurnWait")))
-            return
-        }
-
-        await applyAndConfirm(ticket, changes, webView: webView, stamp: stamp)
-        #if DEBUG
-        await testAfterApplyHook?()
-        #endif
     }
 
     /// Mid-flight generation re-check, shared by all three call sites in
@@ -1585,6 +1619,146 @@ class BlockSyncService {
         case .failed(let error):
             DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
         }
+    }
+
+    #if DEBUG
+    /// Test-only escape hatch for W32 (`DocumentWriterSystemWriteTests`): lets a test
+    /// force `.nested` by calling `performSystemWrite` from inside
+    /// `SystemWriteScope.$active.withValue(true)` without tripping the DEBUG
+    /// `assertionFailure` that would otherwise crash the test process.
+    var testSuppressNestedAssert = false
+    #endif
+
+    /// Phase 2 (t-94369a83), §1.1: the ONE public entry point for a non-editor
+    /// (bibliography/Notes/heading-level) write, routed through the same ordered
+    /// queue `DocumentWriter` already serializes every editor-diff write through. See
+    /// `docs/architecture/document-writer.md`'s "System writes" section for the full
+    /// design (settlement, the I-SYS backstop, why nothing is stamped).
+    ///
+    /// Steps, in order (the only suspensions are `waitForTurn` and the actor hop):
+    /// 1. Nesting check (`SystemWriteScope.active`, `SystemWriteScope.heldEditorSeq`).
+    /// 2. `stillWanted()` -- refuses `.notWanted` WITHOUT reserving.
+    /// 3. Writer/identity checks -- `.noWriter`/`.identityMismatch`, no reservation.
+    /// 4. Reserve (`SystemReservation(writer.reserveSystem())`).
+    /// 5. Run `prepare?()` synchronously; record `prepareRan`.
+    /// 6. Wait for turn -- a skip settles via the writer itself; reads back the real
+    ///    reason from `systemSkipReason`.
+    /// 7. Re-check `stillWanted()` -- ONLY when `prepare == nil` (once `prepare` has
+    ///    run, e.g. posted a `.renumberFootnotes`, there is no safe way to "un-notify"
+    ///    the editor, so the write must proceed and let the caller's OWN recovery
+    ///    table decide what to do with a stale result).
+    /// 8. Apply.
+    @MainActor
+    func performSystemWrite<R: Sendable>(
+        identity: SystemWriteIdentity,
+        kind: SystemWriteKind,
+        stillWanted: @escaping () -> Bool,
+        prepare: (() -> Void)? = nil,
+        body: @escaping @Sendable (Database) throws -> SystemWriteBody<R>
+    ) async -> SystemWriteResult<R> {
+        // Step 1: nesting.
+        if SystemWriteScope.active {
+            return SystemWriteResult(outcome: .refused(.nested), prepareRan: false)
+        }
+        if let heldSeq = SystemWriteScope.heldEditorSeq, let writer, writer.isOpen(heldSeq) {
+            #if DEBUG
+            if !testSuppressNestedAssert {
+                assertionFailure("[SystemWrite] performSystemWrite called while editor seq \(heldSeq) is still open")
+            }
+            #endif
+            DebugLog.alwaysPersisted("[SystemWrite] refused .nested -- editor seq \(heldSeq) still open")
+            return SystemWriteResult(outcome: .refused(.nested), prepareRan: false)
+        }
+
+        // Step 2: wanted, pre-reserve.
+        guard stillWanted() else {
+            return SystemWriteResult(outcome: .refused(.notWanted), prepareRan: false)
+        }
+
+        // Step 3: writer + identity.
+        guard let writer else {
+            // Fallback (§2.0): the caller runs the write directly against its OWN
+            // captured identity. Every Phase 2 caller now implements this fallback --
+            // `BibliographySyncService`/`FootnoteSyncService` each have a direct-write
+            // path for every `.refused(.noWriter)` outcome (defensive only: should not
+            // happen once `configureSyncServices` wires a writer, but exercised
+            // deliberately by `DocumentWriterSystemWriteTests`). `.noWriter` still
+            // counts as a real refusal outcome; the fallback write itself is the
+            // CALLER's responsibility, never this function's.
+            DebugLog.log(.sync, "[SystemWrite] no writer - direct write is the caller's responsibility")
+            return SystemWriteResult(outcome: .refused(.noWriter), prepareRan: false)
+        }
+        guard identity.database === writer.database, identity.projectId == writer.projectId else {
+            return SystemWriteResult(outcome: .refused(.identityMismatch), prepareRan: false)
+        }
+
+        // Step 4: reserve.
+        // §2.8: EditorViewState's contentStateWatchdog waits this out rather than
+        // force-resetting contentState mid-write -- incremented here (reserve) and
+        // decremented via `defer` on every exit from this point on (steps 6-8),
+        // spanning the whole reserve-through-apply window.
+        //
+        // Review fix (finding #13): `editorState` is a `weak var` -- reading it twice
+        // (once to increment, once via `defer` to decrement) risked the two reads
+        // resolving to DIFFERENT instances if `self.editorState` were reassigned (or
+        // deallocated) in between, permanently stranding the first instance's counter
+        // incremented and never reflecting the increment on the new one. Captured ONCE
+        // into a local so both operations always target the exact same instance.
+        let systemWriteEditorState = editorState
+        systemWriteEditorState?.systemWriteInFlight += 1
+        defer { systemWriteEditorState?.systemWriteInFlight -= 1 }
+        let reservation = SystemReservation(writer.reserveSystem())
+
+        // Steps 5-8, all wrapped in ONE `SystemWriteScope.active` window. Review fix
+        // (finding #11): the doc comment on `SystemWriteScope.active`
+        // (DocumentWriter+SystemWrite.swift) has always described this as covering
+        // "performSystemWrite's own steps 6-8 (wait through apply)", but the code only
+        // ever wrapped step 6 (`waitForTurnAsync`) -- `prepare` (step 5) and `apply`
+        // (step 8) both ran OUTSIDE it, so a system write started synchronously from
+        // inside `prepare` (e.g. a `.renumberFootnotes` notification observer) or from
+        // inside the `body` closure passed to `applySystemWrite` would NOT have been
+        // caught by the `.nested` guard. Widened to genuinely cover prepare through
+        // apply, matching the documented invariant.
+        let (outcome, prepareRan) = await SystemWriteScope.$active.withValue(true) { () async -> (SystemWriteOutcome<R>, Bool) in
+            // Step 5: prepare.
+            prepare?()
+            let prepareRan = prepare != nil
+
+            // Step 6: wait.
+            let turnResult = await reservation.ticket.writer.waitForTurnAsync(reservation.ticket.seq)
+            if turnResult == .skipped {
+                let reason = reservation.ticket.writer.systemSkipReason(reservation.ticket.seq) ?? .writerReplaced
+                // `systemSkipReason` only peeks (see its doc comment) -- this call is
+                // what actually retires the entry now that its value has been consumed,
+                // so `skipReasons` doesn't grow unboundedly for this (the common) path.
+                reservation.ticket.writer.discardSystemSkipReason(reservation.ticket.seq)
+                reservation.consume()
+                return (.refused(.skipped(reason)), prepareRan)
+            }
+
+            // Step 7: re-check, only when prepare was never supplied.
+            if prepare == nil, !stillWanted() {
+                reservation.ticket.writer.settleSystemNotWanted(reservation.ticket.seq)
+                reservation.consume()
+                return (.refused(.notWanted), prepareRan)
+            }
+
+            // Step 8: apply.
+            let outcome = await reservation.ticket.writer.applySystemWrite(
+                reservation.ticket.seq, kind: kind, identity: identity, body: body)
+            switch outcome {
+            case .applied, .failed:
+                // The writer itself already removed the phase entry on both these paths.
+                reservation.consume()
+            case .refused:
+                // Out-of-turn or retired: `applySystemWrite` deliberately does NOT settle
+                // this (mirroring `applyEditorBatch`'s own unsettled out-of-turn refusal)
+                // -- `reservation`'s `deinit` is the safety net that settles it.
+                break
+            }
+            return (outcome, prepareRan)
+        }
+        return SystemWriteResult(outcome: outcome, prepareRan: prepareRan)
     }
 
     /// Send ID confirmations back to the editor

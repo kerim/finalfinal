@@ -13,9 +13,21 @@
 //  rewrites (`replaceBlocks`, both its default and its preserving-machine-managed path,
 //  and `replaceBlocksInRange`) and the `configure`/`reconfigure` epoch bump each advance
 //  the project's epoch, so any batch fetched before them is refused. Native structural
-//  writers (SectionOps delete/duplicate, reorder, bibliography/footnote sync,
-//  SectionReconciler, `deleteAllBlocks`) do NOT bump the epoch and are OUT OF SCOPE for
-//  this guard; rows they create land at the default (0, 0) stamp.
+//  writers (SectionOps delete/duplicate, reorder, SectionReconciler, `deleteAllBlocks`)
+//  do NOT bump the epoch and are OUT OF SCOPE for this guard; rows they create land at
+//  the default (0, 0) stamp.
+//
+//  Bibliography/Notes/heading-level sync is DIFFERENT as of t-94369a83 Phase 2: those
+//  writes route through `DocumentWriter`'s "system write" queue
+//  (`BlockSyncService.performSystemWrite`, see docs/architecture/document-writer.md's
+//  "System writes" section), so they now participate in ordering against a concurrent
+//  editor batch -- just not through THIS guard. A system write still never bumps the
+//  epoch or writes an (epoch, sequence) stamp of its own (rows it touches keep whatever
+//  stamp, including the default (0, 0), they already carried); what arbitrates it
+//  against a concurrent editor batch instead is reserve-time and apply-time identity
+//  plus the writer's own strict sequence ordering, not this per-row stamp comparison.
+//  Bibliography rows and Notes-label renames are additionally covered by
+//  `applyUpdateToExistingBlock`'s own refusal (Database+Blocks.swift) regardless.
 //
 //  Comparison is lexicographic, epoch-major. A row stamped in an older epoch therefore
 //  always compares below any batch carrying the current epoch, whatever their sequences.

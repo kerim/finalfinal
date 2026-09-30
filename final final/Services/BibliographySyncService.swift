@@ -66,6 +66,33 @@ final class BibliographySyncService {
 
     weak var database: ProjectDatabase?
 
+    /// Phase 2 (t-94369a83), §2.0: the typed handle to `BlockSyncService`'s ordered
+    /// write queue. Wired in `ContentView+ProjectLifecycle.swift`'s
+    /// `configureSyncServices`. `nil` (never configured, or `BlockSyncService`
+    /// deallocated) degrades every write below to the pre-Phase-2 direct-write
+    /// fallback (§2.0's `.noWriter` fallback).
+    var systemWriter: SystemWriter?
+
+    /// Phase 2 (t-94369a83), §2.1: retry bookkeeping for a system write that came back
+    /// with any outcome other than `.applied`/`.refused(.identityMismatch/
+    /// .writerRetired/.notWanted)` -- keyed by the exact (deduplicated) citekey set so
+    /// a retry counter never leaks across an unrelated later edit that happens to
+    /// produce a different set.
+    private var bibliographyRetryCounts: [Set<String>: Int] = [:]
+    private static let maxBibliographyRetries = 3
+
+    /// Review fix (F5, round 3): handle to the retry `Task` scheduled by
+    /// `scheduleBibliographyRetryOrGiveUp` below -- cancelled by `reset()` so a project
+    /// switch landing inside the retry's ~2s deferral window can never let a stale
+    /// retry fire against the NEW project's freshly-reset state. Belt-and-braces: the
+    /// retry closure ALSO captures the database identity at schedule time and re-checks
+    /// it before doing anything (see that function's own doc comment) -- either guard
+    /// alone would close the hazard, but `reset()` runs synchronously on MainActor
+    /// while the retry's own `Task` may be suspended mid-wait, so cancelling here is
+    /// the more direct signal and the identity check is the defense-in-depth match to
+    /// every other `stillWanted`-style check in this file.
+    private var pendingRetryTask: Task<Void, Never>?
+
     /// Hook invoked at the start of every bibliography update, BEFORE any bibliography row
     /// is written, so the block table reflects the live editor's current text.
     ///
@@ -185,6 +212,62 @@ final class BibliographySyncService {
         )
     }
 
+    /// Phase 2 (t-94369a83), §2.5: forces the write to run directly, right now, bypassing
+    /// the debounce and any `pendingUpdate` entirely -- used by an audited structural
+    /// operation (`StructuralUndoController.forceResyncDerivedContent`) that needs the
+    /// write to complete INSIDE its own `isPerforming` window, not on a later debounce
+    /// fire outside it.
+    ///
+    /// Waits out any already-in-flight run first, the same bound `flushPendingSync`
+    /// above uses. JUDGMENT CALL (see this dispatch's report): §2.0 describes a
+    /// `currentRun: Task<Void, Never>?` this would properly `await`, plus a
+    /// `deferredCheck` slot to also bypass -- neither was built this round (a larger
+    /// item spanning every write path, not just this one call site); this reuses the
+    /// existing `state == .syncing` wait as the nearest equivalent instead.
+    ///
+    /// Review fix (finding #5): after the wait, this used to UNCONDITIONALLY cancel
+    /// the debounce, clear `pendingUpdate`, and bump `syncGeneration` even if `state`
+    /// was STILL `.syncing` -- discarding a pending debounced update with nothing
+    /// replacing it, AND (via the generation bump) causing the still-in-flight run's
+    /// own `stillWanted` check to fail, superseding ITS write too. Net effect: both the
+    /// in-flight run and the pending debounced update could silently vanish with no
+    /// write landing at all. Mirrors `flushPendingSync`'s own correct pattern instead:
+    /// touch `debounceTask`/`pendingUpdate`/`syncGeneration` only once `state ==
+    /// .idle`. If it's still `.syncing` after the wait, this simply cannot force a
+    /// resync without corrupting the in-flight run's own result -- log it and return
+    /// rather than forcing state out from under it.
+    ///
+    /// Review fix (finding #8): `checkAndUpdateBibliography` refuses to run at all
+    /// once the user has manually edited the bibliography (`isAutoUpdateEnabled ==
+    /// false`, set by `markAsManuallyEdited()`), but this function called
+    /// `performBibliographyUpdate` directly, which has no such guard of its own --
+    /// bypassing it and overwriting the user's manual edit. Same guard, same place a
+    /// caller would expect it.
+    func resyncNow(citekeys: [String], projectId: String) async {
+        guard isAutoUpdateEnabled else {
+            DebugLog.log(.bib, "[BibliographySyncService] resyncNow: skipped -- auto-update is disabled " +
+                "(user has manually edited the bibliography)")
+            return
+        }
+        if state == .syncing {
+            let deadline = Date().addingTimeInterval(2.0)
+            while state == .syncing, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        guard state == .idle else {
+            DebugLog.alwaysPersisted(
+                "[BibliographySyncService] resyncNow: could not run -- a write was still in flight after the " +
+                "2s wait; leaving it and any pending debounced update untouched rather than superseding them")
+            return
+        }
+        debounceTask?.cancel()
+        debounceTask = nil
+        pendingUpdate = nil
+        syncGeneration += 1
+        await performBibliographyUpdate(citekeys: citekeys, projectId: projectId, scheduledGeneration: syncGeneration)
+    }
+
     /// Regenerate bibliography (manual trigger)
     func regenerateBibliography(projectId: String, citekeys: [String]) async {
         isAutoUpdateEnabled = true
@@ -210,6 +293,11 @@ final class BibliographySyncService {
         lastGeneratedHash = 0
         isAutoUpdateEnabled = true
         state = .idle
+        bibliographyRetryCounts.removeAll()
+        // F5: cancel any retry still waiting out its ~2s deferral -- see
+        // `pendingRetryTask`'s own doc comment for why this must happen here.
+        pendingRetryTask?.cancel()
+        pendingRetryTask = nil
     }
 
     // MARK: - Private Methods
@@ -224,6 +312,13 @@ final class BibliographySyncService {
     /// is deliberately stale during that specific window, and
     /// `flushPendingSync(overrideContent:)`'s doc comment for how a non-nil value reaches
     /// here).
+    /// Phase 2 (t-94369a83), §2.1: the write itself now goes through
+    /// `DocumentWriter`'s ordered system-write queue (`systemWriter`) instead of
+    /// writing directly. Dedup state (`lastKnownCitekeys`/`lastGeneratedHash`) commits
+    /// ONLY on `.applied` (or the `.noWriter` direct-write fallback's own success) --
+    /// never before the write, so a superseded/refused/failed attempt leaves the dedup
+    /// gate exactly where it was, letting a retry (or a later natural edit reproducing
+    /// the same citekeys) see the change as still-pending rather than already-applied.
     func performBibliographyUpdate(
         citekeys: [String], projectId: String, scheduledGeneration: Int, overrideContent: String? = nil
     ) async {
@@ -244,6 +339,20 @@ final class BibliographySyncService {
 
         state = .syncing
         defer { state = .idle }
+
+        #if DEBUG
+        // Test-only hook, awaited right after `state` becomes `.syncing`, before
+        // anything else in this run happens. Lets a test hold a run deterministically
+        // "in flight" for exactly as long as it needs (e.g. to exercise `resyncNow`'s
+        // own 2s-wait-then-give-up path) without relying on wall-clock timing or
+        // blocking a real database writer lock from a background thread/Task --
+        // `Thread.sleep` inside a `Task` risks starving Swift concurrency's
+        // cooperative thread pool and delaying unrelated timers (including this
+        // service's own debounce), which is exactly what made an earlier version of
+        // that test flaky. Mirrors `BlockSyncService.testPollCycleHook`. No cost in
+        // release builds.
+        await testInFlightHook?()
+        #endif
 
         // Flush the live editor's text into the block table before writing anything.
         // MUST run BEFORE both write branches below: the Source-Mode flush is a wholesale
@@ -268,12 +377,10 @@ final class BibliographySyncService {
         // that a manual regenerateBibliography() hasn't superseded this snapshot while it ran.
         guard scheduledGeneration == syncGeneration else { return }
 
-        // Update last known citekeys
-        lastKnownCitekeys = Set(uniqueCitekeys)
-
-        // Remove bibliography if no citations
+        // Remove bibliography if no citations. `lastKnownCitekeys` is committed inside
+        // `removeBibliographyBlock` itself now, only once its own write actually applies.
         guard !uniqueCitekeys.isEmpty else {
-            await removeBibliographyBlock(projectId: projectId)
+            await removeBibliographyBlock(projectId: projectId, scheduledGeneration: scheduledGeneration)
             return
         }
 
@@ -290,23 +397,153 @@ final class BibliographySyncService {
         // Generate bibliography markdown (items now in cache)
         let bibliographyContent = generateBibliographyMarkdown(citekeys: uniqueCitekeys)
 
-        // Check if content actually changed
+        // Check if content actually changed, against the last COMMITTED hash (only
+        // updated on a successful write below -- see this function's own doc comment).
         let contentHash = bibliographyContent.hashValue
-        guard contentHash != lastGeneratedHash else { return }
-        lastGeneratedHash = contentHash
+        guard contentHash != lastGeneratedHash else {
+            // Review fix (finding #10): the RENDERED content can be unchanged even
+            // when the CITEKEY SET changed (e.g. an unresolvable citekey that never
+            // appears in the generated bibliography either way) -- `lastKnownCitekeys`
+            // must still be committed here, or `checkAndUpdateBibliography`'s own
+            // `currentSet != lastKnownCitekeys` guard sees a "change" on every future
+            // check forever, rescheduling a full run (a Zotero fetch, and in Source
+            // Mode a wholesale delete-and-reinsert flush) every tick with nothing to
+            // show for it. This IS a legitimate "handled" outcome, not a failure --
+            // `lastGeneratedHash` is deliberately left as-is since the content itself
+            // genuinely didn't change.
+            lastKnownCitekeys = Set(uniqueCitekeys)
+            return
+        }
 
-        // Find or create bibliography section
-        do {
-            try await updateBibliographyBlock(
-                content: bibliographyContent,
-                projectId: projectId,
-                database: database
+        guard let systemWriter else {
+            // §2.0's `.noWriter` fallback -- no writer configured at all (should not
+            // happen once `configureSyncServices` wires it; defensive only).
+            await writeBibliographyDirectly(
+                content: bibliographyContent, projectId: projectId, database: database,
+                uniqueCitekeys: uniqueCitekeys, contentHash: contentHash
             )
+            return
+        }
+
+        let identity = SystemWriteIdentity(projectId: projectId, database: database)
+        let result = await systemWriter.perform(
+            identity: identity, kind: .bibliographyUpdate,
+            stillWanted: { [weak self] in
+                guard let self else { return false }
+                return scheduledGeneration == self.syncGeneration && self.database === identity.database
+            },
+            body: { db in
+                try BibliographySyncService.writeBibliographyRows(db: db, content: bibliographyContent, projectId: projectId)
+            }
+        )
+
+        switch result.outcome {
+        case .applied:
+            lastKnownCitekeys = Set(uniqueCitekeys)
+            lastGeneratedHash = contentHash
+            bibliographyRetryCounts[Set(uniqueCitekeys)] = nil
             // Post notification directly - don't rely on ValueObservation
             // ValueObservation may be blocked by contentState guard during editing
             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
+        case .refused(.identityMismatch), .refused(.writerRetired), .refused(.notWanted):
+            break   // superseded or project changed -- nothing to do
+        case .refused(.noWriter):
+            await writeBibliographyDirectly(
+                content: bibliographyContent, projectId: projectId, database: database,
+                uniqueCitekeys: uniqueCitekeys, contentHash: contentHash
+            )
+        case .refused, .failed:
+            scheduleBibliographyRetryOrGiveUp(citekeys: uniqueCitekeys, projectId: projectId)
+        }
+    }
+
+    /// §2.0's `.noWriter` fallback: writes directly against the captured database,
+    /// exactly as this method did before Phase 2. Commits dedup state itself since
+    /// there is no writer-mediated `.applied` outcome to gate on here.
+    private func writeBibliographyDirectly(
+        content: String, projectId: String, database: ProjectDatabase,
+        uniqueCitekeys: [String], contentHash: Int
+    ) async {
+        DebugLog.log(.sync, "[SystemWrite] no writer - direct write")
+        do {
+            _ = try database.write { db in
+                try BibliographySyncService.writeBibliographyRows(db: db, content: content, projectId: projectId)
+            }
+            lastKnownCitekeys = Set(uniqueCitekeys)
+            lastGeneratedHash = contentHash
+            bibliographyRetryCounts[Set(uniqueCitekeys)] = nil
+            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
         } catch {
-            DebugLog.log(.bib, "[BibliographySyncService] Failed to update bibliography: \(error)")
+            DebugLog.log(.bib, "[BibliographySyncService] Failed to update bibliography (direct write): \(error)")
+        }
+    }
+
+    /// §2.1: "any other outcome" (a real refusal or a failed write) leaves dedup state
+    /// untouched and schedules ONE retry, capped at `maxBibliographyRetries` per
+    /// (deduplicated) citekey set.
+    ///
+    /// Review fix (finding #4): this is called from INSIDE `performBibliographyUpdate`,
+    /// whose own `state = .syncing; defer { state = .idle }` has not unwound yet at
+    /// this point in the call stack -- calling anything SYNCHRONOUSLY here would hit a
+    /// `state == .idle` guard and silently no-op. A `Task` body never runs inline; it
+    /// is scheduled onto MainActor's queue for a later turn, strictly after
+    /// `performBibliographyUpdate` (this function's caller) returns and its own
+    /// `defer` has already restored `state` to `.idle` -- so deferring the retry
+    /// through a `Task` is enough to let it actually fire. The bounded wait below is a
+    /// belt-and-braces safety net matching `flushPendingSync`/`resyncNow`'s own
+    /// pattern, for the rare case something else legitimately starts a new sync in the
+    /// interim.
+    ///
+    /// Review fix (F4, round 3): this used to re-enter through
+    /// `checkAndUpdateBibliography(currentCitekeys:projectId:)`, which guards on
+    /// `currentSet != lastKnownCitekeys` -- a check that exists to decide whether a
+    /// NEW check is warranted at all, not whether a FAILED write should be retried.
+    /// Since a failed write never commits `lastKnownCitekeys`, that guard is only
+    /// false (blocking the retry) when the failed citekey set is UNCHANGED from what
+    /// was already committed before the failed attempt -- exactly `regenerateBibliography`'s
+    /// own manual re-trigger case (same citekeys, e.g. after Zotero metadata changed)
+    /// and a `resyncNow`-triggered retry restoring the same citekey set after a
+    /// structural undo. On those two paths the retry silently never ran at all, which
+    /// was this task's own original bug, still present. Fixed by calling
+    /// `performBibliographyUpdate` DIRECTLY here instead -- forcing the exact failed
+    /// generation/content to actually re-run regardless of whether the citekey set
+    /// changed -- rather than routing through a guard meant for a different purpose.
+    /// `isAutoUpdateEnabled` is still respected (mirrors `resyncNow`'s own guard): a
+    /// manual edit landing in the ~2s gap before the retry fires must not be silently
+    /// overwritten by it.
+    private func scheduleBibliographyRetryOrGiveUp(citekeys: [String], projectId: String) {
+        let key = Set(citekeys)
+        let attempt = (bibliographyRetryCounts[key] ?? 0) + 1
+        if attempt <= Self.maxBibliographyRetries {
+            bibliographyRetryCounts[key] = attempt
+            // F5: captured at schedule time -- see `pendingRetryTask`'s own doc comment
+            // for why both this identity check AND `reset()`'s cancel exist together.
+            let scheduledDatabase = database
+            pendingRetryTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.state == .syncing {
+                    let deadline = Date().addingTimeInterval(2.0)
+                    while self.state == .syncing, Date() < deadline {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                }
+                guard !Task.isCancelled,
+                      self.state == .idle,
+                      self.isAutoUpdateEnabled,
+                      self.database === scheduledDatabase
+                else { return }
+                self.syncGeneration += 1
+                self.debounceTask?.cancel()
+                self.debounceTask = nil
+                self.pendingUpdate = nil
+                await self.performBibliographyUpdate(
+                    citekeys: citekeys, projectId: projectId, scheduledGeneration: self.syncGeneration)
+            }
+        } else {
+            DebugLog.alwaysPersisted(
+                "[BibliographySyncService] giving up on bibliography update after \(attempt - 1) "
+                + "retries for citekeys \(key)")
+            bibliographyRetryCounts[key] = nil
         }
     }
 
@@ -317,242 +554,80 @@ final class BibliographySyncService {
     // from this class's sync state machine and block persistence, split out to keep
     // type_body_length in range.
 
-    private func updateBibliographyBlock(
-        content: String,
-        projectId: String,
-        database: ProjectDatabase
-    ) async throws {
-        try database.write { db in
-            // Re-derive the effective header name from INSIDE this serialized GRDB write
-            // section -- NOT from a read captured on the MainActor before this closure was
-            // scheduled to run (the prior shape here). `content`'s own heading text was
-            // already baked in by `generateBibliographyMarkdown`, called before this
-            // function, using whatever name was current at THAT moment. If a rename's write
-            // (`BibliographyHeadingRenamer.rename`) commits in between, that baked-in name
-            // goes stale. GRDB serializes writes, so reading the effective name again here --
-            // inside the write closure, rather than before it -- is what makes BOTH
-            // write-orderings converge on whichever name is actually current in settings at
-            // the moment EACH write actually commits, regardless of which of the two closures
-            // was scheduled first. See `BibliographyHeadingRenamer.rename`'s doc comment for
-            // the counterpart half of this fix (why IT doesn't need a busy-guard against this
-            // function).
-            let headerName = ExportSettings.load().effectiveBibliographyHeaderName
-            // Fetch the existing bibliography blocks BEFORE deleting them, so the regenerated
-            // bibliography can be reinserted back where the old one was, instead of always
-            // landing past whatever the user has typed after it since. See the anchor/step
-            // derivation below for how that position is reconstructed after the delete.
-            let existingBib = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isBibliography == true)
-                .order(Block.Columns.sortOrder)
-                .fetchAll(db)
-
-            // Anchor = the sortOrder the regenerated bibliography should return to: the REAL
-            // bibliography section's own heading position. The insert-time path (see
-            // `Database+BlocksInsert.swift`'s `resolveInsertPlacement`/`buildInsertedBlock`)
-            // only flags a heading `isBibliography = true` when it carries the literal
-            // `<!-- ::auto-bibliography:: -->` marker (`BlockParser.hasBibliographyMarker`) --
-            // a bare-title heading a user types or pastes (e.g. an ordinary "# Bibliography"
-            // chapter heading, a completely normal thing to write) is NOT flagged by that path
-            // at all, regardless of where in the document it lands. A second flagged heading
-            // can still occur, though: pasted text that happens to carry the marker literally,
-            // or a historical orphan already flagged in the DB from before this and the
-            // insert-time fix (see the "Historical orphans" comment further below) -- so
-            // picking the lowest-sortOrder flagged heading unconditionally could still pick the
-            // wrong one instead of the real section's, relocating the entire regenerated
-            // bibliography to the wrong position.
-            //
-            // Disambiguate with the same containment rule `resolveInsertPlacement` already
-            // applies: a flagged heading is the REAL bibliography heading only if the block
-            // immediately following it (by sortOrder, among ALL blocks -- not just
-            // bibliography-flagged ones) is ALSO bibliography-flagged. `generateBibliographyMarkdown`
-            // always emits heading-plus-entries together, so the real section's heading always
-            // has a bibliography-flagged block right after it; a lone stray heading with
-            // ordinary content after it does not.
-            //
-            // Falls back to the simpler "first flagged heading, unconditional" selector -- and,
-            // failing that, the first surviving bibliography block that is NOT a bare opening
-            // marker (see `isBareOpeningMarker` below) -- when no heading satisfies the stricter
-            // check. Covers first-ever generation (no heading exists yet to satisfy anything)
-            // and an already-degenerate state (e.g. a heading-only bibliography with no
-            // surviving entries after it) so those cases don't regress. The bare-marker
-            // exclusion at this last level exists because a marker orphan (an entire block
-            // whose content IS the bare opening-marker literal, left behind when CodeMirror's
-            // Source Mode hides the marker as an invisible atomic decoration and the user
-            // deletes the visible bibliography section around it) is not a heading, so it can
-            // only ever surface here -- unexcluded, it would hijack regeneration to the
-            // orphan's stale mid-document position instead of the document end. `nil` means
-            // there was no prior bibliography at all (or the only surviving block WAS a bare
-            // marker orphan), which keeps today's append-at-the-end behavior.
-            let realBibliographyHeadingAnchor = try existingBib.first { candidate in
-                guard candidate.blockType == .heading else { return false }
-                let nextBlock = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .filter(Block.Columns.sortOrder > candidate.sortOrder)
-                    .order(Block.Columns.sortOrder)
-                    .fetchOne(db)
-                return nextBlock?.isBibliography ?? false
-            }?.sortOrder
-            let anchor = realBibliographyHeadingAnchor
-                ?? existingBib.first { $0.blockType == .heading }?.sortOrder
-                ?? existingBib.first { !$0.isBareOpeningMarker }?.sortOrder
-
-            // Delete ALL existing bibliography blocks (handles duplicates)
-            try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isBibliography == true)
-                .deleteAll(db)
-
-            // Split "# Bibliography\n\nEntry1\n\nEntry2\n\n" into individual fragments
-            // so each DB block maps 1:1 with a ProseMirror top-level node.
-            // This prevents block-sync from seeing temp-ID paragraphs as spurious INSERTs.
-            let rawBlocks = content
-                .components(separatedBy: "\n\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-
-            // Placement: `start` is where the first fragment (the heading, always index 0 --
-            // see generateBibliographyMarkdown) lands; `step` is the sortOrder distance
-            // between consecutive fragments.
-            let start: Double
-            let step: Double
-            if let anchor {
-                start = anchor
-                // Whatever now immediately follows the anchor position (e.g. a trailing
-                // paragraph the user typed after the old bibliography) bounds how far the
-                // regenerated fragments can spread before colliding with it.
-                let nextBlock = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .filter(Block.Columns.sortOrder > anchor)
-                    .order(Block.Columns.sortOrder)
-                    .fetchOne(db)
-                if let nextBlock {
-                    let gap = nextBlock.sortOrder - anchor
-                    step = min(1.0, gap / Double(max(rawBlocks.count, 1)))
-                    if step < 1e-6 {
-                        // Defensive logging only -- no block mutation. `gap / N` still keeps
-                        // every insert strictly increasing and correctly ordered relative to
-                        // `nextBlock` for any positive gap; this just makes an unusually tight
-                        // squeeze visible if it ever happens.
-                        DebugLog.log(.bib, "[BibliographySyncService] Tight bibliography sortOrder gap: " +
-                            "anchor=\(anchor) next=\(nextBlock.sortOrder) step=\(step)")
-                    }
-                } else {
-                    // Bibliography was already the last thing in the document -- nothing to
-                    // pack against, so it simply stays put without needing to shift.
-                    step = 1.0
-                }
-            } else {
-                // First-ever generation: no prior bibliography blocks existed, so there is
-                // nothing to anchor back to. Unchanged existing behavior -- append at the end.
-                let maxSortOrder = try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .order(Block.Columns.sortOrder.desc)
-                    .fetchOne(db)?.sortOrder ?? 0
-                start = maxSortOrder + 1.0
-                step = 1.0
-            }
-
-            // No self-heal sweep here (deliberately removed — a prior version tried to
-            // delete unflagged orphan rows by exact-text match, position-bounded to
-            // "at/after the bibliography heading"). That bound was unsound in both
-            // directions at once: computed from `maxSortOrder` AFTER the delete above, an
-            // orphan surviving in the table shifts the next heading's placement above it,
-            // permanently excluding that orphan from future sweeps; widened to catch it,
-            // the same unbounded-above range would just as readily delete a trailing user
-            // paragraph that happens to exact-match a regenerated fragment, silently and
-            // without undo. `Database+Blocks.swift`'s insert-time containment fix (see
-            // `resolveInsertPlacement`) prevents new orphans from being created at all, and
-            // `BlockParser.parse()`'s `sectionFlagCarriedForward` re-derives every block's
-            // `isBibliography` flag from scratch — no drift possible — on every full
-            // document reparse (project open with no existing blocks, Source Mode's
-            // debounced re-parse, snapshot restore).
-            //
-            // Historical orphans (rows already mis-flagged `isBibliography == true` from
-            // before the insert-time fix) do NOT self-heal from any of that, and must not be
-            // assumed to: `assembleMarkdownForEditor` inserts the terminator immediately
-            // after the LAST block flagged `isBibliography`, which in an already-corrupted
-            // document IS the orphaned paragraph itself, so the regenerated markdown places
-            // the terminator AFTER the orphan every time — a reparse of that markdown
-            // re-derives the identical wrong flag via `sectionFlagCarriedForward`, not a
-            // corrected one. Worse, `ContentView+ProjectLifecycle.swift`'s
-            // `loadInitialContent` only calls `BlockParser.parse()` when no blocks exist yet
-            // for the project; once blocks exist (which they do for any already-corrupted
-            // document) project open just reassembles them via `assembleMarkdownForEditor`
-            // and never reparses at all. Clearing existing historical orphans would need a
-            // dedicated one-time migration — out of scope here.
-            //
-            // UPDATE: the orphan-as-anchor half of this harm is now closed. The `anchor`
-            // derivation above excludes any bare-opening-marker block (`isBareOpeningMarker`,
-            // both the unstripped-literal and legacy-load stripped-empty shapes) from its last
-            // fallback level, so a historical orphan row can no longer hijack regeneration to
-            // its own stale position. Deriving the anchor is not this comment's job, so it does
-            // not delete anything on its own — but that is not the end of the story for a project
-            // that actually regenerates: the orphan row is still flagged `isBibliography == true`
-            // (that flag is exactly why it had to be excluded above), so the SAME regeneration's
-            // own `deleteAll(isBibliography == true)` call just below removes it as a side effect,
-            // like any other stale bibliography row — see `BibliographyOrphanMarkerAnchorTests.
-            // swift`, which asserts this twice. The genuine remaining gap is narrower than "the
-            // orphan is never cleaned up": a project that has an orphan but NEVER regenerates (no
-            // citation is ever added or removed afterward) still has that orphan sitting in the
-            // database forever, since nothing on the read/display path deletes it either. That
-            // case alone still requires the dedicated one-time migration described above.
-
-            for (index, fragment) in rawBlocks.enumerated() {
-                let isHeading = fragment.hasPrefix("#")
-                // Rewrite the heading's own markdown text to the freshly-read `headerName`
-                // too, not just `textContent` below -- otherwise a rename landing between
-                // this write being scheduled and it actually committing would leave the
-                // persisted `markdownFragment` (what both editors actually render) showing
-                // the stale name baked into `content` while `textContent` showed the fresh
-                // one, self-desyncing the very row this write is about to insert. Idempotent
-                // when the name hasn't changed: `fragment` already reads "# \(headerName)" in
-                // that case, so this just rebuilds the identical string.
-                let effectiveFragment = isHeading ? "# \(headerName)" : fragment
-                let textContent = isHeading
-                    ? headerName
-                    : BlockParser.extractTextContent(from: fragment, blockType: .paragraph)
-                var block = Block(
-                    projectId: projectId,
-                    sortOrder: start + Double(index) * step,
-                    blockType: isHeading ? .heading : .paragraph,
-                    textContent: textContent,
-                    markdownFragment: effectiveFragment,
-                    headingLevel: isHeading ? 1 : nil,
-                    status: isHeading ? .final_ : nil,
-                    wordCount: MarkdownUtils.wordCount(for: textContent),
-                    isBibliography: true
-                )
-                try block.insert(db)
-            }
-        }
-    }
-
-    /// Remove bibliography blocks when all citations are deleted
-    private func removeBibliographyBlock(projectId: String) async {
+    /// Phase 2 (t-94369a83), §2.1: removes bibliography blocks when all citations are
+    /// deleted, routed through the same system-write queue as
+    /// `performBibliographyUpdate` above -- same outcome handling, same `.noWriter`
+    /// direct-write fallback, same retry-on-any-other-outcome rule (keyed by the empty
+    /// citekey set, since a removal has none).
+    private func removeBibliographyBlock(projectId: String, scheduledGeneration: Int) async {
         guard let database else { return }
 
-        do {
-            try database.write { db in
-                try Block
-                    .filter(Block.Columns.projectId == projectId)
-                    .filter(Block.Columns.isBibliography == true)
-                    .deleteAll(db)
+        guard let systemWriter else {
+            await removeBibliographyDirectly(projectId: projectId, database: database)
+            return
+        }
+
+        let identity = SystemWriteIdentity(projectId: projectId, database: database)
+        let result = await systemWriter.perform(
+            identity: identity, kind: .bibliographyRemoval,
+            stillWanted: { [weak self] in
+                guard let self else { return false }
+                return scheduledGeneration == self.syncGeneration && self.database === identity.database
+            },
+            body: { db in
+                try BibliographySyncService.writeBibliographyRemoval(db: db, projectId: projectId)
             }
-            // Post notification directly - don't rely on ValueObservation
+        )
+
+        switch result.outcome {
+        case .applied:
             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
-            // Reset hash so next creation triggers notification
             lastGeneratedHash = 0
-            // Reset citekeys so future removals don't get skipped by the guard
             lastKnownCitekeys = []
-        } catch {
-            DebugLog.log(.bib, "[BibliographySyncService] Error removing bibliography: \(error)")
+            bibliographyRetryCounts[[]] = nil
+        case .refused(.identityMismatch), .refused(.writerRetired), .refused(.notWanted):
+            break   // superseded or project changed -- nothing to do
+        case .refused(.noWriter):
+            await removeBibliographyDirectly(projectId: projectId, database: database)
+        case .refused, .failed:
+            scheduleBibliographyRetryOrGiveUp(citekeys: [], projectId: projectId)
         }
     }
+
+    /// §2.0's `.noWriter` fallback for removal -- writes directly, exactly as this
+    /// method did before Phase 2.
+    private func removeBibliographyDirectly(projectId: String, database: ProjectDatabase) async {
+        DebugLog.log(.sync, "[SystemWrite] no writer - direct write")
+        do {
+            _ = try database.write { db in
+                try BibliographySyncService.writeBibliographyRemoval(db: db, projectId: projectId)
+            }
+            NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
+            lastGeneratedHash = 0
+            lastKnownCitekeys = []
+        } catch {
+            DebugLog.log(.bib, "[BibliographySyncService] Error removing bibliography (direct write): \(error)")
+        }
+    }
+
+    #if DEBUG
+    /// Test-only read of whether a debounced update is currently scheduled --
+    /// review finding #4: lets a test deterministically poll for "the retry's own
+    /// `checkAndUpdateBibliography()` call has actually scheduled pending work" rather
+    /// than guessing at a wall-clock delay for the retry's `Task` to run.
+    var testHasPendingUpdate: Bool { pendingUpdate != nil }
+
+    /// Test-only hook -- see the call site inside `performBibliographyUpdate` for the
+    /// full doc comment.
+    var testInFlightHook: (() async -> Void)?
+    #endif
 }
 
-/// Single use: `updateBibliographyBlock`'s anchor-fallback chain above.
-private extension Block {
+/// Used by `BibliographySyncService+SystemWrite.swift`'s `writeBibliographyRows`
+/// anchor-fallback chain (formerly `updateBibliographyBlock`'s own, moved there
+/// verbatim by Phase 2, t-94369a83 §2.1) -- not `private` because that function lives
+/// in a separate file (Swift's `private` is file-scoped).
+extension Block {
     /// A "bare opening marker" block names no real bibliography content: it is either the
     /// unstripped marker literal on its own (a document parsed WITHOUT
     /// strippingBibliographyMarkerFromBlocks), or — on the legacy-load path, where the

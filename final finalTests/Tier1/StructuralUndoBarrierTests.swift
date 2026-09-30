@@ -71,7 +71,11 @@ struct StructuralUndoBarrierTests {
             DocumentManager.shared.projectId = priorPid
         }
 
-        await ContentView.persistEnforcedSections(editorState: editorState)
+        // Phase 2 (t-94369a83), §2.6: `persistEnforcedSections` now needs `originalLevels`
+        // to compute which headings actually changed level. This test asserts the
+        // `invalidateAll` barrier itself, which runs unconditionally BEFORE that check --
+        // an empty map (no heading reported as changed) exercises that same barrier path.
+        await ContentView.persistEnforcedSections(editorState: editorState, originalLevels: [:])
 
         #expect(unifiedUndoService.undoStack.isEmpty, "hierarchy enforcement must invalidate the timeline")
         #expect(unifiedUndoService.redoStack.isEmpty)
@@ -109,7 +113,7 @@ struct StructuralUndoBarrierTests {
             DocumentManager.shared.projectId = priorPid
         }
 
-        await ContentView.persistEnforcedSections(editorState: editorState)
+        await ContentView.persistEnforcedSections(editorState: editorState, originalLevels: [:])
         #expect(unifiedUndoService.undoStack.isEmpty)
     }
 }
