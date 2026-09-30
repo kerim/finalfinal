@@ -371,12 +371,8 @@ extension XCUIApplication {
         for attempt in 1...maxAttempts {
             activateAndWaitForForeground()
             typeText(text)
+            Thread.sleep(forTimeInterval: 1.0)
 
-            // No fixed settle here: editorContainsText already polls (0.25s intervals, up to
-            // its own 15s timeout below) for the exact same condition this used to sleep
-            // a flat 1.0s before checking -- a fixed sleep in front of it was pure dead
-            // weight on the common (already-landed) path and never bought correctness on
-            // the slow path either, since the poll's own budget already dwarfs it.
             if editorContainsText(text, timeout: 15) {
                 return
             }

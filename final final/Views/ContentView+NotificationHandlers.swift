@@ -263,80 +263,9 @@ extension ContentView {
             await flush(projectId, nil)
         }
 
-        // Phase 2 (t-94369a83), §2.2: reserve AFTER the flush above, not before -- so
-        // this write's turn in the ordered queue reflects when the flush (which can
-        // itself take a beat) actually finished, not when this function was first
-        // called.
-        let outcome: BibliographyHeadingRenamer.RenameOutcome
-        if let systemWriter = bibliographySyncService.systemWriter {
-            let identity = SystemWriteIdentity(projectId: projectId, database: database)
-            let result = await systemWriter.perform(
-                identity: identity, kind: .bibliographyRename,
-                stillWanted: { bibliographySyncService.database === identity.database },
-                body: { db in
-                    // Re-read the effective header name from INSIDE the transaction, NOT
-                    // this function's own captured `newName` -- so a rename that reserves
-                    // its turn after a concurrent one still converges on whichever name is
-                    // actually current in settings at the moment ITS write commits,
-                    // regardless of scheduling order (mirrors
-                    // `BibliographySyncService.writeBibliographyRows`'s own re-read of the
-                    // same setting, for the same reason).
-                    let effectiveName = ExportSettings.load().effectiveBibliographyHeaderName
-                    return SystemWriteBody(value: BibliographyHeadingRenamer.renameInTransaction(
-                        db: db, projectId: projectId, from: oldNames, to: effectiveName))
-                }
-            )
-            switch result.outcome {
-            case .applied(let renameOutcome):
-                // A `.noOp` here is a normal outcome of a completed write (see
-                // `renameInTransaction`'s own doc comment) -- handled by the shared
-                // switch below exactly like the pre-Phase-2 direct-write result was.
-                outcome = renameOutcome
-            case .refused(let reason):
-                // Review fix (finding #13): this used to post the SAME "database
-                // error" notification for every refusal reason. Most refusals here are
-                // completely benign -- the project switched away, the writer was
-                // replaced/retired, or this call nested inside another system write --
-                // exactly what `BibliographySyncService`'s own
-                // `.refused(.identityMismatch)/.refused(.writerRetired)/.refused(.notWanted)`
-                // handling already treats as "superseded or project changed -- nothing
-                // to do", with no user-facing error. Telling the user "database error"
-                // for a rename that simply no longer applies (they've moved to a
-                // different project) is actively misleading.
-                switch reason {
-                case .notWanted, .identityMismatch, .writerRetired, .nested,
-                     .skipped(.projectSwitch), .skipped(.writerReplaced), .skipped(.editorReplaced),
-                     .skipped(.lifecycleDrain), .skipped(.drainTimeout):
-                    DebugLog.log(.bib, "[ContentView] performBibliographyHeaderNameChange: rename refused " +
-                        "(\(reason)) -- benign supersession, no user-facing error")
-                case .outOfTurn, .noWriter, .skipped(.systemStalled):
-                    // A genuine problem -- the write never got its turn, no writer is
-                    // configured, or the I-SYS stall backstop fired because something
-                    // else blocked the queue. Still surfaced via the existing message
-                    // (not literally "the database threw", but the user-facing outcome
-                    // is the same: the rename did not happen and won't retry itself).
-                    NotificationCenter.default.post(
-                        name: .bibliographyHeadingRenameFailed, object: nil,
-                        userInfo: ["reason": BibliographyHeadingRenamer.NoOpReason.databaseError.message]
-                    )
-                }
-                return
-            case .failed:
-                // A write that actually threw -- this IS a real database error.
-                NotificationCenter.default.post(
-                    name: .bibliographyHeadingRenameFailed, object: nil,
-                    userInfo: ["reason": BibliographyHeadingRenamer.NoOpReason.databaseError.message]
-                )
-                return
-            }
-        } else {
-            // §2.0's `.noWriter` fallback -- no writer configured at all (defensive
-            // only; should not happen once `configureSyncServices` wires it).
-            outcome = BibliographyHeadingRenamer.rename(
-                in: database, projectId: projectId, from: oldNames, to: newName
-            )
-        }
-
+        let outcome = BibliographyHeadingRenamer.rename(
+            in: database, projectId: projectId, from: oldNames, to: newName
+        )
         switch outcome {
         case .renamed:
             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
@@ -513,46 +442,36 @@ extension ContentView {
             return
         }
 
+        // Set content state BEFORE DB write to suppress sync
+        editorState.contentState = .bibliographyUpdate
+        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands --
+        // see handleBibliographySectionChanged above and
+        // BlockSyncService.checkGenerationGuard's doc comment. Placed here, before the
+        // database write below (handleImmediateInsertion), rather than only before the
+        // Task below, for defensive/consistent ordering with the other two handlers --
+        // NOT because a poll could otherwise observe the bump with no marker set: this
+        // whole run, from the `contentState` assignment above through this call, is one
+        // synchronous MainActor region with no suspension point in it, so no poll cycle
+        // can interleave between them regardless of exactly where in this region the
+        // marker is set.
+        blockSyncService.beginDatabaseRebuild()
         // This is a synthetic content rebuild, not a mode switch — any cursor position
         // already sitting in cursorPositionToRestore was computed against the
         // pre-rebuild document and is stale by construction. Drop it so the stale
         // mode-switch restore mechanism can't fire later and overwrite the correct
-        // footnote cursor placement Stage E is about to set below. Order-independent
-        // (unrelated to contentState gating), so this stays at the original
-        // synchronous point rather than moving into the Task below.
+        // footnote cursor placement Stage E is about to set below.
         cursorPositionToRestore = nil
+        editorState.isResettingContent = true
 
         DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: proceeding " +
             "label=\(label) projectId=\(projectId)")
-        // Phase 2 (t-94369a83), §2.4: the SYNCHRONOUS half of the insertion (debounce
-        // cancel, generation bump) runs HERE, at the original call point, in the same
-        // synchronous MainActor region as everything else above. The write itself
-        // (`commitImmediateInsertion`) is async now -- routed through the ordered
-        // system-write queue -- so `contentState` deliberately stays `.idle` across
-        // that wait (moved into the Task below, AFTER the commit returns) rather than
-        // being set busy before it: this is what keeps routine polls and editor
-        // pushes working normally while the write is in flight, instead of stalling
-        // behind a `contentState` gate for the whole wait.
-        let insertionGeneration = footnoteSyncService.beginImmediateInsertion()
+        // E1/E4: capture the real DB id of the definition row just inserted for `label`, so
+        // it can ride along on the `.scrollToFootnoteDefinition` post below instead of being
+        // discarded -- lets Milkdown resolve the cursor target by block identity rather than
+        // a positional/label search.
+        let insertedBlockId = footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
 
         Task {
-            // E1/E4: capture the real DB id of the definition row just inserted for
-            // `label`, so it can ride along on the `.scrollToFootnoteDefinition` post
-            // below instead of being discarded -- lets Milkdown resolve the cursor
-            // target by block identity rather than a positional/label search.
-            let insertedBlockId = await footnoteSyncService.commitImmediateInsertion(
-                label: label, projectId: projectId, generation: insertionGeneration)
-
-            // Set content state BEFORE the rebuild poll below to suppress sync --
-            // moved here (after the commit above) per this function's own §2.4 doc
-            // comment.
-            editorState.contentState = .bibliographyUpdate
-            // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump
-            // lands -- see handleBibliographySectionChanged above and
-            // BlockSyncService.checkGenerationGuard's doc comment.
-            blockSyncService.beginDatabaseRebuild()
-            editorState.isResettingContent = true
-
             // Force-flush pending JS changes to DB. This MUST complete before the
             // fetchBlocksWithIds() read below: editorState.content above only reflects what
             // the JS coordinator had already synced at notification-post time, but the

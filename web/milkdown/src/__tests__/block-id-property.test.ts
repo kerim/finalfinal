@@ -6,14 +6,10 @@
 // block — never a duplicate or missing id). All 5 are now FIXED for blocks
 // whose OLD START SURVIVED the mapping (not itself deleted) — every one of
 // the 5 is exactly that shape. A block whose start was itself deleted by the
-// mapping still takes the pre-existing raw same-offset fallback, but as of
-// t-452ca407 that fallback claim is no longer trusted on position alone: when
-// the old occupant at that offset was wholly replaced, the claim is flagged
-// and routed through the same text-relatedness check every other structural
-// claim goes through (Phase 1's `flagged` computation and Phase 2's per-block
-// branch, both in block-id-plugin.ts) — see that fix's own doc comments for
-// what still collides (a coincidentally text-related but unrelated block, a
-// stale key, or an app-origin transaction). F1b (the "structure unchanged" per-block
+// mapping still takes the pre-existing raw same-offset fallback and can, in
+// principle, still collide by coincidental offset; see block-id-plugin.ts's
+// Phase 1 mapped-lookup comment (the "no matching swap vector" paragraph) for
+// that narrower, still-open case. F1b (the "structure unchanged" per-block
 // match picking the first same-distance candidate in Map iteration order,
 // instead of a stable tiebreak) was fixed first — see block-id-plugin.ts's
 // per-block matching branch and the P-C property test below. F1a, F2, F3, the
@@ -23,18 +19,7 @@
 // block sharing its numeric offset is the same block (`oldByNewOffset`/
 // `tracked` in block-id-plugin.ts). The 5 regressions below are kept, flipped
 // to assert the now-correct outcome instead of the bug each used to pin —
-// see the note ahead of them. F4 had one more residual shape the mapped
-// lookup alone did not close: a brand-new, unrelated empty block of a
-// DIFFERENT type wholly REPLACING an empty block at the same offset (via
-// replaceWith, not insert) -- the old occupant's start is itself deleted, so
-// this lands on the raw same-offset fallback rather than the mapped lookup,
-// and meaningfulTextOverlap('', '') trivially passes regardless of type.
-// That "replace variant" is closed separately, by phase1CanClaim's
-// replacedOccupant parameter: a flagged raw-fallback claim (t-452ca407's
-// `flagged`) that crosses type AND has both old and new text empty is
-// refused outright -- see phase1CanClaim's own doc comment for the
-// reasoning. Pinned below by the "replace variant" tests in the F4 describe
-// block.
+// see the note ahead of them.
 //
 // The code still does NOT satisfy "every block keeps its id, full stop":
 // two gaps survive the Phase 1 fix and are NOT covered by a pinned
@@ -768,47 +753,6 @@ describe('regression (fixed): F3 (join variant) — a join no longer shifts a pr
   });
 });
 
-describe('positive control: split-then-fill still reclaims the split id under the live (mapped) path', () => {
-  it("Enter at the end of P, then typing into the new blank line (in a transaction that also changes structure) keeps the blank line's own marked id", () => {
-    // The F3/F3-join tests above pin that the bypass no longer reaches TOO
-    // FAR. This test pins the other side: the bypass must still reach far
-    // enough for its actual intended use case -- Enter then immediately
-    // typing into the fresh blank line -- to keep working on the LIVE
-    // (mapped) path real edits take. block-id-recent-split-bypass.test.ts's
-    // positive control calls assignBlockIds with no `mapping` argument at
-    // all, so it only ever exercises the old bare-offset path, never Phase
-    // 1's mapped lookup the real editor actually runs through. Here the
-    // second transaction also appends an unrelated paragraph Z, so
-    // `structureChanged` is true and this genuinely goes through the mapped,
-    // structural path (Phase 1 above, `canClaimUnderStructuralChange` below
-    // it) rather than the "structure unchanged" shortcut.
-    resetBlockIdState();
-    const d0 = propSchema.nodes.doc.create(null, [para('P', 'abcdef')]);
-    let ids = new Map<number, string>([[0, 'id-P']]);
-    let types = new Map<number, string>([[0, 'paragraph']]);
-
-    const t1 = new Transform(d0).split(7, 1, [{ type: propSchema.nodes.paragraph, attrs: { tid: 'E' } }]);
-    [ids, types] = assignBlockIds(t1.doc, ids, types, d0, t1.mapping);
-    const eOffset = para('P', 'abcdef').nodeSize;
-    const eId = ids.get(eOffset)!;
-    expect(getRecentlySplitEmptyIds().has(eId)).toBe(true);
-
-    const t2 = new Transform(t1.doc).insert(eOffset + 1, propSchema.text('typed'));
-    t2.insert(t2.doc.content.size, para('Z', 'zzz'));
-    const [after] = assignBlockIds(t2.doc, ids, types, t1.doc, t2.mapping);
-
-    const byTid = new Map<string, number>();
-    t2.doc.forEach((n, off) => {
-      byTid.set(n.attrs.tid, off);
-    });
-    expect(t2.doc.child(1).textContent).toBe('typed');
-    expect(after.get(byTid.get('E')!)).toBe(eId);
-    expect(after.get(byTid.get('P')!)).toBe('id-P');
-    expect(after.get(byTid.get('Z')!)).not.toBe(eId);
-    expect(getRecentlySplitEmptyIds().has(eId)).toBe(false);
-  });
-});
-
 describe("regression (fixed): F4 — a brand-new paragraph no longer inherits a heading's id (cross-type theft on empty blocks)", () => {
   it('inserting an empty paragraph above a run of empty headings leaves every heading with its own id; the new paragraph gets its own temp id', () => {
     // phase1CanClaim allows a cross-type claim (paragraph <-> heading, etc.)
@@ -820,11 +764,7 @@ describe("regression (fixed): F4 — a brand-new paragraph no longer inherits a 
     // because both were empty and the position coincided -- despite being a
     // completely different node type. Phase 1's mapped lookup now follows H1
     // to its own mapped position, so the brand-new N is never compared
-    // against H1's id at that offset at all. The "replace variant" tests
-    // below (where the old occupant's start is itself replaced, not merely
-    // shifted, so the mapped lookup can't help) are closed by a separate
-    // guard, phase1CanClaim's replacedOccupant refusal -- see that
-    // function's doc comment.
+    // against H1's id at that offset at all.
     resetBlockIdState();
     const d0 = propSchema.nodes.doc.create(null, [
       para('A', 'abc'),
@@ -862,54 +802,5 @@ describe("regression (fixed): F4 — a brand-new paragraph no longer inherits a 
     expect(nId).not.toBe('id-H1');
     expect(nId.startsWith('temp-')).toBe(true);
     expect(tr.doc.nodeAt(byTid.get('H1')!)!.type.name).toBe('heading'); // and H1 is still, in fact, a heading
-  });
-
-  for (const [oldKind, newKind] of [
-    ['heading', 'paragraph'],
-    ['paragraph', 'heading'],
-  ] as const) {
-    it(`replace variant: an empty ${oldKind} wholly replaced by an unrelated empty ${newKind} (same block count) does not inherit its id`, () => {
-      resetBlockIdState();
-      const mk = (k: 'heading' | 'paragraph', tid: string) => (k === 'heading' ? heading(tid, '') : para(tid, ''));
-      const d0 = propSchema.nodes.doc.create(null, [para('A', 'abc'), mk(oldKind, 'OLD'), para('Q', 'x')]);
-      const ids = new Map<number, string>();
-      const types = new Map<number, string>();
-      d0.forEach((n, off) => {
-        ids.set(off, `id-${n.attrs.tid}`);
-        types.set(off, n.type.name);
-      });
-      const aSize = para('A', 'abc').nodeSize;
-      const oldSize = mk(oldKind, 'OLD').nodeSize;
-      const tr = new Transform(d0).replaceWith(aSize, aSize + oldSize, mk(newKind, 'N'));
-      const [after] = assignBlockIds(tr.doc, ids, types, d0, tr.mapping);
-      const byTid = new Map<string, number>();
-      tr.doc.forEach((n, off) => {
-        byTid.set(n.attrs.tid, off);
-      });
-      expect(tr.doc.childCount).toBe(3);
-      expect(byTid.get('N')).toBe(aSize);
-      expect(byTid.has('OLD')).toBe(false);
-      expect(tr.doc.nodeAt(aSize)!.type.name).toBe(newKind);
-      expect(after.get(byTid.get('A')!)).toBe('id-A');
-      expect(after.get(byTid.get('Q')!)).toBe('id-Q');
-      expect(after.get(aSize)!.startsWith('temp-')).toBe(true);
-      expect([...after.values()]).not.toContain('id-OLD');
-    });
-  }
-
-  it('replace variant: an app-origin push keeps positional trust on the same shape', () => {
-    resetBlockIdState();
-    const d0 = propSchema.nodes.doc.create(null, [para('A', 'abc'), heading('OLD', ''), para('Q', 'x')]);
-    const ids = new Map<number, string>();
-    const types = new Map<number, string>();
-    d0.forEach((n, off) => {
-      ids.set(off, `id-${n.attrs.tid}`);
-      types.set(off, n.type.name);
-    });
-    const aSize = para('A', 'abc').nodeSize;
-    const oldSize = heading('OLD', '').nodeSize;
-    const tr = new Transform(d0).replaceWith(aSize, aSize + oldSize, para('N', ''));
-    const [after] = assignBlockIds(tr.doc, ids, types, d0, tr.mapping, true);
-    expect(after.get(aSize)).toBe('id-OLD');
   });
 });

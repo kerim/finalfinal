@@ -115,10 +115,7 @@ struct FootnoteSyncFlushTests {
         #expect(labelsB == Set(["1", "2"]), "Second cycle must reflect B ([1,2]), not just leftover A")
     }
 
-    @Test("""
-        flushPendingSync replays a stale pending snapshot with its STORED generation, so an intervening immediate insertion's \
-        guard correctly rejects it
-        """)
+    @Test("flushPendingSync replays a stale pending snapshot with its STORED generation, so an intervening immediate insertion's guard correctly rejects it")
     @MainActor
     func flushPendingSyncStoredGenerationRejectsStaleSnapshotAfterImmediateInsertion() async throws {
         let seed = """
@@ -138,16 +135,9 @@ struct FootnoteSyncFlushTests {
         // immediateInsertionSupersedesStaleDebounce's setup) — refs=["1"].
         service.checkAndUpdateFootnotes(footnoteRefs: ["1"], projectId: projectId, fullContent: seed)
 
-        // An immediate insertion happens before the flush: bumps syncGeneration 0 -> 1.
-        // Phase 2 (t-94369a83), §2.4: `handleImmediateInsertion` split into begin/commit;
-        // `beginImmediateInsertion` now also clears `pendingUpdate` synchronously (per the
-        // plan), so `flushPendingSync` below now short-circuits on its own
-        // `pendingUpdate == nil` guard rather than reaching the stale-generation guard this
-        // test's assertions were originally written to exercise -- the DB end-state this
-        // test actually asserts on is unchanged either way ([^1]'s real text survives,
-        // [^2] from the immediate insertion is present), so the assertions below still hold.
-        let insertionGeneration = service.beginImmediateInsertion()
-        _ = await service.commitImmediateInsertion(label: "2", projectId: projectId, generation: insertionGeneration)
+        // An immediate insertion happens before the flush: bumps syncGeneration 0 -> 1 and
+        // (per the fix under test) must NOT clear pendingUpdate.
+        service.handleImmediateInsertion(label: "2", projectId: projectId)
 
         // The stale pending snapshot (captured generation 0) must be rejected by
         // performFootnoteUpdate's scheduledGeneration == syncGeneration guard (0 != 1), not

@@ -316,11 +316,8 @@ extension ProjectDatabase {
                 DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(kind) block: \(id.prefix(8))")
                 continue
             }
-            if try Block.deleteOne(db, key: id) {
-                deleted.append(id)
-            } else {
-                DebugLog.log(.data, "[Database+Blocks] editor delete of missing row \(id.prefix(8)) — not counted")
-            }
+            try Block.deleteOne(db, key: id)
+            deleted.append(id)
         }
         return deleted
     }

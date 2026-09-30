@@ -799,12 +799,6 @@ export function insertTable(rows: number, cols: number): void {
     const topLevel = $from.depth >= 1 ? $from.node(1) : null;
     const isEmptyTopParagraph = topLevel !== null && topLevel.type.name === 'paragraph' && topLevel.content.size === 0;
 
-    // Accepted trade-off (t-65a6a268): the isEmptyTopParagraph branch's
-    // replaceWith hits phase1CanClaim's replacedOccupant refusal
-    // (same-offset, cross-type, both-empty) and the new table gets a fresh
-    // temp id rather than inheriting the paragraph's old one -- see
-    // block-id-phase1-mapping.test.ts's "accepted fresh-id trade-offs"
-    // suite, pin (b).
     const tr = isEmptyTopParagraph
       ? view.state.tr.replaceWith($from.before(1), $from.after(1), tableNode)
       : view.state.tr.insert($from.after(1), tableNode);
