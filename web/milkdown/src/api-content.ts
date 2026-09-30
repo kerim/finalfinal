@@ -2687,8 +2687,35 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
   if (!editorInstance || changes.length === 0) return;
 
   syncLog('API:updateHeadingLevels', `${changes.length} changes`);
+  // t-94369a83 Phase 2, §3: flush any edit still sitting in block-sync's own 100ms
+  // debounce BEFORE pausing sync. Once paused, blockSyncPlugin's apply() no-ops on the
+  // heading-level dispatch below, and -- more importantly -- the RAF callback's own
+  // detectPausedEditsKeepingPending (in the `finally` below) unconditionally clears any
+  // still-armed debounce timer when it fires. Without flushing here first, an edit typed
+  // just before this call (still only in the debounce, not yet a genuine pending change)
+  // would be silently cancelled rather than promoted -- this is the last chance to drain
+  // it through the normal detection path.
+  flushPendingBlockChangesPlugin();
   setSyncPaused(true);
   setIsSettingContent(true);
+  // Captured before any dispatch below, at the moment this call begins (reflecting
+  // whatever was just flushed above) -- NOT the ambient last-known state, which the
+  // heading-level dispatch below is about to change. See
+  // detectPausedEditsKeepingPending's own doc comment (block-sync-plugin.ts) for why an
+  // explicit, correctly-timed baseline is required rather than reusing ambient state.
+  //
+  // Review fix (finding #14): captured HERE, before `editorInstance.action(...)` is
+  // even called, rather than as the first statement inside its callback. If
+  // `action()` throws before ever invoking its callback (or the callback's own first
+  // line, `ctx.get(editorViewCtx)`, throws) `baseline` used to stay `undefined`, and
+  // the `finally` block below would then fall back to the OLD full-wipe
+  // `resetAndSnapshot` -- silently discarding any pending edit, the exact bug this
+  // whole phase (t-94369a83 Phase 2 §3) exists to close, just reachable through a
+  // throw instead of the ordinary path. `editorInstance.ctx.get(editorViewCtx)` is the
+  // same accessor the callback below would otherwise use, called one level up --
+  // already the established pattern at every OTHER call site in this file that needs
+  // the view outside an `action()` block (see e.g. `deferredSnapshotAndUnpause` above).
+  const baseline: Map<string, BlockSnapshot> = snapshotBlocks(editorInstance.ctx.get(editorViewCtx).state.doc);
   try {
     editorInstance.action((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -2773,7 +2800,12 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
     });
   } finally {
     setIsSettingContent(false);
-    // Delay snapshot + unpause to RAF so normalization transactions are absorbed
-    deferredSnapshotAndUnpause();
+    // Delay snapshot + unpause to RAF so normalization transactions are absorbed.
+    // t-94369a83 Phase 2, §3: keepPending=true routes through
+    // detectPausedEditsKeepingPending instead of the full-wipe resetAndSnapshot -- an
+    // edit or pending insert queued before this call (including the heading-level
+    // change itself, diffed against `baseline` above) survives instead of being
+    // silently discarded.
+    deferredSnapshotAndUnpause(true, baseline, true);
   }
 }

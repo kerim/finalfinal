@@ -28,7 +28,10 @@
 //  evaluateJavaScript child is a withCheckedContinuation that group.cancelAll()
 //  cannot resume -- so if WebKit never calls back, the timeout never actually let
 //  the function return. See ContentView.raceContentFetch's own doc comment for the
-//  fix (the same unstructured-Task race pattern as BlockSyncService.raceWithTimeout).
+//  fix: it now goes through the shared raceAgainstTimeout(_:_:) helper
+//  (Services/TimeoutRace.swift), the same one BlockSyncService.fetchContentFromWebView
+//  itself was migrated to (t-027c3835, quitting-can-hang-if-the-editor-stops-responding)
+//  after this test first exposed the pattern.
 //
 
 import Testing

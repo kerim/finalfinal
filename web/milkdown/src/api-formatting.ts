@@ -69,14 +69,21 @@ export function setHeading(level: number): boolean {
       const { from } = view.state.selection;
       const $from = view.state.doc.resolve(from);
       const parentStart = $from.before($from.depth);
-      const parentEnd = $from.after($from.depth);
       const parentNode = $from.parent;
 
       if (parentNode.type.name === 'heading') {
         const paragraphType = view.state.schema.nodes.paragraph;
-        const content = parentNode.content;
-        const paragraph = paragraphType.create(null, content, parentNode.marks);
-        const tr = view.state.tr.replaceWith(parentStart, parentEnd, paragraph);
+        // setNodeMarkup converts ONLY the cursor's parent node in place
+        // (today's exact scope) -- a selection-range setBlockType command
+        // would silently convert every heading in a multi-block selection
+        // instead of just the one under the cursor. Unlike the previous
+        // create()+replaceWith() (which deleted the whole node and inserted
+        // a brand-new one via a single ReplaceStep), setNodeMarkup issues a
+        // ReplaceAroundStep that preserves the node's own content as a
+        // "gap" and only swaps the open/close tokens -- see
+        // block-id-phase1-mapping.test.ts's setHeading(0)-shape tests for
+        // what this changes for block-id tracking.
+        const tr = view.state.tr.setNodeMarkup(parentStart, paragraphType, null, parentNode.marks);
         view.dispatch(tr);
         view.focus();
       }
@@ -179,6 +186,12 @@ export function toggleCodeBlock(): boolean {
       const end = $from.after($from.depth);
       const content = $from.parent.content;
       const paragraph = paragraphType.create(null, content);
+      // Accepted trade-off (t-65a6a268): when the code_block is EMPTY, this
+      // create()+replaceWith() hits phase1CanClaim's replacedOccupant
+      // refusal (same-offset, cross-type, both-empty) and the new paragraph
+      // gets a fresh temp id rather than inheriting the code_block's old
+      // one -- see block-id-phase1-mapping.test.ts's "accepted fresh-id
+      // trade-offs" suite, pin (a).
       const tr = view.state.tr.replaceWith(start, end, paragraph);
       view.dispatch(tr);
       view.focus();

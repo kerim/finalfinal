@@ -26,14 +26,29 @@ const schema = new Schema({
     blockquote: { group: 'block', content: 'block+', attrs: { tid: { default: '' } } },
     bullet_list: { group: 'block', content: 'list_item+', attrs: { tid: { default: '' } } },
     list_item: { content: 'paragraph block*', attrs: { tid: { default: '' } } },
+    // Trade-off-pin-only node types (code_block/table): needed only by the
+    // "accepted fresh-id trade-offs" describe block below, which needs a
+    // real code_block and table type to model toggleCodeBlock-off and
+    // insertTable's own replaceWith shapes. Not used by any other test in
+    // this file.
+    code_block: { group: 'block', content: 'text*', attrs: { tid: { default: '' } } },
+    table: { group: 'block', content: 'paragraph+', attrs: { tid: { default: '' } } },
     text: { group: 'inline' },
   },
 });
 
-type Kind = 'paragraph' | 'heading' | 'hr' | 'section_break' | 'figure';
+type Kind = 'paragraph' | 'heading' | 'hr' | 'section_break' | 'figure' | 'code_block' | 'table';
 
 function block(kind: Kind, tid: string, text = ''): Node {
   const type = schema.nodes[kind];
+  if (kind === 'table') {
+    // `table`'s content expression (`paragraph+`) can never be empty, unlike
+    // every other block type this helper builds -- give it one placeholder
+    // paragraph cell. That cell is nested content, never visited by
+    // `assignBlockIds`'s top-level `doc.forEach`, so its own tid never
+    // collides with or appears in any test's `byTid` map.
+    return type.create({ tid }, schema.nodes.paragraph.create({ tid: `${tid}-cell` }, text ? [schema.text(text)] : []));
+  }
   if (type.isLeaf) return type.create({ tid });
   return type.create({ tid }, text ? [schema.text(text)] : []);
 }
@@ -193,22 +208,22 @@ describe('one transaction combining a text shift with a later setNodeMarkup (rev
   });
 });
 
-// Review finding 8: a "drag-move" -- delete a block, then insert a new one
-// elsewhere, in ONE transaction, net block count unchanged. Verified by
-// running it: structureChanged stays false (existingIds.size === new
-// blockCount), so this is decided by the per-block "structure unchanged"
-// proximity branch (block-id-plugin.ts), which has NO content-relatedness
-// check -- unlike the structural (Phase 2 greedy) branch. B's start was
-// itself deleted, so it is never `tracked`, leaving its id unclaimed and
-// available; N (brand-new content, unrelated to B) lands close enough to
-// B's old offset that the type-matching, no-content-check proximity search
-// hands N that orphaned id-B outright. This is a known, pre-existing gap in
-// that branch (see its own "No content-relatedness check here" comment) --
-// not something this fix touches or is meant to close -- pinned here as the
-// actual outcome rather than left undocumented.
-describe('drag-move: delete one block and insert a new one elsewhere in the same transaction (review finding 8)', () => {
-  it("pins the actual outcome: the new block inherits the deleted block's orphaned id by proximity", () => {
-    const { byTid, tr } = run(
+// Review finding 8 / t-452ca407: a "drag-move" -- delete a block, then insert
+// a new one elsewhere, in ONE transaction, net block count unchanged.
+// structureChanged stays false (existingIds.size === new blockCount), so
+// this is decided by the per-block "structure unchanged" proximity branch
+// (block-id-plugin.ts). B's start was itself deleted, so it is never
+// `tracked`, leaving its id unclaimed and available at B's old offset -- the
+// exact raw-fallback shape Phase 1 now flags. N (brand-new content, unrelated
+// to B) landing close enough to B's old offset used to inherit that orphaned
+// id-B by pure proximity, with no content check at all -- the actual bug
+// t-452ca407 fixes. Phase 1 flags N's raw-fallback claim (B's slot was wholly
+// deleted), N fails the text-relatedness check ("nnn" bears no relation to
+// "bbb"), and the same check now gates the per-block proximity branch too, so
+// N gets a fresh temp id instead and id-B goes to no one.
+describe('drag-move: delete one block and insert a new one elsewhere in the same transaction (review finding 8, t-452ca407)', () => {
+  it('the new block gets a fresh temp id; the deleted block’s id goes to no one', () => {
+    const { byTid, all, tr } = run(
       [block('paragraph', 'A', 'aaa'), block('paragraph', 'B', 'bbb'), block('paragraph', 'C', 'ccc')],
       (t) => {
         let bStart = -1;
@@ -238,11 +253,179 @@ describe('drag-move: delete one block and insert a new one elsewhere in the same
     expect(byTid.A).toBe('id-A');
     expect(byTid.C).toBe('id-C');
     // N is brand-new content (text "nnn", not "bbb") landing near B's old
-    // slot. The per-block proximity branch has no content-relatedness gate,
-    // so it hands N the orphaned id-B by pure proximity -- see the describe
-    // block's comment above for why this is a known, pre-existing gap, not
-    // something this fix touches or closes.
-    expect(byTid.N).toBe('id-B');
+    // slot. The text-relatedness check now gating this branch (t-452ca407)
+    // refuses the claim, so N mints its own temp id and id-B is orphaned for
+    // good, rather than being handed to unrelated content.
+    expect(byTid.N.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-B');
+  });
+});
+
+// t-452ca407: a deleted block's id must not be handed to an unrelated new
+// block just because the overall block count stayed the same. Both routes
+// that used to do this — Phase 1's raw same-offset fallback (the drag-move
+// shape above) and Phase 2's per-block proximity branch (no content check at
+// all) — are now gated by text relatedness, unless the transaction is
+// app-origin (a programmatic content push, which authored both sides and so
+// keeps position-only trust).
+describe("a deleted block's id is not reused by an unrelated new block (t-452ca407)", () => {
+  const abcd = () => [
+    block('paragraph', 'A', 'aaa'),
+    block('paragraph', 'B', 'bbb'),
+    block('paragraph', 'C', 'ccc'),
+    block('paragraph', 'D', 'ddd'),
+  ];
+  // offsets: A 0, B 5, C 10, D 15
+
+  it('multi-block replace: two unrelated new blocks over B..C both get temp ids', () => {
+    const { byTid, all, tr } = run(abcd(), (t) =>
+      t.replaceWith(5, 15, [block('paragraph', 'P', 'ppp'), block('paragraph', 'Q', 'qqq')])
+    );
+    expect(tr.doc.childCount).toBe(4);
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.D).toBe('id-D');
+    expect(byTid.P.startsWith('temp-')).toBe(true);
+    expect(byTid.Q.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-B');
+    expect(all).not.toContain('id-C');
+  });
+
+  it('multi-block replace that also shifts offsets: same outcome', () => {
+    const { byTid, all } = run(abcd(), (t) =>
+      t.replaceWith(5, 15, [block('paragraph', 'P', 'pppppp'), block('paragraph', 'Q', 'q')])
+    );
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.D).toBe('id-D');
+    expect(byTid.P.startsWith('temp-')).toBe(true);
+    expect(byTid.Q.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-B');
+    expect(all).not.toContain('id-C');
+  });
+
+  it('control (flagged path): replacing B..C with identical content keeps both ids', () => {
+    const { byTid } = run(abcd(), (t) =>
+      t.replaceWith(5, 15, [block('paragraph', 'B', 'bbb'), block('paragraph', 'C', 'ccc')])
+    );
+    expect(byTid).toEqual({ A: 'id-A', B: 'id-B', C: 'id-C', D: 'id-D' });
+  });
+
+  it('control (flagged path): heading -> paragraph via replaceWith with identical text keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('heading', 'H', 'title'), block('paragraph', 'Q', 'x')],
+      (t) => t.replaceWith(5, 12, block('paragraph', 'H', 'title'))
+    );
+    expect(tr.doc.child(1).type.name).toBe('paragraph');
+    expect(byTid).toEqual({ A: 'id-A', H: 'id-H', Q: 'id-Q' });
+  });
+
+  // Positive controls for the ACTUAL setHeading(0) shape (t-65a6a268):
+  // api-formatting.ts's setHeading(0) now uses setNodeMarkup (a
+  // ReplaceAroundStep, preserving the node's own content as a "gap") rather
+  // than create()+replaceWith() (a full ReplaceStep, deleting the whole old
+  // node) -- see api-formatting.ts's own comment. These three prove that
+  // narrowing keeps every legitimate in-place conversion working, including
+  // the EMPTY case the replacedOccupant refusal above exists to distinguish
+  // from an unrelated empty block landing on the same offset.
+  it('setHeading(0) shape: an EMPTY heading -> paragraph via setNodeMarkup keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('heading', 'H'), block('paragraph', 'Q', 'x')],
+      (t) => t.setNodeMarkup(5, schema.nodes.paragraph, { tid: 'H' })
+    );
+    expect(tr.doc.child(1).type.name).toBe('paragraph');
+    expect(tr.doc.child(1).textContent).toBe('');
+    expect(byTid).toEqual({ A: 'id-A', H: 'id-H', Q: 'id-Q' });
+  });
+
+  it('setHeading(0) shape: a NON-empty heading -> paragraph via setNodeMarkup keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('heading', 'H', 'title'), block('paragraph', 'Q', 'x')],
+      (t) => t.setNodeMarkup(5, schema.nodes.paragraph, { tid: 'H' })
+    );
+    expect(tr.doc.child(1).type.name).toBe('paragraph');
+    expect(tr.doc.child(1).textContent).toBe('title');
+    expect(byTid).toEqual({ A: 'id-A', H: 'id-H', Q: 'id-Q' });
+  });
+
+  it('input-rule "# " shape (delete the marker text, then setBlockType to heading) keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('paragraph', 'P', '# '), block('paragraph', 'Q', 'x')],
+      (t) => {
+        // P: starts at offset 5, content "# " spans [6, 8). The input rule
+        // deletes the typed marker text first, then converts the
+        // now-empty paragraph to a heading -- both steps in one transaction.
+        t.delete(6, 8);
+        t.setBlockType(6, 6, schema.nodes.heading, { tid: 'P' });
+      }
+    );
+    expect(tr.doc.child(1).type.name).toBe('heading');
+    expect(tr.doc.child(1).textContent).toBe('');
+    expect(byTid).toEqual({ A: 'id-A', P: 'id-P', Q: 'id-Q' });
+  });
+
+  // MF-2: this control CAN fail. setBlockType keeps P's inner content range
+  // (the ReplaceAround step never deletes across P+1), and the text is then
+  // replaced with something unrelated. So P must stay UNflagged and keep id-P.
+  // If it were wrongly flagged, 'hello' vs 'zzz' would fail the text check and P
+  // would get a temp id.
+  it('control (UNflagged path): setBlockType then unrelated inner-text replace keeps its id', () => {
+    const { byTid, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('paragraph', 'P', 'hello'), block('paragraph', 'Q', 'x')],
+      (t) => {
+        t.setBlockType(6, 6, schema.nodes.heading, { tid: 'P' }); // P: 5..12, content 6..11
+        t.replaceWith(6, 11, schema.text('zzz')); // whole inner text -> unrelated
+      }
+    );
+    expect(tr.doc.child(1).type.name).toBe('heading');
+    expect(tr.doc.child(1).textContent).toBe('zzz');
+    expect(byTid).toEqual({ A: 'id-A', P: 'id-P', Q: 'id-Q' });
+  });
+
+  it('control: a real move (delete B, re-insert the same B after C) keeps id-B', () => {
+    const { byTid } = run(
+      [block('paragraph', 'A', 'aaa'), block('paragraph', 'B', 'bbb'), block('paragraph', 'C', 'ccc')],
+      (t) => {
+        t.delete(5, 10);
+        t.insert(10, block('paragraph', 'B', 'bbb'));
+      }
+    );
+    expect(byTid).toEqual({ A: 'id-A', B: 'id-B', C: 'id-C' });
+  });
+
+  it('parameter: assignBlockIds(..., appOrigin=true) keeps positional trust on the drag-move shape', () => {
+    resetBlockIdState();
+    const doc0 = schema.nodes.doc.create(null, [
+      block('paragraph', 'A', 'aaa'),
+      block('paragraph', 'B', 'bbb'),
+      block('paragraph', 'C', 'ccc'),
+    ]);
+    const ids = new Map<number, string>();
+    const types = new Map<number, string>();
+    doc0.forEach((n, off) => {
+      ids.set(off, `id-${n.attrs.tid}`);
+      types.set(off, n.type.name);
+    });
+    const tr = new Transform(doc0);
+    let bStart = -1;
+    let bEnd = -1;
+    tr.doc.forEach((n, off) => {
+      if (n.attrs.tid === 'B') {
+        bStart = off;
+        bEnd = off + n.nodeSize;
+      }
+    });
+    tr.delete(bStart, bEnd);
+    let cOffset = -1;
+    tr.doc.forEach((n, off) => {
+      if (n.attrs.tid === 'C') cOffset = off;
+    });
+    tr.insert(cOffset, block('paragraph', 'N', 'nnn'));
+
+    const [after] = assignBlockIds(tr.doc, ids, types, doc0, tr.mapping, true);
+    let nOffset = -1;
+    tr.doc.forEach((n, off) => {
+      if (n.attrs.tid === 'N') nOffset = off;
+    });
+    expect(after.get(nOffset)).toBe('id-B');
   });
 });
 
@@ -382,4 +565,92 @@ describe('wrap: a paragraph pulled into a container block keeps its id (review f
     expect(bqOffset2).toBeGreaterThanOrEqual(0);
     expect(ids3.get(bqOffset2)).toBe('id-B'); // the id survives the rewrap too
   });
+});
+
+// Three deliberate, accepted trade-offs of the replacedOccupant refusal
+// (phase1CanClaim, block-id-plugin.ts) -- each pin documents a shape where a
+// legitimate command's replaceWith produces an EMPTY-to-EMPTY (or, for (c),
+// a refused-independently-of-the-fix) cross-type claim, and the outcome is a
+// fresh temp id for the new block rather than a stolen id, not a bug to fix
+// later.
+describe('accepted fresh-id trade-offs of the replacedOccupant refusal', () => {
+  it('(a) toggleCodeBlock-off shape: an empty code_block replaced by a paragraph via replaceWith gets a fresh temp id', () => {
+    const { byTid, all, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('code_block', 'CB'), block('paragraph', 'Q', 'x')],
+      (t) => t.replaceWith(5, 7, block('paragraph', 'N'))
+    );
+    expect(tr.doc.child(1).type.name).toBe('paragraph');
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.Q).toBe('id-Q');
+    expect(byTid.N.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-CB');
+  });
+
+  it('(b) insertTable shape: an empty paragraph replaced by a table via replaceWith gets a fresh temp id', () => {
+    const { byTid, all, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('paragraph', 'P'), block('paragraph', 'Q', 'x')],
+      (t) => t.replaceWith(5, 7, block('table', 'T'))
+    );
+    expect(tr.doc.child(1).type.name).toBe('table');
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.Q).toBe('id-Q');
+    expect(byTid.T.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-P');
+  });
+
+  // Not actually gated by replacedOccupant: '/break' is non-empty oldText,
+  // so the empty-vs-empty refusal never applies here. This already passed
+  // before this fix -- meaningfulTextOverlap's own asymmetric-empty rule
+  // ('/break' vs '') refuses the claim independently. Pinned here anyway,
+  // alongside (a)/(b), so all three accepted /break/table/code_block
+  // fresh-id outcomes live together.
+  it('(c) /break shape: a paragraph containing "/break" replaced by a section_break via replaceWith gets a fresh temp id', () => {
+    const { byTid, all, tr } = run(
+      [block('paragraph', 'A', 'abc'), block('paragraph', 'P', '/break'), block('paragraph', 'Q', 'x')],
+      (t) => t.replaceWith(5, 13, block('section_break', 'SB'))
+    );
+    expect(tr.doc.child(1).type.name).toBe('section_break');
+    expect(byTid.A).toBe('id-A');
+    expect(byTid.Q).toBe('id-Q');
+    expect(byTid.SB.startsWith('temp-')).toBe(true);
+    expect(all).not.toContain('id-P');
+  });
+});
+
+// Review finding (confirmed by the judge): newSideLeaf must check ONLY the
+// NEW side. An earlier version also exempted a leaf OLD occupant, which
+// reopens a theft in the REVERSE direction, specifically for a LARGER
+// selection -- not the lone single-span replace the tests above already
+// cover (that shape is independently refused by the pre-existing
+// `deletedOldPositions`/`deletedAfter && !deletedAcross` check, from
+// t-452ca407, regardless of this task's fix at all). Here the selection
+// spans from INSIDE a preceding paragraph THROUGH the leaf block (hr /
+// section_break), so `tr.mapping` reports `deletedAcross` for the leaf's own
+// position -- not the single-span `deletedAfter`-only shape -- meaning the
+// leaf's old position never lands in `deletedOldPositions`. Without
+// newSideLeaf scoped to the new side only, an unrelated brand-new EMPTY
+// paragraph landing exactly on the leaf's old numeric offset (a coincidence
+// of the replacement slice's own sizing, matching how the F4 bug itself
+// arises) would inherit the leaf's id outright.
+describe('newSideLeaf does not exempt a leaf OLD occupant (reverse-direction regression, larger-selection shape)', () => {
+  for (const leafKind of ['hr', 'section_break'] as const) {
+    it(`a ${leafKind} deleted as part of a larger selection does not hand its id to an unrelated empty paragraph landing on its old offset`, () => {
+      // A (paragraph, "abcdef", nodeSize 8) then the leaf (nodeSize 1) then
+      // B (paragraph, "xyz"). Replacing [0, 9) -- ALL of A plus the leaf,
+      // strictly larger than the leaf's own [8, 9) span -- with two new
+      // paragraphs sized so the SECOND one (N2, empty) lands exactly at
+      // offset 8, the leaf's own old numeric start.
+      const { byTid, all, tr } = run(
+        [block('paragraph', 'A', 'abcdef'), block(leafKind, 'L'), block('paragraph', 'B', 'xyz')],
+        (t) => t.replaceWith(0, 9, [block('paragraph', 'N1', 'zzzzzz'), block('paragraph', 'N2')])
+      );
+      expect(tr.doc.childCount).toBe(3); // setup: block count unchanged (A+leaf -> N1+N2, both size 2)
+      expect(tr.doc.child(1).type.name).toBe('paragraph');
+      expect(tr.doc.child(1).textContent).toBe(''); // setup: N2 really is empty, landing where the leaf was
+      expect(byTid.N2.startsWith('temp-')).toBe(true);
+      expect(byTid.N2).not.toBe('id-L');
+      expect(byTid.B).toBe('id-B'); // B, untouched by the replace, keeps its own id throughout
+      expect(all).not.toContain('id-L');
+    });
+  }
 });

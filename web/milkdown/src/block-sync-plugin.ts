@@ -1214,13 +1214,28 @@ export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, Bl
 
 /**
  * Like `detectPausedEditsAndSnapshot`, but deliberately does NOT clear
- * `pendingUpdates`/`pendingInserts`/`pendingDeletes` before diffing. Used by
- * `setContentWithBlockIds`'s `preserveUserBlocks` push (api-content.ts, t-6a0d195d): that push
- * already reconciled the EXISTING pending queue itself, surgically, via
- * `reconcilePendingQueueAfterManagedRebuild` below (stripping only entries keyed by a managed
- * id, and re-pointing any pending insert's stale `afterBlockId`) — a plain user edit queued
- * before the rebuild landed, on a block that isn't part of the managed run, must survive this
- * call untouched, not be wiped the way a wholesale `.clear()` would.
+ * `pendingUpdates`/`pendingInserts`/`pendingDeletes` before diffing. Two callers, two
+ * different reasons to keep the existing queue intact:
+ *
+ * 1. `setContentWithBlockIds`'s `preserveUserBlocks` push (api-content.ts, t-6a0d195d):
+ *    that push already reconciled the EXISTING pending queue itself, surgically, via
+ *    `reconcilePendingQueueAfterManagedRebuild` below (stripping only entries keyed by
+ *    a managed id, and re-pointing any pending insert's stale `afterBlockId`) — a plain
+ *    user edit queued before the rebuild landed, on a block that isn't part of the
+ *    managed run, must survive this call untouched, not be wiped the way a wholesale
+ *    `.clear()` would.
+ * 2. `updateHeadingLevels` (api-content.ts, t-94369a83 Phase 2 §3): a SECOND caller
+ *    that, unlike the first, does NOT pre-reconcile the pending queue at all — there is
+ *    no managed-id rebuild here to reconcile against, just a surgical heading-level
+ *    edit. It deliberately relies on the RAW diff against `baseline` to pick up the
+ *    heading-level change itself as an ordinary pending update: this is exactly what
+ *    lets the corrected level survive and later persist through the normal poll-cycle
+ *    write path even when the Swift-side system write that's supposed to persist it
+ *    directly fails (see `ContentView+HierarchyEnforcement.swift`'s
+ *    `persistEnforcedSections`, review findings #5/#6) — and it's also the reason a
+ *    successful direct persist is followed by a second, ordinary edit-serialization
+ *    write of the same row (finding #6, ruled a deliberate and safe consequence, not a
+ *    defect, in `docs/architecture/document-writer.md`).
  *
  * `baseline` has the same contract as `detectPausedEditsAndSnapshot`'s: a snapshot the caller
  * captured at the moment its own paused push settled.

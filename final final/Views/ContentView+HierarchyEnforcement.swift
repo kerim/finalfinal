@@ -5,6 +5,7 @@
 //  Hierarchy constraint enforcement: parent relationships, level validation, and persistence.
 //
 
+import GRDB
 import SwiftUI
 
 extension ContentView {
@@ -151,8 +152,10 @@ extension ContentView {
             }
         }
 
-        // 4. Persist changes to DB (sort orders + heading levels)
-        await persistEnforcedSections(editorState: editorState)
+        // 4. Persist changes to DB (heading levels -- §2.6 dropped the sort-order
+        //    renormalization this used to also do, see persistEnforcedSections's own
+        //    doc comment)
+        await persistEnforcedSections(editorState: editorState, originalLevels: originalLevels)
 
         // 5. If no heading levels changed, nothing to push to editor
         guard !headingChanges.isEmpty else { return }
@@ -250,11 +253,20 @@ extension ContentView {
         }
     }
 
-    /// Persist enforced sections directly to database (both block and legacy section tables)
+    /// Persist enforced sections directly to database (both block and legacy section tables).
     /// Called after hierarchy enforcement to ensure corrected levels are saved.
-    /// Uses reorderAllBlocks to move body blocks with their headings atomically.
+    ///
+    /// Phase 2 (t-94369a83), §2.6: the block-table write (previously `reorderAllBlocks`,
+    /// which also renormalizes sort order) is now `patchHeadingLevels` below, routed
+    /// through the ordered system-write queue -- enforcement only ever changes LEVELS,
+    /// never order, so `reorderAllBlocks` was only ever renormalizing sortOrder here as
+    /// a side effect, and doing so against a stale section-id list (captured before the
+    /// `await`) risked moving blocks by a stale order. `db`/`pid`/`zoomedSectionIds`/the
+    /// changed-heading list are all captured synchronously, before any `await` -- the
+    /// `isPerforming`-gated `invalidateAll` barrier stays before the await too, exactly
+    /// as before.
     @MainActor
-    static func persistEnforcedSections(editorState: EditorViewState) async {
+    static func persistEnforcedSections(editorState: EditorViewState, originalLevels: [String: Int]) async {
         guard let db = DocumentManager.shared.projectDatabase,
               let pid = DocumentManager.shared.projectId else {
             return
@@ -271,13 +283,31 @@ extension ContentView {
         // `requestingProjectId`-style guards in this area
         // (`performSectionRestoreReplace`/`performRestoreProject`/`performRestoreSectionDuplicate`).
         guard DocumentManager.shared.projectId == editorState.currentProjectId else {
-            DebugLog.log(.undo, "[ContentView+HierarchyEnforcement] persistEnforcedSections: DocumentManager.shared.projectId != editorState.currentProjectId -- refusing to enforce (cross-project write risk)")
+            DebugLog.log(
+                .undo,
+                """
+                [ContentView+HierarchyEnforcement] persistEnforcedSections: DocumentManager.shared.projectId != \
+                editorState.currentProjectId -- refusing to enforce (cross-project write risk)
+                """
+            )
             return
         }
 
+        // §2.6: captured synchronously, BEFORE the await below -- `zoomedSectionIds` and
+        // the changed-heading list must reflect THIS moment, not whatever is current
+        // once the system write actually runs.
+        let zoomedSectionIdsAtStart = editorState.zoomedSectionIds
+        // A `let`, built functionally rather than via `var` + `append` -- captured by
+        // the `@Sendable` system-write body closure below, and a captured `var` there
+        // is a Swift 6 strict-concurrency error (warning today), not just style.
+        let changes: [(id: String, oldLevel: Int, newLevel: Int)] = editorState.sections.compactMap { vm in
+            guard let oldLevel = originalLevels[vm.id], oldLevel != vm.headerLevel else { return nil }
+            return (id: vm.id, oldLevel: oldLevel, newLevel: vm.headerLevel)
+        }
+
         // Barrier (see docs/architecture/unified-undo.md's Barriers section): hierarchy
-        // enforcement renumbers sort orders and heading levels via `reorderAllBlocks` below --
-        // a content-mutating change that runs outside any structural op's own checkpoint/
+        // enforcement renumbers heading levels via the system write below -- a
+        // content-mutating change that runs outside any structural op's own checkpoint/
         // audited sequence. This function is
         // `static` (no `self`/`unifiedUndoService` instance access), so it reaches the service
         // through `DocumentManager.shared.structuralUndoController` per the coder brief's
@@ -295,29 +325,85 @@ extension ContentView {
         // route into this function is gated on `contentState == .idle`
         // (`makeSectionsUpdatedHandler`'s guard), which the audited sequence deliberately holds
         // non-idle throughout -- so this guard cannot swallow a genuine external barrier.
+        //
+        // STAYS BEFORE THE AWAIT (§2.6): this must run in the same synchronous window the
+        // rest of the pre-write capture above does.
         let controller = DocumentManager.shared.structuralUndoController
         if controller?.isPerforming != true {
             controller?.unifiedUndoService?.invalidateAll(reason: "hierarchy enforcement")
         }
 
-        do {
-            // Persist to block table (headings + body blocks atomically)
-            var headingUpdates: [String: HeadingUpdate] = [:]
-            for vm in editorState.sections {
-                headingUpdates[vm.id] = HeadingUpdate(
-                    markdownFragment: vm.markdownContent,
-                    headingLevel: vm.headerLevel
-                )
-            }
-            try db.reorderAllBlocks(
-                sections: editorState.sections,
-                projectId: pid,
-                headingUpdates: headingUpdates
-            )
+        guard !changes.isEmpty else { return }
 
-            // Recalculate zoomedBlockRange after sort orders changed
+        let identity = SystemWriteIdentity(projectId: pid, database: db)
+        let outcome: SystemWriteOutcome<Int>
+        if let blockSyncService = editorState.blockSyncService {
+            let result = await blockSyncService.performSystemWrite(
+                identity: identity, kind: .headingLevels,
+                stillWanted: { DocumentManager.shared.projectId == pid },
+                body: { txDb in
+                    patchHeadingLevels(db: txDb, projectId: pid, changes: changes)
+                }
+            )
+            outcome = result.outcome
+        } else {
+            // §2.0's `.noWriter` fallback -- no BlockSyncService wired to this
+            // editorState at all (defensive only).
+            DebugLog.log(.sync, "[SystemWrite] no writer - direct write")
+            do {
+                let patched = try db.write { txDb in patchHeadingLevels(db: txDb, projectId: pid, changes: changes) }
+                outcome = .applied(patched.value)
+            } catch {
+                outcome = .failed(error)
+            }
+        }
+
+        switch outcome {
+        case .applied:
+            break   // proceed to the legacy-table write and zoom-range recompute below.
+        case .refused, .failed:
+            // Review fix (finding #5/#7): the old comment here claimed
+            // "enforceHierarchyInSequence's existing documented behaviour... reschedules
+            // enforcement" -- wrong on two counts: `enforceHierarchyInSequence` only
+            // LOGS when a violation is still present after its own pass (it never
+            // reschedules anything itself), and that function is specific to the
+            // in-sequence (undo/redo/structural-op) call path -- it has nothing to do
+            // with a plain `enforceHierarchyAsync` call whose DB write failed here.
+            //
+            // The REAL recovery, traced end to end: `enforceHierarchyAsync` (this
+            // function's only caller) does NOT branch on this write's outcome -- it
+            // unconditionally proceeds to push the corrected heading level to the
+            // EDITOR (`bss.updateHeadingLevels`/`applyHeadingChangesViaStringReplacement`,
+            // a few lines below in that function) regardless of whether the DB write
+            // above succeeded. So even on `.refused`/`.failed`, the editor's own live
+            // content already shows the corrected level while the DB still has the
+            // stale one. That is a genuine, uncommitted diff from the poll's point of
+            // view -- the JS-side baseline-diff fix (an earlier round of this same
+            // plan) is what makes sure this reads as an ordinary pending edit rather
+            // than being silently swallowed as "no change" -- so the NEXT routine
+            // 2-second poll cycle persists it through the normal editor-diff write
+            // path, no special enforcement retry involved.
+            DebugLog.log(.sync, "[ContentView] persistEnforcedSections: system write did not apply (\(outcome))")
+            return
+        }
+
+        // §2.6: re-check project/db identity AFTER the await, before the legacy write
+        // and the zoomedBlockRange recompute -- both of which read through the
+        // CAPTURED `db`/`pid`, but must not run at all if the live project has moved
+        // on while the write was in flight.
+        guard DocumentManager.shared.projectId == pid,
+              DocumentManager.shared.projectDatabase === db else {
+            DebugLog.log(.sync, "[ContentView] persistEnforcedSections: project changed during system write -- " +
+                "skipping legacy-table write and zoom-range recompute")
+            return
+        }
+
+        do {
+            // Recalculate zoomedBlockRange after heading levels changed -- only if the
+            // zoom itself hasn't changed since this pass started (captured above).
             if editorState.zoomedBlockRange != nil,
-               let zoomedIds = editorState.zoomedSectionIds {
+               editorState.zoomedSectionIds == zoomedSectionIdsAtStart,
+               let zoomedIds = zoomedSectionIdsAtStart {
                 // Find the zoomed heading's new sort order
                 let primaryId = zoomedIds.first ?? ""
                 if let headingBlock = try db.fetchBlock(id: primaryId),
@@ -337,7 +423,8 @@ extension ContentView {
                 }
             }
 
-            // Also persist to legacy section table
+            // Also persist to legacy section table -- unchanged, still a direct write
+            // (Legacy `applySectionChanges` uses the captured `db`, per §2.6).
             var sectionChanges: [SectionChange] = []
             for (index, viewModel) in editorState.sections.enumerated() {
                 let updates = SectionUpdates(
@@ -351,6 +438,72 @@ extension ContentView {
         } catch {
             DebugLog.log(.sync, "[ContentView] Error persisting enforced sections: \(error)")
         }
+    }
+
+    /// Phase 2 (t-94369a83), §2.6: the heading-level system-write body. Re-reads each
+    /// row INSIDE the transaction (never trusting the `vm.markdownContent` captured
+    /// before the `await` in `persistEnforcedSections` above) and skips a candidate
+    /// unless ALL hold: the row still exists; it's still a `.heading`; it isn't
+    /// bibliography-flagged, a bare bibliography opening marker, or a pseudo-section;
+    /// its `headingLevel` still equals the `oldLevel` this change was computed against
+    /// (a concurrent editor batch already changed it); and its CURRENT
+    /// `markdownFragment` still starts with a `#`-marker. When a candidate qualifies,
+    /// only the leading `#`-marker of its CURRENT fragment is replaced -- the rest is
+    /// kept byte-for-byte, including any text a later edit wrote -- `textContent` is
+    /// left untouched. `recomputeSectionParents` always runs, regardless of how many
+    /// rows were skipped.
+    nonisolated static func patchHeadingLevels(
+        db: Database, projectId: String, changes: [(id: String, oldLevel: Int, newLevel: Int)]
+    ) -> SystemWriteBody<Int> {
+        var patched = 0
+        var skipped = 0
+        for change in changes {
+            do {
+                guard var block = try Block.fetchOne(db, key: change.id) else {
+                    skipped += 1
+                    continue
+                }
+                guard block.projectId == projectId,
+                      block.blockType == .heading,
+                      !block.isBibliography,
+                      !block.isBareOpeningMarker,
+                      !block.isPseudoSection,
+                      block.headingLevel == change.oldLevel,
+                      let markerRange = block.markdownFragment.range(
+                        of: "^#{1,6}\\s+", options: .regularExpression)
+                else {
+                    skipped += 1
+                    continue
+                }
+                block.headingLevel = change.newLevel
+                let newPrefix = String(repeating: "#", count: change.newLevel) + " "
+                block.markdownFragment.replaceSubrange(markerRange, with: newPrefix)
+                block.updatedAt = Date()
+                try block.update(db)
+                patched += 1
+            } catch {
+                DebugLog.log(.sync, "[ContentView] patchHeadingLevels: failed to patch id=\(change.id): \(error)")
+                skipped += 1
+            }
+        }
+        // ALWAYS call, regardless of how many rows were skipped (§2.6).
+        // Review fix (finding #13): this used to be a bare `try?`, silently swallowing
+        // any error with no trace at all -- inside a transaction that still commits
+        // the heading-level patches above regardless (this function doesn't throw), so
+        // a failure here left stale section-parent bookkeeping with nothing logged to
+        // even diagnose it. Logged, not propagated -- there's no meaningful way to
+        // fail this call's own return value retroactively without restructuring its
+        // signature, and the heading-level patches themselves are still correct and
+        // worth keeping even if this recompute failed.
+        do {
+            try ProjectDatabase.recomputeSectionParents(db: db, projectId: projectId)
+        } catch {
+            DebugLog.alwaysPersisted(
+                "[ContentView] patchHeadingLevels: recomputeSectionParents failed after patching " +
+                "\(patched)/\(changes.count) heading levels: \(error)")
+        }
+        DebugLog.log(.sync, "[ContentView] patchHeadingLevels: patched=\(patched) skipped=\(skipped) of \(changes.count)")
+        return SystemWriteBody(value: patched)
     }
 
     /// Ensure no section is more than 1 level deeper than its predecessor
