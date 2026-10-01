@@ -99,6 +99,11 @@ enum SkipReason: Sendable, Equatable {
     /// becoming the frontier. Recorded per-sequence in `WriterState.skipReasons` (system
     /// sequences only) so `performSystemWrite` can read back exactly why it was skipped.
     case systemStalled
+    /// t-94369a83 Phase 3a-1a (item 7): the reason `retire(reason:)` is called with when a
+    /// project CLOSES (as opposed to `.projectSwitch`, which retires the writer on the way
+    /// to opening another project). Classified benignly everywhere `.writerReplaced` is.
+    /// STUB: nothing produces it until 3a-1b wires the close tail.
+    case close
 }
 
 /// Why held ops were dropped rather than resolved.
@@ -125,6 +130,59 @@ enum SettleWaitOutcome: Sendable, Equatable {
 enum DrainOutcome: Sendable, Equatable {
     case drained
     case timedOut(skipped: [UInt64])
+}
+
+/// Phase 3a-1a (t-94369a83), §2.1: outcome of `BarrierHandle.wait(timeout:)`.
+enum BarrierOutcome: Sendable, Equatable {
+    /// Every sequence below the barrier has settled (or is `.abandoned` / frontier-passable
+    /// `.late`, which never block it) and no held-op release is pending. The barrier is now
+    /// HELD: sequences reserved after it park until the holder calls `release()` (or `retire`).
+    case reached
+    /// The bound passed first. The EDITOR sequences below the barrier were skipped
+    /// (`skippedEditorSeqs`, of which `skippedFetched` had already been fetched, i.e. consumed
+    /// and lost); system sequences below it were left to finish. The barrier stays open and
+    /// must still be released.
+    ///
+    /// The barrier may ALREADY be reached (held) by the time this value is delivered, and nothing in
+    /// it says so: the timeout's own locked transition skips the editor sequences and then
+    /// re-evaluates reach (`barrierTimeoutFired`), so a barrier whose only blockers were editor
+    /// sequences is reached in that same transition (`barriersReached` +1, the hold warning armed)
+    /// while the wait resumes `.timedOut`. A holder must therefore `release()` after `.timedOut`
+    /// exactly as it does after `.reached`.
+    case timedOut(skippedEditorSeqs: [UInt64], skippedFetched: Int)
+    /// `retire`, `skipAllReserved`, `skip(upTo:)` reaching the barrier, or `release()` of a
+    /// still-unreached barrier took it first. Counted `barriersCancelled`; never a loss.
+    case cancelled
+}
+
+/// Phase 3a-1a (t-94369a83), §2.1: the handle `DocumentWriter.enqueueBarrier()` returns. It holds
+/// the writer and the barrier's sequence and NOTHING ELSE -- no lifecycle state (plan §8, "must
+/// not make harder"): the 3b lifecycle layer composes it, it does not extend it. Every call forwards
+/// to the writer, which owns the barrier's state (`WriterState.openBarrier`); a handle whose barrier
+/// is already gone (released, or dropped by `retire` / `skip(upTo:)`) is inert.
+///
+/// No production code calls `DocumentWriter.enqueueBarrier()` until 3a-1b.
+final class BarrierHandle: Sendable {
+    let writer: DocumentWriter
+    let seq: UInt64
+
+    init(writer: DocumentWriter, seq: UInt64) {
+        self.writer = writer
+        self.seq = seq
+    }
+
+    /// Suspends until the barrier is reached, `timeout` seconds pass, or it is cancelled. Exactly one
+    /// outcome, whichever path resolves the wait first (see `DocumentWriter.waitForBarrierAsync`).
+    /// Never observes Task cancellation, like `WriterTicket.waitForTurn`. A wait on a barrier that is
+    /// already gone returns `.cancelled`; one that is already reached returns `.reached` at once.
+    func wait(timeout: TimeInterval) async -> BarrierOutcome {
+        await writer.waitForBarrierAsync(seq, timeout: timeout)
+    }
+
+    /// Synchronous and idempotent; a no-op once the writer is retired or the barrier is gone.
+    func release() {
+        writer.releaseBarrierSync(seq)
+    }
 }
 
 /// DEBUG/telemetry seam (the `testPollTimeoutHandler` precedent): synchronous,
@@ -155,6 +213,24 @@ enum WriterEvent: Sendable, Equatable {
     case systemSkipped(UInt64, SkipReason)
     case systemStalled(UInt64)
     case systemReservationAbandoned(UInt64)
+    // Phase 3a-1a (t-94369a83), §2.1: the writer barrier (emitted by `enqueueBarrier`, the reach
+    // evaluation, the timeout, `release()` and the drop paths of `skip`/`retire`).
+    case barrierQueued
+    case barrierReached
+    case barrierTimedOut
+    case barrierCancelled
+    /// A barrier left the open state without a pending `wait`: its holder called
+    /// `release()`, or a skip dropped it (P6 accounting). A drop by `skip(upTo:)` -- and so by
+    /// `skipAllReserved` and `retire`, which skip -- emits `.barrierDropped` just before this event.
+    case barrierReleased
+    /// A barrier was DROPPED by a skip that reached it -- `skip(upTo:)` (so also `skipAllReserved`, the
+    /// drain and `retire`) with the full scope -- rather than released by its holder. `reached` says
+    /// whether it had been reached (held) at that moment; the holder is NOT told, and a later
+    /// `release()` is a no-op. Logged `alwaysPersisted` (`logLossEvent`).
+    case barrierDropped(UInt64, reached: Bool, SkipReason)
+    /// `.lifecycleDrain`-style loss event for the queued whole-document close/switch save
+    /// (`SystemWriteKind.lifecycleWholeDocument`): the payload is a human-readable reason.
+    case lifecycleWholeDocumentLost(String)
 }
 
 /// Per-writer counters (item 2, "logged and counted"). Every loss-carrying increment
@@ -197,10 +273,46 @@ struct LossLedger: Sendable, Equatable {
     // via the ordinary skip path" -- backwards. `skip(upTo:reason:)` explicitly EXCLUDES
     // system sequences from `skippedConsumed`/`skippedUnfetched` (the ordinary path)
     // specifically so a system-write skip gets its OWN dedicated counter here instead,
-    // never double-counted against the editor-batch ones.
+    // never double-counted against the editor-batch ones. That promise is only about editor
+    // versus system: the FB loss counter `lifecycleWholeDocumentLost` (below) deliberately
+    // overlays one of the system counters.
     var systemWritesSkipped = 0        // telemetry only, not loss -- counted here, NOT via skippedConsumed/skippedUnfetched
     var systemWritesStalled = 0        // I-SYS backstop fired -- a real loss
     var systemReservationsAbandoned = 0 // a reservation was never applied or explicitly settled -- a real loss
+    // Phase 3a-1a (t-94369a83), §2.1 / §2.3 FB: the writer barrier and the queued whole-document
+    // save. The barrier counters are bumped by `enqueueBarrier` (queued), the reach evaluation
+    // (reached), the timeout path (timed out) and the cancel paths (cancelled).
+    // `lifecycleWholeDocumentApplied` / `lifecycleWholeDocumentLost` are bumped by
+    // `applySystemWrite` and `noteLifecycleWholeDocumentLost` respectively.
+    var barriersQueued = 0            // telemetry only, not loss
+    var barriersReached = 0            // telemetry only, not loss
+    var barriersTimedOut = 0           // telemetry only, not loss (the editor seqs the timeout skipped are counted by the ordinary skip counters)
+    /// A barrier whose `wait` was still pending when `release()`, `retire`, `skipAllReserved`
+    /// or `skip(upTo:)` took it -- telemetry only, never a loss by itself. A REACHED, held
+    /// barrier dropped by `retire(.projectSwitch / .close)` is a `.barrierReleased` event, not
+    /// counted here (addendum P6).
+    var barriersCancelled = 0
+    var lifecycleWholeDocumentApplied = 0 // telemetry only, not loss
+    /// A `.lifecycleWholeDocument` (FB) write that did not happen -- a REAL loss (the closing
+    /// project's last whole-document save did not happen). Counted for every outcome
+    /// `BlockSyncService.performSystemWrite` classifies as not applied: any `.refused(...)` except
+    /// `.noWriter` (the caller's direct-write fallback, only logged), and `.failed`; plus the
+    /// zoomed-section-without-range refusal `performLifecycleWholeDocumentWrite` makes before it
+    /// reserves anything. Always logged `alwaysPersisted` by `noteLifecycleWholeDocumentLost`.
+    ///
+    /// An OVERLAY counter, not an independent one. An FB loss that had already reserved its
+    /// sequence is ALSO counted in exactly one ordinary counter: `failedWrites` (the body threw),
+    /// `systemWritesStalled` (the I-SYS backstop skipped it), `systemWritesSkipped` (another skip
+    /// reached it) or `systemReservationsAbandoned` (the refusal left the sequence unsettled and the
+    /// `SystemReservation` deinit settled it). A loss refused BEFORE any reservation (`.nested`,
+    /// `.identityMismatch` at `performSystemWrite`'s step 3, the zoomed-without-range refusal) is
+    /// counted here only. So the loss counters must never be summed: an FB loss would count twice.
+    ///
+    /// `.identityMismatch` counts as lost (judge adjustment B6), on the writer `performSystemWrite`
+    /// captured at entry (review fix M18) -- which, for a mismatch, is by definition not the
+    /// identity's own writer. 3a-1b's direct-write fallback may still write the document after an
+    /// `.identityMismatch`; the count then stays, so for that outcome it is conservative.
+    var lifecycleWholeDocumentLost = 0
 }
 
 // MARK: - Internal state
@@ -221,6 +333,48 @@ private enum SeqPhase: Equatable {
     /// fetched and applies within milliseconds on the actor, never a 30s wait.
     /// `since` is carried forward the same way, for I-ABN bookkeeping/diagnostics.
     case abandoned(since: ContinuousClock.Instant)
+    /// Phase 3a-1a (t-94369a83), §2.1: the entry of an OPEN barrier (`WriterState.openBarrier`).
+    /// Never in `systemSeqs`, never `.late`/`.abandoned`, and never passable by
+    /// `advanceFrontierLocked`: while it sits in `phase` the frontier cannot move past it, which is
+    /// what parks every sequence reserved after the barrier until it is released (I-BAR).
+    case barrier
+}
+
+/// Phase 3a-1a (t-94369a83), §2.1: the one open barrier a writer may have. `cont` is the pending
+/// `wait(timeout:)` continuation (typed for `BarrierOutcome`, separate from `waiters`); it is only
+/// ever removed through `takeBarrierContinuationLocked`, so every outcome resumes it exactly once.
+/// `waitToken` identifies the current registration so a timeout timer that no longer owns the wait
+/// (the wait was resolved, or the barrier is gone) is a no-op; `warnToken`/`warnTask` are the
+/// hold-warning bookkeeping (`barrierHoldWarnFired`).
+private struct OpenBarrier {
+    let seq: UInt64
+    var reached = false
+    var cont: CheckedContinuation<BarrierOutcome, Never>?
+    var waitToken: UInt64 = 0
+    var timeoutTask: Task<Void, Never>?
+    var warnToken: UInt64 = 0
+    var warnTask: Task<Void, Never>?
+}
+
+/// Which sequences `skipLocked` may skip. `.all` is `skip(upTo:)`'s historical behaviour (also drops
+/// an open barrier at or below the watermark); `.editorOnly` is the barrier timeout's (system
+/// sequences are left to finish, the frontier is never jumped); `.abandonedOnly` is the barrier
+/// reach's (only `.abandoned` entries, never a `.late` one -- a passable `.late` entry stays free to
+/// apply, and be refused by the stale epoch, after a whole-document write).
+private enum SkipScope {
+    case all, editorOnly, abandonedOnly
+
+    func includes(_ phase: SeqPhase, isSystem: Bool) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .editorOnly:
+            return !isSystem
+        case .abandonedOnly:
+            if case .abandoned = phase { return true }
+            return false
+        }
+    }
 }
 
 /// One editor op held because it referenced a temp id no admitted batch has minted
@@ -320,6 +474,20 @@ private struct WriterState {
     var stallArmedSeq: UInt64?
     var stallToken: UInt64 = 0
     var testSystemStallAfterSeconds: TimeInterval?
+    /// Phase 3a-1a (t-94369a83), §2.1: DEBUG override of the 10s "a barrier has been held this
+    /// long" warning, and a counter of how many times that warning fired (the warning itself
+    /// is an `alwaysPersisted` log line in every build, which a test cannot observe). Read when a
+    /// barrier is reached; written by `barrierHoldWarnFired`.
+    var testBarrierHoldWarnAfterSeconds: TimeInterval?
+    var testBarrierHoldWarnCount = 0
+    /// Review fix M14: how many barrier `wait(timeout:)` registrations have ever stored their
+    /// continuation (`waitForBarrierAsync`'s registering branch). Monotonic -- never reset, never
+    /// decremented -- so a test can wait for "my wait registered" even when the wait has already
+    /// resolved (a short timeout) by the time it looks. Read only through the DEBUG accessor.
+    var testBarrierWaitsRegistered = 0
+    /// Phase 3a-1a (t-94369a83), §2.1: the open barrier, if any (at most one -- I-BAR). Its entry in
+    /// `phase` is `.barrier`.
+    var openBarrier: OpenBarrier?
     /// Set by `retire(reason:)`. `applySystemWrite` refuses `.writerRetired` once
     /// this is true, distinct from an ordinary out-of-turn/skipped refusal -- the
     /// editor path doesn't need an equivalent flag because a retired writer's
@@ -371,6 +539,22 @@ private struct Signal {
     /// under the lock (`logLossEvent` has no `WriterState` to read it from, since
     /// it runs after the lock is released -- see that case's own comment).
     var effectiveLateAbandonAfter: TimeInterval?
+    /// Phase 3a-1a (t-94369a83), §2.1 (coder item 6): the `BarrierOutcome` continuation(s) to resume,
+    /// taken under the lock through `takeBarrierContinuationLocked`. Resumed by `perform(_:)` AFTER
+    /// this signal's events have been delivered, so a waiter that wakes can rely on every event of the
+    /// same transition (`.skipped`, `.barrierReached`, ...) having been recorded already. Deliberately
+    /// not the `@MainActor` `OneShotContinuation` (BlockSyncService.swift): the writer is nonisolated.
+    var barrierResumes: [(CheckedContinuation<BarrierOutcome, Never>, BarrierOutcome)] = []
+    /// Set when a barrier was just reached: arm the hold-warning timer (all builds, review fix M2).
+    var barrierHoldWarn: BarrierHoldWarnArm?
+}
+
+/// Phase 3a-1a (t-94369a83), §2.1: what `perform(_:)` needs to start the hold-warning timer
+/// (compiled in every build, review fix M2).
+private struct BarrierHoldWarnArm {
+    let seq: UInt64
+    let token: UInt64
+    let delay: Duration
 }
 
 private enum AdmissionResult {
@@ -400,6 +584,9 @@ actor DocumentWriter {
     /// Phase 2 (t-94369a83), §1.2: the I-SYS backstop -- a system write that has
     /// become the frontier (in `.fetched`) but never reached `applySystemWrite`.
     nonisolated static let systemStallAfterSeconds: TimeInterval = 5.0
+    /// Phase 3a-1a (t-94369a83), §2.1: a barrier held this long without a release logs an
+    /// `alwaysPersisted` warning (never an auto-release -- the holder always releases, or `retire` drops the barrier).
+    nonisolated static let barrierHoldWarnAfterSeconds: TimeInterval = 10.0
 
     private nonisolated let state: Mutex<WriterState>
     private nonisolated let clock = ContinuousClock()
@@ -437,6 +624,23 @@ actor DocumentWriter {
     /// Non-locking, same discipline as `effectiveLateAfter` above.
     private nonisolated func effectiveSystemStallAfter(_ writerState: WriterState) -> TimeInterval {
         writerState.testSystemStallAfterSeconds ?? Self.systemStallAfterSeconds
+    }
+
+    /// Non-locking, same discipline as `effectiveLateAfter` above.
+    private nonisolated func effectiveBarrierHoldWarnAfter(_ writerState: WriterState) -> TimeInterval {
+        writerState.testBarrierHoldWarnAfterSeconds ?? Self.barrierHoldWarnAfterSeconds
+    }
+
+    /// Review fix M12: `Duration.seconds(_: Double)` TRAPS on a non-finite value, and the timeouts
+    /// `BarrierHandle.wait`, `drainForLifecycle` and `awaitSettled` convert come from callers
+    /// (3a-1b passes `deadline.remaining`). Clamps to a finite, representable range first: NaN -> 0,
+    /// +/-infinity -> +/-`maxFiniteTimeoutSeconds` (one year -- an infinite bound is "never"
+    /// for every purpose here). Every finite input within the range converts exactly as before.
+    private nonisolated static let maxFiniteTimeoutSeconds: TimeInterval = 31_536_000
+
+    private nonisolated static func finiteDuration(seconds: TimeInterval) -> Duration {
+        guard !seconds.isNaN else { return .zero }
+        return .seconds(min(max(seconds, -maxFiniteTimeoutSeconds), maxFiniteTimeoutSeconds))
     }
 
     #if DEBUG
@@ -486,6 +690,17 @@ actor DocumentWriter {
     nonisolated var testArmedStallSeq: UInt64? {
         state.withLock { $0.stallArmedSeq }
     }
+    // Phase 3a-1a (t-94369a83), §2.1: barrier-hold warning seam (see `WriterState`'s fields).
+    nonisolated var testBarrierHoldWarnAfterSeconds: TimeInterval? {
+        get { state.withLock { $0.testBarrierHoldWarnAfterSeconds } }
+        set { state.withLock { $0.testBarrierHoldWarnAfterSeconds = newValue } }
+    }
+    nonisolated var testBarrierHoldWarnCount: Int {
+        state.withLock { $0.testBarrierHoldWarnCount }
+    }
+    nonisolated var testBarrierWaitsRegistered: Int {
+        state.withLock { $0.testBarrierWaitsRegistered }
+    }
     #endif
 
     // MARK: - Signal application (the only place continuations are resumed / Tasks started)
@@ -511,6 +726,7 @@ actor DocumentWriter {
         if let handler = signal.handler {
             for event in signal.events { handler(event) }
         }
+        performBarrierActions(signal)
         switch signal.expiryAction {
         case .none, .cancelOnly:
             break
@@ -622,6 +838,20 @@ actor DocumentWriter {
             // log the same way `.expired`/`.abandoned` are.
             DebugLog.alwaysPersisted("[DocumentWriter] awaitSettled timed out waiting for "
                 + "\(seqs.count) sequence(s) \(seqs) to settle -- always persisted, nothing changed")
+        case .barrierDropped(let seq, let reached, let reason):
+            // Phase 3a-1a review fix (M1/M3): a skip dropped an open barrier -- its holder is NOT told
+            // and a later `release()` is a no-op, so this line is the only production trace.
+            DebugLog.alwaysPersisted("[DocumentWriter] barrier \(seq) was DROPPED by a skip (reason: \(reason)); it had "
+                + (reached ? "been reached and was held" : "not been reached yet")
+                + " -- its holder is not told and a later release() is a no-op")
+        case .barrierTimedOut:
+            // The ONE log line of a barrier wait timing out (the `.skipped` line, when a sequence was
+            // skipped, is the separate record of that skip). `barrierTimeoutFired` logs nothing itself.
+            DebugLog.alwaysPersisted("[DocumentWriter] barrier wait timed out -- editor sequences below it were skipped, "
+                + "system sequences were left to finish; the barrier stays open and must still be released")
+        case .barrierCancelled:
+            DebugLog.alwaysPersisted("[DocumentWriter] barrier wait cancelled -- the barrier was released before it "
+                + "was reached, or retire/skip dropped it while a wait was pending")
         default:
             break
         }
@@ -957,6 +1187,7 @@ actor DocumentWriter {
         rearmExpiryLocked(&writerState, &sig)
         rearmAbandonLocked(&writerState, &sig)
         rearmStallLocked(&writerState, &sig)
+        evaluateBarrierLocked(&writerState, &sig)
     }
 
     /// (v3, B) Addendum A2 §3: schedules `releaseDueHolds()` (does not run it; the
@@ -985,6 +1216,174 @@ actor DocumentWriter {
     private nonisolated func maybeClearTombstonesLocked(_ writerState: inout WriterState) {
         guard !writerState.tombstones.isEmpty, !mintPossibleLocked(writerState) else { return }
         writerState.tombstones.removeAll()
+    }
+
+    // MARK: - Barrier locked helpers (Phase 3a-1a, t-94369a83 §2.1)
+
+    /// Resumes this signal's barrier continuations and starts the hold-warning timer. Called by
+    /// `perform(_:)` AFTER the signal's events were delivered (see `Signal.barrierResumes`).
+    private nonisolated func performBarrierActions(_ signal: Signal) {
+        for (continuation, outcome) in signal.barrierResumes {
+            continuation.resume(returning: outcome)
+        }
+        if let arm = signal.barrierHoldWarn { startBarrierHoldWarn(arm) }
+    }
+
+    /// The ONE place a pending `BarrierOutcome` continuation leaves `WriterState` (plan §2.1: every
+    /// resume goes through it, so there is exactly one resume per wait). Also cancels the wait's
+    /// timeout timer and bumps `waitToken`, so a timer that has not fired yet (or is firing right now)
+    /// no longer owns the wait and becomes a no-op. Returns nil when no wait is pending.
+    private nonisolated func takeBarrierContinuationLocked(
+        _ writerState: inout WriterState
+    ) -> CheckedContinuation<BarrierOutcome, Never>? {
+        guard let continuation = writerState.openBarrier?.cont else { return nil }
+        writerState.openBarrier?.cont = nil
+        writerState.openBarrier?.timeoutTask?.cancel()
+        writerState.openBarrier?.timeoutTask = nil
+        writerState.openBarrier?.waitToken += 1
+        return continuation
+    }
+
+    /// Reach rule, blocking half (coder item 3): an entry below the barrier blocks it unless it is
+    /// frontier-PASSABLE -- `.late` (either fetched flag) or `.abandoned`, per `isPassableLateLocked`.
+    /// Everything else (`.reserved`, `.fetched`, `.applying`, and a pending SYSTEM sequence, which is
+    /// `.fetched`) blocks.
+    private nonisolated func hasBlockingEntryBelowLocked(_ barrierSeq: UInt64, _ writerState: WriterState) -> Bool {
+        writerState.phase.contains { entrySeq, _ in
+            entrySeq < barrierSeq && !isPassableLateLocked(entrySeq, writerState)
+        }
+    }
+
+    private nonisolated func hasAbandonedEntryBelowLocked(_ barrierSeq: UInt64, _ writerState: WriterState) -> Bool {
+        writerState.phase.contains { entrySeq, phase in
+            guard entrySeq < barrierSeq else { return false }
+            if case .abandoned = phase { return true }
+            return false
+        }
+    }
+
+    /// I-BAR (DEBUG): at most one open barrier, whose entry is `.barrier` (never `.late`/`.abandoned`,
+    /// never a system sequence); the frontier never passes it (and sits AT it once reached); and no
+    /// sequence above it is `.applying`. Every branch is reachable only through a bug: admission
+    /// (`seq == frontier || passable late`) cannot admit a sequence above a barrier the frontier has
+    /// not passed, because only the frontier's own `.reserved` entry can go `.late` (`expiryFired`).
+    private nonisolated func checkBarrierInvariantLocked(_ writerState: WriterState) {
+        #if DEBUG
+        guard let barrier = writerState.openBarrier else { return }
+        let barrierEntries = writerState.phase.values.filter { $0 == .barrier }.count
+        assert(barrierEntries == 1 && writerState.phase[barrier.seq] == .barrier,
+               "I-BAR violated: barrier \(barrier.seq) has phase \(String(describing: writerState.phase[barrier.seq])), "
+                   + "\(barrierEntries) .barrier entries")
+        assert(!writerState.systemSeqs.contains(barrier.seq), "I-BAR violated: barrier \(barrier.seq) is in systemSeqs")
+        assert(writerState.frontier <= barrier.seq && (!barrier.reached || writerState.frontier == barrier.seq),
+               "I-BAR violated: frontier \(writerState.frontier) vs barrier \(barrier.seq) (reached: \(barrier.reached))")
+        let applyingAbove = writerState.phase.contains { $0.key > barrier.seq && $0.value == .applying }
+        assert(!applyingAbove, "I-BAR violated: a sequence above barrier \(barrier.seq) is .applying")
+        #endif
+    }
+
+    /// Plan §2.1 / coder item 1: the barrier's reach evaluation. The LAST locked step of every
+    /// transition (after `maybeScheduleReleaseLocked`, the held-op drop and the rearms), so it sees
+    /// the transition's final state. The FIRST statement is the early return when no barrier is open
+    /// (slice adjustment B3: nothing in this file behaves differently while `openBarrier == nil`).
+    ///
+    /// Reached = the drain predicate, with passable `.late` non-blocking (item 3): no entry below the
+    /// barrier blocks it (`hasBlockingEntryBelowLocked`), `releaseScheduled == false`, and
+    /// `frontier == seq`. Before declaring it, the `.abandoned` entries below are skipped with
+    /// `.lifecycleDrain` through the `skipLocked` core (`.abandonedOnly` scope: a passable `.late`
+    /// entry is NOT skipped, and the frontier does not move -- the abandoned entries are below it
+    /// already). That skip is done BEFORE the `releaseScheduled` check so that, if it changes what
+    /// the held-op release job must do, the barrier waits for that job (which re-evaluates from
+    /// `releaseDueHolds`) instead of being declared reached with a release still to run. This never
+    /// calls the locking `skip()` and never recurses: `skipLocked` does not evaluate the barrier.
+    ///
+    /// Reaching with a pending `wait` resumes it `.reached`; a barrier with no `wait` pending (the
+    /// wait was not called yet, or already timed out) is still marked reached, so later reservations
+    /// park until `release()`.
+    private nonisolated func evaluateBarrierLocked(_ writerState: inout WriterState, _ sig: inout Signal) {
+        guard let barrier = writerState.openBarrier else { return }
+        checkBarrierInvariantLocked(writerState)
+        guard !barrier.reached, writerState.frontier == barrier.seq,
+              !hasBlockingEntryBelowLocked(barrier.seq, writerState) else { return }
+        if hasAbandonedEntryBelowLocked(barrier.seq, writerState) {
+            skipLocked(upTo: barrier.seq - 1, reason: .lifecycleDrain, scope: .abandonedOnly, &writerState, &sig)
+        }
+        guard !writerState.releaseScheduled else { return }
+        writerState.openBarrier?.reached = true
+        writerState.ledger.barriersReached += 1
+        sig.events.append(.barrierReached)
+        if let continuation = takeBarrierContinuationLocked(&writerState) {
+            sig.barrierResumes.append((continuation, BarrierOutcome.reached))
+        }
+        let warnToken = barrier.warnToken + 1
+        writerState.openBarrier?.warnToken = warnToken
+        sig.barrierHoldWarn = BarrierHoldWarnArm(
+            seq: barrier.seq, token: warnToken, delay: .seconds(effectiveBarrierHoldWarnAfter(writerState)))
+        checkBarrierInvariantLocked(writerState)
+    }
+
+    /// Removes the open barrier (if any) from `WriterState` and settles its `phase` entry. Shared by
+    /// `release()` (`resolvedAhead: true`: the frontier still has to pass the entry, e.g. an unreached
+    /// barrier released while an earlier sequence is open -- coder item 5) and `skipLocked(.all)`
+    /// (`resolvedAhead: false`: the frontier jump covers the entry). Accounting (addendum P6):
+    /// - a barrier whose `wait` was still PENDING is `cancelled` -- the continuation is taken and
+    ///   resumed `.cancelled`, `barriersCancelled` and `.barrierCancelled` count it;
+    /// - any other barrier (reached and held, or unreached with no wait pending) is merely RELEASED --
+    ///   `.barrierReleased`, never `barriersCancelled`.
+    /// A REACHED barrier also resets `since` on the `.reserved`/`.late` sequences above it, so the
+    /// time they spent held back is not charged to them by I-EXP (they would otherwise expire the
+    /// instant the frontier reaches them).
+    private nonisolated func dropBarrierLocked(
+        resolvedAhead: Bool, _ writerState: inout WriterState, _ sig: inout Signal
+    ) {
+        guard let barrier = writerState.openBarrier else { return }
+        if barrier.reached { resetSinceAboveBarrierLocked(barrier.seq, &writerState) }
+        if let continuation = takeBarrierContinuationLocked(&writerState) {
+            writerState.ledger.barriersCancelled += 1
+            sig.events.append(.barrierCancelled)
+            sig.barrierResumes.append((continuation, BarrierOutcome.cancelled))
+        } else {
+            sig.events.append(.barrierReleased)
+        }
+        writerState.phase.removeValue(forKey: barrier.seq)
+        if resolvedAhead { writerState.resolvedAhead.insert(barrier.seq) }
+        barrier.warnTask?.cancel()
+        writerState.openBarrier = nil
+    }
+
+    private nonisolated func resetSinceAboveBarrierLocked(_ barrierSeq: UInt64, _ writerState: inout WriterState) {
+        let now = clock.now
+        for seq in writerState.phase.keys.sorted() where seq > barrierSeq {
+            switch writerState.phase[seq] {
+            case .reserved:
+                writerState.phase[seq] = .reserved(since: now)
+            case .late(let fetched, _):
+                writerState.phase[seq] = .late(fetched: fetched, since: now)
+            default:
+                break
+            }
+        }
+    }
+
+    /// Coder item 4: the barrier timeout's skip -- every EDITOR sequence below `barrierSeq`, and only
+    /// those (`.editorOnly` scope): a system sequence (FB, bibliography/Notes) is left to finish, and
+    /// because `.editorOnly` never jumps the frontier it cannot move past a pending system sequence.
+    /// Held ops whose holder is below the barrier are dropped and counted by `skipLocked`'s own
+    /// accounting (I-HOLD: `heldOpsDropped`, checked by `checkHoldInvariantLocked`); with every editor
+    /// sequence below skipped, none of them can ever resolve. `releaseScheduled` is cleared when that
+    /// drop left nothing to release (and no release job is mid-flight: `heldOpsInFlight == 0`),
+    /// otherwise the scheduled `releaseDueHolds` job clears it and re-evaluates the barrier. Only
+    /// `barrierTimeoutFired` calls this, and only after it took the pending wait's continuation (a
+    /// stale timer is a no-op). Returns the sequences actually skipped.
+    private nonisolated func skipEditorSequencesLocked(
+        below barrierSeq: UInt64, reason: SkipReason, _ writerState: inout WriterState, _ sig: inout Signal
+    ) -> [UInt64] {
+        guard barrierSeq > 0 else { return [] }
+        let skippedSeqs = skipLocked(upTo: barrierSeq - 1, reason: reason, scope: .editorOnly, &writerState, &sig)
+        if writerState.held.isEmpty, writerState.heldOpsInFlight == 0 {
+            writerState.releaseScheduled = false
+        }
+        return skippedSeqs
     }
 
     // MARK: - Reserve / fetch / turn (nonisolated: synchronous, Mutex-guarded)
@@ -1027,6 +1426,7 @@ actor DocumentWriter {
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
             rearmStallLocked(&writerState, &sig)
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -1076,6 +1476,7 @@ actor DocumentWriter {
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
             rearmStallLocked(&writerState, &sig)
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -1097,6 +1498,7 @@ actor DocumentWriter {
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
             rearmStallLocked(&writerState, &sig)
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -1127,6 +1529,7 @@ actor DocumentWriter {
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
             rearmStallLocked(&writerState, &sig)
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -1163,100 +1566,155 @@ actor DocumentWriter {
 
     /// Returns the sequences this call actually affected (skipped) -- NOT a pre-skip
     /// snapshot of everything below `watermark`, since `.applying` sequences are
-    /// deliberately left alone (see the `case .applying: continue` below) and so are
+    /// deliberately left alone (see the `case .applying: continue` in `skipLocked`) and so are
     /// never really skipped. `timeoutDrain` relies on getting the real list back.
+    ///
+    /// Phase 3a-1a (t-94369a83, coder item 2): the body lives in `skipLocked` (the locked core, which
+    /// the barrier's reach and timeout paths reuse without re-locking); this wrapper adds the rearms
+    /// and, as the LAST locked step (item 1), the barrier evaluation. An open barrier at or below
+    /// `watermark` is dropped by the core (settled as released; its pending `wait`, if any, resumes
+    /// `.cancelled`).
     @discardableResult
     nonisolated func skip(upTo watermark: UInt64, reason: SkipReason) -> [UInt64] {
         var affectedResult: [UInt64] = []
         let signal = state.withLock { writerState -> Signal in
             var sig = Signal(handler: writerState.testEventHandler)
-            var affected: [UInt64] = []
-            for seq in writerState.phase.keys.sorted() where seq <= watermark {
-                guard let phase = writerState.phase[seq] else { continue }
-                if case .applying = phase { continue }   // milliseconds from finishing on the actor; leave it
-                // Bug fix (round 2 of this dispatch, per driver's must-fix): a system
-                // sequence is a DIFFERENT kind of loss from an editor batch -- it has
-                // its own dedicated counter (`systemWritesSkipped`) precisely so
-                // `skippedConsumed`/`skippedUnfetched` ("editor-batch accounting", per
-                // the plan's own §1.2 wording) stay unchanged when a system write is
-                // what got skipped. `writerState.systemSeqs.contains(seq)` is checked
-                // BEFORE choosing which counter to bump, not after -- the two are
-                // mutually exclusive per sequence, never both. (A system sequence is
-                // never `.reserved`/`.late`/`.abandoned` per the I-SYS invariant --
-                // `reserveSystem()` always sets `.fetched` directly -- so only the
-                // `.fetched` arm is reachable for one in practice, but every arm is
-                // still guarded here rather than relying on that invariant silently.)
-                let isSystem = writerState.systemSeqs.contains(seq)
-                if !isSystem {
-                    switch phase {
-                    case .reserved:
-                        writerState.ledger.skippedUnfetched += 1
-                    case .fetched:
-                        writerState.ledger.skippedConsumed += 1
-                    case .late(let fetched, _):
-                        // A late sequence that never actually got its batch fetched (the
-                        // `.late(fetched: false)` case `expiryFired` produces) was never
-                        // consumed -- counting it as `skippedConsumed` overstated how much
-                        // work was thrown away after being pulled from the editor.
-                        if fetched {
-                            writerState.ledger.skippedConsumed += 1
-                        } else {
-                            writerState.ledger.skippedUnfetched += 1
-                        }
-                    case .abandoned:
-                        // Only ever reached from `.late(fetched: false)` (see `SeqPhase`'s
-                        // doc comment) -- so it was never fetched either; count it the
-                        // same way.
-                        writerState.ledger.skippedUnfetched += 1
-                    case .applying:
-                        break   // unreachable (handled by the `continue` above)
-                    }
-                }
-                writerState.phase.removeValue(forKey: seq)
-                writerState.skipped.insert(seq)
-                affected.append(seq)
-                // Phase 2 (t-94369a83), §1.1 step 6: recorded for system sequences
-                // only -- `performSystemWrite` reads this back after `waitForTurn()`
-                // reports `.skipped` so it can report the REAL reason instead of
-                // guessing one. The editor path never inspects it.
-                if isSystem {
-                    writerState.skipReasons[seq] = reason
-                    writerState.systemSeqs.remove(seq)
-                    writerState.ledger.systemWritesSkipped += 1
-                }
-            }
-            if writerState.frontier <= watermark { writerState.frontier = watermark + 1 }
-            advanceFrontierLocked(&writerState)
-            sig.resumes = collectReadyWaitersLocked(&writerState)
-            if !affected.isEmpty {
-                sig.events.append(.skipped(affected, reason))
-            }
-            var dropped = 0
-            for (tempId, ops) in writerState.held {
-                let keep = ops.filter { $0.holderSeq > watermark }
-                dropped += ops.count - keep.count
-                if keep.isEmpty { writerState.held.removeValue(forKey: tempId) } else { writerState.held[tempId] = keep }
-            }
-            if dropped > 0 {
-                writerState.ledger.heldOpsDropped += dropped
-                // Addendum A2 §3.5: a `.lifecycleDrain`-reasoned skip tags the holds
-                // it drops the same way, so `drainForLifecycle(timeout:)` giving up
-                // on an abandoned sequence is distinguishable in the ledger/log from an
-                // ordinary skip or a genuine wall-clock drain timeout.
-                let dropReason: HeldOpsDropReason = reason == .lifecycleDrain ? .lifecycleDrain : .skip
-                sig.events.append(.holdsDropped(dropped, dropReason))
-            }
-            checkHoldInvariantLocked(writerState)
-            maybeScheduleReleaseLocked(&writerState, &sig)
-            maybeClearTombstonesLocked(&writerState)
+            affectedResult = skipLocked(upTo: watermark, reason: reason, &writerState, &sig)
             rearmExpiryLocked(&writerState, &sig)
             rearmAbandonLocked(&writerState, &sig)
             rearmStallLocked(&writerState, &sig)
-            affectedResult = affected
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
         return affectedResult
+    }
+
+    /// The locked core of `skip(upTo:reason:)` (coder item 2): everything the original did under the
+    /// lock EXCEPT the three rearms (which stay with the caller, so a caller that already ran them in
+    /// the same `Signal` is not clobbered) and the barrier evaluation (so `evaluateBarrierLocked` can
+    /// call this without recursing). Appends to `sig.resumes` rather than assigning, for the same
+    /// reason. `scope` narrows which sequences are skipped (see `SkipScope`); `.all`, the default, is
+    /// the historical behaviour.
+    @discardableResult
+    private nonisolated func skipLocked(
+        upTo watermark: UInt64, reason: SkipReason, scope: SkipScope = .all,
+        _ writerState: inout WriterState, _ sig: inout Signal
+    ) -> [UInt64] {
+        var affected: [UInt64] = []
+        for seq in writerState.phase.keys.sorted() where seq <= watermark {
+            guard let phase = writerState.phase[seq] else { continue }
+            if case .applying = phase { continue }   // milliseconds from finishing on the actor; leave it
+            if case .barrier = phase {
+                // Settled as released, not skipped: not in `affected`, no loss counter. Only a full
+                // skip reaches a barrier (the other scopes' watermark is always below it), and its
+                // frontier jump below covers the entry. The `.barrierDropped` event makes the drop
+                // production-visible (its holder is never told).
+                if scope == .all {
+                    sig.events.append(.barrierDropped(seq, reached: writerState.openBarrier?.reached ?? false, reason))
+                    dropBarrierLocked(resolvedAhead: false, &writerState, &sig)
+                }
+                continue
+            }
+            // Bug fix (round 2 of this dispatch, per driver's must-fix): a system
+            // sequence is a DIFFERENT kind of loss from an editor batch -- it has
+            // its own dedicated counter (`systemWritesSkipped`) precisely so
+            // `skippedConsumed`/`skippedUnfetched` ("editor-batch accounting", per
+            // the plan's own §1.2 wording) stay unchanged when a system write is
+            // what got skipped. `writerState.systemSeqs.contains(seq)` is checked
+            // BEFORE choosing which counter to bump, not after -- the two are
+            // mutually exclusive per sequence, never both. (A system sequence is
+            // never `.reserved`/`.late`/`.abandoned` per the I-SYS invariant --
+            // `reserveSystem()` always sets `.fetched` directly -- so only the
+            // `.fetched` arm is reachable for one in practice, but every arm is
+            // still guarded here rather than relying on that invariant silently.)
+            let isSystem = writerState.systemSeqs.contains(seq)
+            guard scope.includes(phase, isSystem: isSystem) else { continue }
+            if !isSystem { countSkippedEditorPhaseLocked(phase, &writerState) }
+            writerState.phase.removeValue(forKey: seq)
+            writerState.skipped.insert(seq)
+            affected.append(seq)
+            // Phase 2 (t-94369a83), §1.1 step 6: recorded for system sequences
+            // only -- `performSystemWrite` reads this back after `waitForTurn()`
+            // reports `.skipped` so it can report the REAL reason instead of
+            // guessing one. The editor path never inspects it.
+            if isSystem {
+                writerState.skipReasons[seq] = reason
+                writerState.systemSeqs.remove(seq)
+                writerState.ledger.systemWritesSkipped += 1
+            }
+        }
+        // Only a full skip jumps the frontier: `.editorOnly` must never move it over a pending system
+        // sequence, and `.abandonedOnly` skips entries that are below the frontier already.
+        if scope == .all, writerState.frontier <= watermark { writerState.frontier = watermark + 1 }
+        advanceFrontierLocked(&writerState)
+        sig.resumes += collectReadyWaitersLocked(&writerState)
+        if !affected.isEmpty {
+            sig.events.append(.skipped(affected, reason))
+        }
+        dropHeldOpsLocked(upTo: watermark, reason: reason, scope: scope, &writerState, &sig)
+        maybeScheduleReleaseLocked(&writerState, &sig)
+        maybeClearTombstonesLocked(&writerState)
+        return affected
+    }
+
+    /// The per-phase ledger counter for a skipped EDITOR sequence (extracted verbatim from `skip`'s
+    /// former inline switch; the only exhaustive switch over `SeqPhase` in this file -- coder item 6).
+    private nonisolated func countSkippedEditorPhaseLocked(_ phase: SeqPhase, _ writerState: inout WriterState) {
+        switch phase {
+        case .reserved:
+            writerState.ledger.skippedUnfetched += 1
+        case .fetched:
+            writerState.ledger.skippedConsumed += 1
+        case .late(let fetched, _):
+            // A late sequence that never actually got its batch fetched (the
+            // `.late(fetched: false)` case `expiryFired` produces) was never
+            // consumed -- counting it as `skippedConsumed` overstated how much
+            // work was thrown away after being pulled from the editor.
+            if fetched {
+                writerState.ledger.skippedConsumed += 1
+            } else {
+                writerState.ledger.skippedUnfetched += 1
+            }
+        case .abandoned:
+            // Only ever reached from `.late(fetched: false)` (see `SeqPhase`'s
+            // doc comment) -- so it was never fetched either; count it the
+            // same way.
+            writerState.ledger.skippedUnfetched += 1
+        case .applying, .barrier:
+            break   // unreachable (handled by the `continue`s in `skipLocked`)
+        }
+    }
+
+    /// `skipLocked`'s held-op drop, extracted verbatim from `skip`: every held op whose HOLDER is at
+    /// or below `watermark` is dropped and counted (I-HOLD, checked at the end). The one addition:
+    /// an `.abandonedOnly` skip (the barrier's reach) drops only when nothing can still mint a temp
+    /// id afterwards (no `.late`/`.abandoned` entry left) -- otherwise a passable `.late` entry could
+    /// still resolve those ops, and they stay held.
+    private nonisolated func dropHeldOpsLocked(
+        upTo watermark: UInt64, reason: SkipReason, scope: SkipScope,
+        _ writerState: inout WriterState, _ sig: inout Signal
+    ) {
+        if scope == .abandonedOnly, mintPossibleLocked(writerState) {
+            checkHoldInvariantLocked(writerState)
+            return
+        }
+        var dropped = 0
+        for (tempId, ops) in writerState.held {
+            let keep = ops.filter { $0.holderSeq > watermark }
+            dropped += ops.count - keep.count
+            if keep.isEmpty { writerState.held.removeValue(forKey: tempId) } else { writerState.held[tempId] = keep }
+        }
+        if dropped > 0 {
+            writerState.ledger.heldOpsDropped += dropped
+            // Addendum A2 §3.5: a `.lifecycleDrain`-reasoned skip tags the holds
+            // it drops the same way, so `drainForLifecycle(timeout:)` giving up
+            // on an abandoned sequence is distinguishable in the ledger/log from an
+            // ordinary skip or a genuine wall-clock drain timeout.
+            let dropReason: HeldOpsDropReason = reason == .lifecycleDrain ? .lifecycleDrain : .skip
+            sig.events.append(.holdsDropped(dropped, dropReason))
+        }
+        checkHoldInvariantLocked(writerState)
     }
 
     nonisolated func skipAllReserved(reason: SkipReason) {
@@ -1282,12 +1740,214 @@ actor DocumentWriter {
             for ops in writerState.held.values { dropped += ops.count }
             writerState.held.removeAll()
             writerState.releaseScheduled = false
+            // Phase 3a-1a: `skipAllReserved` above already dropped any open barrier (it is a `.barrier`
+            // entry at or below the watermark). One enqueued in the gap between that call and this
+            // lock -- before `retired` was set -- is dropped here: a retired writer holds no barrier.
+            // A full skip (review fix M10): the barrier is dropped (`.barrierDropped`) and any
+            // sequence reserved in the gap resumes `.skipped`, never `.go` on a retired writer.
+            // Runs ONLY when a barrier is open -- the no-barrier retire path is untouched.
+            if writerState.openBarrier != nil {
+                skipLocked(upTo: writerState.nextSeq - 1, reason: reason, scope: .all, &writerState, &sig)
+            }
             if dropped > 0 {
                 writerState.ledger.heldOpsDropped += dropped
                 sig.events.append(.holdsDropped(dropped, .retired))
             }
             checkHoldInvariantLocked(writerState)
             checkAbandonInvariantLocked(writerState)
+            return sig
+        }
+        perform(signal)
+    }
+
+    // MARK: - Barrier (Phase 3a-1a, t-94369a83 §2.1) and lifecycle-loss counter (§2.3)
+
+    /// Reserves a barrier sequence: a marker that is "reached" once everything reserved before it has
+    /// settled (or is `.abandoned` / frontier-passable `.late`) and that holds back everything
+    /// reserved after it until its holder releases it. Returns nil when the writer is retired or a
+    /// barrier is already open (reached or not). The barrier occupies a `.barrier` phase entry and is
+    /// never in `systemSeqs`; reach is evaluated here too (an idle writer's barrier is reached at
+    /// once), as the last locked step.
+    ///
+    /// No production code calls this until 3a-1b (the lifecycle sequence). The holder must always
+    /// `release()` -- there is no auto-release -- or let `retire` drop the barrier.
+    nonisolated func enqueueBarrier() -> BarrierHandle? {
+        var grantedSeq: UInt64?
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            guard !writerState.retired, writerState.openBarrier == nil else { return sig }
+            let seq = writerState.nextSeq
+            writerState.nextSeq += 1
+            writerState.phase[seq] = .barrier
+            writerState.openBarrier = OpenBarrier(seq: seq)
+            writerState.ledger.barriersQueued += 1
+            sig.events.append(.barrierQueued)
+            grantedSeq = seq
+            rearmExpiryLocked(&writerState, &sig)
+            rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
+            evaluateBarrierLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+        return grantedSeq.map { BarrierHandle(writer: self, seq: $0) }
+    }
+
+    /// `BarrierHandle.wait(timeout:)`'s implementation: ONE continuation registered in typed storage
+    /// (`openBarrier.cont`) plus a timeout Task. Resolves exactly once, on whichever path takes the
+    /// continuation first (always via `takeBarrierContinuationLocked`): reach (`.reached`), the timeout
+    /// (`.timedOut`), or a cancel (`release()` of an unreached barrier, `retire`, `skipAllReserved`,
+    /// `skip(upTo:)` reaching it -- `.cancelled`). A barrier that is already reached resolves at once;
+    /// one that is gone, or whose wait is already pending (a second concurrent wait is a caller error),
+    /// resolves `.cancelled` without touching the first wait.
+    nonisolated func waitForBarrierAsync(_ seq: UInt64, timeout: TimeInterval) async -> BarrierOutcome {
+        await withCheckedContinuation { (continuation: CheckedContinuation<BarrierOutcome, Never>) in
+            var immediate: BarrierOutcome?
+            var timeoutToken: UInt64?
+            state.withLock { writerState in
+                guard let barrier = writerState.openBarrier, barrier.seq == seq else {
+                    immediate = .cancelled
+                    return
+                }
+                if barrier.reached {
+                    immediate = .reached
+                } else if barrier.cont != nil {
+                    immediate = .cancelled
+                } else {
+                    writerState.openBarrier?.cont = continuation
+                    writerState.openBarrier?.waitToken += 1
+                    timeoutToken = writerState.openBarrier?.waitToken
+                    writerState.testBarrierWaitsRegistered += 1
+                }
+            }
+            if let immediate {
+                continuation.resume(returning: immediate)
+            } else if let timeoutToken {
+                startBarrierTimeout(seq: seq, token: timeoutToken, timeout: timeout)
+            }
+        }
+    }
+
+    /// Starts the timeout Task for the wait registered under `token`. Started OUTSIDE the lock (no new
+    /// `Task` while the mutex is held), then stored on the barrier only if that registration is still
+    /// current -- the same discipline as the expiry/abandon/stall timers in `perform(_:)`.
+    private nonisolated func startBarrierTimeout(seq: UInt64, token: UInt64, timeout: TimeInterval) {
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: Self.finiteDuration(seconds: max(0, timeout)))
+            self?.barrierTimeoutFired(seq: seq, token: token)
+        }
+        let stillCurrent = state.withLock { writerState -> Bool in
+            guard writerState.openBarrier?.seq == seq, writerState.openBarrier?.waitToken == token else { return false }
+            writerState.openBarrier?.timeoutTask = task
+            return true
+        }
+        if !stillCurrent { task.cancel() }
+    }
+
+    /// The barrier wait's timeout path (coder item 4). In ONE locked transition: take the pending
+    /// continuation FIRST -- if this timer no longer owns the wait (the wait was reached, cancelled or
+    /// never registered under this token) it is a stale no-op and nothing else happens -- then skip the
+    /// EDITOR sequences below the barrier (`skipEditorSequencesLocked`), count the timeout, and queue
+    /// the `.timedOut` resume. System sequences below are left to finish; the barrier stays open (and
+    /// may still be reached later, once they do) and must still be released.
+    private nonisolated func barrierTimeoutFired(seq: UInt64, token: UInt64) {
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            guard writerState.openBarrier?.seq == seq, writerState.openBarrier?.waitToken == token,
+                  let continuation = takeBarrierContinuationLocked(&writerState) else { return sig }
+            writerState.ledger.barriersTimedOut += 1
+            let consumedBefore = writerState.ledger.skippedConsumed
+            let skippedSeqs = skipEditorSequencesLocked(below: seq, reason: .drainTimeout, &writerState, &sig)
+            let consumed = writerState.ledger.skippedConsumed - consumedBefore
+            sig.events.append(.barrierTimedOut)
+            let outcome = BarrierOutcome.timedOut(skippedEditorSeqs: skippedSeqs, skippedFetched: consumed)
+            sig.barrierResumes.append((continuation, outcome))
+            rearmExpiryLocked(&writerState, &sig)
+            rearmAbandonLocked(&writerState, &sig)
+            rearmStallLocked(&writerState, &sig)
+            evaluateBarrierLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+    }
+
+    /// `BarrierHandle.release()`'s implementation: synchronous and idempotent (a no-op once the barrier
+    /// is gone -- released before, dropped by `retire`/`skip`, or never this seq's). Releasing a REACHED
+    /// barrier settles it and resets `since` on the sequences above (`dropBarrierLocked`); releasing an
+    /// UNREACHED one moves it to `resolvedAhead`, so the frontier can pass it once the open sequences
+    /// below settle, and resumes a still-pending `wait` `.cancelled` (coder item 5). Either way the
+    /// full collect/rearm tail runs (`finishSequenceLocked`), so sequences parked above resume.
+    nonisolated func releaseBarrierSync(_ seq: UInt64) {
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            guard writerState.openBarrier?.seq == seq else { return sig }
+            dropBarrierLocked(resolvedAhead: true, &writerState, &sig)
+            finishSequenceLocked(&writerState, &sig)
+            return sig
+        }
+        perform(signal)
+    }
+
+    /// Starts the hold-warning timer armed by `evaluateBarrierLocked` when a barrier is reached --
+    /// compiled in Release too (review fix M2: the held-barrier diagnostic must exist in production;
+    /// never an auto-release). Same start-outside-the-lock / store-if-current discipline.
+    private nonisolated func startBarrierHoldWarn(_ arm: BarrierHoldWarnArm) {
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: arm.delay)
+            self?.barrierHoldWarnFired(seq: arm.seq, token: arm.token)
+        }
+        let stillCurrent = state.withLock { writerState -> Bool in
+            guard writerState.openBarrier?.seq == arm.seq, writerState.openBarrier?.reached == true,
+                  writerState.openBarrier?.warnToken == arm.token else { return false }
+            writerState.openBarrier?.warnTask = task
+            return true
+        }
+        if !stillCurrent { task.cancel() }
+    }
+
+    /// Fires once, `barrierHoldWarnAfterSeconds` (or the test override) after a barrier was reached,
+    /// if it is still held under the same registration: counts `testBarrierHoldWarnCount` and logs
+    /// `alwaysPersisted`. A release or a drop cancels the timer; a stale fire is a no-op.
+    private nonisolated func barrierHoldWarnFired(seq: UInt64, token: UInt64) {
+        let warned = state.withLock { writerState -> Bool in
+            guard writerState.openBarrier?.seq == seq, writerState.openBarrier?.reached == true,
+                  writerState.openBarrier?.warnToken == token else { return false }
+            writerState.testBarrierHoldWarnCount += 1
+            return true
+        }
+        if warned {
+            DebugLog.alwaysPersisted("[DocumentWriter] barrier \(seq) has been held for a long time without a release "
+                + "-- the holder must release it (there is no auto-release)")
+        }
+    }
+
+    /// Counts a `.lifecycleWholeDocument` write that did not happen (`lifecycleWholeDocumentLost`,
+    /// a REAL loss: the closing project's last whole-document save never landed), logs it with
+    /// `DebugLog.alwaysPersisted` (coder-obligations item 15), and emits
+    /// `.lifecycleWholeDocumentLost(reason)`. `reason` is a human-readable description of why (a
+    /// refusal, a failure, or a zoomed write the primitive declined to build).
+    ///
+    /// The writer cannot count these itself: `applySystemWrite` only sees a write that reached it,
+    /// not one refused before reservation (`.identityMismatch`, `.nested`) or declined by the
+    /// primitive (a zoomed section with no block range). So the caller that observes the outcome
+    /// reports it here -- `BlockSyncService.performSystemWrite` for every non-applied outcome
+    /// (bar `.refused(.noWriter)`, the caller's direct-write fallback), and
+    /// `performLifecycleWholeDocumentWrite` for its own refusal -- both through
+    /// `BlockSyncService.reportLifecycleWholeDocumentLost`, because `writer` is private to
+    /// BlockSyncService.swift. `performSystemWrite` uses the `reason:on:` overload with the writer it
+    /// captured at entry (review fix M18), so the count lands on the writer the write used even if
+    /// `configure`/`reconfigure` replaced `BlockSyncService.writer` while the write was suspended;
+    /// the pre-reservation refusal uses `reason:`, which counts on the current writer. Synchronous
+    /// and callable from anywhere; never resumes anything.
+    ///
+    /// This counter overlays an ordinary one (see `LossLedger.lifecycleWholeDocumentLost`): do not
+    /// sum the loss counters.
+    nonisolated func noteLifecycleWholeDocumentLost(reason: String) {
+        DebugLog.alwaysPersisted("[DocumentWriter] lifecycle whole-document write LOST: \(reason)")
+        let signal = state.withLock { writerState -> Signal in
+            var sig = Signal(handler: writerState.testEventHandler)
+            writerState.ledger.lifecycleWholeDocumentLost += 1
+            sig.events.append(.lifecycleWholeDocumentLost(reason))
             return sig
         }
         perform(signal)
@@ -1305,7 +1965,7 @@ actor DocumentWriter {
         let watermarkHook = state.withLock { $0.testDrainWatermarkCapturedHook }
         watermarkHook?(watermark)
         #endif
-        let deadline = clock.now.advanced(by: .seconds(timeout))
+        let deadline = clock.now.advanced(by: Self.finiteDuration(seconds: timeout))
         while true {
             let (done, hasAbandonedAtOrBelowWatermark, remaining): (Bool, Bool, Duration) = state.withLock { writerState in
                 // Addendum A2 §3.5: an `.abandoned` sequence is EXCLUDED from
@@ -1313,9 +1973,12 @@ actor DocumentWriter {
                 // resolve; that is the whole point of abandonment). Both `done`'s
                 // own settling step below and `timeoutDrain` give up on any that
                 // remain, on whichever return path is actually taken.
+                // Phase 3a-1a: the open barrier's own `.barrier` entry is ignored the same way
+                // (a held barrier must not wedge this drain).
                 let unsettled = writerState.phase.contains { seq, phase in
                     guard seq <= watermark else { return false }
                     if case .abandoned = phase { return false }
+                    if case .barrier = phase { return false }
                     return true
                 } || writerState.releaseScheduled
                 // t-94369a83 addendum A2 v2, judge must-fix #4: checked under this
@@ -1410,6 +2073,7 @@ actor DocumentWriter {
             }
             checkHoldInvariantLocked(writerState)
             sig.events.append(.drainTimedOut(skippedSeqs))
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)
@@ -1428,12 +2092,14 @@ actor DocumentWriter {
     /// `drainForLifecycle(timeout:)` -- its fetch may never return, and this must
     /// not hang waiting for it.
     nonisolated func awaitSettled(through watermark: UInt64, timeout: TimeInterval) async -> SettleWaitOutcome {
-        let deadline = clock.now.advanced(by: .seconds(timeout))
+        let deadline = clock.now.advanced(by: Self.finiteDuration(seconds: timeout))
         while true {
             let (openSeqs, remaining): ([UInt64], Duration) = state.withLock { writerState in
                 let open = writerState.phase.keys.filter { seq in
                     guard seq <= watermark else { return false }
                     if case .abandoned = writerState.phase[seq] { return false }
+                    // Phase 3a-1a: a held barrier's own entry never counts as "still open".
+                    if case .barrier = writerState.phase[seq] { return false }
                     return true
                 }.sorted()
                 return (open, max(.zero, deadline - clock.now))
@@ -1607,6 +2273,7 @@ actor DocumentWriter {
                 rearmExpiryLocked(&writerState, &sig)
                 rearmAbandonLocked(&writerState, &sig)
                 rearmStallLocked(&writerState, &sig)
+                evaluateBarrierLocked(&writerState, &sig)
                 return sig
             }
             perform(signal)
@@ -1629,6 +2296,7 @@ actor DocumentWriter {
                 rearmExpiryLocked(&writerState, &sig)
                 rearmAbandonLocked(&writerState, &sig)
                 rearmStallLocked(&writerState, &sig)
+                evaluateBarrierLocked(&writerState, &sig)
                 return sig
             }
             perform(signal)
@@ -1765,6 +2433,25 @@ actor DocumentWriter {
     /// (§1.4): the single `dbWriter.write` transaction runs the caller's `body`
     /// directly, with no persisted (epoch, sequence) coordinate attached to the rows
     /// it touches.
+    ///
+    /// ONE EXCEPTION to "system writes never stamp or bump the epoch" (t-94369a83 Phase 3a-1a,
+    /// plan §2.3): `.lifecycleWholeDocument`. Its `body` runs the db-level `replaceBlocks*`
+    /// statics, which bump the project's block-write epoch (E -> E+1) and restamp every row to
+    /// `(E+1, 0)` INSIDE this same single transaction (`stampWholeProjectForRewrite`); FB adds no
+    /// stamp or bump of its own. What that does to an editor batch depends on WHEN the batch
+    /// applies, not on its sequence number. A batch reserved before FB's commit carries epoch E;
+    /// rule 1 of `applyBlockChangesFromEditor` refuses it WHOLE (inserts included) only if it
+    /// applies AFTER FB's commit -- so a late orphan batch can never overwrite FB's rows (pinned by
+    /// W-FB (b), LifecycleWholeDocumentWriteTests). A lower-numbered batch that gets its turn BEFORE
+    /// FB applies normally against epoch E and is then replaced by FB's own content.
+    /// That refusal costs nothing only if FB's content already contains the refused batch's edits
+    /// (obligation N13: 3a-1b must use the fresh fetch); otherwise those edits are refused, lost
+    /// and uncounted, because `rejectedWholeBatchForStaleEpoch` feeds no ledger counter (the stamp
+    /// guard only logs it).
+    /// Consequence for 3a-1b: an editor sequence reserved between FB's reservation and its commit
+    /// also read E and is also refused wholesale, though the writer orders it after FB -- 3a-1b
+    /// stops polling before FB so no such sequence exists.
+    /// `kind` is read here only for the `lifecycleWholeDocumentApplied` counter.
     func applySystemWrite<R: Sendable>(
         _ seq: UInt64,
         kind: SystemWriteKind,
@@ -1820,6 +2507,9 @@ actor DocumentWriter {
                 writerState.resolvedAhead.insert(seq)
                 writerState.systemSeqs.remove(seq)
                 writerState.ledger.systemWritesApplied += 1
+                if kind == .lifecycleWholeDocument {
+                    writerState.ledger.lifecycleWholeDocumentApplied += 1
+                }
                 sig.events.append(.systemApplied(seq))
                 finishSequenceLocked(&writerState, &sig)
                 return sig
@@ -2057,13 +2747,21 @@ actor DocumentWriter {
     private enum ReleaseMode { case full, insertsOnly, none }
 
     func releaseDueHolds() async {
+        // Phase 3a-1a: clearing `releaseScheduled` is a barrier transition too (coder item 1) -- the
+        // `.none` branch below re-evaluates the barrier, since this job may have been the last thing
+        // standing between it and "reached".
+        var noneSignal: Signal?
         let (mode, tempIds): (ReleaseMode, [String]) = state.withLock { writerState in
             guard !writerState.held.isEmpty, !holdingActiveLocked(writerState) else {
                 writerState.releaseScheduled = false
+                var sig = Signal(handler: writerState.testEventHandler)
+                evaluateBarrierLocked(&writerState, &sig)
+                noneSignal = sig
                 return (.none, [])
             }
             return (mintPossibleLocked(writerState) ? .insertsOnly : .full, Array(writerState.held.keys))
         }
+        if let noneSignal { perform(noneSignal) }
         guard mode != .none, !tempIds.isEmpty else { return }
         var released = 0
         switch mode {
@@ -2080,6 +2778,7 @@ actor DocumentWriter {
             if released > 0 {
                 sig.events.append(.orphansReleased(released, inline: false))
             }
+            evaluateBarrierLocked(&writerState, &sig)
             return sig
         }
         perform(signal)

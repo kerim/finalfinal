@@ -306,7 +306,9 @@ extension ContentView {
                 switch reason {
                 case .notWanted, .identityMismatch, .writerRetired, .nested,
                      .skipped(.projectSwitch), .skipped(.writerReplaced), .skipped(.editorReplaced),
-                     .skipped(.lifecycleDrain), .skipped(.drainTimeout):
+                     .skipped(.lifecycleDrain), .skipped(.drainTimeout), .skipped(.close):
+                    // `.skipped(.close)` is reachable once 3a-1b calls `retire(.close)`;
+                    // nothing produces it today.
                     DebugLog.log(.bib, "[ContentView] performBibliographyHeaderNameChange: rename refused " +
                         "(\(reason)) -- benign supersession, no user-facing error")
                 case .outOfTurn, .noWriter, .skipped(.systemStalled):

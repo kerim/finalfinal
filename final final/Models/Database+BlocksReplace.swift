@@ -160,225 +160,242 @@ extension ProjectDatabase {
         preservingMachineManagedBlocks: Bool = false
     ) throws {
         try write { db in
-            let existingBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .order(Block.Columns.sortOrder)
-                .fetchAll(db)
+            try Self.replaceBlocks(db: db, blocks, for: projectId, preservingMachineManagedBlocks: preservingMachineManagedBlocks)
+        }
+    }
 
-            // Build image metadata lookup from existing blocks
-            var imageMetaBySrc = buildImageMetadataIndex(from: existingBlocks)
+    /// The db-level body of `replaceBlocks(_:for:preservingMachineManagedBlocks:)`, extracted
+    /// verbatim (t-94369a83 Phase 3a-1a, §2.3 "db-level statics") so the queued whole-document
+    /// write (`LifecycleWholeDocumentWrite.body`) can run it on the `Database` a writer
+    /// transaction already holds. Static on purpose: with no `self`, a re-entrant
+    /// `self.read`/`self.write` from inside `dbWriter.write` is structurally impossible.
+    /// Behaviour, including the epoch bump + whole-project restamp
+    /// (`stampWholeProjectForRewrite`) inside the caller's transaction, is identical to the
+    /// instance method; see its doc comment for the semantics of every parameter.
+    static func replaceBlocks(
+        db: Database,
+        _ blocks: [Block],
+        for projectId: String,
+        preservingMachineManagedBlocks: Bool = false
+    ) throws {
+        let existingBlocks = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .order(Block.Columns.sortOrder)
+            .fetchAll(db)
 
-            if !imageMetaBySrc.isEmpty {
-                DebugLog.log(.data, "[replaceBlocks] Image metadata to preserve: \(imageMetaBySrc.mapValues { "width=\($0.imageWidth ?? -1)" })")
-            }
+        // Build image metadata lookup from existing blocks
+        var imageMetaBySrc = buildImageMetadataIndex(from: existingBlocks)
 
-            if preservingMachineManagedBlocks {
-                // Bibliography + Notes preservation path -- see this function's doc comment
-                // for why both are protected on equal footing here.
-                let headingQueueResult = buildHeadingQueues(existing: existingBlocks, newBlocks: blocks, protectingNotes: true)
-                var headingsByTitle = headingQueueResult.queues
-                let protectedHeadingIds = headingQueueResult.protectedIds
+        if !imageMetaBySrc.isEmpty {
+            DebugLog.log(.data, "[replaceBlocks] Image metadata to preserve: \(imageMetaBySrc.mapValues { "width=\($0.imageWidth ?? -1)" })")
+        }
 
-                // Every existing isBibliography/isNotes row this replace must NOT delete: the
-                // protected "# Bibliography"/"# Notes" heading (above) plus every non-heading
-                // bibliography/notes row (entries, terminator). Mirrors
-                // replaceBlocksInRange's `preservedRowIds` exactly.
-                let preservedRowIds: [String] = existingBlocks
-                    .filter { block in
-                        protectedHeadingIds.contains(block.id) ||
-                        ((block.isBibliography || block.isNotes) && block.blockType != .heading)
-                    }
-                    .map { $0.id }
+        if preservingMachineManagedBlocks {
+            // Bibliography + Notes preservation path -- see this function's doc comment
+            // for why both are protected on equal footing here.
+            let headingQueueResult = buildHeadingQueues(existing: existingBlocks, newBlocks: blocks, protectingNotes: true)
+            var headingsByTitle = headingQueueResult.queues
+            let protectedHeadingIds = headingQueueResult.protectedIds
 
-                // Delete everything else -- see deleteBlocksInRange's `protectingNotes: true`
-                // branch for the exact predicate (never delete a non-heading isBibliography/
-                // isNotes row or a protectedHeadingIds heading).
-                try deleteBlocksInRange(
-                    db: db,
-                    projectId: projectId,
-                    startSortOrder: nil,
-                    endSortOrder: nil,
-                    protectedHeadingIds: protectedHeadingIds,
-                    protectingNotes: true
-                )
-
-                let notesIndex = buildNotesRowIndex(from: existingBlocks)
-                // Genuinely-NEW continuation paragraphs (a footnote that grew: more incoming
-                // labelless continuations than preserved rows existed for) -- collected here
-                // instead of inserted immediately, and given a real position adjacent to
-                // their owner only once the owner's FINAL (reanchored) position is known. See
-                // `insertDeferredContinuations`'s doc comment.
-                var notesState = NotesMergeState(
-                    notesRowByLabel: notesIndex.byLabel,
-                    notesContinuationsByOwner: notesIndex.continuationsByOwner
-                )
-
-                for (index, var block) in blocks.enumerated() {
-                    block.sortOrder = Double(index)
-
-                    // Bibliography-shaped incoming block: skip (defensive -- `blocks` never
-                    // legitimately contains one at these call sites, since bibliography
-                    // content is excluded from the source markdown entirely). `handlingNotes:
-                    // true` merges a same-label incoming Notes row into its preserved row in
-                    // place, same as replaceBlocksInRange -- see handleMachineManagedBlock.
-                    if try handleMachineManagedBlock(
-                        db: db,
-                        block: block,
-                        notesState: &notesState,
-                        handlingNotes: true
-                    ) {
-                        continue
-                    }
-
-                    applyPreservedHeading(to: &block, queues: &headingsByTitle)
-                    applyPreservedImageMetadata(to: &block, index: &imageMetaBySrc)
-                    try block.insert(db)
+            // Every existing isBibliography/isNotes row this replace must NOT delete: the
+            // protected "# Bibliography"/"# Notes" heading (above) plus every non-heading
+            // bibliography/notes row (entries, terminator). Mirrors
+            // replaceBlocksInRange's `preservedRowIds` exactly.
+            let preservedRowIds: [String] = existingBlocks
+                .filter { block in
+                    protectedHeadingIds.contains(block.id) ||
+                    ((block.isBibliography || block.isNotes) && block.blockType != .heading)
                 }
+                .map { $0.id }
 
-                // Deliberately NO `deleteUnclaimedContinuations` call on this path -- unlike
-                // `replaceBlocksInRange`, see below. `blocks` here is guaranteed Notes-free at
-                // every real production call site (this function's own doc comment); any
-                // Notes-shaped content that DOES appear in it is an accidental/collision case
-                // to merge-if-possible (the labeled branch above), never an authoritative,
-                // exhaustive statement of "here is everything this footnote's continuations
-                // should be now." Treating an unclaimed continuation as "the user deleted it"
-                // here would be wrong precisely because this call was never attempting to
-                // represent that footnote's continuations at all -- confirmed by
-                // BibliographySectionFlagTests+DataIntegrity.swift's "Issue 2 fixed" and
-                // "MUST-FIX 1 regression guard" tests, both of which seed a continuation,
-                // pass `blocks` that omits it entirely (in the MUST-FIX-1 case, even while
-                // the SAME footnote's labeled definition IS present and correctly merges),
-                // and assert the continuation survives untouched. `replaceBlocksInRange`'s
-                // `newBlocks`, by contrast, is a reparse of a specific bounded range that ITS
-                // callers assert is exhaustive for that range -- see that function's own call
-                // to `deleteUnclaimedContinuations` and `MultiParagraphFootnoteReplaceTests`'
-                // shrink test.
-
-                // Re-anchor preserved bibliography/Notes rows immediately after all
-                // newly-inserted content -- see reanchorPreservedRows for why leaving them at
-                // a stale position risks a numeric collision with the freshly-sequenced new
-                // blocks.
-                if !preservedRowIds.isEmpty {
-                    try reanchorPreservedRows(db: db, rowIds: preservedRowIds, anchorBase: Double(blocks.count))
-                }
-
-                // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations'
-                // doc comment for why placement depends on the owner's FINAL position.
-                try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
-
-                try renumberSortOrders(db: db, projectId: projectId, now: Date())
-                // Wholesale rewrite of this project's block coordinate space -- see
-                // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
-                // this point now belongs to a document that no longer exists.
-                try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
-                try Self.recomputeSectionParents(db: db, projectId: projectId)
-                return
-            }
-
-            // Original behavior (preservingMachineManagedBlocks == false): delete every
-            // existing block and reinsert `blocks` fresh, preserving only heading id/
-            // metadata by title match — plus the bibliography carry-forward described in this
-            // function's doc comment above.
-
-            // Queue existing headings by title, in existing-document order. A duplicate title
-            // (two headings both named "Notes", say) gets a queue of length > 1; consuming the
-            // new parse in order pops the front of the matching title's queue, so the nth
-            // heading titled T in the new parse inherits id+metadata from the nth heading
-            // titled T in the old rows — not just the first (id) and last (metadata) as before,
-            // which churned ids and cross-contaminated metadata on every duplicate title.
-            var headingsByTitle: [String: [PreservedHeading]] = [:]
-            for block in existingBlocks where block.blockType == .heading {
-                headingsByTitle[block.textContent, default: []].append(PreservedHeading(from: block))
-            }
-
-            // Prepare every block in memory FIRST — heading id/metadata restoration and image
-            // metadata gap-fill both only read `existingBlocks`/`imageMetaBySrc` (already
-            // fetched above), never the live table — so hoisting this above the delete is
-            // behavior-preserving for both of those on its own. It has to happen before the
-            // delete because `carryBibliographyFlagForward` right below needs the WHOLE
-            // prepared array (to find the next heading, or the terminator) before it can run.
-            var prepared = blocks
-
-            // Indices of headings where `applyPreservedHeading` had to RESTORE isBibliography
-            // from preserved metadata because the fresh parse itself didn't recognise the
-            // heading (a detection mismatch) — as opposed to a healthy heading the parser
-            // already flagged on its own. Only the former should ever arm
-            // `carryBibliographyFlagForward` below; see that function's doc comment for why.
-            var mismatchedBibliographyHeadingIndices: Set<Int> = []
-
-            // Whether the fresh parse recognised ANY bibliography heading at all, anywhere in
-            // `blocks` — see `applyPreservedHeading`'s `restoringBibliography` doc comment for
-            // why this is a single, call-wide gate rather than a per-heading check: once the
-            // fresh parse has correctly identified the real heading, restoring a stale
-            // `isBibliography` flag onto any OTHER heading by title match would just be the
-            // bare-title false positive persisting through this function instead of being
-            // fixed by it.
-            let parseFoundBibliographyHeading = blocks.contains {
-                ($0.blockType == .heading || $0.blockType == .bibliography) && $0.isBibliography
-            }
-
-            for index in prepared.indices {
-                let parserRecognisedBibliography = prepared[index].blockType == .heading && prepared[index].isBibliography
-
-                // Gated on BOTH conditions: the fresh parse recognised no bibliography heading
-                // at all (as before), AND this specific heading has a genuine, non-empty,
-                // terminator-bounded run beneath it in `prepared` — see
-                // `hasGenuineBibliographyRun`'s doc comment. Without the second condition, a
-                // document already in the KNOWN-LIMITATION damaged state (heading flagged,
-                // entries not, terminator immediately after the heading) would resurrect the
-                // stale flag onto a heading with nothing real beneath it — the empty-run
-                // shape `BibliographyOpeningSelector` itself refuses to select as evidence.
-                // Only meaningful for headings (`applyPreservedHeading` only ever reads this
-                // for `block.blockType == .heading`), so non-heading blocks skip the check.
-                let restoringBibliography = !parseFoundBibliographyHeading
-                    && prepared[index].blockType == .heading
-                    && hasGenuineBibliographyRun(in: prepared, after: index)
-
-                // Preserve heading ID and metadata by occurrence-indexed title match (see
-                // applyPreservedHeading): pop the front of this title's queue and apply id +
-                // metadata from that SAME popped entry in one branch, so they can never come
-                // from two different existing occurrences of the same title. A unique title
-                // has a one-element queue, which behaves exactly like the old first-match-wins.
-                applyPreservedHeading(
-                    to: &prepared[index],
-                    queues: &headingsByTitle,
-                    restoringBibliography: restoringBibliography
-                )
-
-                if prepared[index].blockType == .heading, prepared[index].isBibliography, !parserRecognisedBibliography {
-                    mismatchedBibliographyHeadingIndices.insert(index)
-                }
-
-                // Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
-                if applyPreservedImageMetadata(to: &prepared[index], index: &imageMetaBySrc) {
-                    let block = prepared[index]
-                    DebugLog.log(.data, "[replaceBlocks] Image block src=\(block.imageSrc ?? "nil") width=\(block.imageWidth ?? -1)")
-                }
-            }
-
-            // Carry a restored isBibliography heading flag forward onto the entry rows beneath
-            // it — see `carryBibliographyFlagForward`'s doc comment for the full mechanism and
-            // its bounds. `budget` is the count of non-heading isBibliography rows the project
-            // already had, from BEFORE this replace — a pure cap, independent of anything the
-            // carry itself decides to flag.
-            carryBibliographyFlagForward(
-                &prepared,
-                mismatchedHeadingIndices: mismatchedBibliographyHeadingIndices,
-                budget: existingBlocks.filter { $0.isBibliography && $0.blockType != .heading }.count
+            // Delete everything else -- see deleteBlocksInRange's `protectingNotes: true`
+            // branch for the exact predicate (never delete a non-heading isBibliography/
+            // isNotes row or a protectedHeadingIds heading).
+            try deleteBlocksInRange(
+                db: db,
+                projectId: projectId,
+                startSortOrder: nil,
+                endSortOrder: nil,
+                protectedHeadingIds: protectedHeadingIds,
+                protectingNotes: true
             )
 
-            try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
+            let notesIndex = buildNotesRowIndex(from: existingBlocks)
+            // Genuinely-NEW continuation paragraphs (a footnote that grew: more incoming
+            // labelless continuations than preserved rows existed for) -- collected here
+            // instead of inserted immediately, and given a real position adjacent to
+            // their owner only once the owner's FINAL (reanchored) position is known. See
+            // `insertDeferredContinuations`'s doc comment.
+            var notesState = NotesMergeState(
+                notesRowByLabel: notesIndex.byLabel,
+                notesContinuationsByOwner: notesIndex.continuationsByOwner
+            )
 
-            for var block in prepared {
+            for (index, var block) in blocks.enumerated() {
+                block.sortOrder = Double(index)
+
+                // Bibliography-shaped incoming block: skip (defensive -- `blocks` never
+                // legitimately contains one at these call sites, since bibliography
+                // content is excluded from the source markdown entirely). `handlingNotes:
+                // true` merges a same-label incoming Notes row into its preserved row in
+                // place, same as replaceBlocksInRange -- see handleMachineManagedBlock.
+                if try handleMachineManagedBlock(
+                    db: db,
+                    block: block,
+                    notesState: &notesState,
+                    handlingNotes: true
+                ) {
+                    continue
+                }
+
+                applyPreservedHeading(to: &block, queues: &headingsByTitle)
+                applyPreservedImageMetadata(to: &block, index: &imageMetaBySrc)
                 try block.insert(db)
             }
 
+            // Deliberately NO `deleteUnclaimedContinuations` call on this path -- unlike
+            // `replaceBlocksInRange`, see below. `blocks` here is guaranteed Notes-free at
+            // every real production call site (this function's own doc comment); any
+            // Notes-shaped content that DOES appear in it is an accidental/collision case
+            // to merge-if-possible (the labeled branch above), never an authoritative,
+            // exhaustive statement of "here is everything this footnote's continuations
+            // should be now." Treating an unclaimed continuation as "the user deleted it"
+            // here would be wrong precisely because this call was never attempting to
+            // represent that footnote's continuations at all -- confirmed by
+            // BibliographySectionFlagTests+DataIntegrity.swift's "Issue 2 fixed" and
+            // "MUST-FIX 1 regression guard" tests, both of which seed a continuation,
+            // pass `blocks` that omits it entirely (in the MUST-FIX-1 case, even while
+            // the SAME footnote's labeled definition IS present and correctly merges),
+            // and assert the continuation survives untouched. `replaceBlocksInRange`'s
+            // `newBlocks`, by contrast, is a reparse of a specific bounded range that ITS
+            // callers assert is exhaustive for that range -- see that function's own call
+            // to `deleteUnclaimedContinuations` and `MultiParagraphFootnoteReplaceTests`'
+            // shrink test.
+
+            // Re-anchor preserved bibliography/Notes rows immediately after all
+            // newly-inserted content -- see reanchorPreservedRows for why leaving them at
+            // a stale position risks a numeric collision with the freshly-sequenced new
+            // blocks.
+            if !preservedRowIds.isEmpty {
+                try reanchorPreservedRows(db: db, rowIds: preservedRowIds, anchorBase: Double(blocks.count))
+            }
+
+            // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations'
+            // doc comment for why placement depends on the owner's FINAL position.
+            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
+
+            try renumberSortOrders(db: db, projectId: projectId, now: Date())
             // Wholesale rewrite of this project's block coordinate space -- see
             // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
             // this point now belongs to a document that no longer exists.
             try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
             try Self.recomputeSectionParents(db: db, projectId: projectId)
+            return
         }
+
+        // Original behavior (preservingMachineManagedBlocks == false): delete every
+        // existing block and reinsert `blocks` fresh, preserving only heading id/
+        // metadata by title match — plus the bibliography carry-forward described in this
+        // function's doc comment above.
+
+        // Queue existing headings by title, in existing-document order. A duplicate title
+        // (two headings both named "Notes", say) gets a queue of length > 1; consuming the
+        // new parse in order pops the front of the matching title's queue, so the nth
+        // heading titled T in the new parse inherits id+metadata from the nth heading
+        // titled T in the old rows — not just the first (id) and last (metadata) as before,
+        // which churned ids and cross-contaminated metadata on every duplicate title.
+        var headingsByTitle: [String: [PreservedHeading]] = [:]
+        for block in existingBlocks where block.blockType == .heading {
+            headingsByTitle[block.textContent, default: []].append(PreservedHeading(from: block))
+        }
+
+        // Prepare every block in memory FIRST — heading id/metadata restoration and image
+        // metadata gap-fill both only read `existingBlocks`/`imageMetaBySrc` (already
+        // fetched above), never the live table — so hoisting this above the delete is
+        // behavior-preserving for both of those on its own. It has to happen before the
+        // delete because `carryBibliographyFlagForward` right below needs the WHOLE
+        // prepared array (to find the next heading, or the terminator) before it can run.
+        var prepared = blocks
+
+        // Indices of headings where `applyPreservedHeading` had to RESTORE isBibliography
+        // from preserved metadata because the fresh parse itself didn't recognise the
+        // heading (a detection mismatch) — as opposed to a healthy heading the parser
+        // already flagged on its own. Only the former should ever arm
+        // `carryBibliographyFlagForward` below; see that function's doc comment for why.
+        var mismatchedBibliographyHeadingIndices: Set<Int> = []
+
+        // Whether the fresh parse recognised ANY bibliography heading at all, anywhere in
+        // `blocks` — see `applyPreservedHeading`'s `restoringBibliography` doc comment for
+        // why this is a single, call-wide gate rather than a per-heading check: once the
+        // fresh parse has correctly identified the real heading, restoring a stale
+        // `isBibliography` flag onto any OTHER heading by title match would just be the
+        // bare-title false positive persisting through this function instead of being
+        // fixed by it.
+        let parseFoundBibliographyHeading = blocks.contains {
+            ($0.blockType == .heading || $0.blockType == .bibliography) && $0.isBibliography
+        }
+
+        for index in prepared.indices {
+            let parserRecognisedBibliography = prepared[index].blockType == .heading && prepared[index].isBibliography
+
+            // Gated on BOTH conditions: the fresh parse recognised no bibliography heading
+            // at all (as before), AND this specific heading has a genuine, non-empty,
+            // terminator-bounded run beneath it in `prepared` — see
+            // `hasGenuineBibliographyRun`'s doc comment. Without the second condition, a
+            // document already in the KNOWN-LIMITATION damaged state (heading flagged,
+            // entries not, terminator immediately after the heading) would resurrect the
+            // stale flag onto a heading with nothing real beneath it — the empty-run
+            // shape `BibliographyOpeningSelector` itself refuses to select as evidence.
+            // Only meaningful for headings (`applyPreservedHeading` only ever reads this
+            // for `block.blockType == .heading`), so non-heading blocks skip the check.
+            let restoringBibliography = !parseFoundBibliographyHeading
+                && prepared[index].blockType == .heading
+                && hasGenuineBibliographyRun(in: prepared, after: index)
+
+            // Preserve heading ID and metadata by occurrence-indexed title match (see
+            // applyPreservedHeading): pop the front of this title's queue and apply id +
+            // metadata from that SAME popped entry in one branch, so they can never come
+            // from two different existing occurrences of the same title. A unique title
+            // has a one-element queue, which behaves exactly like the old first-match-wins.
+            applyPreservedHeading(
+                to: &prepared[index],
+                queues: &headingsByTitle,
+                restoringBibliography: restoringBibliography
+            )
+
+            if prepared[index].blockType == .heading, prepared[index].isBibliography, !parserRecognisedBibliography {
+                mismatchedBibliographyHeadingIndices.insert(index)
+            }
+
+            // Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
+            if applyPreservedImageMetadata(to: &prepared[index], index: &imageMetaBySrc) {
+                let block = prepared[index]
+                DebugLog.log(.data, "[replaceBlocks] Image block src=\(block.imageSrc ?? "nil") width=\(block.imageWidth ?? -1)")
+            }
+        }
+
+        // Carry a restored isBibliography heading flag forward onto the entry rows beneath
+        // it — see `carryBibliographyFlagForward`'s doc comment for the full mechanism and
+        // its bounds. `budget` is the count of non-heading isBibliography rows the project
+        // already had, from BEFORE this replace — a pure cap, independent of anything the
+        // carry itself decides to flag.
+        carryBibliographyFlagForward(
+            &prepared,
+            mismatchedHeadingIndices: mismatchedBibliographyHeadingIndices,
+            budget: existingBlocks.filter { $0.isBibliography && $0.blockType != .heading }.count
+        )
+
+        try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
+
+        for var block in prepared {
+            try block.insert(db)
+        }
+
+        // Wholesale rewrite of this project's block coordinate space -- see
+        // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
+        // this point now belongs to a document that no longer exists.
+        try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
+        try Self.recomputeSectionParents(db: db, projectId: projectId)
     }
 
     /// Replace blocks within a sort order range (used during zoomed CodeMirror re-parse).
@@ -408,196 +425,215 @@ extension ProjectDatabase {
         anchorHeadingId: String? = nil
     ) throws -> [Block] {
         try write { db in
-            // 1. Fetch existing blocks in range to preserve heading metadata and IDs
-            var existingQuery = Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.sortOrder >= startSortOrder)
-            if let end = endSortOrder {
-                existingQuery = existingQuery.filter(Block.Columns.sortOrder < end)
-            }
-            let existingBlocks = try existingQuery.order(Block.Columns.sortOrder).fetchAll(db)
-
-            // 1.5. Resolve the zoom-root anchor (position-based), if requested. When bound, the
-            // anchor's existing row and its corresponding newBlocks heading are excluded from
-            // the title-queue inputs below -- see resolveAnchorHeading's doc comment for why:
-            // otherwise the anchor's own occurrence would compete for a title-queue slot and
-            // could steal (or be stolen by) an unrelated same-titled heading's identity.
-            let resolvedAnchor = resolveAnchorHeading(existing: existingBlocks, newBlocks: newBlocks, anchorId: anchorHeadingId)
-            let headingQueueExisting: [Block]
-            let headingQueueNewBlocks: [Block]
-            if let resolvedAnchor {
-                headingQueueExisting = existingBlocks.filter { $0.id != resolvedAnchor.preserved.id }
-                headingQueueNewBlocks = newBlocks.enumerated()
-                    .filter { $0.offset != resolvedAnchor.newIndex }
-                    .map { $0.element }
-            } else {
-                headingQueueExisting = existingBlocks
-                headingQueueNewBlocks = newBlocks
-            }
-
-            // 2. Build the heading id/metadata pop-queue (keyed by title) plus the set of
-            // existing heading ids that must never be deleted or popped. This is the
-            // highest-risk piece of logic in this function — see buildHeadingQueues for the
-            // full occurrence-index / count-mismatch-protection rationale.
-            let headingQueueResult = buildHeadingQueues(existing: headingQueueExisting, newBlocks: headingQueueNewBlocks)
-            var headingsByTitle = headingQueueResult.queues
-            let protectedHeadingIds = headingQueueResult.protectedIds
-
-            // Safety net: Notes and Bibliography rows are machine-managed by their sync
-            // services (FootnoteSyncService / BibliographySyncService), symmetric with the
-            // guard in Database+Blocks.swift's applyBlockChangesFromEditor. A zoomed CodeMirror
-            // re-parse must never silently delete them just because the current in-editor view
-            // doesn't include them — flushContentToDatabase strips the mini-Notes text before
-            // parsing for the footnote-insertion path, so newBlocks legitimately contains zero
-            // isNotes rows on that call, which previously meant any real Notes row whose
-            // sortOrder fell inside [start, end) was deleted with nothing to replace it.
-            // Existing non-heading rows of these types are preserved untouched below (excluded
-            // from the delete query); if newBlocks legitimately contains a matching (same-label)
-            // Notes row, it is merged into the preserved row in place instead of inserted as a
-            // duplicate alongside it. See buildNotesRowIndex for the lookup this builds.
-            let notesIndex = buildNotesRowIndex(from: existingBlocks)
-            // Genuinely-NEW continuation paragraphs (a footnote that grew) -- see
-            // `insertDeferredContinuations`'s doc comment; populated by
-            // handleMachineManagedBlock below, consumed after reanchorPreservedRows runs.
-            var notesState = NotesMergeState(
-                notesRowByLabel: notesIndex.byLabel,
-                notesContinuationsByOwner: notesIndex.continuationsByOwner
-            )
-
-            // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
-            // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
-            // match flow below (which already preserves its id/metadata safely), but that only
-            // works if its own occurrence slot actually gets popped by a same-titled newBlocks
-            // heading (see protectedHeadingIds, computed above alongside the queue). When it
-            // doesn't — newBlocks omits the title entirely (the mini-Notes-stripped scenario),
-            // or a colliding duplicate title consumes an earlier slot and leaves this
-            // occurrence's slot unreached — protectedHeadingIds already excludes it from the
-            // delete query below, so unconditionally deleting it here can no longer orphan it.
-
-            // Every row the delete-then-reinsert logic below will NOT touch: preserved
-            // (undeleted) non-heading isNotes/isBibliography rows, plus a protected
-            // "# Notes"/"# Bibliography" heading (protectedHeadingIds, above). These keep
-            // whatever DB row they already have — nothing below assigns them a fresh sortOrder,
-            // so they'd otherwise be left at their stale original position. Collected here (in
-            // original relative order, since existingBlocks is already sorted by sortOrder) so
-            // step 3.5 below can re-anchor them immediately after the new content instead of
-            // leaving them at a stale absolute position that can numerically collide with, or
-            // fall inside, the freshly-sequenced new blocks — which previously let a newly-typed
-            // paragraph land between the preserved Notes heading and its own footnote
-            // definition, splitting the Notes section.
-            let preservedRowIds: [String] = existingBlocks
-                .filter { block in
-                    protectedHeadingIds.contains(block.id) ||
-                    ((block.isNotes || block.isBibliography) && block.blockType != .heading)
-                }
-                .map { $0.id }
-
-            // Build image metadata lookup
-            var imageMetaBySrc = buildImageMetadataIndex(from: existingBlocks)
-
-            // 2. Delete blocks in range — see deleteBlocksInRange for the exact
-            // never-delete predicate (non-heading isNotes/isBibliography rows, and any
-            // protectedHeadingIds heading).
-            try deleteBlocksInRange(
-                db: db,
-                projectId: projectId,
-                startSortOrder: startSortOrder,
-                endSortOrder: endSortOrder,
-                protectedHeadingIds: protectedHeadingIds
-            )
-
-            // 2.5. Shift blocks after range to prevent sort order collisions — see
-            // shiftBlocksAfterRange for why insertEnd must reserve room for
-            // preservedRowIds.count too, not just newBlocks.count. preservedRowsAnchor is
-            // hoisted here (rather than inlined into insertEnd below) so it can also be passed
-            // to shiftBlocksAfterRange's own reservation check, and reused unchanged as
-            // reanchorPreservedRows' anchorBase below — one shared value instead of the same
-            // expression written out twice.
-            let preservedRowsAnchor = startSortOrder + Double(newBlocks.count)
-            try shiftBlocksAfterRange(
-                db: db,
-                projectId: projectId,
-                endSortOrder: endSortOrder,
-                insertEnd: preservedRowsAnchor + Double(preservedRowIds.count),
-                reservation: PreservedRowReservation(
-                    anchor: preservedRowsAnchor,
-                    count: preservedRowIds.count
-                )
-            )
-
-            // 3. Insert new blocks with sort orders starting at startSortOrder
-            // `insertedRows` collects every row this loop actually inserts (final id, document
-            // order) -- excludes anything handleMachineManagedBlock skips/merges below. Returned
-            // to the caller (see this function's doc comment); a rename-flush caller resolves
-            // its new zoom root from this without a second DB round trip.
-            var insertedRows: [Block] = []
-            for (index, var block) in newBlocks.enumerated() {
-                block.sortOrder = startSortOrder + Double(index)
-
-                // Bibliography-skip / notes-merge-or-dedup — see handleMachineManagedBlock for
-                // the exact three-way outcome (skip / merge-then-skip / fall through to normal
-                // insert) this must preserve.
-                if try handleMachineManagedBlock(
-                    db: db,
-                    block: block,
-                    notesState: &notesState
-                ) {
-                    continue
-                }
-
-                // 4 & 5. Preserve heading ID and metadata: the zoom-root anchor (position-based,
-                // see resolveAnchorHeading) wins at its own bound index; every other heading is
-                // still matched by occurrence-indexed title (see applyPreservedHeading).
-                if let resolvedAnchor, index == resolvedAnchor.newIndex {
-                    applyPreserved(resolvedAnchor.preserved, to: &block, restoringBibliography: true)
-                } else {
-                    applyPreservedHeading(to: &block, queues: &headingsByTitle)
-                }
-
-                // 6. Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
-                applyPreservedImageMetadata(to: &block, index: &imageMetaBySrc)
-
-                try block.insert(db)
-                insertedRows.append(block)
-            }
-
-            // Any continuation row the incoming batch never claimed -- the user deleted that
-            // paragraph of the footnote -- must be deleted now, before the reanchor step
-            // below moves it to a fresh position and makes it look intentional. See
-            // `deleteUnclaimedContinuations`'s doc comment.
-            try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesState.notesContinuationsByOwner)
-
-            // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
-            // see preservedRowIds above) immediately after all newly-inserted content — see
-            // reanchorPreservedRows for why leaving them at a stale position can split a
-            // preserved Notes section from its own footnote definitions.
-            if !preservedRowIds.isEmpty {
-                try reanchorPreservedRows(
-                    db: db,
-                    rowIds: preservedRowIds,
-                    anchorBase: preservedRowsAnchor
-                )
-            }
-
-            // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations's doc
-            // comment for why placement depends on the owner's FINAL position.
-            try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
-
-            // 6. Normalize sort orders inline (atomic with delete+insert above). Trap: do not
-            // merge this with the public normalizeSortOrders(projectId:) in
-            // Database+BlocksReorder.swift — see renumberSortOrders for why they must stay
-            // separate (a single hoisted `now` here vs. a fresh Date() per row there).
-            try renumberSortOrders(db: db, projectId: projectId, now: Date())
-
-            // Wholesale rewrite of this project's block coordinate space (zoomed re-parse) --
-            // see Database+BlockWriteStamp.swift. Any editor-diff batch fetched before this
-            // point now belongs to a document that no longer exists.
-            try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
-
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
-
-            return insertedRows
+            try Self.replaceBlocksInRange(db: db, newBlocks, for: projectId,
+                                          startSortOrder: startSortOrder, endSortOrder: endSortOrder,
+                                          anchorHeadingId: anchorHeadingId)
         }
+    }
+
+    /// The db-level body of `replaceBlocksInRange(_:for:startSortOrder:endSortOrder:anchorHeadingId:)`,
+    /// extracted verbatim (t-94369a83 Phase 3a-1a, §2.3 "db-level statics") for the same reason
+    /// as `replaceBlocks(db:_:for:preservingMachineManagedBlocks:)` -- see its doc comment. The
+    /// epoch bump + whole-project restamp stays inside the caller's transaction, and the return
+    /// value (the rows actually inserted) is unchanged.
+    @discardableResult
+    static func replaceBlocksInRange(
+        db: Database,
+        _ newBlocks: [Block],
+        for projectId: String,
+        startSortOrder: Double,
+        endSortOrder: Double?,
+        anchorHeadingId: String? = nil
+    ) throws -> [Block] {
+        // 1. Fetch existing blocks in range to preserve heading metadata and IDs
+        var existingQuery = Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.sortOrder >= startSortOrder)
+        if let end = endSortOrder {
+            existingQuery = existingQuery.filter(Block.Columns.sortOrder < end)
+        }
+        let existingBlocks = try existingQuery.order(Block.Columns.sortOrder).fetchAll(db)
+
+        // 1.5. Resolve the zoom-root anchor (position-based), if requested. When bound, the
+        // anchor's existing row and its corresponding newBlocks heading are excluded from
+        // the title-queue inputs below -- see resolveAnchorHeading's doc comment for why:
+        // otherwise the anchor's own occurrence would compete for a title-queue slot and
+        // could steal (or be stolen by) an unrelated same-titled heading's identity.
+        let resolvedAnchor = resolveAnchorHeading(existing: existingBlocks, newBlocks: newBlocks, anchorId: anchorHeadingId)
+        let headingQueueExisting: [Block]
+        let headingQueueNewBlocks: [Block]
+        if let resolvedAnchor {
+            headingQueueExisting = existingBlocks.filter { $0.id != resolvedAnchor.preserved.id }
+            headingQueueNewBlocks = newBlocks.enumerated()
+                .filter { $0.offset != resolvedAnchor.newIndex }
+                .map { $0.element }
+        } else {
+            headingQueueExisting = existingBlocks
+            headingQueueNewBlocks = newBlocks
+        }
+
+        // 2. Build the heading id/metadata pop-queue (keyed by title) plus the set of
+        // existing heading ids that must never be deleted or popped. This is the
+        // highest-risk piece of logic in this function — see buildHeadingQueues for the
+        // full occurrence-index / count-mismatch-protection rationale.
+        let headingQueueResult = buildHeadingQueues(existing: headingQueueExisting, newBlocks: headingQueueNewBlocks)
+        var headingsByTitle = headingQueueResult.queues
+        let protectedHeadingIds = headingQueueResult.protectedIds
+
+        // Safety net: Notes and Bibliography rows are machine-managed by their sync
+        // services (FootnoteSyncService / BibliographySyncService), symmetric with the
+        // guard in Database+Blocks.swift's applyBlockChangesFromEditor. A zoomed CodeMirror
+        // re-parse must never silently delete them just because the current in-editor view
+        // doesn't include them — flushContentToDatabase strips the mini-Notes text before
+        // parsing for the footnote-insertion path, so newBlocks legitimately contains zero
+        // isNotes rows on that call, which previously meant any real Notes row whose
+        // sortOrder fell inside [start, end) was deleted with nothing to replace it.
+        // Existing non-heading rows of these types are preserved untouched below (excluded
+        // from the delete query); if newBlocks legitimately contains a matching (same-label)
+        // Notes row, it is merged into the preserved row in place instead of inserted as a
+        // duplicate alongside it. See buildNotesRowIndex for the lookup this builds.
+        let notesIndex = buildNotesRowIndex(from: existingBlocks)
+        // Genuinely-NEW continuation paragraphs (a footnote that grew) -- see
+        // `insertDeferredContinuations`'s doc comment; populated by
+        // handleMachineManagedBlock below, consumed after reanchorPreservedRows runs.
+        var notesState = NotesMergeState(
+            notesRowByLabel: notesIndex.byLabel,
+            notesContinuationsByOwner: notesIndex.continuationsByOwner
+        )
+
+        // The "# Notes"/"# Bibliography" HEADING itself needs a different rule than the
+        // paragraph rows above: it normally survives via the delete-then-reinsert-by-title-
+        // match flow below (which already preserves its id/metadata safely), but that only
+        // works if its own occurrence slot actually gets popped by a same-titled newBlocks
+        // heading (see protectedHeadingIds, computed above alongside the queue). When it
+        // doesn't — newBlocks omits the title entirely (the mini-Notes-stripped scenario),
+        // or a colliding duplicate title consumes an earlier slot and leaves this
+        // occurrence's slot unreached — protectedHeadingIds already excludes it from the
+        // delete query below, so unconditionally deleting it here can no longer orphan it.
+
+        // Every row the delete-then-reinsert logic below will NOT touch: preserved
+        // (undeleted) non-heading isNotes/isBibliography rows, plus a protected
+        // "# Notes"/"# Bibliography" heading (protectedHeadingIds, above). These keep
+        // whatever DB row they already have — nothing below assigns them a fresh sortOrder,
+        // so they'd otherwise be left at their stale original position. Collected here (in
+        // original relative order, since existingBlocks is already sorted by sortOrder) so
+        // step 3.5 below can re-anchor them immediately after the new content instead of
+        // leaving them at a stale absolute position that can numerically collide with, or
+        // fall inside, the freshly-sequenced new blocks — which previously let a newly-typed
+        // paragraph land between the preserved Notes heading and its own footnote
+        // definition, splitting the Notes section.
+        let preservedRowIds: [String] = existingBlocks
+            .filter { block in
+                protectedHeadingIds.contains(block.id) ||
+                ((block.isNotes || block.isBibliography) && block.blockType != .heading)
+            }
+            .map { $0.id }
+
+        // Build image metadata lookup
+        var imageMetaBySrc = buildImageMetadataIndex(from: existingBlocks)
+
+        // 2. Delete blocks in range — see deleteBlocksInRange for the exact
+        // never-delete predicate (non-heading isNotes/isBibliography rows, and any
+        // protectedHeadingIds heading).
+        try deleteBlocksInRange(
+            db: db,
+            projectId: projectId,
+            startSortOrder: startSortOrder,
+            endSortOrder: endSortOrder,
+            protectedHeadingIds: protectedHeadingIds
+        )
+
+        // 2.5. Shift blocks after range to prevent sort order collisions — see
+        // shiftBlocksAfterRange for why insertEnd must reserve room for
+        // preservedRowIds.count too, not just newBlocks.count. preservedRowsAnchor is
+        // hoisted here (rather than inlined into insertEnd below) so it can also be passed
+        // to shiftBlocksAfterRange's own reservation check, and reused unchanged as
+        // reanchorPreservedRows' anchorBase below — one shared value instead of the same
+        // expression written out twice.
+        let preservedRowsAnchor = startSortOrder + Double(newBlocks.count)
+        try shiftBlocksAfterRange(
+            db: db,
+            projectId: projectId,
+            endSortOrder: endSortOrder,
+            insertEnd: preservedRowsAnchor + Double(preservedRowIds.count),
+            reservation: PreservedRowReservation(
+                anchor: preservedRowsAnchor,
+                count: preservedRowIds.count
+            )
+        )
+
+        // 3. Insert new blocks with sort orders starting at startSortOrder
+        // `insertedRows` collects every row this loop actually inserts (final id, document
+        // order) -- excludes anything handleMachineManagedBlock skips/merges below. Returned
+        // to the caller (see this function's doc comment); a rename-flush caller resolves
+        // its new zoom root from this without a second DB round trip.
+        var insertedRows: [Block] = []
+        for (index, var block) in newBlocks.enumerated() {
+            block.sortOrder = startSortOrder + Double(index)
+
+            // Bibliography-skip / notes-merge-or-dedup — see handleMachineManagedBlock for
+            // the exact three-way outcome (skip / merge-then-skip / fall through to normal
+            // insert) this must preserve.
+            if try handleMachineManagedBlock(
+                db: db,
+                block: block,
+                notesState: &notesState
+            ) {
+                continue
+            }
+
+            // 4 & 5. Preserve heading ID and metadata: the zoom-root anchor (position-based,
+            // see resolveAnchorHeading) wins at its own bound index; every other heading is
+            // still matched by occurrence-indexed title (see applyPreservedHeading).
+            if let resolvedAnchor, index == resolvedAnchor.newIndex {
+                applyPreserved(resolvedAnchor.preserved, to: &block, restoringBibliography: true)
+            } else {
+                applyPreservedHeading(to: &block, queues: &headingsByTitle)
+            }
+
+            // 6. Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
+            applyPreservedImageMetadata(to: &block, index: &imageMetaBySrc)
+
+            try block.insert(db)
+            insertedRows.append(block)
+        }
+
+        // Any continuation row the incoming batch never claimed -- the user deleted that
+        // paragraph of the footnote -- must be deleted now, before the reanchor step
+        // below moves it to a fresh position and makes it look intentional. See
+        // `deleteUnclaimedContinuations`'s doc comment.
+        try deleteUnclaimedContinuations(db: db, notesContinuationsByOwner: notesState.notesContinuationsByOwner)
+
+        // 3.5. Re-anchor preserved isNotes/isBibliography rows (and any protected heading,
+        // see preservedRowIds above) immediately after all newly-inserted content — see
+        // reanchorPreservedRows for why leaving them at a stale position can split a
+        // preserved Notes section from its own footnote definitions.
+        if !preservedRowIds.isEmpty {
+            try reanchorPreservedRows(
+                db: db,
+                rowIds: preservedRowIds,
+                anchorBase: preservedRowsAnchor
+            )
+        }
+
+        // MUST run AFTER reanchorPreservedRows -- see insertDeferredContinuations's doc
+        // comment for why placement depends on the owner's FINAL position.
+        try insertDeferredContinuations(db: db, projectId: projectId, deferredByOwner: notesState.deferredNewContinuations)
+
+        // 6. Normalize sort orders inline (atomic with delete+insert above). Trap: do not
+        // merge this with the public normalizeSortOrders(projectId:) in
+        // Database+BlocksReorder.swift — see renumberSortOrders for why they must stay
+        // separate (a single hoisted `now` here vs. a fresh Date() per row there).
+        try renumberSortOrders(db: db, projectId: projectId, now: Date())
+
+        // Wholesale rewrite of this project's block coordinate space (zoomed re-parse) --
+        // see Database+BlockWriteStamp.swift. Any editor-diff batch fetched before this
+        // point now belongs to a document that no longer exists.
+        try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
+
+        try Self.recomputeSectionParents(db: db, projectId: projectId)
+
+        return insertedRows
     }
 
 }

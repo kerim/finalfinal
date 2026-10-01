@@ -47,7 +47,7 @@ extension ProjectDatabase {
     /// (one of them even while the SAME footnote's labeled definition IS present and
     /// correctly merges), and assert it survives -- calling this function from that path
     /// deleted it instead.
-    func deleteUnclaimedContinuations(db: Database, notesContinuationsByOwner: [String: [Block]]) throws {
+    static func deleteUnclaimedContinuations(db: Database, notesContinuationsByOwner: [String: [Block]]) throws {
         for rows in notesContinuationsByOwner.values {
             for row in rows {
                 try Block.deleteOne(db, key: row.id)
@@ -78,7 +78,7 @@ extension ProjectDatabase {
     /// offset lands safely between the owner's row and whatever reanchored row comes next,
     /// without colliding. `renumberSortOrders`, which always runs after this, converts
     /// everything to clean sequential integers regardless.
-    func insertDeferredContinuations(
+    static func insertDeferredContinuations(
         db: Database, projectId: String, deferredByOwner: [String: [Block]]
     ) throws {
         guard !deferredByOwner.isEmpty else { return }
@@ -161,7 +161,7 @@ extension ProjectDatabase {
     /// never has to make the distinction) is Stage C, not implemented here -- until then
     /// B3's "ghost row the editor can't delete" concern (if reachable at all, given B1
     /// already narrows the one confirmed destructive path) stays open, tracked for C1(3).
-    func deleteBlocksInRange(
+    static func deleteBlocksInRange(
         db: Database,
         projectId: String,
         startSortOrder: Double?,
@@ -223,7 +223,7 @@ extension ProjectDatabase {
     /// equivalent expression can round to a different `Double` and land a hair below the
     /// threshold, turning this data-integrity guard into an unexpected crash. This is a
     /// `precondition` (not `assert`), so it's live — and can trap — in Release builds too.
-    func shiftBlocksAfterRange(
+    static func shiftBlocksAfterRange(
         db: Database,
         projectId: String,
         endSortOrder: Double?,
@@ -295,7 +295,7 @@ extension ProjectDatabase {
     ///   `replaceBlocks`' bibliography+Notes preservation path pass `true` -- a Notes-shaped
     ///   incoming block is merged into its preserved row there too now, on equal footing with
     ///   `replaceBlocksInRange` -- see `replaceBlocks`' doc comment.
-    func handleMachineManagedBlock(
+    static func handleMachineManagedBlock(
         db: Database,
         block: Block,
         notesState: inout NotesMergeState,
@@ -371,7 +371,7 @@ extension ProjectDatabase {
     /// footnotes). Re-fetches each row fresh by id (rather than reusing the pre-loop
     /// existingBlocks snapshot) so a content update already applied by the merge logic above
     /// isn't clobbered by a stale copy.
-    func reanchorPreservedRows(db: Database, rowIds: [String], anchorBase: Double) throws {
+    static func reanchorPreservedRows(db: Database, rowIds: [String], anchorBase: Double) throws {
         let now = Date()
         for (offset, rowId) in rowIds.enumerated() {
             guard var row = try Block.fetchOne(db, key: rowId) else { continue }
@@ -391,7 +391,7 @@ extension ProjectDatabase {
     /// whole batch) while the public one calls `Date()` fresh inside its loop (a distinct
     /// timestamp per row); unifying them would change the timestamp granularity of a normalize
     /// pass, not which rows get touched.
-    func renumberSortOrders(db: Database, projectId: String, now: Date) throws {
+    static func renumberSortOrders(db: Database, projectId: String, now: Date) throws {
         let allProjectBlocks = try Block
             .filter(Block.Columns.projectId == projectId)
             .order(Block.Columns.sortOrder)

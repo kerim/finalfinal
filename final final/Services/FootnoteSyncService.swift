@@ -627,9 +627,10 @@ final class FootnoteSyncService {
             break   // Recovery R, below.
         case .refused(.skipped(.lifecycleDrain)), .refused(.skipped(.drainTimeout)),
              .refused(.skipped(.projectSwitch)), .refused(.skipped(.writerReplaced)),
-             .refused(.skipped(.editorReplaced)),
+             .refused(.skipped(.editorReplaced)), .refused(.skipped(.close)),
              .refused(.identityMismatch), .refused(.writerRetired):
-            // No inverse, no carry -- close/quit flush (lifecycleDrain/drainTimeout) or
+            // No inverse, no carry -- close/quit flush (lifecycleDrain/drainTimeout, and `.close`,
+            // which is reachable once 3a-1b calls `retire(.close)`; nothing produces it today) or
             // switch flush (projectSwitch/writerReplaced/editorReplaced/identityMismatch/
             // writerRetired) rewrites the DB from the editor's own fetched content, which
             // already carries the new labels -- `carriedRenameMap` is left exactly as it

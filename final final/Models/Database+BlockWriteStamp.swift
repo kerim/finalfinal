@@ -21,11 +21,28 @@
 //  writes route through `DocumentWriter`'s "system write" queue
 //  (`BlockSyncService.performSystemWrite`, see docs/architecture/document-writer.md's
 //  "System writes" section), so they now participate in ordering against a concurrent
-//  editor batch -- just not through THIS guard. A system write still never bumps the
-//  epoch or writes an (epoch, sequence) stamp of its own (rows it touches keep whatever
-//  stamp, including the default (0, 0), they already carried); what arbitrates it
-//  against a concurrent editor batch instead is reserve-time and apply-time identity
-//  plus the writer's own strict sequence ordering, not this per-row stamp comparison.
+//  editor batch -- just not through THIS guard. A system write (bar the ONE exception
+//  below) still never bumps the epoch or writes an (epoch, sequence) stamp of its own
+//  (rows it touches keep whatever stamp, including the default (0, 0), they already
+//  carried); what arbitrates it against a concurrent editor batch instead is
+//  reserve-time and apply-time identity plus the writer's own strict sequence ordering,
+//  not this per-row stamp comparison.
+//
+//  ONE EXCEPTION (t-94369a83 Phase 3a-1a, plan §2.3): the `.lifecycleWholeDocument` system
+//  write (the queued whole-document save a close/switch/quit will take, no production caller
+//  until 3a-1b) DOES bump and restamp the epoch -- inside its OWN transaction, because its body
+//  runs the `replaceBlocks*` statics, which call `stampWholeProjectForRewrite` on the writer's
+//  `Database`. It adds no second bump. An editor batch reserved before FB's commit carries
+//  epoch E and is refused whole by rule 1 of `applyBlockChangesFromEditor` below, but only
+//  if it applies AFTER FB's commit; a lower-numbered batch that gets its turn before FB
+//  applies normally and is then replaced by FB's content. The refusal costs nothing only
+//  if FB's content already contains the refused batch's edits; otherwise they are refused,
+//  lost and uncounted (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter, only the
+//  log line in rule 1). Consequence for 3a-1b: an editor sequence reserved between FB's
+//  reservation and its commit also read E and is also refused wholesale (the writer orders
+//  it after FB, but its stamp is stale), so 3a-1b stops polling before FB. Every other kind
+//  of system write still never stamps or bumps.
+//
 //  Bibliography rows and Notes-label renames are additionally covered by
 //  `applyUpdateToExistingBlock`'s own refusal (Database+Blocks.swift) regardless.
 //

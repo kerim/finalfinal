@@ -73,17 +73,35 @@ struct SystemWriteResult<R: Sendable>: Sendable {
 /// stamped (§1.4): the rows they touch (bibliography, Notes definitions, heading
 /// levels) are either already refused-by-guard to a stale editor batch, or a stamp
 /// would actively cause harm (see the plan's §1.4 table).
+///
+/// ONE EXCEPTION (t-94369a83 Phase 3a-1a, plan §2.3): a `.lifecycleWholeDocument` write DOES
+/// bump the project's block-write epoch and restamp every row to `(E+1, 0)` -- inside its own
+/// transaction, through the `replaceBlocks*` statics (`stampWholeProjectForRewrite`), not through
+/// anything on this type. A whole-document rewrite is exactly what the epoch exists to invalidate
+/// stale batches for: an editor batch reserved before FB's commit carries epoch E and is refused
+/// WHOLE (inserts included) by rule 1 of `applyBlockChangesFromEditor`, but only if it applies
+/// AFTER FB's commit. A lower-numbered batch that gets its turn before FB applies normally and is
+/// then replaced by FB's content. The refusal costs nothing only if FB's content already contains
+/// the refused batch's edits; otherwise they are refused, lost and uncounted
+/// (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter). Consequence for 3a-1b: an editor
+/// sequence reserved between FB's reservation and its commit also read E, so it is refused
+/// wholesale too even though the writer orders it after FB; 3a-1b avoids it by stopping polling
+/// before FB. Every OTHER kind still never stamps or bumps.
 struct SystemWriteBody<R: Sendable>: Sendable {
     var value: R
     var deletedAnchors: [String: DeletedAnchor] = [:]
 }
 
-/// Which write site a call came from -- carried through for logging/diagnostics only;
-/// no branch in `DocumentWriter` reads it. Every case now has a real call site:
-/// `.bibliographyUpdate`/`.bibliographyRemoval` (`BibliographySyncService`),
+/// Which write site a call came from -- carried through for logging/diagnostics, and (since
+/// Phase 3a-1a) read by `applySystemWrite` for exactly one thing: the
+/// `lifecycleWholeDocumentApplied` counter, bumped when `kind == .lifecycleWholeDocument`.
+/// No other branch in `DocumentWriter` reads it. Every case except the last has a real call
+/// site: `.bibliographyUpdate`/`.bibliographyRemoval` (`BibliographySyncService`),
 /// `.bibliographyRename` (`ContentView+NotificationHandlers.swift`),
 /// `.notesUpdate`/`.notesRemoval`/`.notesInsertion` (`FootnoteSyncService`), and
-/// `.headingLevels` (`ContentView+HierarchyEnforcement.swift`).
+/// `.headingLevels` (`ContentView+HierarchyEnforcement.swift`). `.lifecycleWholeDocument` (the
+/// queued whole-document save a close/switch/quit takes through the writer) has NO production
+/// caller until 3a-1b.
 enum SystemWriteKind: Sendable, Equatable {
     case bibliographyUpdate
     case bibliographyRemoval
@@ -92,6 +110,7 @@ enum SystemWriteKind: Sendable, Equatable {
     case notesRemoval
     case notesInsertion
     case headingLevels
+    case lifecycleWholeDocument
 }
 
 // MARK: - No nesting (§1.3)
@@ -107,15 +126,15 @@ enum SystemWriteScope {
     /// `performSystemWrite` call observing this already `true` (including via task
     /// inheritance) is refused `.nested` before it reserves anything.
     @TaskLocal static var active: Bool = false
-    /// Set by `doPollBlockChanges` from immediately after `reserveWriterTurn` until
-    /// `applyAndConfirm` returns (or its `defer` settles) -- wired in (Phase 2,
-    /// t-94369a83 §1.3): the existing fetch-to-apply body is wrapped verbatim in
-    /// `SystemWriteScope.$heldEditorSeq.withValue(ticket.seq) { ... }`, a synchronous
-    /// save/restore around the same `await`s already there, changing nothing about
-    /// control flow, suspension points, or the "no cancellation-observing await
-    /// between fetch and apply" invariant documented above `reserveWriterTurn`.
-    /// `performSystemWrite`'s own check against it (step 1) is live -- see W34
-    /// (SystemWriteOrderingTests.swift) for the full-stack proof.
+    // Set by `doPollBlockChanges` from immediately after `reserveWriterTurn` until
+    // `applyAndConfirm` returns (or its `defer` settles) -- wired in (Phase 2,
+    // t-94369a83 §1.3): the existing fetch-to-apply body is wrapped verbatim in
+    // `SystemWriteScope.$heldEditorSeq.withValue(ticket.seq) { ... }`, a synchronous
+    // save/restore around the same `await`s already there, changing nothing about
+    // control flow, suspension points, or the "no cancellation-observing await
+    // between fetch and apply" invariant documented above `reserveWriterTurn`.
+    // `performSystemWrite`'s own check against it (step 1) is live -- see W34
+    // (SystemWriteOrderingTests.swift) for the full-stack proof.
     // swiftlint:disable:next implicit_optional_initialization
     @TaskLocal static var heldEditorSeq: UInt64? = nil
 }

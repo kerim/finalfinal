@@ -1627,13 +1627,21 @@ class BlockSyncService {
     /// `SystemWriteScope.$active.withValue(true)` without tripping the DEBUG
     /// `assertionFailure` that would otherwise crash the test process.
     var testSuppressNestedAssert = false
+
+    /// Test-only (review fix M24): bumped by EVERY `reportLifecycleWholeDocumentLost` call,
+    /// including the no-writer branch that only logs -- the writer's own
+    /// `lifecycleWholeDocumentLost` ledger counter cannot show a report that had no writer to
+    /// count on (and `testWriterLedger` is all-zero then), so an assertion on the ledger alone
+    /// cannot tell "reported, no writer" from "never reported".
+    var testLifecycleLossReports = 0
     #endif
 
     /// Phase 2 (t-94369a83), §1.1: the ONE public entry point for a non-editor
     /// (bibliography/Notes/heading-level) write, routed through the same ordered
     /// queue `DocumentWriter` already serializes every editor-diff write through. See
     /// `docs/architecture/document-writer.md`'s "System writes" section for the full
-    /// design (settlement, the I-SYS backstop, why nothing is stamped).
+    /// design (settlement, the I-SYS backstop, why system writes do not stamp rows -- bar the
+    /// one exception, `.lifecycleWholeDocument`, which bumps and restamps the epoch).
     ///
     /// Steps, in order (the only suspensions are `waitForTurn` and the actor hop):
     /// 1. Nesting check (`SystemWriteScope.active`, `SystemWriteScope.heldEditorSeq`).
@@ -1648,8 +1656,87 @@ class BlockSyncService {
     ///    the editor, so the write must proceed and let the caller's OWN recovery
     ///    table decide what to do with a stale result).
     /// 8. Apply.
+    ///
+    /// Phase 3a-1a (t-94369a83, coder-obligations item 15): a `.lifecycleWholeDocument` write
+    /// whose outcome is anything but `.applied` is reported as a LOSS through
+    /// `reportLifecycleWholeDocumentLost`, from this single choke point so every refusal and
+    /// failure path (nested, identity mismatch, skipped, out of turn, retired, failed) is
+    /// covered by the one hook. The exception (judge adjustment B6) is `.refused(.noWriter)`:
+    /// that is the direct-write fallback plan §2.3 gives the caller, not a loss, so it is only
+    /// logged. Every other `kind` is untouched by the hook. The loss is counted on the writer
+    /// captured at entry (review fix M18), not on whatever `writer` has become by the time the
+    /// outcome is known; the counter overlays an ordinary one -- see `LossLedger.lifecycleWholeDocumentLost`.
     @MainActor
     func performSystemWrite<R: Sendable>(
+        identity: SystemWriteIdentity,
+        kind: SystemWriteKind,
+        stillWanted: @escaping () -> Bool,
+        prepare: (() -> Void)? = nil,
+        body: @escaping @Sendable (Database) throws -> SystemWriteBody<R>
+    ) async -> SystemWriteResult<R> {
+        // Review fix M18: the writer THIS call used is the one in place at entry (the steps below
+        // read it before their first suspension). `configure`/`reconfigure` can replace
+        // `self.writer` on the MainActor while this call is suspended (a close/switch race), so
+        // the loss must be counted on the entry writer, not re-read after the await.
+        let writerAtEntry = writer
+        let result = await performSystemWriteSteps(
+            identity: identity, kind: kind, stillWanted: stillWanted, prepare: prepare, body: body)
+        if kind == .lifecycleWholeDocument {
+            noteLifecycleWholeDocumentOutcome(result.outcome, writerAtEntry: writerAtEntry)
+        }
+        return result
+    }
+
+    /// Classifies a `.lifecycleWholeDocument` outcome for `performSystemWrite`'s loss hook (see
+    /// its doc comment): `.applied` is not a loss, `.refused(.noWriter)` is the caller's
+    /// direct-write fallback (B6, logged at `.lifecycle`, never counted), everything else is.
+    private func noteLifecycleWholeDocumentOutcome<R: Sendable>(
+        _ outcome: SystemWriteOutcome<R>, writerAtEntry: DocumentWriter?
+    ) {
+        switch outcome {
+        case .applied:
+            break
+        case .refused(.noWriter):
+            DebugLog.log(.lifecycle, "[SystemWrite] lifecycleWholeDocument: no writer -- not a loss, the caller's direct write is the fallback")
+        case .refused(let reason):
+            reportLifecycleWholeDocumentLost(reason: "refused(\(reason))", on: writerAtEntry)
+        case .failed(let error):
+            reportLifecycleWholeDocumentLost(reason: "failed(\(error))", on: writerAtEntry)
+        }
+    }
+
+    /// Counts and logs a `.lifecycleWholeDocument` write that did not happen, on this service's
+    /// writer (`DocumentWriter.noteLifecycleWholeDocumentLost`). Internal rather than private so
+    /// `performLifecycleWholeDocumentWrite` (LifecycleWholeDocumentWrite.swift) can report its
+    /// own pre-reservation refusal through the SAME hook -- `writer` is private to this file.
+    /// With no writer there is no ledger to count on, so the loss is only logged
+    /// (`alwaysPersisted`).
+    func reportLifecycleWholeDocumentLost(reason: String) {
+        reportLifecycleWholeDocumentLost(reason: reason, on: writer)
+    }
+
+    /// The same report, counted on an explicit `writer` (review fix M18): `performSystemWrite`
+    /// passes the writer it captured at entry, so a loss observed after the await lands on the
+    /// writer the write actually used -- not on whatever `self.writer` has become since (a
+    /// replacement project's). Counts on `writer` when it is non-nil (even if that writer is
+    /// retired by now); only when it is nil is there nothing to count on and the loss is just
+    /// logged. Bumps `testLifecycleLossReports` either way.
+    func reportLifecycleWholeDocumentLost(reason: String, on writer: DocumentWriter?) {
+        #if DEBUG
+        testLifecycleLossReports += 1
+        #endif
+        guard let writer else {
+            DebugLog.alwaysPersisted("[SystemWrite] lifecycle whole-document write LOST (no writer to count it on): \(reason)")
+            return
+        }
+        writer.noteLifecycleWholeDocumentLost(reason: reason)
+    }
+
+    /// The eight documented steps of `performSystemWrite` (see its doc comment), unchanged by
+    /// Phase 3a-1a: split out so the wrapper above can classify the outcome of EVERY return path
+    /// -- including the early refusals -- in one place.
+    @MainActor
+    private func performSystemWriteSteps<R: Sendable>(
         identity: SystemWriteIdentity,
         kind: SystemWriteKind,
         stillWanted: @escaping () -> Bool,
