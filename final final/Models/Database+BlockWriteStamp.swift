@@ -13,38 +13,9 @@
 //  rewrites (`replaceBlocks`, both its default and its preserving-machine-managed path,
 //  and `replaceBlocksInRange`) and the `configure`/`reconfigure` epoch bump each advance
 //  the project's epoch, so any batch fetched before them is refused. Native structural
-//  writers (SectionOps delete/duplicate, reorder, SectionReconciler, `deleteAllBlocks`)
-//  do NOT bump the epoch and are OUT OF SCOPE for this guard; rows they create land at
-//  the default (0, 0) stamp.
-//
-//  Bibliography/Notes/heading-level sync is DIFFERENT as of t-94369a83 Phase 2: those
-//  writes route through `DocumentWriter`'s "system write" queue
-//  (`BlockSyncService.performSystemWrite`, see docs/architecture/document-writer.md's
-//  "System writes" section), so they now participate in ordering against a concurrent
-//  editor batch -- just not through THIS guard. A system write (bar the ONE exception
-//  below) still never bumps the epoch or writes an (epoch, sequence) stamp of its own
-//  (rows it touches keep whatever stamp, including the default (0, 0), they already
-//  carried); what arbitrates it against a concurrent editor batch instead is
-//  reserve-time and apply-time identity plus the writer's own strict sequence ordering,
-//  not this per-row stamp comparison.
-//
-//  ONE EXCEPTION (t-94369a83 Phase 3a-1a, plan §2.3): the `.lifecycleWholeDocument` system
-//  write (the queued whole-document save a close/switch/quit will take, no production caller
-//  until 3a-1b) DOES bump and restamp the epoch -- inside its OWN transaction, because its body
-//  runs the `replaceBlocks*` statics, which call `stampWholeProjectForRewrite` on the writer's
-//  `Database`. It adds no second bump. An editor batch reserved before FB's commit carries
-//  epoch E and is refused whole by rule 1 of `applyBlockChangesFromEditor` below, but only
-//  if it applies AFTER FB's commit; a lower-numbered batch that gets its turn before FB
-//  applies normally and is then replaced by FB's content. The refusal costs nothing only
-//  if FB's content already contains the refused batch's edits; otherwise they are refused,
-//  lost and uncounted (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter, only the
-//  log line in rule 1). Consequence for 3a-1b: an editor sequence reserved between FB's
-//  reservation and its commit also read E and is also refused wholesale (the writer orders
-//  it after FB, but its stamp is stale), so 3a-1b stops polling before FB. Every other kind
-//  of system write still never stamps or bumps.
-//
-//  Bibliography rows and Notes-label renames are additionally covered by
-//  `applyUpdateToExistingBlock`'s own refusal (Database+Blocks.swift) regardless.
+//  writers (SectionOps delete/duplicate, reorder, bibliography/footnote sync,
+//  SectionReconciler, `deleteAllBlocks`) do NOT bump the epoch and are OUT OF SCOPE for
+//  this guard; rows they create land at the default (0, 0) stamp.
 //
 //  Comparison is lexicographic, epoch-major. A row stamped in an older epoch therefore
 //  always compares below any batch carrying the current epoch, whatever their sequences.
@@ -75,15 +46,6 @@ struct BlockWriteStamp: Equatable, Sendable, Comparable {
     }
 }
 
-/// Where a deleted block's anchor pointed, recorded at the moment a newer batch
-/// deletes it -- addendum A2 (t-94369a83), §2. Lets a still-in-flight (late or
-/// abandoned) insert whose own anchor turns out to be one of these deleted ids
-/// re-anchor onto the anchor's own predecessor instead of being silently dropped.
-enum DeletedAnchor: Sendable, Equatable {
-    case after(String)
-    case documentStart
-}
-
 /// What a stamped `applyBlockChangesFromEditor` actually wrote, so the caller can
 /// report and account for it without keeping any parallel in-memory state.
 struct EditorApplyResult: Sendable {
@@ -98,19 +60,6 @@ struct EditorApplyResult: Sendable {
     /// True when the batch's epoch was below the project's current epoch and the
     /// ENTIRE batch - inserts included - was refused.
     var rejectedWholeBatchForStaleEpoch = false
-    /// Addendum A2 §2: each row this write ACTUALLY deleted, keyed by its own id,
-    /// recording what it was anchored after (or that it was the document's first
-    /// block) at the moment it was deleted. Excludes any delete `processEditorDeletes`
-    /// itself refused (its bibliography/notes safety net) -- only a row that really
-    /// left the table gets a tombstone.
-    var deletedAnchors: [String: DeletedAnchor] = [:]
-    /// Temp ids whose insert re-anchored via the tombstone chain (§2(a)) instead of
-    /// resolving directly against its own anchor -- telemetry, not loss.
-    var reanchoredInserts: [String] = []
-    /// Temp ids whose insert was rejected because its anchor was missing and the
-    /// tombstone chain could not resolve it to a live row either -- a real,
-    /// counted loss (`staleAnchorInsertsRejected`).
-    var rejectedStaleAnchorInserts: [String] = []
 
     var writtenCount: Int { writtenUpdateIds.count + writtenInsertIds.count + writtenDeleteIds.count }
     var droppedCount: Int { droppedUpdateIds.count + droppedDeleteIds.count }
@@ -219,8 +168,7 @@ extension ProjectDatabase {
     func applyBlockChangesFromEditor(
         _ changes: BlockChanges,
         for projectId: String,
-        stamp batchStamp: BlockWriteStamp,
-        tombstones: [String: DeletedAnchor] = [:]
+        stamp batchStamp: BlockWriteStamp
     ) throws -> EditorApplyResult {
         var result = EditorApplyResult()
 
@@ -284,43 +232,13 @@ extension ProjectDatabase {
                     + "deletesDropped=\(result.droppedDeleteIds.count) wholeBatchRejected=false")
             }
 
-            // Addendum A2 §2: record each about-to-be-deleted row's own predecessor
-            // WHILE it still exists (the SQL needs its sortOrder) -- before any row is
-            // actually removed. `processEditorDeletes` below can still refuse some of
-            // these (its bibliography/notes safety net), so this is filtered down to
-            // `writtenDeleteIds` afterward; only a row that really left the table gets
-            // a tombstone recorded in the result.
-            var candidateDeletedAnchors: [String: DeletedAnchor] = [:]
-            for id in deletesToApply {
-                if let predecessorId = try String.fetchOne(db, sql: """
-                        SELECT id FROM block WHERE projectId = ? \
-                        AND sortOrder < (SELECT sortOrder FROM block WHERE id = ?) \
-                        ORDER BY sortOrder DESC LIMIT 1
-                        """, arguments: [projectId, id]) {
-                    candidateDeletedAnchors[id] = .after(predecessorId)
-                } else {
-                    candidateDeletedAnchors[id] = .documentStart
-                }
-            }
-
             // Order preserved from the original: deletes, then inserts (so idMapping is
             // populated for temp-id updates), then updates.
             result.writtenDeleteIds = try processEditorDeletes(db: db, deletes: deletesToApply)
-            // Efficiency (t-94369a83 addendum A2 v2, judge small fix): a `Set`
-            // membership check is O(1); filtering with `Array.contains` directly
-            // made this whole filter O(N*M) across candidate anchors x written
-            // deletes.
-            let writtenDeleteIdSet = Set(result.writtenDeleteIds)
-            result.deletedAnchors = candidateDeletedAnchors.filter { writtenDeleteIdSet.contains($0.key) }
 
-            // RULE 3 - inserts always run once rule 1 has not fired. Addendum A2 §2(a):
-            // an insert whose anchor is missing at write time can re-anchor via the
-            // tombstone chain instead of being silently dropped -- see
-            // `processEditorInserts`'s own doc comment.
+            // RULE 3 - inserts always run once rule 1 has not fired.
             try processEditorInserts(db: db, inserts: changes.inserts, projectId: projectId,
-                                     nextSortOrder: &nextSortOrder, idMapping: &result.idMapping,
-                                     tombstones: tombstones, reanchored: &result.reanchoredInserts,
-                                     rejected: &result.rejectedStaleAnchorInserts)
+                                     nextSortOrder: &nextSortOrder, idMapping: &result.idMapping)
             result.writtenInsertIds = Array(result.idMapping.values)
 
             result.writtenUpdateIds = try processEditorUpdates(db: db, updates: updatesToApply,

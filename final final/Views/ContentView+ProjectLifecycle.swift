@@ -74,11 +74,7 @@ extension ContentView {
         annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)
         bibliographySyncService.flushLiveEditorContentToBlocks = makeBibliographyFlushHandler()
-        // Phase 2 (t-94369a83), §2.0: the typed handle bibliography/Notes sync route
-        // their writes through -- see DocumentWriter+SystemWrite.swift's `SystemWriter`.
-        bibliographySyncService.systemWriter = SystemWriter(blockSync: blockSyncService)
         footnoteSyncService.configure(database: db, projectId: pid)
-        footnoteSyncService.systemWriter = SystemWriter(blockSync: blockSyncService)
         autoBackupService.configure(database: db, projectId: pid)
         autoBackupService.editorState = editorState
 
@@ -469,6 +465,7 @@ extension ContentView {
 
         // Stop remaining services
         editorState.stopObserving()
+        blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()
@@ -763,6 +760,7 @@ extension ContentView {
             await autoBackupService.projectWillClose()
         }
 
+        blockSyncService.cancelPendingSync()
         sectionSyncService.cancelPendingSync()
         annotationSyncService.cancelPendingSync()
         bibliographySyncService.reset()

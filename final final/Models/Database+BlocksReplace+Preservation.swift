@@ -26,7 +26,7 @@ extension ProjectDatabase {
 
     /// Build a src -> preserved-metadata lookup from existing image blocks (used for the
     /// imageWidth/imageCaption gap-fill during block replacement).
-    static func buildImageMetadataIndex(from existingBlocks: [Block]) -> [String: ImageMeta] {
+    func buildImageMetadataIndex(from existingBlocks: [Block]) -> [String: ImageMeta] {
         var imageMetaBySrc: [String: ImageMeta] = [:]
         for block in existingBlocks where block.blockType == .image {
             if let src = block.imageSrc, !src.isEmpty {
@@ -43,7 +43,7 @@ extension ProjectDatabase {
     /// fragment (legacy pre-`BlockParser.parseImageFragmentMeta` format). Anchored (`^`) so
     /// this can only match a comment immediately preceding the image, not one appearing
     /// anywhere else in the fragment. Returns nil if no such comment is present.
-    static func extractLegacyImageCaption(from fragment: String) -> String? {
+    func extractLegacyImageCaption(from fragment: String) -> String? {
         let frag = fragment.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let captionRange = frag.range(
             of: #"^<!--\s*caption:\s*(.*?)\s*-->"#, options: .regularExpression
@@ -66,7 +66,7 @@ extension ProjectDatabase {
     /// (`replaceBlocks`) knows when to log. `replaceBlocksInRange` has no such log and
     /// simply discards the result.
     @discardableResult
-    static func applyPreservedImageMetadata(to block: inout Block, index: inout [String: ImageMeta]) -> Bool {
+    func applyPreservedImageMetadata(to block: inout Block, index: inout [String: ImageMeta]) -> Bool {
         guard block.blockType == .image, let src = block.imageSrc, !src.isEmpty else { return false }
 
         // Legacy migration only: recover a caption from a leading
@@ -122,7 +122,7 @@ extension ProjectDatabase {
     ///   bare-title user heading a stale parse once mistook for the real one) would have its
     ///   stale flag OR'd back in by this title match, making the false positive permanent
     ///   instead of letting the corrected fresh parse win.
-    static func applyPreservedHeading(
+    func applyPreservedHeading(
         to block: inout Block,
         queues: inout [String: [PreservedHeading]],
         restoringBibliography: Bool = true
@@ -140,7 +140,7 @@ extension ProjectDatabase {
     /// preserved heading's id + metadata directly onto `block`. `restoringBibliography`
     /// semantics are identical to `applyPreservedHeading`'s own parameter of the same name --
     /// see that function's doc comment.
-    static func applyPreserved(_ preserved: PreservedHeading, to block: inout Block, restoringBibliography: Bool) {
+    func applyPreserved(_ preserved: PreservedHeading, to block: inout Block, restoringBibliography: Bool) {
         block.id = preserved.id
         block.status = preserved.metadata.status
         block.tags = preserved.metadata.tags
@@ -175,7 +175,7 @@ extension ProjectDatabase {
     ///      (the "user deleted the root heading, revealing an existing child" case, where
     ///      binding the anchor would misattribute that other heading's content to the anchor's
     ///      id instead of leaving both to resolve independently).
-    static func resolveAnchorHeading(
+    func resolveAnchorHeading(
         existing: [Block],
         newBlocks: [Block],
         anchorId: String?
@@ -277,7 +277,7 @@ extension ProjectDatabase {
     /// flagged, entries not), the assembler places the terminator directly after the heading,
     /// so this arms and disarms in the same step and restores nothing. This prevents
     /// recurrence on a healthy document; it does not heal an already-broken one.
-    static func carryBibliographyFlagForward(
+    func carryBibliographyFlagForward(
         _ blocks: inout [Block],
         mismatchedHeadingIndices: Set<Int>,
         budget: Int
@@ -316,7 +316,7 @@ extension ProjectDatabase {
     /// WHETHER to restore the heading's flag at all), so the two questions — "where does this
     /// run end" and "should I restore this heading" — can never disagree about where the run
     /// ends.
-    static func bibliographyRunEnd(in blocks: [Block], after headingIndex: Int) -> Int? {
+    func bibliographyRunEnd(in blocks: [Block], after headingIndex: Int) -> Int? {
         guard headingIndex < blocks.index(before: blocks.endIndex) else { return nil }
         return blocks[blocks.index(after: headingIndex)...].firstIndex(where: { $0.endsBibliographyRun })
     }
@@ -336,7 +336,7 @@ extension ProjectDatabase {
     /// into `BibliographyOpeningSelector` itself: different question (where does a run end,
     /// given `[Block]` with no text form) over an incompatible data shape (no terminator-carrying
     /// line/block exists here — only a transient flag on the preceding content block).
-    static func hasGenuineBibliographyRun(in blocks: [Block], after headingIndex: Int) -> Bool {
+    func hasGenuineBibliographyRun(in blocks: [Block], after headingIndex: Int) -> Bool {
         guard let end = bibliographyRunEnd(in: blocks, after: headingIndex) else { return false }
         let cursor = blocks.index(after: headingIndex)
         guard cursor <= end else { return false }
@@ -395,7 +395,7 @@ extension ProjectDatabase {
     ///   gets the same protection bibliography does, for the same reason (see `replaceBlocks`'
     ///   doc comment): its incoming `blocks` is guaranteed Notes-free at those call sites, so
     ///   there is nothing there for a preserved row to collide with.
-    static func buildHeadingQueues(
+    func buildHeadingQueues(
         existing: [Block],
         newBlocks: [Block],
         protectingNotes: Bool = true
@@ -460,7 +460,7 @@ extension ProjectDatabase {
     /// Those rows belong to BibliographySyncService, never to this index -- letting one
     /// through here could make it either wrongly "own" real continuations that follow it,
     /// or get wrongly consumed/claimed/deleted as if it were a continuation itself.
-    static func buildNotesRowIndex(from existing: [Block]) -> (byLabel: [String: Block], continuationsByOwner: [String: [Block]]) {
+    func buildNotesRowIndex(from existing: [Block]) -> (byLabel: [String: Block], continuationsByOwner: [String: [Block]]) {
         var notesRowByLabel: [String: Block] = [:]
         var continuationsByOwner: [String: [Block]] = [:]
         var currentOwnerLabel: String?

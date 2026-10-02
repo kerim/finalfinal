@@ -148,25 +148,6 @@ class EditorViewState {
                     // its own contentState transition back to .idle on every exit path (M1,
                     // judge fix round).
                     guard !self.isZoomRestoreInProgress else { return }
-                    // Phase 2 (t-94369a83), §2.8: wait out an in-flight system write
-                    // rather than force-resetting contentState from under it -- see
-                    // `systemWriteInFlight`'s own doc comment.
-                    //
-                    // Review fix (finding #13): the old comment here claimed a flat "I-SYS's
-                    // 5s stall backstop plus the 3s late-expiry margin" bound -- not actually
-                    // a hard ceiling. I-SYS's stall backstop is PER SYSTEM WRITE: if several
-                    // are queued, each one individually gets its own 5s window before being
-                    // skipped, so N queued, all-stalling writes could take roughly N x 5s, not
-                    // a flat 8s. And once a write is admitted past the stall backstop and
-                    // actually reaches `applySystemWrite`, the DB write itself has NO timeout
-                    // of its own -- a genuinely stuck write (e.g. blocked on a lock) could keep
-                    // this loop waiting indefinitely. In the ordinary, expected case this
-                    // resolves in well under a second; there is no hard bound for the
-                    // pathological one.
-                    while self.systemWriteInFlight > 0, !Task.isCancelled {
-                        try? await Task.sleep(for: .milliseconds(500))
-                    }
-                    guard !Task.isCancelled else { return }
                     if self.contentState != .idle {
                         if self.contentState == .zoomTransition {
                             // M1 (judge fix round, CRITICAL): clearing zoomedSectionId/
@@ -198,17 +179,6 @@ class EditorViewState {
 
     /// Watchdog task that resets contentState if stuck in non-idle state for >5 seconds
     private var contentStateWatchdog: Task<Void, Never>?
-
-    /// Phase 2 (t-94369a83), §2.8: incremented by `BlockSyncService.performSystemWrite`
-    /// for the whole reserve-through-apply span of a system write (bibliography/Notes/
-    /// heading-level), decremented via `defer` on every exit. `contentStateWatchdog`
-    /// waits this out (bounded by I-SYS's 5s stall backstop plus the 3s late-expiry
-    /// margin) rather than force-resetting `contentState` out from under an in-flight
-    /// system write -- a hierarchy-enforcement write in particular can itself run
-    /// longer than this watchdog's plain 5s bound. The hierarchy flow still owns its
-    /// own return to idle via `enforceHierarchyAsync`'s existing `defer { contentState
-    /// = .idle }`; this only defers the WATCHDOG's own force-reset, never replaces it.
-    var systemWriteInFlight: Int = 0
 
     /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.
     /// Set to true IMMEDIATELY BEFORE content change, cleared AFTER acknowledgement.

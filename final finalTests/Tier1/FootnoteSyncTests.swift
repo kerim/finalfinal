@@ -135,9 +135,7 @@ struct FootnoteSyncTests {
 
         // 1. Immediate insertion of [^2] (as if the user ran /footnote). Rebuilds Notes to
         //    [^1] real + [^2] empty, and bumps syncGeneration 0 -> 1.
-        // Phase 2 (t-94369a83), §2.4: split into begin/commit.
-        let insertionGeneration1 = service.beginImmediateInsertion()
-        _ = await service.commitImmediateInsertion(label: "2", projectId: projectId, generation: insertionGeneration1)
+        service.handleImmediateInsertion(label: "2", projectId: projectId)
 
         // 2. The stale debounced rebuild now fires. It must bail because the immediate
         //    insertion superseded it. Without the fix it deletes/empties the fresh [^2].
@@ -241,7 +239,7 @@ struct FootnoteSyncTests {
 
     @Test("handleImmediateInsertion preserves block identity and text across a rename")
     @MainActor
-    func handleImmediateInsertionPreservesIdentityAcrossRename() async throws {
+    func handleImmediateInsertionPreservesIdentityAcrossRename() throws {
         let seed = """
         Body[^1] and[^2].
 
@@ -264,8 +262,7 @@ struct FootnoteSyncTests {
 
         // JS computed pivot "1" — inserting a new footnote before both existing ones
         // forces 1->2, 2->3.
-        let insertionGeneration = service.beginImmediateInsertion()
-        _ = await service.commitImmediateInsertion(label: "1", projectId: projectId, generation: insertionGeneration)
+        service.handleImmediateInsertion(label: "1", projectId: projectId)
 
         let after = try TestFixtureFactory.fetchBlocks(from: db)
             .filter { $0.isNotes && $0.blockType == .paragraph }
@@ -304,7 +301,7 @@ struct FootnoteSyncTests {
     // renamed (pre-existing, real-text) rows that were also written to in this same call.
     @Test("handleImmediateInsertion returns the block id of the label the user actually inserted, not a renamed pre-existing row")
     @MainActor
-    func handleImmediateInsertionReturnsPivotBlockIdNotRenamedRow() async throws {
+    func handleImmediateInsertionReturnsPivotBlockIdNotRenamedRow() throws {
         let seed = """
         Body[^1] and[^2].
 
@@ -328,9 +325,7 @@ struct FootnoteSyncTests {
         // Pivot "1": both pre-existing definitions get renamed (1->2, 2->3) in the SAME
         // reconciliation pass that inserts the new blank [^1] row -- exactly the shape where
         // "any row this call touched" and "the row the user actually inserted" diverge.
-        let insertionGeneration = service.beginImmediateInsertion()
-        let insertedBlockId = await service.commitImmediateInsertion(
-            label: "1", projectId: projectId, generation: insertionGeneration)
+        let insertedBlockId = service.handleImmediateInsertion(label: "1", projectId: projectId)
 
         let after = try TestFixtureFactory.fetchBlocks(from: db)
             .filter { $0.isNotes && $0.blockType == .paragraph }
@@ -350,7 +345,7 @@ struct FootnoteSyncTests {
 
     @Test("handleImmediateInsertion returns the correct pivot id on a pure append (no renames in play)")
     @MainActor
-    func handleImmediateInsertionReturnsPivotBlockIdOnAppend() async throws {
+    func handleImmediateInsertionReturnsPivotBlockIdOnAppend() throws {
         let seed = """
         Body[^1].
 
@@ -365,9 +360,7 @@ struct FootnoteSyncTests {
         service.configure(database: db, projectId: projectId)
 
         // Pivot "2": appends after the existing [^1], nothing to rename.
-        let insertionGeneration = service.beginImmediateInsertion()
-        let insertedBlockId = try #require(
-            await service.commitImmediateInsertion(label: "2", projectId: projectId, generation: insertionGeneration))
+        let insertedBlockId = try #require(service.handleImmediateInsertion(label: "2", projectId: projectId))
 
         let after = try TestFixtureFactory.fetchBlocks(from: db)
             .filter { $0.isNotes && $0.blockType == .paragraph }
@@ -609,8 +602,7 @@ extension FootnoteSyncTests {
 
         [^1]: Real definition one.
         """
-        let insertionGeneration = service.beginImmediateInsertion()
-        _ = await service.commitImmediateInsertion(label: "3", projectId: projectId, generation: insertionGeneration)
+        service.handleImmediateInsertion(label: "3", projectId: projectId)
 
         let midway = try TestFixtureFactory.fetchBlocks(from: db)
             .filter { $0.isNotes && $0.blockType == .paragraph }
@@ -630,18 +622,11 @@ extension FootnoteSyncTests {
             footnoteRefs: refreshedRefs, projectId: projectId, fullContent: bodyAfterInsertion
         )
         // Drive the newly-scheduled debounce synchronously (avoids a real 3s sleep in the
-        // test) via `flushPendingSync()` -- NOT a second, manual `performFootnoteUpdate`
-        // call with a hand-matched generation, which left the REAL debounce `Task`
-        // `checkAndUpdateFootnotes` just scheduled alive and uncancelled, asleep for a
-        // real 3 seconds past this test's own return (round 3 review: harmless today,
-        // since it captures `[weak self]` and no-ops once `service` deallocates, but a
-        // latent source of cross-test scheduler noise). `flushPendingSync()` cancels
-        // that same `Task` AND drives the identical pending snapshot (refs, projectId,
-        // fullContent, and the generation `checkAndUpdateFootnotes` captured at
-        // schedule time -- 1, matching syncGeneration after the immediate insertion
-        // above) -- functionally identical to the old manual call, without leaking a
-        // live Task.
-        await service.flushPendingSync()
+        // test). scheduledGeneration 1 matches syncGeneration after the immediate insertion
+        // above, exactly like the debounce checkAndUpdateFootnotes just scheduled.
+        await service.performFootnoteUpdate(
+            refs: refreshedRefs, projectId: projectId, fullContent: bodyAfterInsertion, scheduledGeneration: 1
+        )
 
         let after = try TestFixtureFactory.fetchBlocks(from: db)
             .filter { $0.isNotes && $0.blockType == .paragraph }

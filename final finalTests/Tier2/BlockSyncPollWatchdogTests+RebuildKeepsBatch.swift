@@ -4,7 +4,7 @@
 //
 //  t-7c1d3fd8 (Finding #1, Calm_Bibliography, docs/architecture/tla/README.md): a save
 //  in flight when a bibliography/Notes/footnote rebuild starts used to be thrown away by
-//  BlockSyncService.checkGenerationGuard's postFetch/postTurnWait discard, and the
+//  BlockSyncService.checkGenerationGuard's postFetch/postChainWait discard, and the
 //  rebuild would then restore older text from the database over it. `beginDatabaseRebuild()`
 //  / `pollBlockChangesNowForDatabaseRebuild()` / `shouldKeepBatchForDatabaseRebuild` close
 //  that window for the narrow case where the pending generation transition IS the rebuild
@@ -178,13 +178,7 @@ extension BlockSyncPollWatchdogTests {
 
         stack.editorState.contentState = .bibliographyUpdate
         stack.sync.beginDatabaseRebuild()
-        // Phase 2 (t-94369a83), §2.4: `handleImmediateInsertion` split into begin/commit.
-        // `footnotes.systemWriter` is never set here, so `commitImmediateInsertion` takes
-        // the `.noWriter` direct-write fallback -- same synchronous-equivalent behavior
-        // this test relied on before the split.
-        let insertionGeneration = footnotes.beginImmediateInsertion()
-        let inserted = await footnotes.commitImmediateInsertion(
-            label: "1", projectId: stack.pid, generation: insertionGeneration)
+        let inserted = footnotes.handleImmediateInsertion(label: "1", projectId: stack.pid)
         #expect(inserted != nil)
         let sync = stack.sync
         let flush = Task { @MainActor in await sync.pollBlockChangesNowForDatabaseRebuild() }

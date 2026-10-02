@@ -15,77 +15,43 @@ extension ProjectDatabase {
 
     /// Inserts editor-created blocks (sort order, image dedup) and records each temp-ID →
     /// permanent-ID mapping.
-    ///
-    /// Addendum A2 (t-94369a83) §2(a): an insert whose anchor is missing at write time has
-    /// two possible causes now, not one — a structural rewrite (`replaceBlocks`) that
-    /// replaced every row wholesale, in which case the whole coordinate space this batch
-    /// was diffed against is gone and the insert is genuinely stale; or a late/abandoned
-    /// batch's insert arriving after a NEWER batch deleted its anchor specifically (while
-    /// leaving the rest of the document intact), in which case `tombstones` lets it
-    /// re-anchor onto the deleted anchor's own predecessor instead of being dropped. Both
-    /// causes look identical here (anchor id resolves to nothing) — `tombstones` is what
-    /// tells them apart: only a genuinely tombstoned anchor gets the re-anchor treatment,
-    /// so a wholesale-rewrite orphan (never tombstoned) still falls through to rejection.
     func processEditorInserts(
         db: Database,
         inserts: [BlockInsert],
         projectId: String,
         nextSortOrder: inout Double,
-        idMapping: inout [String: String],
-        tombstones: [String: DeletedAnchor] = [:],
-        reanchored: inout [String],
-        rejected: inout [String]
+        idMapping: inout [String: String]
     ) throws {
         // Track image sources inserted within this batch to prevent duplicates
         // (catches the race condition where multiple inserts of the same image arrive in one sync cycle)
         var insertedImageSources: [String: String] = [:]  // imageSrc -> permanentId
 
         for insert in inserts {
-            var effectiveInsert = insert
-            var forceUnmanaged = false
-            var wasReanchored = false
+            // Stale-snapshot guard (t-3904c457): the JS differ always anchors an insert
+            // to the block immediately before it in the editor's CURRENT snapshot, so a
+            // non-temp anchor is a row the editor believes exists right now — and a batch
+            // can never delete its own anchor (a delete is a block absent from that same
+            // snapshot). If the anchor resolves to nothing in the DB, this diff was
+            // computed against rows a structural rewrite (e.g. the mode-toggle's
+            // `replaceBlocks`, which deletes and re-creates every row) has since replaced.
+            // Appending it at document end would materialize a duplicate row with a
+            // brand-new id — the exact corruption signature this task documented. Reject
+            // it like `processEditorDeletes` rejects stale deletes: the editor is
+            // re-seeded from the DB on remount (`setContentWithBlockIds`), so the stale
+            // fragment dies with the old view rather than landing in the wrong place.
             if let rawAfterId = insert.afterBlockId {
                 let anchorId = idMapping[rawAfterId] ?? rawAfterId
                 if !anchorId.hasPrefix("temp-"), try Block.fetchOne(db, key: anchorId) == nil {
-                    if let substitute = try resolveTombstoneChain(anchorId: anchorId, tombstones: tombstones, db: db) {
-                        switch substitute {
-                        case .after(let liveId):
-                            effectiveInsert = BlockInsert(
-                                tempId: insert.tempId, blockType: insert.blockType,
-                                textContent: insert.textContent, markdownFragment: insert.markdownFragment,
-                                headingLevel: insert.headingLevel, afterBlockId: liveId, atDocumentStart: nil)
-                        case .documentStart:
-                            effectiveInsert = BlockInsert(
-                                tempId: insert.tempId, blockType: insert.blockType,
-                                textContent: insert.textContent, markdownFragment: insert.markdownFragment,
-                                headingLevel: insert.headingLevel, afterBlockId: nil, atDocumentStart: true)
-                        }
-                        forceUnmanaged = true
-                        // Bug fix (t-94369a83 addendum A2 v2 judge round): counting
-                        // this as reanchored HERE, before the within-batch image-dedup
-                        // check below, wrongly counted a deduplicated insert too --
-                        // one that never actually creates a new row (it just maps onto
-                        // an already-inserted image's id). `wasReanchored` defers the
-                        // actual `reanchored.append` until after that dedup check has
-                        // had its chance to `continue` past this insert entirely.
-                        wasReanchored = true
-                        DebugLog.log(.data, "[Blocks] Re-anchored insert \(insert.tempId.prefix(13)): original anchor "
-                            + "\(anchorId.prefix(8)) was deleted by a newer batch, substituted via tombstone chain")
-                    } else {
-                        rejected.append(insert.tempId)
-                        DebugLog.log(.data, "[Blocks] Rejecting stale insert \(insert.tempId.prefix(13)): anchor "
-                            + "\(anchorId.prefix(8)) no longer exists (snapshot predates a structural rewrite, or "
-                            + "the tombstone chain could not resolve it to a live row)")
-                        continue
-                    }
+                    DebugLog.log(.data, "[Blocks] Rejecting stale insert \(insert.tempId.prefix(13)): anchor "
+                        + "\(anchorId.prefix(8)) no longer exists (snapshot predates a structural rewrite)")
+                    continue
                 }
             }
             let placement = try resolveInsertPlacement(
-                db: db, insert: effectiveInsert, projectId: projectId, idMapping: idMapping,
-                nextSortOrder: &nextSortOrder, forceUnmanaged: forceUnmanaged
+                db: db, insert: insert, projectId: projectId, idMapping: idMapping, nextSortOrder: &nextSortOrder
             )
             var block = buildInsertedBlock(
-                insert: effectiveInsert, projectId: projectId, sortOrder: placement.sortOrder,
+                insert: insert, projectId: projectId, sortOrder: placement.sortOrder,
                 isBibliographyContainment: placement.isBibliography,
                 isNotesContainment: placement.isNotes
             )
@@ -102,8 +68,6 @@ extension ProjectDatabase {
                 }
             }
 
-            if wasReanchored { reanchored.append(insert.tempId) }
-
             try block.insert(db)
 
             // Record image source for within-batch dedup
@@ -114,33 +78,6 @@ extension ProjectDatabase {
             // Record the mapping from temp ID to permanent ID
             idMapping[insert.tempId] = permanentId
         }
-    }
-
-    /// Addendum A2 §2(a): walks the tombstone chain starting at `anchorId` (already
-    /// confirmed missing from the DB) looking for a live substitute anchor. Capped at
-    /// `tombstones.count` steps as a guard against a cycle. Returns nil — a counted
-    /// rejection at the call site — when the anchor was never tombstoned, the chain
-    /// ends at an id that is neither live nor tombstoned (e.g. a structural rewrite
-    /// also removed the predecessor), or the cap is hit.
-    private func resolveTombstoneChain(
-        anchorId: String, tombstones: [String: DeletedAnchor], db: Database
-    ) throws -> DeletedAnchor? {
-        var current = anchorId
-        var steps = 0
-        while steps < tombstones.count {
-            guard let tombstone = tombstones[current] else { return nil }
-            switch tombstone {
-            case .documentStart:
-                return .documentStart
-            case .after(let predecessor):
-                if try Block.fetchOne(db, key: predecessor) != nil {
-                    return .after(predecessor)
-                }
-                current = predecessor
-                steps += 1
-            }
-        }
-        return nil
     }
 
     /// Sort order plus bibliography- and Notes-containment for a resolved insert placement —
@@ -235,24 +172,12 @@ extension ProjectDatabase {
     /// through `liveInsertOpensNotesSection` either — those placements are rare edge cases
     /// distinct from the ordinary anchored-insert path this fix targets, and
     /// `adoptUnflaggedNotesContinuations` remains the backstop for them too.)
-    /// `forceUnmanaged`: re-anchored late inserts only (addendum A2 §2(a)/(b)). When
-    /// true, forces `bibliographyContainment`/`notesContainment` to false regardless
-    /// of the substitute anchor's/next-block's own flags. Containment is inferred
-    /// from the ORIGINAL anchor, which `processEditorDeletes` guarantees was
-    /// unmanaged (it refuses every editor delete of an `isBibliography`/`isNotes`
-    /// row) — the live substitute's flags must not leak in. Scoped to
-    /// `bibliographyContainment`/`notesContainment` only — `isNotesOpeningHeadingInsert`
-    /// below is anchor-independent (it depends only on the INSERTED fragment's own
-    /// text) and must not be touched: an insert landing at its ORIGINAL, unmanaged
-    /// anchor would still get it, and zeroing the whole `isNotes` result would
-    /// incorrectly unflag a re-anchored Notes-opening heading.
     func resolveInsertPlacement(
         db: Database,
         insert: BlockInsert,
         projectId: String,
         idMapping: [String: String],
-        nextSortOrder: inout Double,
-        forceUnmanaged: Bool = false
+        nextSortOrder: inout Double
     ) throws -> InsertPlacement {
         let insertTrimmed = insert.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
         let isHeadingInsert = insertTrimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) != nil
@@ -274,12 +199,11 @@ extension ProjectDatabase {
             } else {
                 sortOrder = afterBlock.sortOrder + 1.0
             }
-            let bibliographyContainment = forceUnmanaged
-                ? false : (afterBlock.isBibliography && (nextBlock?.isBibliography ?? false))
+            let bibliographyContainment = afterBlock.isBibliography && (nextBlock?.isBibliography ?? false)
             let isBibliography = isNonBibliographyHeadingInsert ? false : bibliographyContainment
             // No next-block requirement here — see this function's doc comment for why the
             // anchor alone is sufficient evidence for Notes, unlike bibliography.
-            let notesContainment = forceUnmanaged ? false : (afterBlock.isNotes && afterBlock.blockType != .heading)
+            let notesContainment = afterBlock.isNotes && afterBlock.blockType != .heading
             // A live-typed heading insert that IS ITSELF the Notes section's own opening must
             // not be unconditionally suppressed like every other heading insert -- unlike
             // bibliography, Notes has no persisted opening marker (see `NotesOpeningSelector`'s

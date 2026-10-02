@@ -16,8 +16,6 @@
 //  See `BlockSyncService.checkGenerationGuard`'s doc comment for why this is safe.
 //
 
-import Foundation
-
 extension BlockSyncService {
     /// Pure decision for the Finding #1 exception. Keep the batch ONLY if the one and
     /// only generation transition since this poll cycle's snapshot was taken
@@ -53,24 +51,10 @@ extension BlockSyncService {
     /// to read the database. That ordering is what makes the exception in
     /// `checkGenerationGuard` safe in the overwhelming common case: the marker is live for
     /// the whole window in which a kept batch could still be written, and gone before the
-    /// database read that must see it.
-    ///
-    /// t-94369a83 Phase 1 (B4 regression fix): `pollBlockChangesNow()`'s own drain loop
-    /// only waits for a stuck predecessor's POLL-LEVEL watchdog to release the in-flight
-    /// slot, not for its real underlying work (a bare `evaluateJavaScript` call the
-    /// watchdog cannot observe completion of) — see that function's "What this does NOT
-    /// guarantee" note. Left alone, that meant THIS flush's `defer` could clear the marker
-    /// — closing the KEEP-exception window — while the very routine cycle it exists to
-    /// protect was still genuinely in flight underneath a watchdog-truncated Task handle;
-    /// `checkGenerationGuard`'s own doc comment used to call this a "narrow" residual, but
-    /// a short poll watchdog paired with a rebuild hits it deterministically, not rarely.
-    /// `awaitWriterSettlementForRebuild()` below closes that gap: it waits on the WRITER's
-    /// own internal state (bounded by this cycle's watchdog, with margin over the writer's
-    /// turn-stall expiry), READ-ONLY, rather than on the poll cycle's Task, so the marker
-    /// only clears once the predecessor has actually settled — applied, gone
-    /// late-then-applied, or (addendum A2 §1: if truly stuck past the bound) left exactly
-    /// as it was, with the wait simply giving up and the miss counted, never skipped or
-    /// dropped by this wait itself.
+    /// database read that must see it. See that function's doc comment's KNOWN RESIDUAL
+    /// for the narrow hung-WebKit-watchdog window where the SPAWNER returns (and this
+    /// `defer` fires) before the underlying work task's write has actually landed — not
+    /// closed here, same class as the pre-existing L8/L10 residuals.
     ///
     /// The `defer` clears the marker only if it still holds THIS call's own value
     /// (`myMarker`, captured at entry) — never a blind `= nil`. Two rebuilds can
@@ -104,10 +88,6 @@ extension BlockSyncService {
             }
         }
         await pollBlockChangesNow()
-        // See this function's doc comment: waits for the writer to actually settle
-        // (not just for the poll-level drain above to have returned) before the
-        // `defer` above clears the marker.
-        await awaitWriterSettlementForRebuild()
     }
 
     #if DEBUG
