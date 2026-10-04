@@ -267,14 +267,14 @@ extension ZoomDataIntegrityTests {
 
         alpha.isNotes = true
         #expect(
-            db.resolveAnchorHeading(existing: [alpha], newBlocks: [newHeading], anchorId: alpha.id) == nil,
+            ProjectDatabase.resolveAnchorHeading(existing: [alpha], newBlocks: [newHeading], anchorId: alpha.id) == nil,
             "an isNotes anchor row must decline, matching the anchorHeadingId: nil baseline"
         )
 
         alpha.isNotes = false
         alpha.isBibliography = true
         #expect(
-            db.resolveAnchorHeading(existing: [alpha], newBlocks: [newHeading], anchorId: alpha.id) == nil,
+            ProjectDatabase.resolveAnchorHeading(existing: [alpha], newBlocks: [newHeading], anchorId: alpha.id) == nil,
             "an isBibliography anchor row must decline, matching the anchorHeadingId: nil baseline"
         )
     }

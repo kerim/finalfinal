@@ -17,8 +17,9 @@
 //  `testJSEvaluator` seam, so these tests need no run loop, no WebView load, and
 //  no wall-clock settling. The only clocks that run are the two per-instance
 //  overrides — the poll watchdog (`testPollWatchdogSeconds`) and, for the
-//  valve-abandon path alone, the apply-chain valve (`testApplyChainWaitSeconds`) —
-//  so no other concurrently running suite is affected
+//  late-apply path alone, the writer's turn-stall expiry (`testWriterLateAfterSeconds`,
+//  threaded through to `DocumentWriter` by `BlockSyncService`) — so no other
+//  concurrently running suite is affected
 //  (`DiagnosticLogFile.swift:57-61` is the same reasoning for its own
 //  instance-scoped test override). Timeout observation is an instance-scoped
 //  handler (`testPollTimeoutHandler`), never the process-global `DebugLog.always`
@@ -85,11 +86,18 @@ final class ScriptedJSEvaluator {
 
     func callCount(_ key: String) -> Int { callCounts[key] ?? 0 }
 
-    /// Suspends until `key` has been called at least `count` times.
-    func waitUntilCallEntry(_ key: String, _ count: Int) async {
-        while callCount(key) < count {
+    /// Suspends until `key` has been called at least `count` times. Bounded and
+    /// cancellation-aware, matching every sibling "wait until" helper in this suite
+    /// (`waitUntil`, `backPressureWaitUntil`) — the suite's own
+    /// `.timeLimit(.minutes(1))` is only a backstop, not a substitute for this.
+    @discardableResult
+    func waitUntilCallEntry(_ key: String, _ count: Int, iterations: Int = 100_000) async -> Bool {
+        for _ in 0..<iterations {
+            if callCount(key) >= count { return true }
+            if Task.isCancelled { return false }
             await Task.yield()
         }
+        return callCount(key) >= count
     }
 
     /// Suspends until this evaluator is actually parked inside its wedge.
@@ -282,9 +290,11 @@ func makeStack(content: String = "# Alpha\n\none two three.\n\n# Beta\n\nfour fi
 /// empty keep `shouldRejectStaleSnapshot` (which early-returns unless deletes or inserts
 /// are non-empty) off the path and never call `confirmBlockIds` — no temp→permanent ID
 /// mapping to confirm. `inserts` is used only by the wire-contract test and the epoch-barrier
-/// tests (BlockSyncPollWatchdogTests+EpochBarrier.swift).
-func blockChangesJSON(updates: [BlockUpdate] = [], inserts: [BlockInsert] = []) throws -> String {
-    let changes = BlockChanges(updates: updates, inserts: inserts, deletes: [])
+/// tests (BlockSyncPollWatchdogTests+EpochBarrier.swift). `deletes` (t-94369a83 Phase 1) is
+/// used by the stuck-insert-save tests (BlockSyncPollWatchdogTests+StuckSave.swift) to build
+/// a batch that deletes a still-unresolved temp id.
+func blockChangesJSON(updates: [BlockUpdate] = [], inserts: [BlockInsert] = [], deletes: [String] = []) throws -> String {
+    let changes = BlockChanges(updates: updates, inserts: inserts, deletes: deletes)
     let data = try JSONEncoder().encode(changes)
     guard let json = String(data: data, encoding: .utf8) else {
         throw BlockChangesJSONError.notUTF8
@@ -368,7 +378,6 @@ struct BlockSyncPollWatchdogTests {
     func forcedWedgeReturnsAtWatchdog_andLogsUnconditionalTimeoutWithForceFlag() async throws {
         let stack = try makeStack()
         let sync = stack.sync
-        _ = stack.editorState
 
         let js = ScriptedJSEvaluator()
         js.answer("flushPendingBlockChanges", true)
@@ -402,28 +411,42 @@ struct BlockSyncPollWatchdogTests {
                 "the checkForChanges wire script changed — got \(js.scripts)")
 
         js.releaseWedge()
+        _ = stack.editorState
     }
 
-    /// T3. The batching hazard the apply chain exists for: cycle 1 times out while
-    /// ALREADY HOLDING batch X (the JS side cleared its queues when it produced X,
-    /// so X is consumed and must land), then cycle 2 fetches the newer batch Y.
-    /// Fetch order — not cycle-start order — is what the chain serializes on, so X
-    /// must land BEFORE Y: the shared block ends on Y's text, X's unique edit
-    /// survives.
+    /// T3. The ordering hazard `DocumentWriter` exists for: cycle 1 times out (its own
+    /// poll watchdog, not the writer) while ALREADY HOLDING batch X (the JS side
+    /// cleared its queues when it produced X, so X is consumed and must land), then
+    /// cycle 2 fetches the newer batch Y. Fetch order — not cycle-start order — is
+    /// what the writer serializes turns on, so X must land BEFORE Y: the shared block
+    /// ends on Y's text, X's unique edit survives.
     ///
-    /// M4/A11: `testApplyChainWaitSeconds` is pinned LONG (30s) so cycle 2 WAITS for
-    /// cycle 1 instead of abandoning it — with the new 3s default, cycle 2's valve
-    /// could otherwise expire and drop X, which is deliberately T4's scenario.
+    /// t-94369a83 Phase 1: no override needed for cycle 2 to wait for cycle 1 — the
+    /// writer's default turn-stall expiry (3.0s production value) is far longer than
+    /// this test's own wedge/release window, so cycle 2 parks on `ticket.waitForTurn()`
+    /// and is released normally once cycle 1's wedge opens and X actually applies.
+    /// (Making that expiry fire and drop into the late path instead is deliberately
+    /// T4's scenario.)
     ///
     /// M3/A5 interaction: cycle 1's wedge is INSIDE the fetch, so its batch has not
     /// been handed to Swift and it counts as an outstanding pre-fetch orphan, which
-    /// pauses UNFORCED ticks. Cycle 2 is therefore driven forced — which is also the
+    /// may pause unforced ticks (after one probe, up to a hard cap; see
+    /// +BackPressure). Cycle 2 is therefore driven forced — which is also the
     /// realistic caller (a forced flush arriving while an orphan holds a consumed
     /// batch) and is exactly the path that bypasses the back-pressure.
     @Test("Apply chain: a timed-out orphan that already holds batch X still writes X, and a later cycle's newer batch Y wins on shared block ids")
     func applyChain_orphanBatchXLandsBeforeNewerBatchY_onSharedBlockIds() async throws {
         let stack = try makeStack()
         let (db, pid, sync, editorState) = (stack.db, stack.pid, stack.sync, stack.editorState)
+        // Explicit and large, not the production 3.0s default: this test's own claim
+        // ("no override needed... the writer's default turn-stall expiry is far
+        // longer than this test's own wedge/release window") depended on outrunning
+        // production timing under load, so under a slow/contended CI run cycle 2
+        // could silently take the LATE-merge path (T4's scenario) instead of parking
+        // on `waitForTurn()`, and still pass -- masking the very ordering distinction
+        // this test claims to prove. Pin it far above any realistic wedge/release
+        // window so it actually tests strict turn order.
+        sync.testWriterLateAfterSeconds = 30
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
         let blockA = try #require(blocks.first { $0.textContent.contains("one two three") },
@@ -445,9 +468,6 @@ struct BlockSyncPollWatchdogTests {
         js.wedgeOn("getBlockChanges")
         sync.testJSEvaluator = { try await js.evaluate($0) }
 
-        // M4/A11: keep cycle 2 waiting for cycle 1 rather than abandoning it.
-        sync.testApplyChainWaitSeconds = 30
-
         // M5: instance-scoped timeout signal instead of the process-global sink.
         let timedOut = StartSignal()
         sync.testPollTimeoutHandler = { timedOut.fire() }
@@ -455,7 +475,7 @@ struct BlockSyncPollWatchdogTests {
         let applies = CountGate()
         sync.testAfterApplyHook = { await applies.note() }
 
-        // Cycle 1 fetches X and parks inside the fetch, holding chain node 1.
+        // Cycle 1 fetches X and parks inside the fetch, holding the writer's frontier.
         let cycle1 = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
         await js.waitUntilEnteredWedge()
         await cycle1.value
@@ -463,8 +483,8 @@ struct BlockSyncPollWatchdogTests {
         #expect(sync.testInFlightPollIsNil,
                 "cycle 1's slot must be free while its orphan is still parked on the fetch")
 
-        // Cycle 2 fetches the newer Y and parks on node 1 (or, with no chain at all,
-        // applies Y immediately — see the final assertions).
+        // Cycle 2 fetches the newer Y and parks behind cycle 1's turn (or, with no
+        // ordering at all, applies Y immediately — see the final assertions).
         let cycle2 = Task { @MainActor in await sync.pollBlockChangesForTest(force: true) }
         await js.waitUntilCallEntry("getBlockChanges", 2)
         await cycle2.value
@@ -487,20 +507,26 @@ struct BlockSyncPollWatchdogTests {
     }
 
     // swiftlint:disable line_length
-    /// T4. The L6 valve-abandon path: a successor gives up on a wedged predecessor and
-    /// marks it abandoned; when the predecessor finally resumes it MERGES its (older)
-    /// batch per block — block A is shared with the successor's newer batch and keeps
-    /// the successor's text, while block B, which only the predecessor touched, still
-    /// lands — and a later cycle still applies normally.
+    /// T4 (t-94369a83 Phase 1). The turn-stall-expiry / late-apply path: cycle 2 gives
+    /// up waiting on a wedged cycle 1 (the writer marks cycle 1's sequence LATE, not
+    /// abandoned) and proceeds; when cycle 1 finally resumes it applies LATE, and the
+    /// persisted (epoch, sequence) write guard merges it per block — block A is
+    /// shared with the successor's newer batch and keeps the successor's text, while
+    /// block B, which only the predecessor touched, still lands — and a later cycle
+    /// still applies normally.
     ///
-    /// Only the VALVE fires in the interesting phase: the watchdog is lengthened to 30s
-    /// for cycle 2 and the valve shortened to 0.05s, so cycle 2's apply is what proves
-    /// the valve expired (not a timeout). Cycle 1 must first time out under a SHORT
-    /// watchdog, because that is the only way its in-flight slot is freed while it is
-    /// still parked on its fetch — otherwise no second cycle could start at all.
-    @Test("Apply chain valve: a successor that gives up on a wedged predecessor abandons it, and the predecessor's batch is merged per block (shared ids keep the newer text, its own blocks still land) (L6)")
+    /// Only the writer's turn-stall expiry fires in the interesting phase: the poll
+    /// watchdog is lengthened to 30s for cycle 2 and the expiry shortened to 0.3s, so
+    /// cycle 2's apply is what proves the expiry fired (not a poll timeout). Cycle 1
+    /// must first time out under a SHORT poll watchdog, because that is the only way
+    /// its in-flight slot is freed while it is still parked on its fetch — otherwise
+    /// no second cycle could start at all. That poll-level timeout is unrelated to
+    /// (and strictly shorter than) the writer's own turn-stall expiry: cycle 1's
+    /// sequence stays `.reserved` the whole time regardless of the poll watchdog,
+    /// because its fetch continuation never actually resumes until `releaseWedge()`.
+    @Test("A cycle that gives up waiting on a wedged predecessor proceeds once its turn goes late, and the predecessor's batch is merged per block when it finally resumes (shared ids keep the newer text, its own blocks still land)")
     // swiftlint:enable line_length
-    func applyChainValveExpiry_abandonsWedgedPredecessor_whoseBatchIsMergedPerBlock() async throws {
+    func writerLateApply_predecessorResumesAndIsMergedPerBlock() async throws {
         let stack = try makeStack()
         let (db, pid, sync, editorState) = (stack.db, stack.pid, stack.sync, stack.editorState)
 
@@ -533,8 +559,20 @@ struct BlockSyncPollWatchdogTests {
         let timedOut = StartSignal()
         sync.testPollTimeoutHandler = { timedOut.fire() }
 
-        // Phase 1: cycle 1 must FREE the slot (so cycle 2 can start) while staying
-        // parked on its fetch.
+        // M5/A12 precedent, extended to the writer: instance-scoped event signals
+        // instead of the process-global `DebugLog.alwaysSink`. `WriterEventSignal`
+        // (DocumentWriterTests.swift), not `StartSignal`: the writer's event handler
+        // is `@Sendable` and non-async, called from nonisolated contexts, so it
+        // cannot call a MainActor-isolated `StartSignal.fire()` directly.
+        let expired = WriterEventSignal(matching: { if case .expired = $0 { return true }; return false })
+        let lateApplied = WriterEventSignal(matching: { if case .lateApply = $0 { return true }; return false })
+        sync.testWriterEventHandler = { event in
+            expired.note(event)
+            lateApplied.note(event)
+        }
+
+        // Phase 1: cycle 1 must FREE the poll slot (so cycle 2 can start) while
+        // staying parked on its fetch — its sequence stays `.reserved`.
         sync.testPollWatchdogSeconds = 0.2
         let cycle1 = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
         await js.waitUntilEnteredWedge()
@@ -543,71 +581,52 @@ struct BlockSyncPollWatchdogTests {
         #expect(sync.testInFlightPollIsNil,
                 "cycle 1's slot must be free while its orphan is parked on the fetch")
 
-        // Phase 2: from here only the VALVE may fire.
+        // Phase 2: from here only the writer's turn-stall expiry may fire.
         sync.testPollWatchdogSeconds = 30
-        sync.testApplyChainWaitSeconds = 0.05
+        sync.testWriterLateAfterSeconds = 0.3
 
-        // Cycle 2 fetches Y, parks on cycle 1's node, and gives up on it. Forced:
-        // cycle 1 is an outstanding pre-fetch orphan, which pauses unforced ticks.
+        // Cycle 2 fetches Y and parks behind cycle 1's turn until it goes late. Forced:
+        // cycle 1 is an outstanding pre-fetch orphan, which may pause unforced ticks
+        // (after one probe, up to a hard cap; see +BackPressure).
         let cycle2 = Task { @MainActor in await sync.pollBlockChangesForTest(force: true) }
         await cycle2.value
         await applies.waitFor(1)
+        await expired.wait()
 
         let afterY = try TestFixtureFactory.fetchBlocks(from: db)
         let yText = Dictionary(uniqueKeysWithValues: afterY.map { ($0.id, $0.textContent) })
         #expect(yText[blockA.id] == "Y alpha text",
-                "cycle 2 must still apply its own newer batch after abandoning cycle 1 — got \(String(describing: yText[blockA.id]))")
+                "cycle 2 must still apply its own newer batch once cycle 1's turn goes late — got \(String(describing: yText[blockA.id]))")
 
-        // Release the abandoned predecessor and watch the MERGE: it resumes with X,
-        // and the persisted (epoch, sequence) write guard drops only the id a newer
-        // batch WROTE (block A — Y's) inside the write transaction, applying the rest
-        // (block B, which only X touched). The sink is installed for just this window
-        // to capture the unconditional merge line; the suite is `.serialized`, so no
-        // sibling test's line can interleave in this window.
-        //
-        // This test is ALSO the end-to-end proof that `BlockSyncService` threads its
-        // own real `fetchSequence` through to the DB write as the stamp's sequence
-        // half (no hand-built stamp anywhere in it) — the merge counts below (merged=1
-        // superseded=1) only come out right if the service's real stamps, not a stub,
-        // drove the guard's per-row decision.
-        let capture = AlwaysLogCapture()
-        DebugLog.alwaysSink = { capture.append($0) }
-        defer { DebugLog.alwaysSink = nil }
+        // Release the late predecessor and watch it apply LATE: the persisted
+        // (epoch, sequence) write guard drops only the id a newer batch WROTE
+        // (block A — Y's) inside the write transaction, applying the rest (block B,
+        // which only X touched).
         js.releaseWedge()
-        let merged = await waitUntil { sync.testOwnBatchAbandonCount == 1 }
-        #expect(merged,
-                "cycle 1 must observe that it was abandoned and merge its batch — got \(sync.testOwnBatchAbandonCount)")
-        // The counter is now bumped AFTER the merged apply runs (it reads the write
-        // transaction's own result) rather than before, but `waitUntil` above polls
-        // until it is set either way, so wait for that extra apply the same way:
-        // cycle 2's Y plus cycle 1's filtered X.
+        await lateApplied.wait()
         await applies.waitFor(2)
         #expect(applies.value == 2,
-                "the abandoned predecessor must apply its MERGED batch (block B only), not drop it — got \(applies.value) applies")
-        DebugLog.alwaysSink = nil
-        #expect(capture.captured.contains {
-                    $0.contains("[BlockSync] apply chain: own batch arrived after a successor applied")
-                        && $0.contains("merged=1") && $0.contains("superseded=1")
-                },
-                "the merge must be logged unconditionally with its counts — got \(capture.captured)")
+                "the late predecessor must apply its MERGED batch (block B only), not drop it — got \(applies.value) applies")
+        #expect(sync.testWriterLedger.lateApplies == 1,
+                "exactly one late apply — got \(sync.testWriterLedger)")
 
         let afterX = try TestFixtureFactory.fetchBlocks(from: db)
         let xText = Dictionary(uniqueKeysWithValues: afterX.map { ($0.id, $0.textContent) })
         #expect(xText[blockA.id] == "Y alpha text",
-                "block A is shared: Y's newer text must survive the late, abandoned X — got \(String(describing: xText[blockA.id]))")
+                "block A is shared: Y's newer text must survive the late apply — got \(String(describing: xText[blockA.id]))")
         #expect(xText[blockB.id] == "X beta text",
-                "block B is X's own edit and no newer batch wrote it: the merged batch must land it — got \(String(describing: xText[blockB.id]))")
+                "block B is X's own edit and no newer batch wrote it: the late apply must land it — got \(String(describing: xText[blockB.id]))")
 
-        // A later cycle still lands: the chain is not wedged by the abandoned node.
+        // A later cycle still lands: the writer is not wedged by the late sequence.
         let released = await waitUntil { sync.testOutstandingPrefetchOrphans == 0 }
-        #expect(released, "the abandoned orphan must release the back-pressure counter")
+        #expect(released, "the released orphan must release the back-pressure counter")
         let cycle3 = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
         await cycle3.value
         await applies.waitFor(3)
         let afterZ = try TestFixtureFactory.fetchBlocks(from: db)
         let zText = Dictionary(uniqueKeysWithValues: afterZ.map { ($0.id, $0.textContent) })
         #expect(zText[blockB.id] == "Z beta text",
-                "a later cycle's batch must still land after the merge — got \(String(describing: zText[blockB.id]))")
+                "a later cycle's batch must still land after the late apply — got \(String(describing: zText[blockB.id]))")
         _ = (pid, editorState)
     }
 
@@ -620,7 +639,6 @@ struct BlockSyncPollWatchdogTests {
     func drainCancelsInFlightUnforcedCycle_promptly() async throws {
         let stack = try makeStack()
         let sync = stack.sync
-        _ = stack.editorState
         // The watchdog cannot realistically fire here: its absence from the outcome
         // is the promptness signal.
         sync.testPollWatchdogSeconds = 30
@@ -666,6 +684,7 @@ struct BlockSyncPollWatchdogTests {
         // cancellation is observed before any JS call at all.
         #expect(js.callCount("hasBlockChanges") == 0,
                 "the cancelled cycle must unwind before any JS call — got \(js.callCount("hasBlockChanges"))")
+        _ = stack.editorState
     }
 
     /// T6. Freeze the wire contract (A14): the poll path must issue exactly these JS
@@ -680,7 +699,6 @@ struct BlockSyncPollWatchdogTests {
         let stack = try makeStack()
         let db = stack.db
         let sync = stack.sync
-        _ = (stack.pid, stack.webView, stack.editorState)
         // Long watchdog: this test is about script text, not timing.
         sync.testPollWatchdogSeconds = 30
 
@@ -720,5 +738,6 @@ struct BlockSyncPollWatchdogTests {
         let expectedConfirm = "window.FinalFinal.confirmBlockIds(JSON.parse(`\(mappingJSON)`)); true"
         #expect(js.scripts.contains(expectedConfirm),
                 "confirmBlockIds wire script changed — expected \(expectedConfirm), got \(js.scripts)")
+        _ = (stack.pid, stack.webView, stack.editorState)
     }
 }

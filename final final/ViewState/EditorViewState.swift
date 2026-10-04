@@ -148,6 +148,25 @@ class EditorViewState {
                     // its own contentState transition back to .idle on every exit path (M1,
                     // judge fix round).
                     guard !self.isZoomRestoreInProgress else { return }
+                    // Phase 2 (t-94369a83), §2.8: wait out an in-flight system write
+                    // rather than force-resetting contentState from under it -- see
+                    // `systemWriteInFlight`'s own doc comment.
+                    //
+                    // Review fix (finding #13): the old comment here claimed a flat "I-SYS's
+                    // 5s stall backstop plus the 3s late-expiry margin" bound -- not actually
+                    // a hard ceiling. I-SYS's stall backstop is PER SYSTEM WRITE: if several
+                    // are queued, each one individually gets its own 5s window before being
+                    // skipped, so N queued, all-stalling writes could take roughly N x 5s, not
+                    // a flat 8s. And once a write is admitted past the stall backstop and
+                    // actually reaches `applySystemWrite`, the DB write itself has NO timeout
+                    // of its own -- a genuinely stuck write (e.g. blocked on a lock) could keep
+                    // this loop waiting indefinitely. In the ordinary, expected case this
+                    // resolves in well under a second; there is no hard bound for the
+                    // pathological one.
+                    while self.systemWriteInFlight > 0, !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(500))
+                    }
+                    guard !Task.isCancelled else { return }
                     if self.contentState != .idle {
                         if self.contentState == .zoomTransition {
                             // M1 (judge fix round, CRITICAL): clearing zoomedSectionId/
@@ -180,6 +199,25 @@ class EditorViewState {
     /// Watchdog task that resets contentState if stuck in non-idle state for >5 seconds
     private var contentStateWatchdog: Task<Void, Never>?
 
+    #if DEBUG
+    /// Test seam (t-94369a83 3a-1b C5b, N10): whether the content-state watchdog has no live task. A completed
+    /// close or switch ends with `resetForProjectSwitch()` setting `contentState = .idle`, whose `didSet` cancels
+    /// and drops the watchdog; the N10 test asserts that after a close tail with a system write parked behind
+    /// the held barrier. Read-only; no production behaviour.
+    var testContentStateWatchdogIsNil: Bool { contentStateWatchdog == nil }
+    #endif
+
+    /// Phase 2 (t-94369a83), §2.8: incremented by `BlockSyncService.performSystemWrite`
+    /// for the whole reserve-through-apply span of a system write (bibliography/Notes/
+    /// heading-level), decremented via `defer` on every exit. `contentStateWatchdog`
+    /// waits this out (bounded by I-SYS's 5s stall backstop plus the 3s late-expiry
+    /// margin) rather than force-resetting `contentState` out from under an in-flight
+    /// system write -- a hierarchy-enforcement write in particular can itself run
+    /// longer than this watchdog's plain 5s bound. The hierarchy flow still owns its
+    /// own return to idle via `enforceHierarchyAsync`'s existing `defer { contentState
+    /// = .idle }`; this only defers the WATCHDOG's own force-reset, never replaces it.
+    var systemWriteInFlight: Int = 0
+
     /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.
     /// Set to true IMMEDIATELY BEFORE content change, cleared AFTER acknowledgement.
     /// This flag is passed directly to editor views and read in the same updateNSView cycle as content.
@@ -191,8 +229,9 @@ class EditorViewState {
 
     /// Suppresses `.bibliographySectionChanged` handling for the duration of a project
     /// switch -- a bounded WINDOW, not a one-shot consumed flag (round 4,
-    /// doc-open-blank-regression). Armed at the very top of `ContentView.handleProjectOpened()`
-    /// and CHECKED (never reset by the consumer) by `ContentView.handleBibliographySectionChanged()`.
+    /// doc-open-blank-regression). Armed by the lifecycle's open tail (`ContentView.runOpenTail`,
+    /// ContentView+LifecycleTails.swift) and CHECKED (never reset by the consumer) by
+    /// `ContentView.handleBibliographySectionChanged()`.
     ///
     /// Round 4.1: moved here from a `@State Bool` on `ContentView` itself. That shape was
     /// correct in production (a live SwiftUI view installs `@State`'s storage normally) but
@@ -205,16 +244,16 @@ class EditorViewState {
     /// exactly why THEIR mutations already worked reliably in tests while this one didn't.
     ///
     /// Why not one-shot: a mid-switch bibliography flush (`flushPendingSync`, called
-    /// explicitly from `handleProjectOpened()`) and the OLD project's own independent
+    /// explicitly from the old `handleProjectOpened()`, before 3a-1b) and the OLD project's own independent
     /// debounce timer (`BibliographySyncService`'s 1s `debounceTask`) can BOTH post
     /// `.bibliographySectionChanged` during the same switch. A one-shot flag that resets
     /// itself on first consumption (round 3's shape) protects only whichever of the two
     /// posts first, leaving the other free to run `handleBibliographySectionChanged`'s own
     /// unstructured `Task` -- which sets `isResettingContent = true` then `false` on a
-    /// schedule `handleProjectOpened()` doesn't control -- reopening the blank-pane publish
+    /// schedule the open sequence doesn't control -- reopening the blank-pane publish
     /// window this mechanism exists to close.
     ///
-    /// Cleared at the 3 points in `handleProjectOpened()` where ITS OWN switch machinery
+    /// Cleared at the 3 points in `ContentView.configureAndPushContentAfterProjectSwitch` where ITS OWN switch machinery
     /// declares `isResettingContent` settled again: the synchronous Source-mode branch, the
     /// WYSIWYG branch's async content-push `Task`, and that Task's 3-second watchdog (a hard
     /// backstop, so the window is bounded to at most ~3s even if the WYSIWYG content push
@@ -224,100 +263,10 @@ class EditorViewState {
     /// arbitrary timer.
     ///
     /// Deliberately NOT reset by `resetForProjectSwitch()` below: that call happens WHILE
-    /// this window is still meant to be armed (partway through `handleProjectOpened()`,
+    /// this window is still meant to be armed (partway through the open tail,
     /// before any of the 3 clear points above), so clearing it there would reopen the window
     /// early.
     var suppressBibliographyRebuildsDuringSwitch = false
-
-    /// Suppresses `.bibliographySectionChanged` AND `.notesSectionChanged` handling for
-    /// the duration of quit -- same CHECKED-not-consumed shape as
-    /// `suppressBibliographyRebuildsDuringSwitch` above, mirrored rather than reinvented,
-    /// but covering both rebuild handlers (the switch flag only ever guarded the
-    /// bibliography one -- `ContentView.handleNotesSectionChanged()` has no equivalent
-    /// guard today, and still doesn't for the switch case; this property is quit-only --
-    /// see `suppressRebuildsForClose` below for the equivalent covering project close).
-    ///
-    /// Armed at the very top of `EditorViewState.flushForQuit()`, BEFORE
-    /// `stopPollingAndDrain()` and the rest of the flush. Closes the gap
-    /// `stopPollingAndDrain()` leaves open: that call only stops the periodic poll
-    /// Timer and drains whatever unforced cycle is already in flight -- it has no idea
-    /// `flushAllSync()` (via `flushPendingBibliographyAndFootnoteSync()`) is about to
-    /// force a still-pending, debounced bibliography/Notes update to run, which (if
-    /// it writes a new section) posts `.bibliographySectionChanged` /
-    /// `.notesSectionChanged`. Unsuppressed, either handler would set
-    /// `contentState`/`isResettingContent` and spawn its own untracked `Task` that
-    /// calls `pollBlockChangesNowForDatabaseRebuild()` -- a FORCED poll that bypasses
-    /// `stopPollingAndDrain()`'s drain entirely and can re-apply a still-unconfirmed
-    /// insert on top of the row `flushForQuit()`'s own flush just wrote (the same
-    /// duplicate-paragraph shape as Finding #8, reached through a citation- or
-    /// footnote-bearing paragraph instead of a plain one).
-    ///
-    /// Deliberately never cleared: unlike the switch window (which must reopen for the
-    /// NEXT project), quit has no "after" -- `flushForQuit()`'s only caller
-    /// (`AppDelegate.applicationShouldTerminate`) proceeds straight to the auto-backup
-    /// wait and then terminates the process. The rebuild's only job is refreshing what
-    /// the editor SHOWS, which no one is about to look at again; the bibliography/Notes
-    /// database writes those handlers would have re-read already happened via
-    /// `flushPendingBibliographyAndFootnoteSync()` itself, independently of this poll.
-    var suppressRebuildsForQuit = false
-
-    /// Suppresses `.bibliographySectionChanged` AND `.notesSectionChanged` handling for
-    /// the duration of project close -- same CHECKED-not-consumed shape as
-    /// `suppressRebuildsForQuit` above, mirrored rather than reinvented, and covering the
-    /// same two rebuild handlers.
-    ///
-    /// DEFENSIVE, not a bug this flag is likely to actually catch in the running app: the
-    /// only subscribers to either notification are `ContentView`'s own `.onReceive`
-    /// (`ContentView.swift`), and `FinalFinalApp.handleProjectClosed()` swaps `rootView` to
-    /// `.picker` synchronously as soon as `.projectDidClose` arrives -- before
-    /// `performProjectClose` even starts running. By the time
-    /// `flushPendingBibliographyAndFootnoteSync` posts either notification, after the drain
-    /// and up to a further 3s wait, SwiftUI has almost certainly already torn `ContentView`
-    /// (and its subscriptions) down. View teardown timing isn't a guarantee, though, and
-    /// `performProjectClose` keeps running regardless of whether the view is gone -- this
-    /// flag closes the reachable path outright rather than depending on that race.
-    ///
-    /// Armed synchronously in `ContentView.handleProjectClosed()`, before the `Task` that
-    /// calls `performProjectClose(fetchContent:)` even starts -- closing the gap between the
-    /// `.projectDidClose` notification arriving and that `Task`'s first run, where a debounce
-    /// firing in between could otherwise still reach an unguarded handler. Also kept as the
-    /// first statement inside `performProjectClose` itself: that function is also called
-    /// directly, with a stubbed fetch, by `ProjectCloseStaleContentTests`, which has no
-    /// `handleProjectClosed()` call to arm the flag first. Closes the same gap
-    /// `suppressRebuildsForQuit` closes for quit: `stopPollingAndDrain()` only stops the
-    /// periodic poll Timer and drains whatever unforced cycle is already in flight -- it has
-    /// no idea `performProjectClose` is about to call
-    /// `flushPendingBibliographyAndFootnoteSync(overrideContent:)` directly, which forces a
-    /// still-pending, debounced bibliography/Notes update to run right away. Unsuppressed,
-    /// either handler would spawn its own untracked `Task` that calls
-    /// `pollBlockChangesNowForDatabaseRebuild()` -- a FORCED poll that bypasses
-    /// `stopPollingAndDrain()`'s drain entirely and can re-apply a still-unconfirmed insert on
-    /// top of the row the close flush just wrote (the same duplicate-paragraph shape
-    /// `suppressRebuildsForQuit` guards against, reached through a citation- or
-    /// footnote-bearing paragraph instead of a plain one).
-    ///
-    /// Deliberately never cleared, for the same reason as `suppressRebuildsForQuit`: close
-    /// has no "after" for THIS `EditorViewState` to see. `EditorViewState` is `ContentView`'s
-    /// `@State`, and `performProjectClose`'s only caller discards `ContentView` (and with it
-    /// this `EditorViewState`): `FinalFinalApp.handleProjectClosed()` swaps `rootView` to
-    /// `.picker` synchronously as soon as `.projectDidClose` arrives -- before
-    /// `performProjectClose` even starts -- and `onProjectClosed` (called at the end of
-    /// `performProjectClose`) swaps it again. Reopening a project builds a brand-new
-    /// `ContentView` and `EditorViewState` with this flag back at its `false` default, so
-    /// there is no window left to reopen. Clearing at the end of close instead of never would
-    /// gain little: `flushPendingBibliographyAndFootnoteSync` stops WAITING after 3s, but an
-    /// update it gave up on can still post its notification later, after this function has
-    /// returned -- by then `resetForProjectSwitch()` has already set `content = ""`, and each
-    /// handler's OWN empty-content check (which runs before either suppress check) already
-    /// blocks that late post on its own. This flag only does real work in the narrower window
-    /// between the flush and that reset.
-    ///
-    /// INVARIANT this design depends on: every close discards this `ContentView`/
-    /// `EditorViewState` pair rather than reusing it. If a future change ever reuses an
-    /// `EditorViewState` across a close (instead of constructing a fresh one on reopen), that
-    /// change MUST also clear this flag somewhere in the reuse path, or every rebuild
-    /// notification handled by the reused instance would be silently suppressed forever.
-    var suppressRebuildsForClose = false
 
     /// IDs of sections included in the zoom (root + descendants)
     var zoomedSectionIds: Set<String>?
@@ -484,10 +433,11 @@ class EditorViewState {
     var content: String = ""
 
     /// Authoritative stand-in for `content` during a project-switch flush, while `content`
-    /// itself is deliberately stale for the whole window (see
-    /// `ContentView.flushAllPendingContent()`'s doc comment for the full mechanism).
+    /// itself is deliberately stale for the whole window (see `freshContentForLifecycle`,
+    /// EditorViewState+Lifecycle.swift, which stages it for a Markdown lifecycle; the old
+    /// `flushAllPendingContent()` did the same for every project switch before 3a-1b).
     ///
-    /// Set there -- to the freshest content that function could obtain -- right after it
+    /// Set there -- to the freshest content it could obtain -- right after it
     /// resolves what to flush, and cleared by `resetForProjectSwitch()` once the window
     /// ends. `flushContentToDatabase(overrideContent:)` prefers this over `content` whenever
     /// it is set and no explicit `overrideContent` was passed.
@@ -596,6 +546,25 @@ class EditorViewState {
     /// a new one. Moved here for the same reason and with the same guarantee: a plain stored
     /// property on a class is visible to the next read unconditionally, mounted view or not.
     var pendingBibliographyRebuildAfterZoom: Bool = false
+
+    /// The rebuild requests a bibliography / Notes / footnote notification could not run yet, kept until the
+    /// editor is idle again: drained one per idle transition by `ContentView.handleContentStateChange`, dropped
+    /// by a project switch (`ContentView+ProjectLifecycle`), and -- while a close / switch / quit holds the
+    /// editor (`activeLifecycle != nil`, t-94369a83 3a-1b round C4) -- the place the three rebuild handlers
+    /// DEFER to instead of starting a rebuild inside the window. A cancelled lifecycle re-posts them (round
+    /// C5a), a completed one drops them (round C5b).
+    ///
+    /// These were `ContentView` `@State` properties. They live here, on a class, for the same reason
+    /// `pendingBibliographyRebuildAfterZoom` above does: a `@State` write on a bare, never-mounted
+    /// `ContentView()` is silently dropped, so a test could never observe that a handler had deferred.
+    /// Not observed: no view reads them.
+    @ObservationIgnored
+    var pendingBibliographyRebuild = false
+    @ObservationIgnored
+    var pendingNotesRebuild = false
+    /// Footnote labels awaiting insertion while `contentState != .idle` or a lifecycle holds the editor.
+    @ObservationIgnored
+    var pendingFootnoteLabels = PendingFootnoteQueue()
 
     // MARK: - Document Goal Settings
     var documentGoal: Int?
@@ -706,6 +675,44 @@ class EditorViewState {
     /// Footnote sync service reference (injected by ContentView)
     weak var footnoteSyncService: FootnoteSyncService?
 
+    // MARK: - Lifecycle (t-94369a83 Phase 3a-1b, round C2)
+    //
+    // The state a close / project switch / quit runs against (slice-3a-1b-everyday.md section 5.2). The
+    // token API (`armLifecycle` / `clearLifecycle`) and everything else that operates on these lives in
+    // `EditorViewState+Lifecycle.swift`; an extension cannot hold stored properties, so they sit here.
+    //
+    // Everything except `activeLifecycle` is `@ObservationIgnored` (N34): none of it is UI state, and an
+    // observed write inside the save sequence would invalidate views for no reason.
+
+    /// The close / switch / quit currently holding this editor, or nil. Written only through
+    /// `armLifecycle(_:wasGettingStarted:)` and `clearLifecycle(_:)`; read by the gates the later rounds add.
+    var activeLifecycle: LifecycleToken?
+
+    /// The writer barrier a lifecycle holds from the end of its save sequence to its tail. Exactly ONE
+    /// owner holds it (N9) and it is released through a `defer` on every exit path.
+    @ObservationIgnored
+    var lifecycleBarrier: BarrierHandle?
+
+    /// Every running bibliography / Notes / footnote rebuild Task, by id (item 21: a collection, not one
+    /// slot). The save sequence awaits all of them to completion before it forces a poll.
+    @ObservationIgnored
+    var runningRebuildTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// The closures ContentView installs in `.task` and removes in `.onDisappear` (item 11). Nil whenever
+    /// no ContentView is mounted for this editor state. A lifecycle captures the host into
+    /// `LifecycleEntry.current` at arm and never reads this property again (N26).
+    @ObservationIgnored
+    var lifecycleHost: LifecycleHost?
+
+    /// The id of the lifecycle token whose save sequence completed (item 9): a quit that joins that
+    /// lifecycle sees it and does not flush a second time.
+    @ObservationIgnored
+    var lifecycleFlushDoneFor: UUID?
+
+    /// The id of the lifecycle token whose tail already made the automatic version (item 9).
+    @ObservationIgnored
+    var lifecycleBackupDoneFor: UUID?
+
     /// Pending image metadata for CodeMirror to pick up during zoom/rebuild transitions
     var pendingImageMeta: [ContentView.ImageBlockMeta]?
 
@@ -725,6 +732,12 @@ class EditorViewState {
     var blockReparseTask: Task<Void, Never>?
     /// Generation counter for blockReparseTask cooperative cancellation guard
     var blockReparseGeneration: Int = 0
+
+    /// How long the Source Mode re-parse waits after a content change before it writes (both the full-document
+    /// and the zoomed branch, `ContentSyncObserverHost.scheduleSourceModeReparse`). One second in the app; a
+    /// test shortens it on its own editor state so it does not have to wait.
+    @ObservationIgnored
+    var sourceReparseDebounce: Duration = .milliseconds(1000)
 
     /// Current persist task for cancellation on rapid successive reorders
     var currentPersistTask: Task<Void, Never>?

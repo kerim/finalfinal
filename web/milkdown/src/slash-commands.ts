@@ -130,7 +130,7 @@ function updateSlashMenu(filter: string) {
     if (insideTable && cmd.disabledInsideTable) return false;
     return true;
   });
-  // t-784ff3aa fix round: no recompute call here -- see `configureSlash`'s `onShow`/`onHide`
+  // t-784ff3aa fix round: no recompute call here -- see `createSlashPluginView`'s `onShow`/`onHide`
   // hooks' doc comment for why a push from inside this function always raced the menu
   // element's own `data-show` flip (which happens later, back in `SlashProvider`'s internal
   // `#onUpdate`, after `shouldShow` -- and this function is only ever called from
@@ -309,7 +309,7 @@ function executeSlashCommand(index: number) {
       }
       filteredCommands = [];
       // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
-      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // fires the `onHide` hook registered in `createSlashPluginView`, which pushes the closed state
       // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
@@ -328,7 +328,7 @@ function executeSlashCommand(index: number) {
       if (slashProviderInstance) slashProviderInstance.hide();
       filteredCommands = [];
       // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
-      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // fires the `onHide` hook registered in `createSlashPluginView`, which pushes the closed state
       // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
@@ -343,7 +343,7 @@ function executeSlashCommand(index: number) {
       if (slashProviderInstance) slashProviderInstance.hide();
       filteredCommands = [];
       // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
-      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // fires the `onHide` hook registered in `createSlashPluginView`, which pushes the closed state
       // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
@@ -367,7 +367,7 @@ function executeSlashCommand(index: number) {
       }
       filteredCommands = [];
       // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
-      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // fires the `onHide` hook registered in `createSlashPluginView`, which pushes the closed state
       // at the exact moment `data-show` flips. See that hook's doc comment.
       // Re-enable slash menu after picker closes (handled by callback)
       requestAnimationFrame(() => {
@@ -386,7 +386,7 @@ function executeSlashCommand(index: number) {
       }
       filteredCommands = [];
       // t-784ff3aa: no recompute call here -- `slashProviderInstance.hide()` above always
-      // fires the `onHide` hook registered in `configureSlash`, which pushes the closed state
+      // fires the `onHide` hook registered in `createSlashPluginView`, which pushes the closed state
       // at the exact moment `data-show` flips. See that hook's doc comment.
       requestAnimationFrame(() => {
         suppressSlashMenu = false;
@@ -623,7 +623,7 @@ export function dismissSlashMenu(): void {
   // which is now load-bearing for the Swift bridge as well as this file's own internal checks.
   filteredCommands = [];
   // t-784ff3aa: no recompute call here -- `.hide()` above's own `onHide` hook (registered in
-  // `configureSlash`) already pushes the closed state synchronously, at the exact point
+  // `createSlashPluginView`) already pushes the closed state synchronously, at the exact point
   // `data-show` flips, which is this very call (not some later transaction).
 }
 
@@ -648,12 +648,39 @@ export function isNoOpSlashUpdate(prevState: EditorState | undefined, state: Edi
   return !!prevState && prevState.doc.eq(state.doc) && prevState.selection.eq(state.selection);
 }
 
-export function configureSlash(ctx: Ctx) {
-  slashMenuElement = createSlashMenu();
-  document.body.appendChild(slashMenuElement);
+/**
+ * Builds one plugin view's worth of slash UI: the menu element, its `SlashProvider`, and the
+ * document-level keydown listener -- and returns the `{ update, destroy }` view that owns them.
+ *
+ * Everything is created HERE, per plugin view, not once in `configureSlash`, because ProseMirror
+ * destroys every plugin view and re-runs every plugin's `spec.view(...)` factory whenever
+ * `view.updateState(state)` is handed a state whose `plugins` array differs from the previous
+ * one (`EditorView.updatePluginViews`). This app does that on EVERY project switch / Open Recent
+ * (`resetForProjectSwitch` -> `clearEditorHistory`, which ends in `view.updateState(...)` with a
+ * fresh history plugin) and on ordinary undo-stack eviction (`clearStructuralUndoState` ->
+ * `clearEditorHistory`). When the menu, provider and listener were created once in
+ * `configureSlash` but torn down by this view's `destroy()`, the re-run factory rebuilt none of
+ * them: after the first rebuild the "/" menu never opened again, and the arrow/Enter handling
+ * and Cmd-Z routing in `handleSlashKeydown` were gone, until the WebView was replaced.
+ *
+ * Per-view ownership (rather than one long-lived set that `destroy()` leaves alone) is also what
+ * a rebuild actually needs for the menu element itself: `SlashProvider` moves the element into
+ * `view.dom.parentElement` only on its FIRST update (`#initialized`), and Milkdown's own
+ * `MILKDOWN_VIEW_CLEAR` plugin discards and recreates that `.milkdown` container on every
+ * rebuild -- taking a long-lived menu element with it. A long-lived provider would never
+ * re-attach it; a fresh provider does, on its first update, into the new container.
+ *
+ * `destroy()` tears down exactly what this call created. The module-level handles are cleared
+ * only if they still point at THIS view's pieces, so a late `destroy()` can never null out a
+ * newer view's set. `selectedIndex`/`filteredCommands` are reset on both ends so a stale open
+ * state (e.g. `isSlashMenuOpen()` true, or arrow keys swallowed) cannot leak across a rebuild.
+ */
+function createSlashPluginView() {
+  const menu = createSlashMenu();
+  document.body.appendChild(menu);
 
-  slashProviderInstance = new SlashProvider({
-    content: slashMenuElement,
+  const provider = new SlashProvider({
+    content: menu,
     shouldShow(view) {
       // Pass custom matchNode to allow slash commands in both paragraphs and headings
       const content = this.getContent(view, (node) => node.type.name === 'paragraph' || node.type.name === 'heading');
@@ -683,10 +710,10 @@ export function configureSlash(ctx: Ctx) {
 
   // t-784ff3aa fix round, bug found in the FIX round's own re-verification: `SlashProvider`
   // (@milkdown/plugin-slash) debounces its internal update by 200ms by default (no `debounce`
-  // option is passed above) -- `slashProviderInstance.update()` merely (re)schedules that
+  // option is passed above) -- `provider.update()` merely (re)schedules that
   // debounced call; it does NOT synchronously run `shouldShow`/`updateSlashMenu` or flip the
   // menu element's `data-show` attribute. A `recomputeAndPushWebPopupState()` call placed
-  // right after `slashProviderInstance.update()` (as this code briefly did) or inside
+  // right after `provider.update()` (as this code briefly did) or inside
   // `updateSlashMenu` itself therefore always reads STALE `data-show` -- `.show()`/`.hide()`
   // (which is what actually flips it) run strictly AFTER `shouldShow` returns, on the SAME
   // debounced firing, with nothing re-running the recompute afterward. Net effect: the very
@@ -704,29 +731,19 @@ export function configureSlash(ctx: Ctx) {
   // that can change visibility, with no staleness window. Recompute calls that used to be
   // scattered after each of those `.hide()` calls, and the one inside `updateSlashMenu`, are
   // removed below in favor of these two hooks being the single source of truth.
-  slashProviderInstance.onShow = () => {
+  provider.onShow = () => {
     recomputeAndPushWebPopupState();
   };
-  slashProviderInstance.onHide = () => {
+  provider.onHide = () => {
     recomputeAndPushWebPopupState();
   };
 
-  ctx.set(slash.key, {
-    view: () => ({
-      update: (view: any, prevState: any) => {
-        if (isNoOpSlashUpdate(prevState, view.state)) return;
-        slashProviderInstance!.update(view, prevState);
-      },
-      destroy: () => {
-        slashProviderInstance!.destroy();
-        if (slashMenuElement) {
-          slashMenuElement.remove();
-          slashMenuElement = null;
-        }
-        document.removeEventListener('keydown', handleSlashKeydown, true);
-      },
-    }),
-  });
+  // This view's pieces become the live ones the module-level helpers (updateSlashMenu,
+  // executeSlashCommand, handleSlashKeydown, isSlashMenuOpen, dismissSlashMenu) operate on.
+  slashMenuElement = menu;
+  slashProviderInstance = provider;
+  selectedIndex = 0;
+  filteredCommands = [];
 
   // Add keyboard listener for menu navigation
   // DEFERRED (Phase 3, do not fix now): no event-target check -- since the unified-undo
@@ -735,4 +752,34 @@ export function configureSlash(ctx: Ctx) {
   // Harmless today (routing always falls through to a no-op for events outside the editor),
   // but worth scoping to editor-owned targets before Phase 3 makes the structural path live.
   document.addEventListener('keydown', handleSlashKeydown, true);
+
+  return {
+    update: (view: any, prevState: any) => {
+      if (isNoOpSlashUpdate(prevState, view.state)) return;
+      provider.update(view, prevState);
+    },
+    destroy: () => {
+      document.removeEventListener('keydown', handleSlashKeydown, true);
+      // A menu that is open at teardown (a rebuild while the user is typing a command) must
+      // report closed to Swift: `hide()` fires the `onHide` hook above, which recomputes the
+      // aggregate popup-open state while the module-level handles still point at this view's
+      // (now hidden) menu.
+      if (menu.getAttribute('data-show') === 'true') provider.hide();
+      provider.destroy();
+      menu.remove();
+      if (slashMenuElement === menu) {
+        slashMenuElement = null;
+        slashProviderInstance = null;
+        selectedIndex = 0;
+        filteredCommands = [];
+      }
+    },
+  };
+}
+
+export function configureSlash(ctx: Ctx) {
+  // The plugin view is rebuilt on every `view.updateState()` whose plugin array changed (every
+  // project switch), so the menu, provider and keydown listener live in the per-view factory --
+  // see `createSlashPluginView`. Nothing UI-related is created here.
+  ctx.set(slash.key, { view: createSlashPluginView });
 }

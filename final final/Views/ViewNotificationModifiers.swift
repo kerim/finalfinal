@@ -126,9 +126,10 @@ struct ContentSyncObserverHost<Content: View>: View {
 
     /// Dispatches the source-mode block re-parse to the zoomed or non-zoomed path.
     /// Extracted from `handleContentChange` to keep type-checking fast and its
-    /// cyclomatic complexity down.
+    /// cyclomatic complexity down. Internal rather than private: a cancelled lifecycle schedules its one
+    /// catch-up re-parse through `LifecycleHost.scheduleSourceModeReparse` (ContentView+LifecycleHost.swift).
     @MainActor
-    private static func scheduleSourceModeReparse(
+    static func scheduleSourceModeReparse(
         newValue: String,
         editorState: EditorViewState,
         services: ContentSyncServices
@@ -145,21 +146,40 @@ struct ContentSyncObserverHost<Content: View>: View {
 
     /// Non-zoomed source-mode re-parse: rebuilds the full block table from `newValue`,
     /// preserving existing heading metadata (status/tags/word goal).
+    ///
+    /// t-94369a83 3a-1b round C4, P5 (obligation 24): this write is a direct whole-document `replaceBlocks`
+    /// outside the writer, and `db`/`pid` are read at SCHEDULE time. While a close / project switch / quit
+    /// holds the editor (`activeLifecycle != nil`) it is therefore not scheduled at all, and one scheduled
+    /// BEFORE the lifecycle armed does not write when it fires inside the window (the lifecycle's own
+    /// whole-document save, FB, already carries the same text, and a write landing after FB or after the
+    /// barrier is exactly what the queue exists to prevent). At fire time it also re-checks that the editor is
+    /// still on the project it was scheduled for: a keystroke typed after `openProject` swapped
+    /// `documentManager` to project B but before the tail reset the editor state would otherwise write A's
+    /// text into B.
     @MainActor
     private static func scheduleFullDocumentReparse(
         newValue: String,
         editorState: EditorViewState,
         services: ContentSyncServices
     ) {
+        guard editorState.activeLifecycle == nil else {
+            DebugLog.log(.lifecycle, "[SourceReparse] full re-parse not scheduled: a close/switch/quit holds the editor")
+            return
+        }
         guard let db = services.documentManager.projectDatabase,
               let pid = services.documentManager.projectId else { return }
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseGeneration += 1
         let myGeneration = editorState.blockReparseGeneration
+        let debounce = editorState.sourceReparseDebounce
         editorState.blockReparseTask = Task {
-            try? await Task.sleep(for: .milliseconds(1000))
+            try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
             guard editorState.blockReparseGeneration == myGeneration else { return }
+            guard editorState.activeLifecycle == nil, editorState.currentProjectId == pid else {
+                DebugLog.log(.lifecycle, "[SourceReparse] full re-parse dropped at fire time: lifecycle armed or project changed")
+                return
+            }
             guard editorState.contentState == .idle,
                   editorState.editorMode == .source,
                   editorState.zoomedSectionId == nil else { return }
@@ -185,16 +205,29 @@ struct ContentSyncObserverHost<Content: View>: View {
         }
     }
 
-    /// Zoomed source-mode re-parse: flushes the scoped CodeMirror content to the database.
+    /// Zoomed source-mode re-parse: flushes the scoped CodeMirror content to the database. Gated like
+    /// `scheduleFullDocumentReparse` (P5, obligation 24): not scheduled while a lifecycle holds the editor, and
+    /// dropped at fire time if one armed since or the editor moved to another project (`pid` captured at
+    /// schedule).
     @MainActor
     private static func scheduleZoomedReparse(editorState: EditorViewState) {
+        guard editorState.activeLifecycle == nil else {
+            DebugLog.log(.lifecycle, "[SourceReparse] zoomed re-parse not scheduled: a close/switch/quit holds the editor")
+            return
+        }
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseGeneration += 1
         let myGeneration = editorState.blockReparseGeneration
+        let pid = editorState.currentProjectId
+        let debounce = editorState.sourceReparseDebounce
         editorState.blockReparseTask = Task {
-            try? await Task.sleep(for: .milliseconds(1000))
+            try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
             guard editorState.blockReparseGeneration == myGeneration else { return }
+            guard editorState.activeLifecycle == nil, editorState.currentProjectId == pid else {
+                DebugLog.log(.lifecycle, "[SourceReparse] zoomed re-parse dropped at fire time: lifecycle armed or project changed")
+                return
+            }
             guard editorState.contentState == .idle,
                   editorState.editorMode == .source else { return }
             editorState.flushContentToDatabase()
@@ -377,9 +410,6 @@ extension View {
     /// Adds file menu notification handlers
     @MainActor
     func withFileNotifications(
-        editorState: EditorViewState,
-        syncService: SectionSyncService,
-        onOpened: @escaping (_ isRestore: Bool) async -> Void,
         onClosed: @escaping () -> Void
     ) -> some View {
         self
@@ -400,36 +430,18 @@ extension View {
             .onReceive(NotificationCenter.default.publisher(for: .exportTextBundle)) { _ in
                 Task { await FileOperations.handleExportTextBundle() }
             }
+            // t-94369a83 3a-1b C5b/C8b: the three project lifecycle posts go through `LegacyProjectNotifications`.
+            // A keyed post (a managed lifecycle's) is ignored because its tail does the work (the create seed is
+            // `ContentView.seedCreatedProjectContent`, run by the create tail); the Getting Started close runs
+            // `onClosed`; anything else is an unkeyed post (a missed call site), which is logged and counted.
             .onReceive(NotificationCenter.default.publisher(for: .projectDidOpen)) { notification in
-                let isRestore = notification.userInfo?["isRestore"] as? Bool ?? false
-                Task { await onOpened(isRestore) }
+                LegacyProjectNotifications.opened(notification)
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidCreate)) { notification in
-                Task {
-                    await onOpened(false)
-                    if let content = notification.userInfo?["content"] as? String {
-                        editorState.content = content
-                        // Parse initial content into blocks
-                        if let db = DocumentManager.shared.projectDatabase,
-                           let pid = DocumentManager.shared.projectId {
-                            // C5: a brand-new project has no pre-existing Notes heading yet, so
-                            // this resolves to nil -> the "Notes" default either way -- wired
-                            // for consistency with every other production `BlockParser.parse`
-                            // site rather than as a behavior-affecting change here.
-                            let blocks = BlockParser.parse(
-                                markdown: content,
-                                projectId: pid,
-                                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
-                            )
-                            try? db.replaceBlocks(blocks, for: pid)
-                        }
-                        // Also sync to legacy sections (until fully retired)
-                        await syncService.syncNow(content)
-                    }
-                }
+                LegacyProjectNotifications.created(notification)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
-                onClosed()
+            .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { notification in
+                LegacyProjectNotifications.closed(notification, onClosed: onClosed)
             }
             .onReceive(NotificationCenter.default.publisher(for: .gettingStartedEdited)) { _ in
                 withAnimation {

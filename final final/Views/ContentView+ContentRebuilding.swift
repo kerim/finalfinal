@@ -451,8 +451,32 @@ extension ContentView {
 
     // MARK: - Zoomed Footnote Insertion
 
+    /// Phase 2 (t-94369a83), §2.4: the write (`commitImmediateInsertion`) is now async
+    /// -- routed through the ordered system-write queue -- so this function's tail can
+    /// no longer assume the insert has already landed by the time it runs, the way the
+    /// old fully-synchronous `handleImmediateInsertion` let it. `flushContentToDatabase()`/
+    /// `syncMiniNotesBackPublic`/`beginImmediateInsertion()` stay synchronous and
+    /// unchanged, at the original call point; everything from the commit onward moves
+    /// into the `Task` below and is built from a FRESH post-commit read of the editor
+    /// (`fresh`), never from pre-wait `editorState.content` -- this is what closes the
+    /// actual bug: without it, this tail would rebuild the zoomed Notes view from
+    /// content that predates the write and can drop whatever the user typed during the
+    /// wait.
     func handleZoomedFootnoteInsertion(label: String, projectId: String) {
-        editorState.contentState = .bibliographyUpdate
+        // A close / project switch / quit holds the editor (t-94369a83 3a-1b, round C4, item 23): this path
+        // writes outside the ordered queue (`flushContentToDatabase`, `syncMiniNotesBackPublic`), so it must not
+        // START inside the window. The label is kept (deferred, not dropped); a cancelled lifecycle re-posts it
+        // (round C5a), a completed one drops it (round C5b). `handleFootnoteInsertedImmediate` already defers
+        // before it routes here; this guard covers any other caller.
+        guard editorState.activeLifecycle == nil else {
+            editorState.pendingFootnoteLabels.enqueue(label)
+            DebugLog.log(.footnotes, "[ContentView] handleZoomedFootnoteInsertion: deferred " +
+                "(close/switch/quit in progress) label=\(label)")
+            return
+        }
+        // Captured BEFORE the async gap so the re-check after the commit below can
+        // tell whether zoom or the active project changed while it was in flight.
+        let zoomedSectionIdAtStart = editorState.zoomedSectionId
 
         // No `blockSyncService.beginDatabaseRebuild()` marker needed here (t-7c1d3fd8,
         // Finding #1): unlike the other three `.bibliographyUpdate` sites, this path never
@@ -472,50 +496,78 @@ extension ContentView {
             sectionSyncService.syncMiniNotesBackPublic(miniNotes, projectId: projectId)
         }
 
-        // Create definition in DB (reuses existing logic). E4: capture the inserted row's id
-        // for the `.scrollToFootnoteDefinition` post below, same as the non-zoomed path in
-        // ContentView+NotificationHandlers.swift. NOTE: in zoom mode the mini-Notes tail is
-        // NOT included in `pushBlockIds`'s array (isNotes blocks are excluded -- see the
-        // KNOWN RESIDUAL RISK comment on the `pushBlockIds` call below), so this id will
-        // typically be absent from the JS side's `getAllBlockIds()` map when zoomed; Milkdown's
-        // `focusFootnoteDefinition` falls back to its node/text search in that case (loudly
-        // logged), same as any other blockId-miss. Threading it through anyway costs nothing
-        // and helps on the rare path where the id IS already present (e.g. zoom-out/back-in).
-        let insertedBlockId = footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
+        // Phase 2 (t-94369a83), §2.4: the SYNCHRONOUS half of the insertion (debounce
+        // cancel, generation bump), same as the non-zoomed path -- see
+        // `beginImmediateInsertion`'s own doc comment.
+        let insertionGeneration = footnoteSyncService.beginImmediateInsertion()
 
-        // Recalculate zoom range using count-based boundary
-        recalculateZoomRangeCountBased(projectId: projectId)
+        // Push to editor via normal content path, then push block IDs for body only. Registered so the
+        // lifecycle save sequence's step 3 awaits it, as it does the three database-rebuild handlers' Tasks.
+        let rebuildTask: Task<Void, Never> = Task {
+            // Create definition in DB (reuses existing logic). E4: capture the inserted
+            // row's id for the `.scrollToFootnoteDefinition` post below, same as the
+            // non-zoomed path in ContentView+FootnoteHandlers.swift. NOTE: in zoom
+            // mode the mini-Notes tail is NOT included in `pushBlockIds`'s array
+            // (isNotes blocks are excluded -- see the KNOWN RESIDUAL RISK comment on
+            // the `pushBlockIds` call below), so this id will typically be absent from
+            // the JS side's `getAllBlockIds()` map when zoomed; Milkdown's
+            // `focusFootnoteDefinition` falls back to its node/text search in that case
+            // (loudly logged), same as any other blockId-miss.
+            let insertedBlockId = await footnoteSyncService.commitImmediateInsertion(
+                label: label, projectId: projectId, generation: insertionGeneration)
 
-        // Rebuild zoomed content with updated mini #Notes
-        let (body, _) = SectionSyncService.stripZoomNotes(from: editorState.content)
-        let refs = FootnoteSyncService.extractFootnoteRefs(from: body)
+            // Re-check zoom/project haven't changed while the commit was in flight.
+            guard editorState.zoomedSectionId == zoomedSectionIdAtStart,
+                  documentManager.projectId == projectId else {
+                DebugLog.log(.footnotes, "[ContentView] handleZoomedFootnoteInsertion: aborting -- " +
+                    "zoom or project changed during commit (label=\(label))")
+                return
+            }
 
-        // Get ALL definitions from DB
-        let notesMd = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId) ?? ""
-        let allDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
+            // Set content state -- no further pushes accepted from here.
+            editorState.contentState = .bibliographyUpdate
 
-        var miniNotesSection = "\n\n<!-- ::zoom-notes:: -->\n# Notes\n"
-        for ref in refs {
-            let def = allDefs[ref] ?? ""
-            miniNotesSection += "\n[^\(ref)]: \(def)\n"
-        }
+            // Read the FRESH, post-commit content rather than the pre-wait
+            // `editorState.content` (which the commit above may have raced against
+            // further typing) -- reuses the same bounded-timeout WebView-fetch
+            // fallback pattern the close path (`ContentView+ProjectLifecycle.swift`'s
+            // `handleProjectClosed`) already uses.
+            let fresh = await blockSyncService.fetchContentFromWebView(timeout: .seconds(2)) ?? editorState.content
+            editorState.content = fresh
 
-        let combined = body + miniNotesSection
-        editorState.content = combined
-        // Set pending image meta for CodeMirror (footnote insertion doesn't change figures)
-        if let result = fetchBlocksWithIds() {
-            editorState.pendingImageMeta = result.imageMeta
-        }
-        // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
-        // action (footnote insertion) synthesizes new content, arguably closer to an
-        // intentional replacement, but this path is NOT a mode/zoom/project transition and
-        // can plausibly land while the user keeps typing elsewhere in the zoomed body.
-        // Left DERIVED so the settle-window guard can defer-and-retry rather than risk
-        // taking a concurrent edit's undo history with it.
-        updateSourceContentIfNeeded()
+            // Recalculate zoom range using count-based boundary. Reads `editorState.
+            // content`, already updated to `fresh` above, so this and everything below
+            // is built from `fresh` -- never from pre-wait state.
+            recalculateZoomRangeCountBased(projectId: projectId)
 
-        // Push to editor via normal content path, then push block IDs for body only
-        Task {
+            // Rebuild zoomed content with updated mini #Notes
+            let (body, _) = SectionSyncService.stripZoomNotes(from: fresh)
+            let refs = FootnoteSyncService.extractFootnoteRefs(from: body)
+
+            // Get ALL definitions from DB
+            let notesMd = footnoteSyncService.buildNotesSectionMarkdown(projectId: projectId) ?? ""
+            let allDefs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
+
+            var miniNotesSection = "\n\n<!-- ::zoom-notes:: -->\n# Notes\n"
+            for ref in refs {
+                let def = allDefs[ref] ?? ""
+                miniNotesSection += "\n[^\(ref)]: \(def)\n"
+            }
+
+            let combined = body + miniNotesSection
+            editorState.content = combined
+            // Set pending image meta for CodeMirror (footnote insertion doesn't change figures)
+            if let result = fetchBlocksWithIds() {
+                editorState.pendingImageMeta = result.imageMeta
+            }
+            // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
+            // action (footnote insertion) synthesizes new content, arguably closer to an
+            // intentional replacement, but this path is NOT a mode/zoom/project transition and
+            // can plausibly land while the user keeps typing elsewhere in the zoomed body.
+            // Left DERIVED so the settle-window guard can defer-and-retry rather than risk
+            // taking a concurrent edit's undo history with it.
+            updateSourceContentIfNeeded()
+
             guard let range = editorState.zoomedBlockRange else {
                 editorState.contentState = .idle
                 return
@@ -545,6 +597,7 @@ extension ContentView {
                 userInfo: scrollUserInfo
             )
         }
+        editorState.registerRebuildTask(rebuildTask)
     }
 
     private func recalculateZoomRangeCountBased(projectId: String) {

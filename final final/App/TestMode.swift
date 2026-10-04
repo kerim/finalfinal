@@ -122,8 +122,9 @@ enum TestMode {
     }
 
     /// UI-test-only artificial delay (milliseconds), held open in each of the three rebuild
-    /// handlers (`handleBibliographySectionChanged`, `handleNotesSectionChanged`,
-    /// `handleFootnoteInsertedImmediate` in `ContentView+NotificationHandlers.swift`) between
+    /// handlers (`handleBibliographySectionChanged`, `handleNotesSectionChanged` in
+    /// `ContentView+NotificationHandlers.swift`, `handleFootnoteInsertedImmediate` in
+    /// `ContentView+FootnoteHandlers.swift`) between
     /// `fetchBlocksWithIds()` and the push of the rebuilt content back to the editor. Exists
     /// ONLY to widen that window wide enough for an e2e test to type into it deterministically
     /// -- proving a rebuild's own flush window can overwrite words typed during it -- not a

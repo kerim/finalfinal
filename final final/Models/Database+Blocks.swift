@@ -125,13 +125,21 @@ extension ProjectDatabase {
     /// order is the canonical title, never a level heuristic.
     func fetchNotesHeadingTitle(projectId: String) throws -> String? {
         try read { db in
-            try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                .filter(Block.Columns.isNotes == true)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)?.textContent
+            try Self.fetchNotesHeadingTitle(db: db, projectId: projectId)
         }
+    }
+
+    /// The db-level body of `fetchNotesHeadingTitle(projectId:)`, extracted verbatim
+    /// (t-94369a83 Phase 3a-1a, §2.3 "db-level statics") so a caller that already holds a
+    /// `Database` -- the queued whole-document write's preparation -- can read it without a
+    /// second `read`. See the instance method's doc comment for the full semantics.
+    static func fetchNotesHeadingTitle(db: Database, projectId: String) throws -> String? {
+        try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+            .filter(Block.Columns.isNotes == true)
+            .order(Block.Columns.sortOrder)
+            .fetchOne(db)?.textContent
     }
 
     /// Whether ANY `isNotes`-flagged block exists at all, regardless of `blockType`. Mirrors
@@ -316,8 +324,11 @@ extension ProjectDatabase {
                 DebugLog.log(.data, "[Database+Blocks] Rejecting editor-diff delete of \(kind) block: \(id.prefix(8))")
                 continue
             }
-            try Block.deleteOne(db, key: id)
-            deleted.append(id)
+            if try Block.deleteOne(db, key: id) {
+                deleted.append(id)
+            } else {
+                DebugLog.log(.data, "[Database+Blocks] editor delete of missing row \(id.prefix(8)) — not counted")
+            }
         }
         return deleted
     }

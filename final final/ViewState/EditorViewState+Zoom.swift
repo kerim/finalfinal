@@ -732,20 +732,17 @@ extension EditorViewState {
     /// replays the `fullContent` string captured when its debounce was originally
     /// scheduled, so it has no stale-content hazard for this to close.
     ///
+    /// No production caller passes a non-nil value since 3a-1b. The old
     /// `ContentView.handleProjectOpened()` and `ContentView.performProjectClose(fetchContent:)`
-    /// (review round 2, close's own version of this same fix -- TLA+ Finding #5) are the two
-    /// callers that pass a non-nil value -- in both cases the SAME content their own
-    /// `flushAllPendingContent()` call just flushed -- to prevent a pending bibliography
-    /// update's flush hook from re-reading `editorState.content`, which is deliberately stale
-    /// for the duration of both functions (review round 1 must-fix for switch: the
-    /// bibliography-flush clobber; the same hazard, now also reachable from close). Close no
-    /// longer routes through `flushAllSync()` below AT ALL -- `performProjectClose` calls
-    /// this function directly with that override, bypassing `flushAllSyncCore()`'s own
-    /// `editorState.content` read entirely. `flushAllSync()` below still passes `nil`, but its
-    /// only remaining caller is quit (`EditorViewState+Quit.swift`'s `flushForQuit()`), which
-    /// assigns the freshly-fetched content to `editorState.content` itself just before calling
-    /// it -- so "already current" still holds there. It no longer holds for close, because
-    /// close isn't a caller of this function at all anymore.
+    /// (review round 2, close's own version of this same fix -- TLA+ Finding #5) were the two
+    /// callers that did -- in both cases the SAME content their own `flushAllPendingContent()`
+    /// call had just flushed -- to prevent a pending bibliography update's flush hook from
+    /// re-reading `editorState.content`, which was deliberately stale for the duration of both
+    /// functions. Close, project switch and quit now run the lifecycle save sequence
+    /// (`EditorViewState.runLifecycleFlush`) instead: it writes the fresh content through the
+    /// ordered queue (FB) and refreshes the bibliography itself. `flushAllSync()` below passes
+    /// `nil`; its only caller was quit, which since round C6 runs that sequence
+    /// (`EditorViewState+Quit.swift`), so it currently has no caller.
     func flushPendingBibliographyAndFootnoteSync(overrideContent: String? = nil) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -780,19 +777,19 @@ extension EditorViewState {
     ///
     /// `overrideContent`, when non-nil, is parsed and persisted INSTEAD of `content` —
     /// without ever assigning it to `content` itself. This exists for
-    /// `ContentView.flushAllPendingContent()` (the project-switch/close flush): that caller
-    /// fetches fresh WebView content that may belong to a project already mid-switch, and
-    /// publishing it into `editorState.content` reaches `MilkdownEditor.updateNSView`, which
-    /// pushes it into the WebView now representing the NEW project (see that function's own
-    /// doc comment for the full mechanism). Every other explicit-override call site passes
-    /// `nil` and is unaffected.
+    /// the old `ContentView.flushAllPendingContent()` (the project-switch/close flush, replaced
+    /// by the lifecycle save sequence's fresh-content step): that caller fetched fresh WebView
+    /// content that may belong to a project already mid-switch, and publishing it into
+    /// `editorState.content` reaches `MilkdownEditor.updateNSView`, which pushes it into the
+    /// WebView now representing the NEW project. Every other explicit-override call site
+    /// passes `nil` and is unaffected.
     ///
     /// When `overrideContent` is `nil`, `switchInProgressContent` is consulted BEFORE
     /// falling back to `content` -- see that property's doc comment. This is what makes a
     /// caller reaching this function with no override safe during a project switch even if
     /// it never explicitly threads an override through: the debounce timer in
     /// `BibliographySyncService` is exactly such a caller (it cannot pass an override, since
-    /// it fires on its own schedule, independent of `ContentView.handleProjectOpened()`).
+    /// it fires on its own schedule, independent of the lifecycle's open tail).
     func flushContentToDatabase(overrideContent: String? = nil) {
         let contentToFlush = overrideContent ?? switchInProgressContent ?? content
         guard !contentToFlush.isEmpty else { return }
@@ -959,16 +956,17 @@ extension EditorViewState {
     /// that no longer exists and is silently lost. Same pairing already used by the
     /// `zoomToSection` and `handleZoomedFootnoteInsertion` call sites.
     func flushLiveContentToDatabase(currentContent: () async -> String?) async {
-        // Guard mirrors AppDelegate.swift's applicationShouldTerminate: skip the
-        // assignment on a failed/empty fetch rather than clobbering known-good
-        // content with nothing.
+        // Skip the assignment on a failed/empty fetch rather than clobbering known-good
+        // content with nothing. (The lifecycle save sequence differs on purpose: there an empty
+        // fetch is a valid answer -- the user deleted everything -- N28.)
         let freshContent = await currentContent()
         if let freshContent, !freshContent.isEmpty {
             content = freshContent
             // MF3 (doc-open-blank-regression, judge round 4): also restage
             // `switchInProgressContent` when a switch window is already active, mirroring
-            // `flushAllPendingContent`'s own staging pattern (restage with the freshest
-            // known-good value -- no new invariant introduced). Without this, this
+            // the staging pattern of the Markdown lifecycle's fresh-content step
+            // (`freshContentForLifecycle`; the old `flushAllPendingContent` did the same) (restage
+            // with the freshest known-good value -- no new invariant introduced). Without this, this
             // function's own override below is correctly fresh, but the OLDER staged value
             // is left behind for the NEXT bare `flushContentToDatabase()` call in the same
             // window -- which resolves via `overrideContent ?? switchInProgressContent ??
@@ -991,8 +989,8 @@ extension EditorViewState {
         // directly): forwarding an empty-but-non-nil string as the override would make
         // flushContentToDatabase()'s own emptiness guard no-op unconditionally instead of
         // falling back to switchInProgressContent/content as it did before this fix --
-        // same "" vs nil distinction judge round 2 required for flushAllPendingContent's
-        // return value.
+        // same "" vs nil distinction judge round 2 required for the old
+        // `flushAllPendingContent`'s return value.
         flushContentToDatabase(overrideContent: freshContent?.isEmpty == false ? freshContent : nil)
         await blockSyncService?.pushBlockIds(for: zoomedBlockRange)
     }

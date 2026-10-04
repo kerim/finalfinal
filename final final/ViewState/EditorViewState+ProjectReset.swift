@@ -10,7 +10,8 @@ import SwiftUI
 extension EditorViewState {
 
     /// Reset all project-specific state for a clean project switch.
-    /// Call from handleProjectOpened() and performProjectClose().
+    /// Called by the lifecycle tails (`ContentView.runCloseTail`, and `runProjectOpenSequence(kind: .projectSwitch)`
+    /// from `runOpenTail`), which replaced the old `handleProjectOpened()` and `performProjectClose()`.
     func resetForProjectSwitch() {
         // Cancel in-flight tasks first
         blockReparseTask?.cancel()
