@@ -30,7 +30,7 @@ import Testing
 /// What `runFBSkippedWhileWaitingForItsTurn` hands back.
 private struct FBSkippedRun {
     let stack: TestStack
-    let result: SystemWriteResult<[Block]>
+    let result: SystemWriteResult<LifecycleWholeDocumentWriteValue>
     let recorder: WriterEventRecorder
 }
 
@@ -165,7 +165,7 @@ extension LifecycleWholeDocumentWriteTests {
         let otherDb = try TestFixtureFactory.createTemporary()
         let otherPid = try TestFixtureFactory.getProjectId(from: otherDb)
 
-        var fbTask: Task<SystemWriteResult<[Block]>, Never>?
+        var fbTask: Task<SystemWriteResult<LifecycleWholeDocumentWriteValue>, Never>?
         stack.sync.testAfterFetchHook = {
             fbTask = Task { @MainActor in
                 await SystemWriteScope.$heldEditorSeq.withValue(nil) {

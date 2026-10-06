@@ -87,7 +87,10 @@ struct ContentSyncObserverHost<Content: View>: View {
         #if DEBUG
         DebugLog.log(.viewUpdates, "[ContentSyncObserved]")
         #endif
-        guard editorState.contentState == .idle else { return }
+        guard editorState.contentState == .idle else {
+            FootnoteDiag.log("content change IGNORED by handleContentChange: contentState=\(editorState.contentState) length=\(newValue.utf8.count)")
+            return
+        }
 
         // P3 §4d (undo-mode-switch-focus second timing gap, M1 fix): this is the
         // content-sync consumer -- consumes its OWN one-shot flag on the shared token
@@ -114,7 +117,10 @@ struct ContentSyncObserverHost<Content: View>: View {
 
         // Skip bibliography sync when zoomed - we don't have full document context
         // Bibliography will be synced when user zooms out and full content is rebuilt
-        guard editorState.zoomedSectionId == nil else { return }
+        guard editorState.zoomedSectionId == nil else {
+            FootnoteDiag.log("content change: footnote and bibliography sync skipped while zoomed length=\(newValue.utf8.count)")
+            return
+        }
 
         // Check for citation changes and update bibliography if needed
         // Always call even when citekeys is empty - this triggers bibliography removal

@@ -76,7 +76,9 @@ struct SystemWriteResult<R: Sendable>: Sendable {
 ///
 /// ONE DELIBERATE EXCEPTION (t-94369a83 Phase 3a-1a, plan §2.3; obligation 16): a
 /// `.lifecycleWholeDocument` write (FB, the close/quit/switch save) DOES bump the project's
-/// block-write epoch and restamp every row to `(E+1, 0)` -- inside its own transaction, through
+/// block-write epoch and restamp every row to `(E+1, 0)` WHEN IT WRITES (a checked FB, Phase 3a-2, whose
+/// stored rows already match what it would write, writes nothing and bumps nothing; see below) --
+/// inside its own transaction, through
 /// the `replaceBlocks*` statics (`stampWholeProjectForRewrite`), not through anything on this
 /// type. A whole-document rewrite is exactly what the epoch exists to invalidate stale batches
 /// for: an editor batch reserved before FB's commit carries epoch E and is refused WHOLE (inserts
@@ -92,6 +94,11 @@ struct SystemWriteResult<R: Sendable>: Sendable {
 /// `editorState.content`) can edits in flight be refused, lost and uncounted
 /// (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter): the known hung-editor gap. Every
 /// OTHER kind still never stamps or bumps.
+///
+/// A skipped (unchanged) FB is safe for a different reason than a written one: a clean F does not mean no
+/// editor batch can apply after FB (a `.late` sequence still may), but the row comparison inside FB's own
+/// transaction means any content not yet applied makes FB write after all, and rows already written by a
+/// newer batch are protected by row rule 2 and by the held temp-id ops. See `applySystemWrite`.
 struct SystemWriteBody<R: Sendable>: Sendable {
     var value: R
     var deletedAnchors: [String: DeletedAnchor] = [:]

@@ -21,13 +21,20 @@
 //    - `BlockSyncService.performLifecycleWholeDocumentWrite`: reserve, wait, apply, through
 //      `performSystemWrite(kind: .lifecycleWholeDocument, ...)`.
 //
-//  The epoch (slice-3a-1a.md (D)): the replace statics bump the project's block-write epoch
-//  and restamp every row to (E+1, 0) INSIDE the caller's transaction (`stampWholeProjectForRewrite`),
-//  so FB adds no stamp or bump of its own. An editor batch reserved before FB commits carries
-//  epoch E and is refused whole by rule 1 of `applyBlockChangesFromEditor` if it applies AFTER
-//  FB's commit (a lower-numbered batch that applies in turn before FB is not refused). See the
-//  exception note on `applySystemWrite` (DocumentWriter.swift), which also says when that
-//  refusal loses edits.
+//  The epoch (slice-3a-1a.md (D)): when FB WRITES, the replace statics bump the project's
+//  block-write epoch and restamp every row to (E+1, 0) INSIDE the caller's transaction
+//  (`stampWholeProjectForRewrite`), so FB adds no stamp or bump of its own. An editor batch
+//  reserved before FB commits carries epoch E and is refused whole by rule 1 of
+//  `applyBlockChangesFromEditor` if it applies AFTER FB's commit (a lower-numbered batch that
+//  applies in turn before FB is not refused). See the exception note on `applySystemWrite`
+//  (DocumentWriter.swift), which also says when that refusal loses edits.
+//
+//  Checked FB (Phase 3a-2, "Option A, per the user's decision"): FB checks before it writes. Inside
+//  its own queued job body -- so the comparison and the write are ONE transaction, behind every
+//  write already queued -- it compares the rows it WOULD write with the stored rows
+//  (`rowsMatch`, `hasNearTie`, plan-v2 section 0). If they are identical it writes NOTHING and
+//  bumps NO epoch (`.unchanged`); otherwise it runs exactly as above. The check lives in
+//  LifecycleWholeDocumentWrite+Check.swift.
 //
 
 import Foundation
@@ -56,13 +63,20 @@ struct LifecycleWholeDocumentPrepared: Sendable {
     /// transaction does no parsing. Empty when `miniNotes` is nil or empty, which makes `body` skip
     /// the mini-Notes write exactly as `flushContentToDatabase` skips an empty mini-Notes text (N17).
     let miniNoteDefinitions: [String: String]
+    /// Checked FB (Phase 3a-2): when true, `LifecycleWholeDocumentWrite.body` first compares the rows it would
+    /// write with the stored rows, and writes nothing if they already match. The lifecycle sets it only
+    /// when its gate holds (`EditorViewState.fbMaySkipWhenUnchanged`: Rich Text, not zoomed, F finished
+    /// cleanly, a real fetch answered). Default false: every other caller writes, as before. A zoomed
+    /// body (`range != nil`) always writes, whatever this says.
+    private(set) var skipIfUnchanged: Bool
 
     init(
         blocks: [Block],
         projectId: String,
         range: (start: Double, end: Double?)?,
         anchorHeadingId: String?,
-        miniNotes: String?
+        miniNotes: String?,
+        skipIfUnchanged: Bool = false
     ) {
         self.blocks = blocks
         self.projectId = projectId
@@ -70,7 +84,28 @@ struct LifecycleWholeDocumentPrepared: Sendable {
         self.anchorHeadingId = anchorHeadingId
         self.miniNotes = miniNotes
         self.miniNoteDefinitions = miniNotes.map { FootnoteSyncService.extractFootnoteDefinitions(from: $0) } ?? [:]
+        self.skipIfUnchanged = skipIfUnchanged
     }
+
+    /// This value with the skip flag cleared. The direct-write fallback (no queue writer, or a writer
+    /// belonging to another project) writes with THIS copy, so it never inherits the skip decision
+    /// (plan-v2 C6): it always writes, and its caller keeps reporting `.appliedDirectly`.
+    func forcingWrite() -> LifecycleWholeDocumentPrepared {
+        var copy = self
+        copy.skipIfUnchanged = false
+        return copy
+    }
+}
+
+/// What `LifecycleWholeDocumentWrite.body` handed back: the rows it wrote, or the verdict that it had nothing to write.
+enum LifecycleWholeDocumentWriteValue: Sendable, Equatable {
+    /// The replace ran. For a zoomed write, the rows `replaceBlocksInRange` actually inserted (final ids,
+    /// document order); for a whole-document write `[]` (`replaceBlocks` returns nothing, and the parsed
+    /// blocks' ids are NOT the stored ids once heading ids are preserved by title).
+    case written([Block])
+    /// Checked FB found the stored rows already identical to the rows it would write (`rowCount` rows
+    /// compared) and wrote nothing: no row touched, no epoch bump, block ids still valid.
+    case unchanged(rowCount: Int)
 }
 
 /// Why `LifecycleWholeDocumentWrite.body` refused to build a write. Defence in depth only:
@@ -111,7 +146,8 @@ enum LifecycleWholeDocumentWrite {
         database: ProjectDatabase,
         projectId: String,
         zoomedRange: (start: Double, end: Double?)?,
-        zoomedSectionId: String?
+        zoomedSectionId: String?,
+        skipIfUnchanged: Bool = false
     ) -> LifecycleWholeDocumentPrepared? {
         guard !content.isEmpty else {
             // N18: a nil here is silent to the caller, so say it. An empty fetch means "nothing to
@@ -141,7 +177,8 @@ enum LifecycleWholeDocumentWrite {
             projectId: projectId,
             range: zoomedRange,
             anchorHeadingId: zoomedSectionId,
-            miniNotes: zoomedRange != nil ? stripResult.miniNotes : nil
+            miniNotes: zoomedRange != nil ? stripResult.miniNotes : nil,
+            skipIfUnchanged: skipIfUnchanged
         )
     }
 
@@ -151,16 +188,32 @@ enum LifecycleWholeDocumentWrite {
     /// `replaceBlocksInRange(db:...)` for a zoomed one) on the `Database` the writer's
     /// transaction hands it. No `self`, no `read`/`write`, no MainActor state.
     ///
-    /// Value: for a zoomed write, the rows `replaceBlocksInRange` actually inserted (final ids,
-    /// document order); for a whole-document write, `[]` (`replaceBlocks` returns nothing, and
-    /// the parsed blocks' ids are NOT the stored ids once heading ids are preserved by title).
-    /// No lifecycle caller reads it.
+    /// Value (`LifecycleWholeDocumentWriteValue`): `.written(rows)` when the replace ran (for a zoomed
+    /// write, the rows `replaceBlocksInRange` actually inserted, final ids, document order; for a
+    /// whole-document write, `[]`: `replaceBlocks` returns nothing, and the parsed blocks' ids are NOT
+    /// the stored ids once heading ids are preserved by title), or `.unchanged(rowCount:)` when checked
+    /// FB (`prepared.skipIfUnchanged`, a whole-document write only) found the stored rows already
+    /// identical to what it would write. The lifecycle layer reads which one it was
+    /// (`LifecycleFBOutcome.unchanged`).
     ///
-    /// `deletedAnchors` stays empty on purpose: the replace bumps the epoch inside this same
-    /// transaction, so an editor batch reserved before FB that applies AFTER FB's commit is refused
+    /// Checked FB (Phase 3a-2, plan-v2 section 0, "Option A, per the user's decision"): with
+    /// `skipIfUnchanged` the body first fetches the project's rows INSIDE this transaction and compares
+    /// them (`rowsMatch`, `hasNearTie`, LifecycleWholeDocumentWrite+Check.swift) with the rows the
+    /// replace would write (`ProjectDatabase.preparedRowsForWholeReplace`, the very code `replaceBlocks`
+    /// runs). Identical -> nothing is written and the epoch is NOT bumped; anything differs -> the
+    /// replace below runs exactly as before. Why a skip is data-safe (obligation 16, replacing the
+    /// "FB always bumps the epoch" argument; see also `DocumentWriter.applySystemWrite`): a clean F does
+    /// NOT mean no editor batch can apply after FB (a writer sequence that already went `.late` may still
+    /// apply after a whole-document write), but (1) row rule 2 drops a late update or delete on any row a
+    /// newer batch wrote, (2) updates and deletes naming a temp id that is not minted yet are held while
+    /// a mint is possible, and (3) most of all, any content not yet applied makes the stored rows differ
+    /// from the fresh fetch, so FB writes and bumps the epoch as it always did.
+    ///
+    /// `deletedAnchors` stays empty on purpose: when FB writes, the replace bumps the epoch inside this
+    /// same transaction, so an editor batch reserved before FB that applies AFTER FB's commit is refused
     /// WHOLE for its stale epoch (rule 1 of `applyBlockChangesFromEditor`) and never needs a
     /// tombstone to re-anchor; a lower-numbered batch that applied in turn before FB has had its
-    /// rows replaced by FB's content.
+    /// rows replaced by FB's content. An unchanged FB deletes nothing, so there is nothing to anchor on.
     ///
     /// DELIBERATELY NOT DONE: `flushContentToDatabase`'s zoomed MainActor post-processing (zoom-root
     /// re-resolution from the inserted rows, `zoomedBlockRange` recompute, the
@@ -184,7 +237,7 @@ enum LifecycleWholeDocumentWrite {
     /// mini-Notes (`prepare` only carries them for a zoomed write).
     static func body(
         _ prepared: LifecycleWholeDocumentPrepared
-    ) -> @Sendable (Database) throws -> SystemWriteBody<[Block]> {
+    ) -> @Sendable (Database) throws -> SystemWriteBody<LifecycleWholeDocumentWriteValue> {
         { db in
             if let range = prepared.range {
                 if !prepared.miniNoteDefinitions.isEmpty {
@@ -210,13 +263,16 @@ enum LifecycleWholeDocumentWrite {
                     endSortOrder: range.end,
                     anchorHeadingId: prepared.anchorHeadingId
                 )
-                return SystemWriteBody(value: inserted)
+                return SystemWriteBody(value: .written(inserted))
             }
             guard prepared.anchorHeadingId == nil else {
                 throw LifecycleWholeDocumentWriteError.zoomedSectionWithoutRange
             }
+            if prepared.skipIfUnchanged, let rowCount = try matchingRowCount(db: db, prepared: prepared) {
+                return SystemWriteBody(value: .unchanged(rowCount: rowCount))
+            }
             try ProjectDatabase.replaceBlocks(db: db, prepared.blocks, for: prepared.projectId)
-            return SystemWriteBody(value: [])
+            return SystemWriteBody(value: .written([]))
         }
     }
 }
@@ -242,7 +298,7 @@ extension BlockSyncService {
         identity: SystemWriteIdentity,
         prepared: LifecycleWholeDocumentPrepared,
         onReserved: (() -> Void)? = nil
-    ) async -> SystemWriteResult<[Block]> {
+    ) async -> SystemWriteResult<LifecycleWholeDocumentWriteValue> {
         if let zoomRootId = prepared.anchorHeadingId, prepared.range == nil {
             reportLifecycleWholeDocumentLost(
                 reason: "refused: zoomed section \(zoomRootId) has no block range yet "

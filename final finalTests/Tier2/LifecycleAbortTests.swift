@@ -122,6 +122,48 @@ extension LifecycleEntryStatic {
             #expect(!rig.editorState.isResettingContent, "and cleared once the abort is done")
         }
 
+        // MARK: - U-C6 (Phase 3a-2): a cancelled close after an UNCHANGED FB re-pushes nothing
+
+        @Test("""
+            U-C6 (checked FB, Phase 3a-2): a perform that throws after an UNCHANGED FB (the fetch equals the stored \
+            document, so FB wrote nothing) re-pushes NO block ids (they are still valid), and still restarts polling, \
+            clears the token and leaves no barrier open
+            """)
+        func postUnchangedFBThrow_repushesNothing() async throws {
+            let rig = try LifecycleFlushHarness()
+            rig.js.answer("flushPendingBlockChanges", true)
+            rig.js.answer("hasBlockChanges", false)
+            rig.fetchAnswer = LifecycleFlushHarness.seed         // identical to the stored document: FB is a no-op
+            rig.recordPushes()
+            defer { rig.sync.stopPolling() }
+            let idsBefore = try rig.blocks().map(\.id)
+            let epochBefore = try rig.db.currentBlockWriteEpoch(projectId: rig.pid)
+            var thrown = false
+
+            try await rig.withEntry {
+                do {
+                    try await LifecycleEntry.run(kind: .projectSwitch) {
+                        rig.note("perform")
+                        throw AbortBoom()
+                    }
+                } catch is AbortBoom {
+                    thrown = true
+                }
+            }
+
+            #expect(thrown, "the failure is re-reported: run rethrows what perform threw")
+            #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)")
+            #expect(rig.sync.testWriterLedger.lifecycleWholeDocumentApplied == 1, "precondition: the FB job ran before the throw")
+            #expect(try rig.db.currentBlockWriteEpoch(projectId: rig.pid) == epochBefore, "precondition: FB was unchanged (no epoch bump)")
+            #expect(try rig.blocks().map(\.id) == idsBefore, "precondition: FB wrote nothing, so every id is still the editor's")
+            #expect(rig.pushes.isEmpty, "nothing was replaced, so nothing is re-pushed; pushes: \(rig.pushes)")
+            #expect(!rig.log.contains("pushBlockIds"), "log: \(rig.log)")
+            #expect(rig.sync.testPollTimerIsArmed, "polling is running again afterwards")
+            #expect(rig.editorState.activeLifecycle == nil)
+            #expect(rig.editorState.lifecycleBarrier == nil)
+            #expect(rig.sync.testWriterHandle?.testOpenBarrierSeq == nil, "N9: no barrier is open after a non-tail exit")
+        }
+
         // MARK: - Must-fix #3: a section-operation cancel restarts polling
 
         @Test("""

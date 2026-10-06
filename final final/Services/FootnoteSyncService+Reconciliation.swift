@@ -248,9 +248,11 @@ extension FootnoteSyncService {
     ///     call) because renames resolve against original identity, not by re-querying by
     ///     label mid-loop.
     ///   - definitionOverrides: new-label -> definition text, for a caller that already
-    ///     knows the text a renamed-into or newly-inserted label should carry. Neither
-    ///     current caller uses this (renames carry forward existing text; inserts default
-    ///     to blank).
+    ///     knows the text a renamed-into or newly-inserted label should carry. Only the
+    ///     undo restore (`restoreFromCheckpoint`, FootnoteSyncService+UndoCheckpoint.swift)
+    ///     passes any: the text of the definitions an earlier write deleted, for exactly the
+    ///     labels that are inserted again. Every other caller leaves it empty (renames carry
+    ///     forward existing text; inserts default to blank).
     /// Adopt rows that sit positionally inside a "# Notes" run but aren't flagged yet.
     /// `Database+BlocksInsert.swift`'s `resolveInsertPlacement`/`buildInsertedBlock`
     /// already flag a live-typed footnote continuation `isNotes = true` at insert time

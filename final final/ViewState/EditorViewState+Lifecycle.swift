@@ -207,6 +207,13 @@ enum LifecycleFBStatus: Equatable, Sendable {
 enum LifecycleFBOutcome: Equatable, Sendable {
     /// Written through the ordered write queue (`lifecycleWholeDocumentApplied` counted).
     case applied
+    /// Checked FB (Phase 3a-2, "Option A, per the user's decision"): the FB job ran in the queue (so
+    /// `lifecycleWholeDocumentApplied` counted it, which means "the job ran", not "it wrote"), compared the
+    /// rows it would write with the stored rows, found them identical and WROTE NOTHING: no epoch bump, no
+    /// new block ids, the editor's ids still valid. Not a loss, never counted in
+    /// `lifecycleWholeDocumentLost`. This outcome is where the unchanged verdict is counted: the writer
+    /// cannot see it (`applySystemWrite` is generic over the body's result), the lifecycle layer can.
+    case unchanged
     /// Written straight to the database: there was no writer (`.refused(.noWriter)`, not a loss), or the
     /// writer belonged to another project (`.identityMismatch`, counted lost first, plan section 4.2 step 6).
     case appliedDirectly
@@ -595,6 +602,26 @@ extension EditorViewState {
 
     // MARK: Step 6 (FB)
 
+    /// The gate for checked FB (Phase 3a-2, plan-v2 section 0, "Option A, per the user's decision"): whether FB
+    /// may write NOTHING when the stored rows already match what it would write. All of these must hold:
+    ///   - Rich Text mode (in Markdown there is no per-edit path: FB is the only write of the typing);
+    ///   - not zoomed, which means BOTH `zoomedRange` and `zoomedSectionId` are nil (the zoom-in-flight shape,
+    ///     section id set and range nil, must stay the counted `.refused(.notWanted)` loss, N15; a zoomed
+    ///     close also writes Mini-Notes, N17);
+    ///   - F finished cleanly: no poll watchdog hit, no drain or forced-poll timeout (the editor answered);
+    ///   - the fresh fetch really answered (`fetchedContent != nil`, not the `usedFallback` content on hand).
+    /// "A writer exists" is NOT part of the gate: it cannot be known here. The direct-write fallback
+    /// (no queue writer, or a writer of another project) never inherits the decision: it writes with
+    /// `prepared.forcingWrite()` and keeps reporting `.appliedDirectly` (plan-v2 C6).
+    static func fbMaySkipWhenUnchanged(capture: LifecycleCapture, result: LifecycleFlushResult) -> Bool {
+        capture.editorMode == .wysiwyg
+            && capture.zoomedRange == nil
+            && capture.zoomedSectionId == nil
+            && !result.watchdogHit && !result.drainTimedOut && !result.forcedPollTimedOut
+            && result.fetchedContent != nil
+            && !result.usedFallback
+    }
+
     /// FB: prepare (parse before reserving, item 17), then the queued whole-document write in its OWN Task,
     /// raced at `bound(fb)`. Losing the race is neither a failure nor a loss (E1): the race cannot cancel
     /// the Task, the sequence goes on, and the barrier (round C3b), queued behind FB, is what waits for it.
@@ -609,12 +636,16 @@ extension EditorViewState {
             result.fbStatus = .skippedNoWriteTarget
             return
         }
+        // Checked FB (Phase 3a-2): the gate for "write nothing if the stored rows already match" is decided
+        // HERE, from the sequence's own results; the comparison itself runs inside FB's queued transaction.
+        let skipIfUnchanged = Self.fbMaySkipWhenUnchanged(capture: capture, result: result)
         guard let prepared = LifecycleWholeDocumentWrite.prepare(
             content: content,
             database: database,
             projectId: projectId,
             zoomedRange: capture.zoomedRange,
-            zoomedSectionId: capture.zoomedSectionId
+            zoomedSectionId: capture.zoomedSectionId,
+            skipIfUnchanged: skipIfUnchanged
         ) else {
             result.fbStatus = .skippedEmptyContent
             return
@@ -657,10 +688,16 @@ extension EditorViewState {
         let written = await blockSync.performLifecycleWholeDocumentWrite(
             identity: identity, prepared: prepared, onReserved: onReserved)
         switch written.outcome {
-        case .applied:
+        case .applied(.written):
             return .applied
+        case .applied(.unchanged(let rowCount)):
+            // Checked FB: this is where "unchanged" is counted (the writer's ledger cannot see it).
+            DebugLog.log(.lifecycle, "[LifecycleFlush] FB unchanged: \(rowCount) rows already match -- nothing written, no epoch bump")
+            return .unchanged
         case .refused(.noWriter), .refused(.identityMismatch):
-            return writeLifecycleWholeDocumentDirectly(blockSync: blockSync, database: database, prepared: prepared)
+            // The direct write NEVER inherits the skip decision: it always writes (plan-v2 C6).
+            return writeLifecycleWholeDocumentDirectly(
+                blockSync: blockSync, database: database, prepared: prepared.forcingWrite())
         case .refused(let reason):
             return .lost("refused(\(reason))")
         case .failed(let error):

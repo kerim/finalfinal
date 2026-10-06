@@ -296,7 +296,36 @@ extension ProjectDatabase {
         // Original behavior (preservingMachineManagedBlocks == false): delete every
         // existing block and reinsert `blocks` fresh, preserving only heading id/
         // metadata by title match — plus the bibliography carry-forward described in this
-        // function's doc comment above.
+        // function's doc comment above. The in-memory preparation (heading id/metadata and
+        // bibliography-flag restoration, carry-forward, image metadata gap-fill) is the pure
+        // static `preparedRowsForWholeReplace` below, which the lifecycle whole-document
+        // write's check (`LifecycleWholeDocumentWrite`, Phase 3a-2) calls too, so that check
+        // and this write can never disagree about the rows that would be written.
+        let prepared = Self.preparedRowsForWholeReplace(existing: existingBlocks, parsed: blocks)
+
+        try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
+
+        for var block in prepared {
+            try block.insert(db)
+        }
+
+        // Wholesale rewrite of this project's block coordinate space -- see
+        // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
+        // this point now belongs to a document that no longer exists.
+        try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
+        try Self.recomputeSectionParents(db: db, projectId: projectId)
+    }
+
+    /// The pure, in-memory half of `replaceBlocks`' default (non-preserving) path (t-94369a83
+    /// Phase 3a-2, plan-v2 D6 / amendment A3): the rows that path would insert for the parsed
+    /// `blocks`, given the project's `existing` rows. Extracted verbatim from `replaceBlocks` so
+    /// `replaceBlocks` itself and the checked lifecycle write (`LifecycleWholeDocumentWrite`,
+    /// which skips its write when the stored rows already match this output) call the SAME code.
+    /// It restores heading id + metadata by title, the preserved `isBibliography`/`isNotes`
+    /// flags and the bibliography carry-forward, and gap-fills image metadata by src; it reads
+    /// nothing from the database and writes nothing.
+    static func preparedRowsForWholeReplace(existing existingBlocks: [Block], parsed blocks: [Block]) -> [Block] {
+        var imageMetaBySrc = buildImageMetadataIndex(from: existingBlocks)
 
         // Queue existing headings by title, in existing-document order. A duplicate title
         // (two headings both named "Notes", say) gets a queue of length > 1; consuming the
@@ -385,17 +414,7 @@ extension ProjectDatabase {
             budget: existingBlocks.filter { $0.isBibliography && $0.blockType != .heading }.count
         )
 
-        try Block.filter(Block.Columns.projectId == projectId).deleteAll(db)
-
-        for var block in prepared {
-            try block.insert(db)
-        }
-
-        // Wholesale rewrite of this project's block coordinate space -- see
-        // Database+BlockWriteStamp.swift. Any editor-diff batch fetched before
-        // this point now belongs to a document that no longer exists.
-        try Self.stampWholeProjectForRewrite(db: db, projectId: projectId)
-        try Self.recomputeSectionParents(db: db, projectId: projectId)
+        return prepared
     }
 
     /// Replace blocks within a sort order range (used during zoomed CodeMirror re-parse).

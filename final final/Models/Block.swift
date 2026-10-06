@@ -492,6 +492,18 @@ struct BlockUpdate: Codable, Sendable {
     let textContent: String?
     let markdownFragment: String?
     let headingLevel: Int?
+    /// The editor node's own type (`BlockType.rawValue`), so a paragraph turned into a list (or back) is stored as one.
+    /// nil = no type information: an older payload, or a caller that has none. Absent on the wire decodes as nil and
+    /// nil is omitted when encoding (synthesized Codable). Applied only within `ProjectDatabase.editorAuthoritativeTypes`.
+    let blockType: String?
+
+    init(id: String, textContent: String?, markdownFragment: String?, headingLevel: Int?, blockType: String? = nil) {
+        self.id = id
+        self.textContent = textContent
+        self.markdownFragment = markdownFragment
+        self.headingLevel = headingLevel
+        self.blockType = blockType
+    }
 }
 
 /// Represents block changes from the editor for sync

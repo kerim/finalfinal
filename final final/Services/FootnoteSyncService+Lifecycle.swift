@@ -25,6 +25,7 @@ extension FootnoteSyncService {
     /// `syncGeneration` (an OLDER run's write is refused by its own generation check) and makes
     /// `checkAndUpdateFootnotes` record instead of schedule. `resyncNow` (step 7) is NOT gated.
     func suspendForLifecycle() {
+        fnDiagLifecycle("suspend: debounce cancelled, pending moves to deferredCheck")
         debounceTask?.cancel()
         debounceTask = nil
         if let pending = pendingUpdate, deferredCheck == nil {
@@ -39,6 +40,7 @@ extension FootnoteSyncService {
     /// Phase 3a-1b (C3b): the lifecycle was cancelled. Clears the suspension and re-runs ONE check for the
     /// recorded request, if any. A completed close/switch's tail `reset()` clears the suspension instead.
     func resumeAfterLifecycle() {
+        fnDiagLifecycle("resume (cancelled lifecycle): replays the deferred check if any")
         isSuspendedForLifecycle = false
         guard let check = deferredCheck else { return }
         deferredCheck = nil

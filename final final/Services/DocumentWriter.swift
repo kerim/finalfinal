@@ -2458,10 +2458,14 @@ actor DocumentWriter {
     ///
     /// ONE DELIBERATE EXCEPTION to "system writes never stamp or bump the epoch" (t-94369a83 Phase
     /// 3a-1a, plan §2.3; obligation 16): `.lifecycleWholeDocument` (FB, the close/quit/switch save).
-    /// Its `body` runs the db-level `replaceBlocks*` statics, which bump the project's block-write
-    /// epoch (E -> E+1) and restamp every row to `(E+1, 0)` INSIDE this same single transaction
-    /// (`stampWholeProjectForRewrite`); FB adds no stamp or bump of its own. A whole-document rewrite
-    /// is exactly what the epoch exists to invalidate stale editor batches for. What that does to an
+    /// When its `body` WRITES, it runs the db-level `replaceBlocks*` statics, which bump the project's
+    /// block-write epoch (E -> E+1) and restamp every row to `(E+1, 0)` INSIDE this same single
+    /// transaction (`stampWholeProjectForRewrite`); FB adds no stamp or bump of its own. A checked FB
+    /// (Phase 3a-2, "Option A, per the user's decision"; `LifecycleWholeDocumentPrepared.skipIfUnchanged`)
+    /// first compares the stored rows with the rows it would write inside that same transaction and,
+    /// when they are identical, writes NOTHING and bumps NO epoch: an unchanged check writes nothing and
+    /// bumps nothing, so every statement below about the bump describes a FB that wrote. A whole-document
+    /// rewrite is exactly what the epoch exists to invalidate stale editor batches for. What that does to an
     /// editor batch depends on WHEN the batch applies, not on its sequence number. A batch reserved
     /// before FB's commit carries epoch E; rule 1 of `applyBlockChangesFromEditor` refuses it WHOLE
     /// (inserts included) only if it applies AFTER FB's commit -- so a late orphan batch can never
@@ -2479,7 +2483,23 @@ actor DocumentWriter {
     /// `editorState.content`) can edits in flight be refused, lost and uncounted
     /// (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter, the stamp guard only logs it): the
     /// known hung-editor gap. Every OTHER system-write kind still never stamps or bumps.
-    /// `kind` is read here only for the `lifecycleWholeDocumentApplied` counter.
+    ///
+    /// Why a SKIPPED (unchanged) FB is data-safe, restated for the checked FB (plan-v2 section 0; replaces
+    /// the "no batch can apply after FB" reading, which a clean F does not give: F's drain waits only for the
+    /// in-flight poll Task, and a writer sequence that already went `.late` stays free to apply after a
+    /// whole-document write, see `isPassableLateLocked`). Today FB's epoch bump refuses such a batch; after
+    /// a skip it is not refused. Safety rests on three things: (1) row rule 2 (`Database+BlockWriteStamp`)
+    /// drops a late update or delete on any row a newer batch wrote; (2) updates and deletes naming a temp id
+    /// that is not minted yet are held while a mint is possible (`processIncomingLocked`); (3) most of all,
+    /// the row check itself: any late content not yet applied makes the stored rows differ from the fresh
+    /// fetch, so FB writes and bumps the epoch exactly as before. No Swift "no late sequence" check exists
+    /// (the judge's ruling), and the TLA+ model checks the same thing (`FBSkippable` has no `late.st`
+    /// conjunct).
+    ///
+    /// `kind` is read here only for the `lifecycleWholeDocumentApplied` counter, which means "the FB job
+    /// ran in the queue", whether or not its body wrote. The writer cannot see an unchanged verdict (this
+    /// function is generic over the body's result); the lifecycle layer records it as
+    /// `LifecycleFBOutcome.unchanged`.
     func applySystemWrite<R: Sendable>(
         _ seq: UInt64,
         kind: SystemWriteKind,
@@ -2620,7 +2640,8 @@ actor DocumentWriter {
             } else {
                 keepUpdates.append(BlockUpdate(id: resolve(update.id), textContent: update.textContent,
                                                 markdownFragment: update.markdownFragment,
-                                                headingLevel: update.headingLevel))
+                                                headingLevel: update.headingLevel,
+                                                blockType: update.blockType))
             }
         }
         for id in changes.deletes {
@@ -2734,7 +2755,8 @@ actor DocumentWriter {
             let id = tempIdMap[update.id] ?? update.id
             return BlockChanges(updates: [BlockUpdate(id: id, textContent: update.textContent,
                                                         markdownFragment: update.markdownFragment,
-                                                        headingLevel: update.headingLevel)])
+                                                        headingLevel: update.headingLevel,
+                                                        blockType: update.blockType)])
         case .delete(let id):
             return BlockChanges(deletes: [tempIdMap[id] ?? id])
         case .insert(let insert):

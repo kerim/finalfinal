@@ -60,11 +60,13 @@ enum LifecycleAbortReason {
 
 extension LifecycleFBOutcome {
     /// FB replaced the block table with its own (non-id-preserving) write, either through the queue or directly.
-    /// The editor's block ids are then stale and must be re-pushed (N14). A lost FB wrote nothing.
+    /// The editor's block ids are then stale and must be re-pushed (N14). A lost FB wrote nothing, and so did
+    /// an unchanged one (checked FB, Phase 3a-2): the rows and their ids are exactly what the editor holds, so a
+    /// cancelled close has nothing to re-push.
     fileprivate var replacedBlocks: Bool {
         switch self {
         case .applied, .appliedDirectly: true
-        case .lost: false
+        case .lost, .unchanged: false
         }
     }
 }

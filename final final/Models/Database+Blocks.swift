@@ -404,6 +404,8 @@ extension ProjectDatabase {
         if let markdownFragment = update.markdownFragment {
             applyMarkdownFragmentTransition(block: &block, markdownFragment: markdownFragment, update: update)
         }
+        // The editor's own type (paragraph ↔ list/quote/code/table), AFTER the fragment transition so it cannot undo it.
+        applyEditorBlockType(update.blockType, to: &block)
         if let headingLevel = update.headingLevel {
             block.headingLevel = headingLevel
         }
@@ -607,6 +609,7 @@ extension ProjectDatabase {
             // remap) and Fix 2 (Swift resolution)" comment on the stale-temp-id branch above).
             applyHorizontalRuleToggleAndImageMeta(block: &existingBlock, trimmed: trimmed)
         }
+        applyEditorBlockType(update.blockType, to: &existingBlock)   // after the fragment step, as in the primary path
         if let headingLevel = update.headingLevel {
             existingBlock.headingLevel = headingLevel
         }
@@ -630,6 +633,7 @@ extension ProjectDatabase {
             // merge path above for why a temp-ID block can reach this defensive path too.
             applyHorizontalRuleToggleAndImageMeta(block: &existingBlock, trimmed: trimmed)
         }
+        applyEditorBlockType(update.blockType, to: &existingBlock)
         if let headingLevel = update.headingLevel {
             existingBlock.headingLevel = headingLevel
         }
@@ -661,7 +665,7 @@ extension ProjectDatabase {
 
     /// Logs a `[Blocks:edit...]` word-count change when recalculation altered the block's
     /// count, mirroring the log line each type-transition branch above used to emit inline.
-    private func logWordCountChange(block: Block, oldWordCount: Int, tag: String = "") {
+    func logWordCountChange(block: Block, oldWordCount: Int, tag: String = "") {
         guard oldWordCount != block.wordCount else { return }
         let id8 = String(block.id.prefix(8))
         let label = tag.isEmpty ? "[Blocks:edit]" : "[Blocks:edit:\(tag)]"

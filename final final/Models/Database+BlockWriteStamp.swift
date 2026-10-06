@@ -30,7 +30,9 @@
 //
 //  ONE DELIBERATE EXCEPTION (t-94369a83 Phase 3a-1a, plan §2.3; obligation 16): the
 //  `.lifecycleWholeDocument` system write (FB, the queued whole-document save a close, project
-//  switch or quit takes, Phase 3a-1b step 6) DOES bump and restamp the epoch -- inside its OWN
+//  switch or quit takes, Phase 3a-1b step 6) DOES bump and restamp the epoch WHEN IT WRITES -- a
+//  checked FB (Phase 3a-2, Option A per the user's decision) whose stored rows already match what it
+//  would write writes nothing and bumps nothing -- inside its OWN
 //  transaction, because its body runs the `replaceBlocks*` statics, which call
 //  `stampWholeProjectForRewrite` on the writer's `Database`. It adds no second bump. A
 //  whole-document rewrite is exactly what the epoch exists to invalidate stale batches for. An
@@ -47,6 +49,11 @@
 //  falls back to `editorState.content`) can edits in flight be refused, lost and uncounted
 //  (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter, only the log line in rule 1): the
 //  known hung-editor gap. Every other kind of system write still never stamps or bumps.
+//
+//  After a SKIPPED (unchanged) FB nothing is refused by the epoch, since none was bumped: a late batch
+//  that applies afterwards is arbitrated by rule 2 below (a late update or delete on a row a newer batch
+//  wrote is dropped), by the writer holding updates and deletes that name an unminted temp id, and by
+//  FB's own comparison (content not yet applied makes the rows differ, so FB writes and bumps).
 //
 //  Bibliography rows and Notes-label renames are additionally covered by
 //  `applyUpdateToExistingBlock`'s own refusal (Database+Blocks.swift) regardless.

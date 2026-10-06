@@ -342,14 +342,24 @@ extension ContentView {
     /// Notes section was updated in the database - rebuild editor content
     @MainActor
     func handleNotesSectionChanged() {
-        guard editorState.zoomedSectionId == nil else { return }
+        guard editorState.zoomedSectionId == nil else {
+            FootnoteDiag.log("notesSectionChanged handler: skipped while zoomed")
+            return
+        }
         // Also deferred while a close / switch / quit holds the editor -- see `handleBibliographySectionChanged`
         // (t-94369a83 3a-1b, round C4, item 23).
         guard editorState.contentState == .idle, editorState.activeLifecycle == nil else {
+            FootnoteDiag.log("notesSectionChanged handler: DEFERRED (re-posted when idle) contentState=\(editorState.contentState) " +
+                "lifecycle=\(editorState.activeLifecycle != nil)")
             editorState.pendingNotesRebuild = true
             return
         }
-        guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            FootnoteDiag.log("notesSectionChanged handler: skipped, the document is empty")
+            return
+        }
+        let diagStart = FootnoteDiag.nowMs()
+        FootnoteDiag.log("notes rebuild: starts")
 
         // Atomic content+IDs push (same pattern as bibliography)
         editorState.contentState = .bibliographyUpdate  // Reuse same state
@@ -368,8 +378,10 @@ extension ContentView {
 
         // Registered for the lifecycle save sequence's step 3, as in `handleBibliographySectionChanged`.
         let rebuildTask: Task<Void, Never> = Task {
+            defer { FootnoteDiag.log("notes rebuild: finished duration=\(FootnoteDiag.nowMs() - diagStart)ms") }
             // Force-flush pending JS changes to DB before reading blocks
             await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
+            FootnoteDiag.log("notes rebuild: forced poll done after \(FootnoteDiag.nowMs() - diagStart)ms")
 
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
@@ -384,6 +396,7 @@ extension ContentView {
 
             await holdRebuildFlushWindowForUITesting()
 
+            let pushStart = FootnoteDiag.nowMs()
             let merged = await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
@@ -392,6 +405,7 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks,
                 managedBlockIds: result.managedBlockIds,
                 preserveUserBlocks: true)
+            FootnoteDiag.log("notes rebuild: editor push done pushDuration=\(FootnoteDiag.nowMs() - pushStart)ms blocks=\(result.blockIds.count)")
             // t-6a0d195d: see handleBibliographySectionChanged's matching comment above -- the
             // merged push's actual markdown can differ from result.markdown.
             if let merged, merged != result.markdown {
@@ -439,6 +453,7 @@ extension ContentView {
                 NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
             }
         } else if editorState.pendingNotesRebuild {
+            FootnoteDiag.log("pending notes rebuild re-posted: contentState is idle again (was \(oldValue))")
             editorState.pendingNotesRebuild = false
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .notesSectionChanged, object: nil)

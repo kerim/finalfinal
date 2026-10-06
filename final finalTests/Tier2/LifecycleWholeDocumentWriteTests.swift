@@ -330,7 +330,8 @@ struct LifecycleWholeDocumentWriteTests {
             projectId: pid, range: nil, anchorHeadingId: nil, miniNotes: nil)
 
         // Compile-level: the declared type is the contract.
-        let body: @Sendable (Database) throws -> SystemWriteBody<[Block]> = LifecycleWholeDocumentWrite.body(prepared)
+        let body: @Sendable (Database) throws -> SystemWriteBody<LifecycleWholeDocumentWriteValue> =
+            LifecycleWholeDocumentWrite.body(prepared)
         _ = try db.dbWriter.write { database in try body(database) }
 
         let after = try TestFixtureFactory.fetchBlocks(from: db)

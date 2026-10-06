@@ -49,17 +49,17 @@ final class FootnoteSyncService {
     /// corrupting Recovery R's `syncGeneration == renumberGeneration` check via a data
     /// race on the shared `renumberGeneration`/`carriedRenameMap` fields. Mirrors
     /// `EditorViewState.systemWriteInFlight`'s counter pattern.
-    private var inFlightCount: Int = 0 {
+    var inFlightCount: Int = 0 {
         didSet { state = inFlightCount > 0 ? .syncing : .idle }
     }
 
     /// Last known footnote ref labels (to prevent unnecessary updates)
-    private var lastKnownRefs: [String] = []
+    var lastKnownRefs: [String] = []
 
     /// Hash of last renumbered content (feedback loop breaker)
-    private var lastRenumberedHash: Int = 0
+    var lastRenumberedHash: Int = 0
 
-    /// Debounce timer for footnote updates
+    /// The ONE timer of the current burst of reference changes (nil / finished when none is waiting).
     var debounceTask: Task<Void, Never>?
 
     /// Monotonic counter bumped by every immediate insertion. A debounced rebuild
@@ -67,13 +67,13 @@ final class FootnoteSyncService {
     /// the debounced rebuild is stale and must not run.
     var syncGeneration: Int = 0
 
-    /// Debounce interval (3 seconds — longer than bibliography to let Notes edits settle)
-    private let debounceInterval: TimeInterval = 3.0
+    /// The wait before a burst of reference changes is written, counted from its FIRST change (a fixed deadline: later
+    /// changes ride along and never move it). Kept at 3 s because cutting and pasting a sentence that contains a footnote
+    /// needs it (t-2c022719), and so that one burst becomes one write. Tests shorten it.
+    @ObservationIgnored var debounceInterval: TimeInterval = 3.0
 
-    /// Snapshot captured at the moment a debounced update was scheduled but not yet
-    /// consumed by `performFootnoteUpdate`. Cleared inside the debounce closure immediately
-    /// before it fires, so `pendingUpdate != nil` reliably means "there is unconsumed
-    /// scheduled work".
+    /// The LATEST snapshot of the waiting burst (replaced by every later change, read when the deadline arrives).
+    /// `pendingUpdate != nil` means "a burst is waiting"; every path that ends a burst clears it and cancels the timer.
     var pendingUpdate: PendingFootnoteUpdate?
 
     /// Phase 3a-1b (C3b): set from `suspendForLifecycle()` to `resumeAfterLifecycle()` / `reset()`; while set,
@@ -83,6 +83,16 @@ final class FootnoteSyncService {
     /// The request to replay on resume: the last check made while suspended, or the update that was pending
     /// at suspend (C23).
     @ObservationIgnored var deferredCheck: DeferredFootnoteCheck?
+
+    /// Step 5 (t-4a6e6414): session-only checkpoints of deleted definitions, so ⌘Z can bring the text back, and the content
+    /// last seen with the committed refs they are built from. Cleared by `reset()`. Logic: FootnoteSyncService+UndoCheckpoint.swift.
+    @ObservationIgnored var undoCheckpoints: [FootnoteUndoCheckpoint] = []
+    @ObservationIgnored var lastContentWithKnownRefs: String?
+    /// Scheduling times for the `[FN-DIAG]` log lines (FootnoteSyncService+Diagnostics.swift). Logging only.
+    @ObservationIgnored var fnDiag = FootnoteDiagState()
+    /// Step 6: the documents the waiting burst passed through, and the last check made (FootnoteSyncService+UndoStates.swift).
+    @ObservationIgnored var burstStates: [FootnoteUndoState] = []
+    @ObservationIgnored var lastChecked: (content: String, refs: [String])?
 
     // MARK: - Dependencies
 
@@ -98,7 +108,7 @@ final class FootnoteSyncService {
     /// NOT land -- carried forward so the NEXT run composes it in front of its own
     /// mapping, renaming DB labels to match what the editor already shows before
     /// applying its own further changes. Cleared on `.applied` and on `reset()`.
-    private var carriedRenameMap: [String: String] = [:]
+    var carriedRenameMap: [String: String] = [:]
 
     /// §2.3: the `syncGeneration` value recorded at the moment `prepare` last posted a
     /// `.renumberFootnotes` notification -- Recovery R's "no newer Notes update
@@ -146,42 +156,35 @@ final class FootnoteSyncService {
     ) {
         // Phase 3a-1b (C3b): suspended for a lifecycle -- record "dirty" with the request and return.
         guard !isSuspendedForLifecycle else {
+            fnDiagCheck("deferred by lifecycle suspension", refs: footnoteRefs)
             deferredCheck = DeferredFootnoteCheck(refs: footnoteRefs, projectId: projectId, fullContent: fullContent)
             return
         }
 
-        guard state == .idle else {
-            return
-        }
+        guard state == .idle else { fnDiagCheck("DROPPED: a write is in flight", refs: footnoteRefs); return }
 
         // Check if refs have changed
         guard footnoteRefs != lastKnownRefs else {
+            // t-e8821953 (Step 2): refs equal what the Notes rows match, so an update still waiting on the debounce
+            // was scheduled for a state the document has left (typically a deleted reference restored by undo): drop it,
+            // or it would fire from that old snapshot. No generation bump: `state == .idle` here, and the debounce Task
+            // has no suspension point between its last `isCancelled` check and the write starting.
+            if pendingUpdate != nil { fnDiagPendingDropped() }
+            debounceTask?.cancel()
+            debounceTask = nil
+            pendingUpdate = nil
+            noteEqualRefsCheck(content: fullContent, refs: footnoteRefs)
             // Even if refs haven't changed, we should still push definitions
             // for tooltip display (definitions may have been edited in #Notes)
             pushDefinitionsToEditor(fullContent: fullContent)
             return
         }
+        fnDiagRefsChanged(footnoteRefs)
+        // Step 5 (t-4a6e6414): an undo of a deleted footnote restores its text at once (FootnoteSyncService+UndoCheckpoint.swift).
+        if handleUndoCheckpoints(refs: footnoteRefs, projectId: projectId, content: fullContent) { return }
 
-        // Debounce the update
-        let scheduledGeneration = syncGeneration
-        pendingUpdate = PendingFootnoteUpdate(
-            refs: footnoteRefs, projectId: projectId, fullContent: fullContent, generation: scheduledGeneration
-        )
-        debounceTask?.cancel()
-        debounceTask = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-
-            try? await Task.sleep(nanoseconds: UInt64(3_000_000_000))
-
-            guard !Task.isCancelled else { return }
-            self?.pendingUpdate = nil
-            await self?.performFootnoteUpdate(
-                refs: footnoteRefs,
-                projectId: projectId,
-                fullContent: fullContent,
-                scheduledGeneration: scheduledGeneration
-            )
-        }
+        // Wait for the burst: a fixed deadline from its FIRST change, later changes ride along (FootnoteSyncService+Deadline.swift)
+        scheduleBurst(refs: footnoteRefs, projectId: projectId, fullContent: fullContent)
     }
 
     /// Force any already-scheduled (but not yet fired) debounced footnote update to run
@@ -337,6 +340,7 @@ final class FootnoteSyncService {
         renumberGeneration = 0
         isSuspendedForLifecycle = false   // Phase 3a-1b (C3b): the next project's checks must schedule again
         deferredCheck = nil
+        resetUndoState()   // Phase 3a-2 Step 5: the checkpoints belong to the session that just ended
     }
 
     /// Phase 2 (t-94369a83), §2.4: the SYNCHRONOUS half of the immediate-insertion
@@ -350,6 +354,7 @@ final class FootnoteSyncService {
     /// check against.
     @discardableResult
     func beginImmediateInsertion() -> Int {
+        discardUndoCheckpointsForNewFootnote()   // Step 5: an explicit NEW footnote never inherits a deleted one's text
         debounceTask?.cancel()
         debounceTask = nil
         pendingUpdate = nil
@@ -501,10 +506,11 @@ final class FootnoteSyncService {
         // that insertion must NOT run against its now-stale refs/fullContent snapshot.
         guard !Task.isCancelled,
               scheduledGeneration == syncGeneration,
-              state == .idle else { return }
+              state == .idle else { fnDiagPerformRefused(generation: scheduledGeneration); return }
 
         inFlightCount += 1
         defer { inFlightCount -= 1 }
+        fnDiagPerformStart(refs: refs, generation: scheduledGeneration, allowRenumber: allowRenumber)
 
         #if DEBUG
         // Test-only hook, awaited right after `inFlightCount` makes `state ==
@@ -528,12 +534,14 @@ final class FootnoteSyncService {
             guard !Self.documentContainsFootnoteReference(fullContent) else {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] performFootnoteUpdate: refs.isEmpty but " +
                     "unstripped document still contains a [^N] reference -- refusing removeNotesBlock (B7 guard)")
+                fnDiagPerformSkipped("B7 guard (no refs, but the document still has a reference)", refs: refs)
                 return
             }
             // `lastKnownRefs`/`lastRenumberedHash` are committed inside
             // `removeNotesBlock` itself now, only once its own write actually applies
             // (§2.3 point 6 -- no renumber posted either way).
-            await removeNotesBlock(projectId: projectId, scheduledGeneration: scheduledGeneration)
+            let undoCheckpoint = makeUndoCheckpoint(raw: [], refs: [], renames: [:], content: fullContent, allowRenumber: allowRenumber)
+            await removeNotesBlock(projectId: projectId, scheduledGeneration: scheduledGeneration, undoCheckpoint: undoCheckpoint)
             return
         }
 
@@ -552,7 +560,7 @@ final class FootnoteSyncService {
         // Check if refs actually changed, against the last COMMITTED hash (only
         // updated on a successful write below -- see this function's own doc comment).
         let contentHash = effectiveRefs.joined(separator: ",").hashValue
-        guard contentHash != lastRenumberedHash else { return }
+        guard contentHash != lastRenumberedHash else { fnDiagPerformSkipped("lastRenumberedHash guard", refs: refs); return }
 
         // §2.3: this run's own rename map, derived the same way the old
         // `updateNotesBlock` wrapper did -- position-aligned original/effective ref
@@ -565,6 +573,9 @@ final class FootnoteSyncService {
         // run's own -- see `composeRenameMaps`'s own doc comment for the exact rule.
         // E2: under `allowRenumber: false` the WHOLE composed map is empty -- the carry included.
         let composedMap = allowRenumber ? Self.composeRenameMaps(carried: carriedRenameMap, own: ownRenameMap) : [:]
+        // Built before the write, recorded only once it has applied (see `committedNotesWrite`).
+        let undoCheckpoint = makeUndoCheckpoint(
+            raw: refs, refs: effectiveRefs, renames: composedMap, content: fullContent, allowRenumber: allowRenumber)
 
         guard let systemWriter else {
             // §2.0's `.noWriter` fallback -- no writer configured at all (defensive
@@ -587,6 +598,7 @@ final class FootnoteSyncService {
                 lastKnownRefs = effectiveRefs
                 lastRenumberedHash = contentHash
                 carriedRenameMap = [:]
+                committedNotesWrite(undoCheckpoint: undoCheckpoint, content: fullContent)
                 NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
                 pushDefinitionsToEditor(fullContent: fullContent)
             } catch {
@@ -596,6 +608,7 @@ final class FootnoteSyncService {
         }
 
         let identity = SystemWriteIdentity(projectId: projectId, database: database)
+        let diagMark = FootnoteDiagMark()
         let result = await systemWriter.perform(
             identity: identity, kind: .notesUpdate,
             stillWanted: { [weak self] in scheduledGeneration == self?.syncGeneration },
@@ -620,16 +633,19 @@ final class FootnoteSyncService {
                 self?.renumberGeneration = self?.syncGeneration ?? scheduledGeneration
             },
             body: { db in
-                try FootnoteSyncService.writeNotesReconciliation(
+                diagMark.set()
+                return try FootnoteSyncService.writeNotesReconciliation(
                     db: db, projectId: projectId, targetRefs: effectiveRefs, renameMap: composedMap)
             }
         )
+        fnDiagWriteDone("notesUpdate", diagMark, result)
 
         switch result.outcome {
         case .applied:
             lastKnownRefs = effectiveRefs
             lastRenumberedHash = contentHash
             carriedRenameMap = [:]
+            committedNotesWrite(undoCheckpoint: undoCheckpoint, content: fullContent)
             NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
             pushDefinitionsToEditor(fullContent: fullContent)
         default:
@@ -819,7 +835,7 @@ final class FootnoteSyncService {
     /// should never hand this a non-injective map, but this tripwire (DEBUG-only,
     /// matching this codebase's I-HOLD/I-SYS `assert` convention) catches it at the
     /// point data would actually be lost if that invariant were ever violated.
-    private static func invertRenameMap(_ map: [String: String]) -> [String: String] {
+    static func invertRenameMap(_ map: [String: String]) -> [String: String] {
         #if DEBUG
         let mapValues = Array(map.values)
         assert(Set(mapValues).count == mapValues.count,
@@ -875,27 +891,30 @@ final class FootnoteSyncService {
     /// as `performFootnoteUpdate` above -- posts NO renumber (a removal has no rename
     /// map); only dedup state (`lastRenumberedHash`/`lastKnownRefs`) rolls back on any
     /// non-applied outcome, left exactly as it was before this call.
-    private func removeNotesBlock(projectId: String, scheduledGeneration: Int) async {
+    private func removeNotesBlock(projectId: String, scheduledGeneration: Int, undoCheckpoint: FootnoteUndoCheckpoint?) async {
         guard let database else { return }
 
         DebugLog.log(.footnotes, "[FootnoteSyncService] removeNotesBlock: entry projectId=\(projectId)")
 
         guard let systemWriter else {
-            await removeNotesBlockDirectly(projectId: projectId, database: database)
+            await removeNotesBlockDirectly(projectId: projectId, database: database, undoCheckpoint: undoCheckpoint)
             return
         }
 
         let identity = SystemWriteIdentity(projectId: projectId, database: database)
+        let diagMark = FootnoteDiagMark()
         let result = await systemWriter.perform(
             identity: identity, kind: .notesRemoval,
             stillWanted: { [weak self] in scheduledGeneration == self?.syncGeneration },
             body: { db in
+                diagMark.set()
                 var anchors: [String: DeletedAnchor]? = [:]
                 let removal = try FootnoteSyncService.writeNotesRemoval(
                     db: db, projectId: projectId, deletedAnchors: &anchors)
                 return SystemWriteBody(value: removal, deletedAnchors: anchors ?? [:])
             }
         )
+        fnDiagWriteDone("notesRemoval", diagMark, result)
 
         switch result.outcome {
         case .applied(let removal):
@@ -909,8 +928,9 @@ final class FootnoteSyncService {
             }
             lastRenumberedHash = 0
             lastKnownRefs = []
+            committedNotesWrite(undoCheckpoint: undoCheckpoint)
         case .refused(.noWriter):
-            await removeNotesBlockDirectly(projectId: projectId, database: database)
+            await removeNotesBlockDirectly(projectId: projectId, database: database, undoCheckpoint: undoCheckpoint)
         default:
             break   // dedup state rolls back -- left exactly as it was, nothing to commit
         }
@@ -918,7 +938,7 @@ final class FootnoteSyncService {
 
     /// §2.0's `.noWriter` fallback for removal -- writes directly, exactly as this
     /// method did before Phase 2.
-    private func removeNotesBlockDirectly(projectId: String, database: ProjectDatabase) async {
+    private func removeNotesBlockDirectly(projectId: String, database: ProjectDatabase, undoCheckpoint: FootnoteUndoCheckpoint?) async {
         DebugLog.log(.sync, "[SystemWrite] no writer - direct write")
         do {
             var anchors: [String: DeletedAnchor]?
@@ -930,6 +950,7 @@ final class FootnoteSyncService {
             }
             lastRenumberedHash = 0
             lastKnownRefs = []
+            committedNotesWrite(undoCheckpoint: undoCheckpoint)
         } catch {
             DebugLog.log(.editor, "[FootnoteSyncService] Error removing notes section (direct write): \(error)")
         }

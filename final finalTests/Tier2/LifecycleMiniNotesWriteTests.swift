@@ -66,7 +66,7 @@ struct LifecycleMiniNotesWriteTests {
 
     private func applyZoomedFB(
         _ stack: TestStack, content: String, zoom: Zoom
-    ) async throws -> SystemWriteResult<[Block]> {
+    ) async throws -> SystemWriteResult<LifecycleWholeDocumentWriteValue> {
         let prepared = try #require(LifecycleWholeDocumentWrite.prepare(
             content: content, database: stack.db, projectId: stack.pid,
             zoomedRange: zoom.range, zoomedSectionId: zoom.alphaId))

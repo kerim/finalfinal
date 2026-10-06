@@ -35,6 +35,9 @@ export interface BlockUpdate {
   textContent?: string;
   markdownFragment?: string;
   headingLevel?: number;
+  /** The editor node's own type (same strings as BlockInsert.blockType), so Swift can store a paragraph turned into
+   * a list (or back) as one. Swift applies it only within paragraph/lists/blockquote/code/table. */
+  blockType?: string;
 }
 
 export interface BlockInsert {
@@ -829,6 +832,7 @@ export function detectChanges(
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||
       oldBlock.headingLevel !== newBlock.headingLevel ||
+      oldBlock.blockType !== newBlock.blockType ||
       getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock)
     ) {
       // If this block is already pending as an insert, update the insert's content
@@ -853,6 +857,7 @@ export function detectChanges(
           textContent: newBlock.textContent,
           markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
+          blockType: newBlock.blockType,
         });
         if (SYNC_DIAG_DETAIL) {
           const changes: string[] = [];
