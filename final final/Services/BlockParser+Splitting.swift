@@ -313,8 +313,9 @@ private struct RawBlockSplitter {
             inFootnoteDef = false
         }
 
-        let lineRange = NSRange(line.startIndex..., in: line)
-        if Self.footnoteDefStartPattern.firstMatch(in: line, range: lineRange) != nil {
+        // `footnoteDefStartPattern` (`^\[\^(\d+)\]:`) can only match a line that starts with `[^`.
+        if line.hasPrefix("[^"),
+           Self.footnoteDefStartPattern.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil {
             // Flush previous block before starting footnote def
             flushCurrentBlockIfNotBlank()
             inFootnoteDef = true
@@ -461,8 +462,10 @@ private struct RawBlockSplitter {
     /// absorbed so caption and image stay in one block.
     private func isCaptionAwaitingImage(after index: Int, in lines: [String]) -> Bool {
         let trimmedBlock = currentBlock.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != nil,
-              trimmedBlock.hasSuffix("-->") else { return false }
+        // Both conditions must hold; the suffix test is a plain comparison and most blocks fail it, so it goes first and the
+        // regular expression is only run for blocks that end in `-->`.
+        guard trimmedBlock.hasSuffix("-->"),
+              trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != nil else { return false }
 
         // Peek ahead for image line
         var nextIdx = index + 1

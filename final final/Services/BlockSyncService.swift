@@ -59,6 +59,35 @@ class BlockSyncService {
     private var projectId: String?
     /// Internal (was private) only so the DEBUG accessors in `BlockSyncService+Lifecycle.swift` can reach it.
     weak var webView: WKWebView?
+    /// The JavaScript call `fetchContentFromWebView` makes. Rich Text: the editor's `getContent()`, as always (Milkdown has no
+    /// `getContentRaw`, and when zoomed it serializes the zoom-notes marker itself). Markdown (CodeMirror): the page's `getContent()`
+    /// strips EVERY hidden marker (`stripAnchors`, web/codemirror/src/anchor-plugin.ts; its regex has listed the end marker since
+    /// 2026-08-09), and the text this returns is SAVED, so two of those markers must survive it:
+    ///   - the bibliography END marker (`BlockParser.bibliographyEndMarker`): a document parsed without it stores its bibliography
+    ///     heading and entries as ordinary blocks (`BibliographyOpeningSelector`, tier 2 needs the terminator), and the next
+    ///     regeneration then adds a second bibliography;
+    ///   - the zoom-notes marker `<!-- ::zoom-notes:: -->`: `LifecycleWholeDocumentWrite.prepare` splits a zoomed section's mini-Notes
+    ///     off on exactly that marker (`SectionSyncService.stripZoomNotes`). Without it the trailing `# Notes` heading and the `[^n]:`
+    ///     definitions are parsed as part of the zoomed section and written into the middle of the document when that section is not
+    ///     the last (a second Notes heading, duplicate definitions), and an edit to a definition never reaches the real Notes.
+    /// So on a page that offers `getContentRaw()` this strips only the section anchors and the bibliography START marker, which is
+    /// the shape `editorState.content` has in Markdown mode (the page's own push, minus the anchors and the start marker; the zoomed
+    /// text there carries the zoom-notes marker too). The final branch keeps the literal `getContent()` call that the unit-test
+    /// harnesses (LifecycleFlushHarness, LifecycleTailHarness) answer by script text.
+    ///
+    /// Who can reach a Markdown page: only the lifecycle save sequence (close, quit, project switch), which hands
+    /// `fetchContentFromWebView` the captured CodeMirror view explicitly (`EditorViewState.captureForLifecycle`). Export
+    /// (`ContentView`'s `flushBeforeExport`), Save Version (`ContentView.handleSaveVersion`) and auto-backup
+    /// (`AutoBackupService.createAutoBackup`) pass no view, so they ask this service's own `webView`, which `configure` sets from the
+    /// Rich Text page only; in Markdown mode they get nil once that page is freed and flush the text on hand.
+    nonisolated static let fetchContentScript = """
+        (() => {
+            const ff = window.FinalFinal;
+            if (typeof ff.getContentRaw !== 'function') { return window.FinalFinal.getContent(); }
+            return ff.getContentRaw().replace(/<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->/g, '');
+        })()
+        """
+
     /// Fetch content from the active WebView with a timeout.
     /// Returns nil if WebView is unavailable, JS call fails, or timeout elapses.
     ///
@@ -77,7 +106,7 @@ class BlockSyncService {
     func fetchContentFromWebView(timeout: Duration = .seconds(2), webView explicitWebView: WKWebView? = nil) async -> String? {
         guard let webView = explicitWebView ?? self.webView else { return nil }
         let outcome = await raceAgainstTimeout(timeout) {
-            (try? await self.evaluateJS("window.FinalFinal.getContent()", in: webView)) as? String
+            (try? await self.evaluateJS(Self.fetchContentScript, in: webView)) as? String
         }
         switch outcome {
         case .finished(let value):

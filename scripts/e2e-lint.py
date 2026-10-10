@@ -229,6 +229,28 @@ NEGATIVE_PAIR = [
     ),
 ]
 
+# Co-occurrence rules with an exemption: pattern A and pattern B within
+# WINDOW code lines, unless pattern C also appears in that window.
+PAIR_UNLESS = [
+    (
+        "boundbyindex-bulk-read",
+        "error",
+        r"\ballElementsBoundByIndex\b",
+        r"\.(?:compactMap|flatMap|map|reduce|filter)\b",
+        r"\.exists\b",
+        "Reading `.value`/`.label` off `allElementsBoundByIndex` in bulk "
+        "(map/compactMap/reduce) re-resolves every element against a FRESH "
+        "snapshot, so one element the tree drops mid-loop (the status-bar "
+        "word count inside editor-area vanishes when a selection collapses) "
+        "ends the test with 'Failed to get matching snapshot: No matches "
+        "found for Element at index N' -- a hard XCTest failure, not a nil "
+        "(CONFIRMED live: write-queue 3b M7, 2026-10-06). Read the whole "
+        "tree from one snapshot -- editorStaticTextValues() in "
+        "UITestQueryAndFixtureHelpers.swift -- or guard each element with "
+        "`.exists` first.",
+    ),
+]
+
 SUPPRESS_RE = re.compile(r"e2e-lint:\s*allow\s+([\w-]+)")
 
 
@@ -281,6 +303,20 @@ def lint_file(path):
                 findings.append(
                     (sev, anchor + 1, rule_id, msg, rule_id in sup)
                 )
+
+    # PAIR with an exemption: A and B together in a window, unless C is too.
+    # The window starts AT the A line, so a guard (C) a few lines below it counts.
+    for rule_id, sev, pat_a, pat_b, pat_c, msg in PAIR_UNLESS:
+        for pos, (idx, ln) in enumerate(code):
+            if not re.search(pat_a, ln):
+                continue
+            window = code[pos : pos + WINDOW + 1]
+            if not any(re.search(pat_b, w) for _, w in window):
+                continue
+            if any(re.search(pat_c, w) for _, w in window):
+                continue
+            sup = suppressions_for(lines, idx)
+            findings.append((sev, idx + 1, rule_id, msg, rule_id in sup))
 
     # Same code-lines-only list as PAIR above, but inverted: flag pattern A
     # unless pattern B shows up within NEG_WINDOW code lines either side.

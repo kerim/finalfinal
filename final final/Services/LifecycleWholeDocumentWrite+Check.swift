@@ -137,18 +137,19 @@ extension LifecycleWholeDocumentWrite {
     }
 
     /// The check, inside FB's own transaction: the number of rows compared when the stored rows already
-    /// match what FB would write and there is no near tie; nil when FB must write.
-    static func matchingRowCount(db: Database, prepared: LifecycleWholeDocumentPrepared) throws -> Int? {
+    /// match what FB would write and there is no near tie; nil when FB must write. `caller` only labels the log lines (this
+    /// check runs for close, quit and project switch, and for the editor mode switch); it changes nothing else.
+    static func matchingRowCount(db: Database, prepared: LifecycleWholeDocumentPrepared, caller: String) throws -> Int? {
         let stored = BlockParser.assemblySorted(
             try Block.filter(Block.Columns.projectId == prepared.projectId).fetchAll(db))
         if hasNearTie(stored) {
-            DebugLog.log(.lifecycle, "[LifecycleWholeDocumentWrite] check: near sortOrder tie among \(stored.count) rows -- rebuilding")
+            DebugLog.log(.lifecycle, "[LifecycleWholeDocumentWrite] check (\(caller)): near sortOrder tie among \(stored.count) rows -- rebuilding")
             return nil
         }
         let wouldWrite = ProjectDatabase.preparedRowsForWholeReplace(existing: stored, parsed: prepared.blocks)
         if let difference = firstDifference(stored: stored, wouldWrite: wouldWrite) {
             // Only the row number and field names go to the log, never the document's text.
-            DebugLog.log(.lifecycle, "[LifecycleWholeDocumentWrite] check: rows differ -- rebuilding (\(difference.prefix(60)))")
+            DebugLog.log(.lifecycle, "[LifecycleWholeDocumentWrite] check (\(caller)): rows differ -- rebuilding (\(difference.prefix(60)))")
             return nil
         }
         return comparableRows(wouldWrite).count

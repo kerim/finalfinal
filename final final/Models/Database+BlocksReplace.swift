@@ -164,6 +164,39 @@ extension ProjectDatabase {
         }
     }
 
+    /// `replaceBlocks`, except that it writes NOTHING when the rows already stored are the rows the write would
+    /// store. Returns `true` when it wrote (rows differed, or the near-tie rule asked for a renumber), `false`
+    /// when it skipped. Used only by the Markdown <-> Rich Text switch's flush (book-length switch plan, step 2b):
+    /// on an unchanged switch every row keeps its id and the write counter (`stampWholeProjectForRewrite`) is not
+    /// bumped, which also saves the delete-and-reinsert of every row.
+    ///
+    /// The comparison is the one close and quit already make before their whole-document write
+    /// (`LifecycleWholeDocumentWrite.matchingRowCount`, called here as it stands, not copied), and it runs in the
+    /// SAME write transaction as the write that follows: sort the stored rows in reopen order, check
+    /// `hasNearTie`, prepare the would-write rows from the sorted stored rows with `preparedRowsForWholeReplace`,
+    /// then `firstDifference`. It compares type, heading level, trimmed fragment, trimmed text and the
+    /// bibliography / Notes / pseudo-section flags, so a changed character, a changed block type or a changed
+    /// flag always writes; ids and sort numbers are not compared. See that file's header for what the rule
+    /// compares and what it deliberately does not tolerate. Never used for a zoomed flush (the caller keeps the
+    /// range replace for that).
+    func replaceBlocksIfChanged(_ blocks: [Block], for projectId: String) throws -> Bool {
+        try write { db in
+            try Self.replaceBlocksIfChanged(db: db, blocks, for: projectId)
+        }
+    }
+
+    /// The db-level body of `replaceBlocksIfChanged(_:for:)`, static for the same reason as `replaceBlocks(db:...)`.
+    static func replaceBlocksIfChanged(db: Database, _ blocks: [Block], for projectId: String) throws -> Bool {
+        let prepared = LifecycleWholeDocumentPrepared(
+            blocks: blocks, projectId: projectId, range: nil, anchorHeadingId: nil, miniNotes: nil
+        )
+        if try LifecycleWholeDocumentWrite.matchingRowCount(db: db, prepared: prepared, caller: "editor mode switch") != nil {
+            return false
+        }
+        try replaceBlocks(db: db, blocks, for: projectId)
+        return true
+    }
+
     /// The db-level body of `replaceBlocks(_:for:preservingMachineManagedBlocks:)`, extracted
     /// verbatim (t-94369a83 Phase 3a-1a, §2.3 "db-level statics") so the queued whole-document
     /// write (`LifecycleWholeDocumentWrite.body`) can run it on the `Database` a writer

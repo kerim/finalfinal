@@ -278,6 +278,14 @@ extension ContentView {
                                     editorState.content = result.markdown
                                 }
                                 editorState.isResettingContent = false
+                                // End of a switch to Rich Text: the editor now holds its content (or there was none to set), so
+                                // .editorTransition ends here, on both paths above and before polling starts. Only if still in
+                                // that state: this closure also runs for project open, which owns its own state. Zoom never reaches
+                                // it: zoom pushes through plain setContent on the editor that is already mounted.
+                                // Replaces the fixed 1.5 s wait that used to end the transition in ViewNotificationModifiers.swift.
+                                if editorState.contentState == .editorTransition {
+                                    editorState.contentState = .idle
+                                }
                                 blockSyncService.startPolling()
                             }
                         }

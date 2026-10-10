@@ -568,9 +568,12 @@ extension EditorViewState {
     /// document is a valid answer, N28), else `content` on hand. The fetch is skipped after a watchdog hit.
     ///
     /// Markdown (round C4): the fetch asks the CAPTURED view, which in source mode is CodeMirror's (never the
-    /// block-sync service's own view, which is the Milkdown editor's). CodeMirror's `getContent()` already
-    /// strips the section anchors; the bibliography marker is stripped here (`stripBibliographyMarker` is
-    /// idempotent, and `content` on hand is already stripped, so both sources agree). The result is staged
+    /// block-sync service's own view, which is the Milkdown editor's). The fetch (`BlockSyncService.fetchContentScript`)
+    /// strips the section anchors and, on a Markdown page, KEEPS the bibliography END marker (the page's own `getContent()`
+    /// strips it, and a text parsed without it stores the bibliography as ordinary blocks; 2026-10-09) and, for a zoomed
+    /// section, the zoom-notes marker (FB's `prepare` splits the mini-Notes off on it); the bibliography
+    /// start marker is stripped here (`stripBibliographyMarker` is idempotent, and `content` on hand is already stripped,
+    /// so both sources agree). The result is staged
     /// into `switchInProgressContent` exactly as the old `flushAllPendingContent` did, so a flush that reaches
     /// `flushContentToDatabase` with no override inside the window reads THIS content, never the stale
     /// `content`. An empty answer is staged as `""` on purpose: `flushContentToDatabase` refuses empty content,

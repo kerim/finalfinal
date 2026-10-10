@@ -103,42 +103,50 @@ enum MarkdownUtils {
     ///   text that merely looks like one — preserving the literal text is the
     ///   safer default there.
     static func stripMarkdownSyntax(from content: String, stripListMarkers: Bool = true) -> String {
-        var result = content
+        var work = GuardedText(content)
+        strippingSyntax(&work, stripListMarkers: stripListMarkers)
+        return work.text
+    }
 
+    /// The body of `stripMarkdownSyntax`, working on a `GuardedText` so `stripForWordCount` can hand over a text whose
+    /// character scan is already current. Every pattern is compiled once (`rxStrip...`, further down) and is run only when
+    /// the text holds the characters it needs (see `GuardedText`), so a plain paragraph costs one scan instead of sixteen
+    /// regular-expression passes. The order of the steps is unchanged.
+    private static func strippingSyntax(_ work: inout GuardedText, stripListMarkers: Bool) {
         // Remove heading markers: # ## ### etc at line start
-        applyInlinePattern("^#{1,6}\\s+", options: .anchorsMatchLines, to: &result, template: "")
+        work.replace(rxStripHeadingMarker, with: "") { $0.hash }
 
         // Remove bold/italic markers: ** __ * _
         // Handle bold first (** and __), then italic (* and _)
-        applyInlinePattern("\\*\\*(.+?)\\*\\*|__(.+?)__", to: &result, template: "$1$2")
-        applyInlinePattern("\\*([^*]+)\\*|_([^_]+)_", to: &result, template: "$1$2")
+        work.replace(rxStripBold, with: "$1$2") { $0.doubleStar || $0.doubleUnderscore }
+        work.replace(rxStripItalic, with: "$1$2") { $0.star || $0.underscore }
 
         // Remove strikethrough: ~~text~~
-        applyInlinePattern("~~(.+?)~~", to: &result, template: "$1")
+        work.replace(rxStripStrikethrough, with: "$1") { $0.doubleTilde }
 
         // Remove highlight markers: ==text==
-        applyInlinePattern("==(.+?)==", to: &result, template: "$1")
+        work.replace(rxStripHighlight, with: "$1") { $0.doubleEquals }
 
         // Remove inline code backticks: `code`
-        applyInlinePattern("`([^`]+)`", to: &result, template: "$1")
+        work.replace(rxStripInlineCode, with: "$1") { $0.backtick }
 
         // Remove images ![alt](url){width=N%} entirely (don't count alt text as words).
         // MUST run before the link stripper, otherwise the link regex matches
         // [alt](url) inside the image syntax and leaves a stray `!alt text` behind.
-        applyInlinePattern("!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?", to: &result, template: "")
+        work.replace(rxStripImage, with: "") { $0.imageOpen && $0.linkJoin }
 
         // Convert links [text](url) to just text. Negative lookbehind `(?<!!)`
         // is belt-and-braces in case the image stripper missed an unusual variant.
-        applyInlinePattern("(?<!!)\\[([^\\]]+)\\]\\([^)]+\\)", to: &result, template: "$1")
+        work.replace(rxStripLink, with: "$1") { $0.linkJoin }
 
         // Remove list markers: - * + or 1. 2. etc (unless the caller already
         // knows this isn't really list content -- see stripListMarkers's doc)
         if stripListMarkers {
-            result = strippingListMarkers(from: result)
+            work.replace(rxStripListMarker, with: "") { $0.dash || $0.star || $0.plus || $0.dot }
         }
 
         // Remove blockquote markers: > at line start
-        applyInlinePattern("^>+\\s*", options: .anchorsMatchLines, to: &result, template: "")
+        work.replace(rxStripBlockquoteMarker, with: "") { $0.greaterThan }
 
         // Remove section break markers: <!-- ::break:: -->
         // Deliberately a substring removal (matches the marker ANYWHERE in
@@ -159,58 +167,22 @@ enum MarkdownUtils {
         // them feed this function a value that's supposed to answer the
         // classification question, so this pattern intentionally stays a
         // plain substring strip.
-        applyInlinePattern("<!--\\s*::break::\\s*-->", to: &result, template: "")
+        work.replace(rxStripSectionBreak, with: "") { $0.breakMarker }
 
         // Remove code fence markers: ```language
-        applyInlinePattern("^```[a-zA-Z]*\\s*$", options: .anchorsMatchLines, to: &result, template: "")
+        work.replace(rxStripCodeFenceMarker, with: "") { $0.fence }
 
         // Remove horizontal rules: ---, ***, ___
-        applyInlinePattern("^[-*_]{3,}\\s*$", options: .anchorsMatchLines, to: &result, template: "")
+        work.replace(rxStripHorizontalRule, with: "") { $0.dash || $0.star || $0.underscore }
 
         // Remove footnote references: [^1], [^2], etc.
-        applyInlinePattern("\\[\\^\\d+\\](?!:)", to: &result, template: "")
+        work.replace(rxStripFootnoteReference, with: "") { $0.footnoteOpen }
 
         // Remove footnote definition prefixes: [^1]: at line start
-        applyInlinePattern("^\\[\\^\\d+\\]:\\s*", options: .anchorsMatchLines, to: &result, template: "")
+        work.replace(rxStripFootnoteDefinitionPrefix, with: "") { $0.footnoteOpen }
 
         // Remove annotations: <!-- ::type:: content -->
-        result = stripAnnotations(from: result)
-
-        return result
-    }
-
-    /// Compile `pattern` (with `options`) and, if it compiles, replace every match in
-    /// `input` with `template` -- in place. Leaves `input` unchanged if the pattern fails
-    /// to compile, matching every one of `stripMarkdownSyntax`'s original inline
-    /// `if let regex = try? ...` blocks: these are compile-time constant patterns, so a
-    /// failure is a programming error (a typo), not a runtime condition worth branching on
-    /// at the call site. Extracted purely to keep `stripMarkdownSyntax` itself branch-free
-    /// per pattern -- each inline `if let` used to add one path to that function's own
-    /// cyclomatic complexity; this helper carries that one branch instead, once, so adding
-    /// or removing a stripped pattern no longer moves `stripMarkdownSyntax` closer to
-    /// SwiftLint's `cyclomatic_complexity` limit.
-    private static func applyInlinePattern(
-        _ pattern: String,
-        options: NSRegularExpression.Options = [],
-        to input: inout String,
-        template: String
-    ) {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
-        let range = NSRange(input.startIndex..., in: input)
-        input = regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: template)
-    }
-
-    /// Remove a leading `- `/`* `/`+ `/`N. ` list marker at the start of each line.
-    /// Split out of `stripMarkdownSyntax` so that function's own complexity doesn't
-    /// grow with this conditional step -- see `stripMarkdownSyntax`'s `stripListMarkers`
-    /// parameter for why this is sometimes skipped.
-    private static func strippingListMarkers(from content: String) -> String {
-        let listPattern = "^\\s*(?:[-*+]|\\d+\\.)\\s+"
-        guard let regex = try? NSRegularExpression(pattern: listPattern, options: .anchorsMatchLines) else {
-            return content
-        }
-        let range = NSRange(content.startIndex..., in: content)
-        return regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: "")
+        work.replace(rxAnnotation, with: "") { $0.commentOpen }
     }
 
     /// Strip `==highlight==` markers from markdown content, reducing highlighted text to
@@ -312,17 +284,7 @@ enum MarkdownUtils {
     static func stripHighlightMarkers(from markdown: String) -> String {
         guard markdown.contains("==") else { return markdown }
 
-        // Group numbers (used below to decide verbatim-copy vs. strip-to-inner-text):
-        //   1 = fenced code block (```)      2 = fenced code block (~~~)
-        //   3 = inline code (`...`)          4 = display math ($$...$$)
-        //   5 = inline math ($...$)          6 = full highlight match (==...==)
-        //   7 = highlight inner text (captured content between the == markers)
-        let pattern = #"""
-        (```[\s\S]*?```)|(~~~[\s\S]*?~~~)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|\#
-        ((?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$]))|((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)
-        """#
-
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        guard let regex = highlightMarkerRegex else {
             // Unreachable unless the literal pattern above is edited into an invalid one.
             // Degrade to the input unchanged (highlights export with their `==` markers
             // intact) rather than crashing an export on a programming error.
@@ -363,6 +325,21 @@ enum MarkdownUtils {
 
         return result
     }
+
+    /// The one alternation `stripHighlightMarkers` runs, compiled once (it used to be compiled on every call).
+    ///
+    /// Group numbers (used by the function to decide verbatim-copy vs. strip-to-inner-text):
+    ///   1 = fenced code block (```)      2 = fenced code block (~~~)
+    ///   3 = inline code (`...`)          4 = display math ($$...$$)
+    ///   5 = inline math ($...$)          6 = full highlight match (==...==)
+    ///   7 = highlight inner text (captured content between the == markers)
+    private static let highlightMarkerRegex: NSRegularExpression? = {
+        let pattern = #"""
+        (```[\s\S]*?```)|(~~~[\s\S]*?~~~)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|\#
+        ((?<![A-Za-z0-9$])\$(?=\S)[^\$\n]+?(?<=\S)\$(?![A-Za-z0-9$]))|((?<!=)==(?!=)((?:(?!==)[\s\S])+?)==)
+        """#
+        return try? NSRegularExpression(pattern: pattern)
+    }()
 
     /// The image markdown pattern used by `strippingImages(from:)`: `![alt](url){attrs}`,
     /// with an OPTIONAL trailing `{...}` attribute block (Pandoc width/attrs syntax), a
@@ -430,17 +407,11 @@ enum MarkdownUtils {
     /// Annotations follow the pattern: <!-- ::type:: content -->
     /// where type is task, comment, reference, or break
     static func stripAnnotations(from content: String) -> String {
-        var result = content
-
-        // Pattern matches: <!-- ::word:: any content -->
+        // Pattern (`rxAnnotation`) matches: <!-- ::word:: any content -->
         // This handles task, comment, reference, break, and auto-bibliography annotations
-        let annotationPattern = "<!--\\s*::\\w+::\\s*[\\s\\S]*?-->"
-        if let regex = try? NSRegularExpression(pattern: annotationPattern, options: []) {
-            let range = NSRange(result.startIndex..., in: result)
-            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
-        }
-
-        return result
+        var work = GuardedText(content)
+        work.replace(rxAnnotation, with: "") { $0.commentOpen }
+        return work.text
     }
 
     /// Check if text is a ghost image reference from WebKit's native drop race condition.
@@ -539,13 +510,6 @@ enum MarkdownUtils {
     )
     // swiftlint:enable force_try
 
-    /// Apply a precompiled regex to `input` with the given replacement template,
-    /// in-place. Keeps call sites as one-liners.
-    private static func apply(_ regex: NSRegularExpression, to input: inout String, with template: String) {
-        let range = NSRange(input.startIndex..., in: input)
-        input = regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: template)
-    }
-
     /// Strip markdown syntax AND non-prose regions in preparation for word counting.
     /// More aggressive than `stripMarkdownSyntax`: also removes fenced code blocks,
     /// math (`$…$`, `$$…$$`), HTML tags/comments, YAML frontmatter, reference-style
@@ -562,64 +526,66 @@ enum MarkdownUtils {
     /// (which removes autolinks so `<alice@host.org>` doesn't trigger the `@key`
     /// regex). Do not reorder without updating the citation tests.
     static func stripForWordCount(from content: String) -> String {
-        var result = content
+        // Each step runs only when the text, as it is at that step, holds the characters its pattern needs (`GuardedText`);
+        // output is identical to running every step unconditionally.
+        var work = GuardedText(content)
 
         // YAML frontmatter at start of document
-        apply(rxYAMLFrontmatter, to: &result, with: "")
+        work.replace(rxYAMLFrontmatter, with: "") { $0.startsWithFrontmatterFence }
 
         // Fenced code blocks (``` and ~~~) — entire block including content
-        apply(rxFencedCodeBacktick, to: &result, with: "")
-        apply(rxFencedCodeTilde, to: &result, with: "")
+        work.replace(rxFencedCodeBacktick, with: "") { $0.fence }
+        work.replace(rxFencedCodeTilde, with: "") { $0.tildeFence }
 
         // HTML comments (catches annotation comments and any other)
-        apply(rxHTMLComment, to: &result, with: "")
+        work.replace(rxHTMLComment, with: "") { $0.commentOpen }
 
         // Display math: $$ ... $$
-        apply(rxDisplayMath, to: &result, with: "")
+        work.replace(rxDisplayMath, with: "") { $0.displayMath }
 
         // Inline math: $ ... $ (Pandoc rule — see regex comment)
-        apply(rxInlineMath, to: &result, with: "")
+        work.replace(rxInlineMath, with: "") { $0.dollar }
 
         // Reference-style link definitions: [label]: url (excludes footnote defs [^N]:)
-        apply(rxReferenceLinkDef, to: &result, with: "")
+        work.replace(rxReferenceLinkDef, with: "") { $0.referenceDefinitionJoin }
 
         // Inline reference-style links: [text][ref] → text (excludes footnotes [^N])
-        apply(rxInlineReferenceLink, to: &result, with: "$1")
+        work.replace(rxInlineReferenceLink, with: "$1") { $0.referenceLinkJoin }
 
         // Run the inline syntax stripper for headings, bold/italic, strikethrough,
         // links, images, list markers, blockquotes, footnote refs/defs, horizontal
         // rules, section breaks, code-fence language markers, inline code, annotations.
-        result = stripMarkdownSyntax(from: result)
+        strippingSyntax(&work, stripListMarkers: true)
 
         // Remaining HTML tags (after stripMarkdownSyntax). Running BEFORE the
         // citation substitution so `<alice@host.org>` is gone before @key scans.
-        apply(rxHTMLTag, to: &result, with: "")
+        work.replace(rxHTMLTag, with: "") { $0.lessThan && $0.greaterThan }
 
         // Pandoc citations — render-then-count. Order within this group matters:
         // 1. -@key → " CIT " (suppress author: renders to year only, 1 word)
         // 2. @key → " CIT CIT " (full: renders to name + year, 2 words)
         // 3. Outer [ … CIT … ] → inner content (locator words pass through)
-        apply(rxCitationSuppressAuthor, to: &result, with: Self.citSingle)
-        apply(rxCitationKey, to: &result, with: Self.citDouble)
-        apply(rxCitationBracket, to: &result, with: "$1")
+        work.replace(rxCitationSuppressAuthor, with: Self.citSingle, mayKeepLength: true) { $0.suppressedCitation }
+        work.replace(rxCitationKey, with: Self.citDouble, mayKeepLength: true) { $0.atSign }
+        work.replace(rxCitationBracket, with: "$1") { $0.openBracket && $0.citationPlaceholder }
 
         // Pandoc attribute blocks: {#id}, {.class}, {key=val}
-        apply(rxPandocAttrs, to: &result, with: "")
+        work.replace(rxPandocAttrs, with: "") { $0.openBrace }
 
         // Task checkbox markers at start of (now-de-listed) lines: [ ] or [x]
-        apply(rxTaskCheckbox, to: &result, with: "")
+        work.replace(rxTaskCheckbox, with: "") { $0.openBracket }
 
         // Table separator rows: |---|:--:|
-        apply(rxTableSeparator, to: &result, with: "")
+        work.replace(rxTableSeparator, with: "") { $0.pipe && $0.dash }
 
         // Table cell separators: pipe → space (so cells split into words)
-        result = result.replacingOccurrences(of: "|", with: " ")
+        work.replaceLiteral("|", with: " ") { $0.pipe }
 
         // Em- and en-dashes split adjacent words
-        result = result.replacingOccurrences(of: "\u{2014}", with: " ")
-        result = result.replacingOccurrences(of: "\u{2013}", with: " ")
+        work.replaceLiteral("\u{2014}", with: " ") { $0.emDash }
+        work.replaceLiteral("\u{2013}", with: " ") { $0.enDash }
 
-        return result
+        return work.text
     }
 
     /// Ensures markdown content ends with exactly one blank line (`\n\n`), so it can be
@@ -631,5 +597,204 @@ enum MarkdownUtils {
         if content.hasSuffix("\n\n") { return content }
         if content.hasSuffix("\n") { return content + "\n" }
         return content + "\n\n"
+    }
+}
+
+// MARK: - Fast paths for the strip functions
+
+// These are an extension, in this file, only so the helpers do not count against the length of `MarkdownUtils` itself; their
+// `private` members are visible to the functions above.
+extension MarkdownUtils {
+    // swiftlint:disable force_try
+    //
+    // The patterns of `stripMarkdownSyntax` and `stripAnnotations` (they used to be compiled on every call: sixteen
+    // compilations per block, twice per block when parsing). Same pattern text, same options, same order of use.
+    private static let rxStripHeadingMarker = try! NSRegularExpression(
+        pattern: "^#{1,6}\\s+", options: .anchorsMatchLines
+    )
+    private static let rxStripBold = try! NSRegularExpression(pattern: "\\*\\*(.+?)\\*\\*|__(.+?)__")
+    private static let rxStripItalic = try! NSRegularExpression(pattern: "\\*([^*]+)\\*|_([^_]+)_")
+    private static let rxStripStrikethrough = try! NSRegularExpression(pattern: "~~(.+?)~~")
+    private static let rxStripHighlight = try! NSRegularExpression(pattern: "==(.+?)==")
+    private static let rxStripInlineCode = try! NSRegularExpression(pattern: "`([^`]+)`")
+    private static let rxStripImage = try! NSRegularExpression(pattern: "!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?")
+    private static let rxStripLink = try! NSRegularExpression(pattern: "(?<!!)\\[([^\\]]+)\\]\\([^)]+\\)")
+    private static let rxStripListMarker = try! NSRegularExpression(
+        pattern: "^\\s*(?:[-*+]|\\d+\\.)\\s+", options: .anchorsMatchLines
+    )
+    private static let rxStripBlockquoteMarker = try! NSRegularExpression(
+        pattern: "^>+\\s*", options: .anchorsMatchLines
+    )
+    private static let rxStripSectionBreak = try! NSRegularExpression(pattern: "<!--\\s*::break::\\s*-->")
+    private static let rxStripCodeFenceMarker = try! NSRegularExpression(
+        pattern: "^```[a-zA-Z]*\\s*$", options: .anchorsMatchLines
+    )
+    private static let rxStripHorizontalRule = try! NSRegularExpression(
+        pattern: "^[-*_]{3,}\\s*$", options: .anchorsMatchLines
+    )
+    private static let rxStripFootnoteReference = try! NSRegularExpression(pattern: "\\[\\^\\d+\\](?!:)")
+    private static let rxStripFootnoteDefinitionPrefix = try! NSRegularExpression(
+        pattern: "^\\[\\^\\d+\\]:\\s*", options: .anchorsMatchLines
+    )
+    private static let rxAnnotation = try! NSRegularExpression(pattern: "<!--\\s*::\\w+::\\s*[\\s\\S]*?-->")
+    // swiftlint:enable force_try
+
+    // MARK: - Cheap "can this pattern match at all" checks
+
+    /// Which of the characters and short literals the patterns of `stripMarkdownSyntax` and `stripForWordCount` need occur in
+    /// a text, found by `memchr` / `memmem` over its UTF-8 bytes. Everything looked for is ASCII (plus the two dashes of
+    /// `stripForWordCount`, searched as their UTF-8 bytes), and UTF-8 never uses a byte of one character inside another
+    /// character's bytes, so a byte string is present exactly when the characters are. A flag is only used to SKIP a step
+    /// that needs the characters it names, spelled out in the pattern as adjacent literals, to match anything, so skipping it
+    /// when they are absent cannot change the result. A multi-byte literal is only searched for when its single bytes are all
+    /// present; the flag still means exactly "the literal occurs" (an occurrence needs each of its bytes).
+    private struct SyntaxPresence {
+        var hash = false
+        var star = false
+        var underscore = false
+        var plus = false
+        var dash = false
+        var dot = false
+        var backtick = false
+        var greaterThan = false
+        var lessThan = false
+        var openBracket = false
+        var openBrace = false
+        var pipe = false
+        var atSign = false
+        var dollar = false
+        var doubleStar = false
+        var doubleUnderscore = false
+        var doubleTilde = false
+        var doubleEquals = false
+        var displayMath = false
+        /// `![`
+        var imageOpen = false
+        /// `](`
+        var linkJoin = false
+        /// `]:`
+        var referenceDefinitionJoin = false
+        /// `][`
+        var referenceLinkJoin = false
+        /// `[^`
+        var footnoteOpen = false
+        /// `<!--`
+        var commentOpen = false
+        /// `::break::`
+        var breakMarker = false
+        /// three backticks
+        var fence = false
+        /// three tildes
+        var tildeFence = false
+        /// `-@`
+        var suppressedCitation = false
+        /// `CIT`, the placeholder `stripForWordCount` substitutes for a citation. Searched only when `[` is present, because the
+        /// one step that reads it (the bracket around a citation) needs both.
+        var citationPlaceholder = false
+        var emDash = false
+        var enDash = false
+        /// The text begins with `---` (the only place a YAML front-matter block can start)
+        var startsWithFrontmatterFence = false
+
+        init() {}
+
+        init(scanning buffer: UnsafeBufferPointer<UInt8>) {
+            guard let base = buffer.baseAddress, !buffer.isEmpty else { return }
+            let count = buffer.count
+            func has(_ byte: UInt8) -> Bool { memchr(base, Int32(byte), count) != nil }
+            func has(_ literal: StaticString) -> Bool {
+                memmem(base, count, literal.utf8Start, literal.utf8CodeUnitCount) != nil
+            }
+            hash = has(0x23)
+            star = has(0x2A)
+            underscore = has(0x5F)
+            plus = has(0x2B)
+            dash = has(0x2D)
+            dot = has(0x2E)
+            backtick = has(0x60)
+            greaterThan = has(0x3E)
+            lessThan = has(0x3C)
+            openBracket = has(0x5B)
+            openBrace = has(0x7B)
+            pipe = has(0x7C)
+            atSign = has(0x40)
+            dollar = has(0x24)
+            let tilde = has(0x7E)
+            let equals = has(0x3D)
+            let bang = has(0x21)
+            let closeBracket = has(0x5D)
+            let openParen = has(0x28)
+            let colon = has(0x3A)
+            let caret = has(0x5E)
+            doubleStar = star && has("**")
+            doubleUnderscore = underscore && has("__")
+            doubleTilde = tilde && has("~~")
+            doubleEquals = equals && has("==")
+            displayMath = dollar && has("$$")
+            imageOpen = bang && openBracket && has("![")
+            linkJoin = closeBracket && openParen && has("](")
+            referenceDefinitionJoin = closeBracket && colon && has("]:")
+            referenceLinkJoin = closeBracket && openBracket && has("][")
+            footnoteOpen = openBracket && caret && has("[^")
+            commentOpen = lessThan && bang && has("<!--")
+            breakMarker = colon && has("::break::")
+            fence = backtick && has("```")
+            tildeFence = tilde && has("~~~")
+            suppressedCitation = dash && atSign && has("-@")
+            citationPlaceholder = openBracket && has("CIT")
+            let possibleDash = has(0xE2)
+            emDash = possibleDash && has("\u{2014}")
+            enDash = possibleDash && has("\u{2013}")
+            startsWithFrontmatterFence = count >= 3 && base[0] == 0x2D && base[1] == 0x2D && base[2] == 0x2D
+        }
+    }
+
+    /// A text that remembers which characters it holds. Each step asks `replace(...)` to run a pattern only if the text, AS IT
+    /// IS WHEN THE STEP RUNS, holds what the pattern needs. The scan is redone after a step that changed the text (a removal
+    /// can bring two characters together that were apart: dropping the `**` of `!**[a**](b)` leaves the image `![a](b)`) and
+    /// is kept while the text is untouched.
+    private struct GuardedText {
+        private(set) var text: String
+        private var presence = SyntaxPresence()
+        private var presenceIsCurrent = false
+
+        init(_ text: String) {
+            self.text = text
+        }
+
+        /// Replace every match of `regex` with `template`, but only if `needs` holds for the characters the text holds now.
+        ///
+        /// After a run the scan stays valid if nothing matched. That is read from the length: a pattern that replaces its
+        /// (never empty) match with `""` or with a capture group inside the match always makes the text SHORTER, so an
+        /// unchanged length means no match. A pattern that substitutes text of its own (the citation placeholders) can
+        /// produce exactly the length of what it replaced (`@zhao2020` is nine characters, and so is ` CIT CIT `), so it
+        /// passes `mayKeepLength` and the scan is always redone.
+        mutating func replace(
+            _ regex: NSRegularExpression,
+            with template: String,
+            mayKeepLength: Bool = false,
+            if needs: (SyntaxPresence) -> Bool
+        ) {
+            refreshPresence()
+            guard needs(presence) else { return }
+            let range = NSRange(text.startIndex..., in: text)
+            text = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: template)
+            presenceIsCurrent = !mayKeepLength && text.utf16.count == range.length
+        }
+
+        /// `replacingOccurrences(of:with:)`, only if `needs` holds.
+        mutating func replaceLiteral(_ target: String, with replacement: String, if needs: (SyntaxPresence) -> Bool) {
+            refreshPresence()
+            guard needs(presence) else { return }
+            text = text.replacingOccurrences(of: target, with: replacement)
+            presenceIsCurrent = false
+        }
+
+        private mutating func refreshPresence() {
+            guard !presenceIsCurrent else { return }
+            // `withUTF8` makes the text contiguous UTF-8 in place if a replacement left it bridged, so later scans copy nothing.
+            presence = text.withUTF8 { SyntaxPresence(scanning: $0) }
+            presenceIsCurrent = true
+        }
     }
 }

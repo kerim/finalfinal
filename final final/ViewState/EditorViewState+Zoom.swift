@@ -790,7 +790,13 @@ extension EditorViewState {
     /// it never explicitly threads an override through: the debounce timer in
     /// `BibliographySyncService` is exactly such a caller (it cannot pass an override, since
     /// it fires on its own schedule, independent of the lifecycle's open tail).
-    func flushContentToDatabase(overrideContent: String? = nil) {
+    ///
+    /// `skipUnchangedWrite` (default `false`; passed `true` ONLY by the two calls in `handleEditorModeToggle`, the
+    /// Markdown <-> Rich Text switch) makes the NOT-zoomed branch use `replaceBlocksIfChanged` instead of
+    /// `replaceBlocks`: when the rows already stored are the rows this parse would store (the rule close and quit use,
+    /// `LifecycleWholeDocumentWrite.matchingRowCount`), nothing is written, every row keeps its id and the write counter
+    /// is not bumped. A zoomed flush ignores the flag: it always takes the range replace below, as before.
+    func flushContentToDatabase(overrideContent: String? = nil, skipUnchangedWrite: Bool = false) {
         let contentToFlush = overrideContent ?? switchInProgressContent ?? content
         guard !contentToFlush.isEmpty else { return }
         guard let db = projectDatabase, let pid = currentProjectId else { return }
@@ -922,7 +928,7 @@ extension EditorViewState {
                 }
             } else {
                 // Not zoomed: full document replace (existing behavior)
-                try db.replaceBlocks(blocks, for: pid)
+                try writeWholeDocumentRows(blocks, to: db, projectId: pid, skipUnchangedWrite: skipUnchangedWrite)
             }
         } catch {
             DebugLog.log(.zoom, "[EditorViewState] flushContentToDatabase error: \(error)")

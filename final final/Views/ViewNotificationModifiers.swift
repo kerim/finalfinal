@@ -87,6 +87,13 @@ struct ContentSyncObserverHost<Content: View>: View {
         #if DEBUG
         DebugLog.log(.viewUpdates, "[ContentSyncObserved]")
         #endif
+        // Tells the citation-prefill scheduler the document changed -- all it does here is store the text and move a due time; the
+        // scan for changed citations and the page work happen later, off this path. Before the idle guard below, so text assigned
+        // during a transition (zoom in or out, project open or close) reaches the scheduler too and its next background fill never
+        // works from an older text; and so a zoomed editor's text (the zoomed section, which is what a switch to Rich Text would
+        // load) counts as well.
+        EditorPreloader.shared.noteDocumentChanged(newValue)
+
         guard editorState.contentState == .idle else {
             FootnoteDiag.log("content change IGNORED by handleContentChange: contentState=\(editorState.contentState) length=\(newValue.utf8.count)")
             return
@@ -592,7 +599,9 @@ extension View {
             // Without this, recently-inserted nodes (e.g. images via editor-first
             // approach) may not be in the blocks table yet, causing wrong offsets
             // and anchor injection corruption.
-            editorState.flushContentToDatabase(overrideContent: editorState.content)
+            // `skipUnchangedWrite`: when the stored rows already are what this flush would store (no edit since
+            // the last save), nothing is written, so every row keeps its id. A zoomed flush ignores the flag.
+            editorState.flushContentToDatabase(overrideContent: editorState.content, skipUnchangedWrite: true)
             DebugLog.log(.editor, "[SWITCH→CM] After flush")
 
             // Compute offsets from blocks (same data that produced editorState.content)
@@ -659,26 +668,17 @@ extension View {
             // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
             editorState.contentState = .editorTransition
             DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
-            editorState.flushContentToDatabase(overrideContent: editorState.content)
-
-            // Extract anchors and strip bibliography marker
-            let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
-                markdown: editorState.sourceContent
-            )
-            DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
-            editorState.sourceAnchors = anchors
-            // Also strip bibliography marker since Milkdown shouldn't see it
-            editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)
+            // Extract the anchors and the bibliography marker from the text the Markdown editor holds NOW, save that text and hand it
+            // to Rich Text. (It used to save `editorState.content`, which lags the page by its 50 ms push timer, so keys typed just
+            // before the switch were not saved.)
+            editorState.commitMarkdownTextForRichTextSwitch(sectionSyncService: sectionSyncService)
             editorState.toggleEditorMode()
 
-            // CRITICAL: Delay returning to .idle to give Milkdown time to initialize
-            // Milkdown's first few polls can return corrupted content (missing # from headers)
-            // Keep .editorTransition active to suppress polling during this initialization window
-            // The 1.5s delay covers: WebView load + FinalFinal init + first stable poll cycle
-            Task {
-                try? await Task.sleep(for: .milliseconds(1500))
-                editorState.contentState = .idle
-            }
+            // No fixed wait here. contentState stays .editorTransition until the new Rich Text editor has been handed its
+            // content: onWebViewReady (ContentView+EditorPresentation.swift) sets .idle right after setContentWithBlockIds
+            // returns and before block polling starts. Backstop: the 5 s contentState watchdog (EditorViewState).
+            // History: a 1.5 s Task.sleep stood here (added 2026-02-04 for a "missing # from headers" claim, no
+            // reproduction on file); removed in the faster-switch work after VM runs showed headings survive without it.
         }
     }
 

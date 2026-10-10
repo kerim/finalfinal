@@ -235,7 +235,10 @@ export function setCitationLibraryApi(items: CSLItem[]): void {
 }
 
 export function setCitationStyle(styleXML: string): void {
-  getCiteprocEngine().setStyle(styleXML);
+  // The engine is already running exactly this style (the Swift side pushes the effective
+  // style at every Rich Text mount, and into the standby page ahead of time): nothing changed,
+  // so there is nothing to re-render and no event or transaction to dispatch.
+  if (!getCiteprocEngine().setStyle(styleXML)) return;
   // Notify citation nodes that the active style has changed so they re-render with the new
   // formatting. An empty `view.dispatch(view.state.tr)` transaction (as used elsewhere in this
   // file for annotation redecoration) is NOT sufficient here: it leaves the document and its

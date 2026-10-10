@@ -156,8 +156,14 @@ extension MilkdownEditor.Coordinator {
     /// Push citation library to the editor for search and formatting
     func setCitationLibrary(_ itemsJSON: String) {
         guard isEditorReady, let webView else { return }
-        let escaped = itemsJSON.escapedForJSTemplateLiteral
-        webView.evaluateJavaScript("window.FinalFinal.setCitationLibrary(JSON.parse(`\(escaped)`))") { _, _ in }
+        webView.evaluateJavaScript(Self.setCitationLibraryScript(itemsJSON)) { _, _ in }
+    }
+
+    /// The JavaScript call that gives a Rich Text page its citation library. One builder for both callers: this coordinator's
+    /// push into the live view (`setCitationLibrary` above) and `EditorPreloader.prefillCitations`' push into the standby page,
+    /// so the standby page receives exactly the call the mount later makes.
+    static func setCitationLibraryScript(_ itemsJSON: String) -> String {
+        "window.FinalFinal.setCitationLibrary(JSON.parse(`\(itemsJSON.escapedForJSTemplateLiteral)`))"
     }
 
     /// Insert a footnote reference at the current cursor position.
@@ -242,12 +248,19 @@ extension MilkdownEditor.Coordinator {
     /// Set CSL style for citation formatting
     func setCitationStyle(_ styleXML: String) {
         guard isEditorReady, let webView else { return }
-        // A hand-rolled backtick-only replace here used to let a `${...}` sequence inside the
-        // style XML (or a stray backslash) break out of the JS template literal -- every
-        // other bridge call in this file uses the shared escapedForJSTemplateLiteral helper
-        // (see setCitationLibrary, setFootnoteDefinitions above) for exactly this reason.
-        let escaped = styleXML.escapedForJSTemplateLiteral
-        webView.evaluateJavaScript("window.FinalFinal.setCitationStyle(`\(escaped)`)") { _, _ in }
+        webView.evaluateJavaScript(Self.setCitationStyleScript(styleXML)) { _, _ in }
+    }
+
+    /// The JavaScript call that gives a Rich Text page its CSL style. One builder for both callers: this
+    /// coordinator's push into the live view (`setCitationStyle` above) and `EditorPreloader`'s push into the
+    /// standby page, so the two can never escape the style differently.
+    ///
+    /// A hand-rolled backtick-only replace here used to let a `${...}` sequence inside the
+    /// style XML (or a stray backslash) break out of the JS template literal -- every
+    /// other bridge call in this file uses the shared escapedForJSTemplateLiteral helper
+    /// (see setCitationLibrary, setFootnoteDefinitions above) for exactly this reason.
+    static func setCitationStyleScript(_ styleXML: String) -> String {
+        "window.FinalFinal.setCitationStyle(`\(styleXML.escapedForJSTemplateLiteral)`)"
     }
 
     /// Get all citekeys used in the document (for bibliography generation)
@@ -318,8 +331,11 @@ extension MilkdownEditor.Coordinator {
             return
         }
 
-        // Skip content capture during Milkdown initialization (source→WYSIWYG transition).
-        // Milkdown may return corrupted content (missing # from headers) during this window.
+        // Skip content capture while a switch to Rich Text is still handing the new editor its content (.editorTransition ends in
+        // onWebViewReady, right after setContentWithBlockIds returns): until then this editor's document is not yet the project's,
+        // so reading it back would save the wrong text. (An older version of this comment blamed Milkdown returning "missing # from
+        // headers"; it was written 2026-03-15, before 2026-06-09, with no reproduction on file, and the heading-survival VM test finds
+        // headings intact.)
         // Still save cursor and fire the toggle notification so the toggle proceeds.
         if contentState == .editorTransition {
             DebugLog.log(.editor, "[CURSOR-SYNC] MW.saveAndNotify: SKIPPING content capture (editorTransition)")

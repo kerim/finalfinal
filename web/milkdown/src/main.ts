@@ -107,7 +107,9 @@ import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
 import { caywRemapPlugin, insertCitationAtCursor } from './cayw';
 import { citationPlugin } from './citation-plugin';
+import { prefillCitationsBegin, prefillCitationsStep } from './citation-prefill';
 import { restoreCitationLibrary } from './citation-search';
+import { getCitationMemoStats, setCitationMemoEnabled } from './citeproc-engine';
 import { dropCursorPlugin } from './drop-cursor-plugin';
 import {
   clearContentPushTimer,
@@ -662,6 +664,13 @@ window.FinalFinal = {
   getAllCitekeys,
   requestCitationResolution,
   addCitationItems,
+  // Citations worked out ahead of time (citation-prefill.ts): the app's spare Rich Text page fills the citation memo for the open
+  // document while the user is still in Markdown. Begin parses without touching the editor; step formats for about `budgetMs`.
+  prefillCitationsBegin,
+  prefillCitationsStep,
+  // Memo switch and counters for the UI-test comparison runs (citeproc-engine.ts). Production never calls the switch.
+  setCitationMemoEnabled,
+  getCitationMemoStats,
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,

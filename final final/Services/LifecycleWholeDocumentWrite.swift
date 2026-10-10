@@ -268,7 +268,8 @@ enum LifecycleWholeDocumentWrite {
             guard prepared.anchorHeadingId == nil else {
                 throw LifecycleWholeDocumentWriteError.zoomedSectionWithoutRange
             }
-            if prepared.skipIfUnchanged, let rowCount = try matchingRowCount(db: db, prepared: prepared) {
+            if prepared.skipIfUnchanged,
+               let rowCount = try matchingRowCount(db: db, prepared: prepared, caller: "close, quit or project switch") {
                 return SystemWriteBody(value: .unchanged(rowCount: rowCount))
             }
             try ProjectDatabase.replaceBlocks(db: db, prepared.blocks, for: prepared.projectId)

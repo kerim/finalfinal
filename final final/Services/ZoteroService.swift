@@ -220,6 +220,15 @@ final class ZoteroService {
     /// `private` is file-scoped.
     var itemsByKey: [String: CSLItem] = [:]
 
+    /// Counts the writes to `itemsByKey` (every write site calls `noteLibraryChanged()`, in `ZoteroService+ItemCache.swift`). A bump
+    /// does not mean the contents differ: re-caching an identical item bumps it too. Read by the citation-prefill scheduler to
+    /// tell whether the library it last gave the standby page is the current one.
+    @ObservationIgnored var itemsRevision = 0
+
+    /// Called after every bump of `itemsRevision`. Set only by `EditorPreloader.installCitationPrefillScheduler()`, so a unit test
+    /// that writes to the cache reaches nothing.
+    @ObservationIgnored var onLibraryChanged: (() -> Void)?
+
     /// Session cache of libraries known to Better BibTeX (from `user.groups`) — the
     /// personal library plus every group/shared library the user belongs to. Populated
     /// lazily by `fetchLibraries()`; pass `forceRefresh: true` there to bypass this cache
@@ -352,6 +361,7 @@ final class ZoteroService {
                 let key = item.id.isEmpty ? item.citekey : item.id
                 itemsByKey[key] = item
             }
+            if !items.isEmpty { noteLibraryChanged() }
 
             isConnected = true
             connectionError = nil
@@ -397,11 +407,14 @@ final class ZoteroService {
         for item in items where itemsByID[item.id.lowercased()] == nil {
             itemsByID[item.id.lowercased()] = item
         }
+        var cachedAny = false
         for key in requested {
             if let item = itemsByID[key.lowercased()] {
                 itemsByKey[key] = item
+                cachedAny = true
             }
         }
+        if cachedAny { noteLibraryChanged() }
     }
 
     func fetchItemsForCitekeys(_ citekeys: [String]) async throws -> [CSLItem] {
@@ -533,7 +546,8 @@ final class ZoteroService {
     /// mock-enabled UI test, that it asked for a citekey the mock doesn't know about.
     private func mockFetchItemsForCitekeys(_ requested: [String]) throws -> [CSLItem] {
         let matched = try Self.mockCSLItems(matching: requested)
-        let unresolved = requested.filter { $0.lowercased() != Self.mockCitekey.lowercased() }
+        let resolvedIds = Set(matched.map { $0.id.lowercased() })
+        let unresolved = requested.filter { !resolvedIds.contains($0.lowercased()) }
         cacheItems(matched, forRequestedCitekeys: requested)
         isConnected = true
         connectionError = nil
@@ -547,11 +561,28 @@ final class ZoteroService {
     /// `citekeys` matches `mockCitekey` case-insensitively -- otherwise empty. Shared by both
     /// `fetchItemsForCitekeys`'s and `fetchItemsForCitekeysViaExport`'s mock branches above.
     private static func mockCSLItems(matching citekeys: [String]) throws -> [CSLItem] {
-        guard citekeys.contains(where: { $0.lowercased() == mockCitekey.lowercased() }) else {
+        var matched: [CSLItem] = []
+        if citekeys.contains(where: { $0.lowercased() == mockCitekey.lowercased() }) {
+            matched.append(try mockCSLItem())
+        }
+        // UI-test-only extension (TestMode.uiTestingZoteroMockLibraryPath): the extra library file, when the test supplied one.
+        let wanted = Set(citekeys.map { $0.lowercased() })
+        matched.append(contentsOf: mockLibraryItems.filter { wanted.contains($0.id.lowercased()) })
+        return matched
+    }
+
+    /// The items of the extra mock library file (`TestMode.uiTestingZoteroMockLibraryPath`), decoded once per process; empty when
+    /// there is no such file, so the mock is exactly the one canned item for every other test.
+    private static let mockLibraryItems: [CSLItem] = {
+        guard let path = TestMode.uiTestingZoteroMockLibraryPath else { return [] }
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            return try JSONDecoder().decode([CSLItem].self, from: data)
+        } catch {
+            DebugLog.log(.zotero, "[ZoteroService] UI-testing mock library file could not be read (\(path)): \(error)")
             return []
         }
-        return [try mockCSLItem()]
-    }
+    }()
 
     /// Build the `item.export` JSON-RPC request for `fetchItemsForCitekeysViaExport`. Runs
     /// before the network `do` block, exactly where this code sat inline before the refactor,

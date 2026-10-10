@@ -58,6 +58,19 @@ enum TestMode {
         isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_ZOTERO_MOCK"] == "1"
     }
 
+    /// UI-test-only extension of the Zotero mock above (complex-document switch measurements): the path of a file holding a CSL-JSON
+    /// array that `ZoteroService`'s mock fetch resolves citekeys against, IN ADDITION to the one canned item. Lets a test document that
+    /// cites dozens of distinct keys see them all resolve (real citation formatting in the Rich Text editor, a real generated
+    /// bibliography). Inert for a normal user: it needs `isUITestingZoteroMockEnabled` (UI testing AND the Zotero mock flag) AND this
+    /// variable; otherwise it is nil and the mock behaves exactly as before. The file is written by the test into the runner's own
+    /// container, which the (unsandboxed) app can read, like the fixture. Read fresh on every access.
+    static var uiTestingZoteroMockLibraryPath: String? {
+        guard isUITestingZoteroMockEnabled,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_ZOTERO_MOCK_LIBRARY_FILE"],
+              !raw.isEmpty else { return nil }
+        return raw
+    }
+
     /// Optional artificial delay (milliseconds) `ZoteroService.openCAYWPicker()`'s mock path
     /// waits before returning its canned result, when `isUITestingZoteroMockEnabled` is set.
     /// Zero (the default, and always when unset/unparseable) mimics an instant Zotero response.
@@ -153,6 +166,56 @@ enum TestMode {
               let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_WINDOW_WIDTH"],
               let value = Double(raw), value > 0 else { return nil }
         return CGFloat(value)
+    }
+
+    /// UI-test-only: `FF_UI_TESTING_ENABLE_PRELOADER=1` lets `EditorPreloader` run
+    /// under UI testing exactly as it does in production (it otherwise returns at its first line when `TestMode.isTesting`),
+    /// so the incoming editor of a mode switch is normally a claimed, already page-loaded spare instead of a view created and
+    /// page-loaded from scratch. It changes nothing else in the preloader. Unset (or anything but "1"): today's path exactly.
+    /// Same `isUITesting &&` guard as every sibling flag here, so a unit-test run can never enable it.
+    static var isUITestingEditorPreloaderEnabled: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_ENABLE_PRELOADER"] == "1"
+    }
+
+    // MARK: - Citation prefill (plan-citations-ahead-of-time.md)
+
+    /// What `FF_UI_TESTING_CITATION_PREFILL` asks for. The app works the document's citations out ahead of time by default
+    /// (`CitationPrefillScheduler`); the variable exists only so a UI test can measure the other columns. A UI test that sets nothing
+    /// gets the app as the user has it.
+    enum UITestingCitationPrefillMode: String {
+        /// No scheduler: the standby page never works citations out ahead of time. The page's citation memo stays on.
+        case off
+        /// The page's citation memo is turned off at every Rich Text page load (`window.FinalFinal.setCitationMemoEnabled(false)`),
+        /// which restores today's one-formatting-per-citation behaviour; the scheduler is off too (it would have nothing to fill).
+        case memoOff
+        /// Accepted so a launch environment written for the measurement before the scheduler existed still parses. Means exactly
+        /// what an unset variable means: the scheduler is on.
+        case trigger
+    }
+
+    /// The pure part of `uiTestingCitationPrefillMode`: only a UI-test launch honours the variable, and an unknown value is ignored.
+    static func citationPrefillMode(environment: [String: String], isUITesting: Bool) -> UITestingCitationPrefillMode? {
+        guard isUITesting, let raw = environment["FF_UI_TESTING_CITATION_PREFILL"] else { return nil }
+        return UITestingCitationPrefillMode(rawValue: raw)
+    }
+
+    /// `FF_UI_TESTING_CITATION_PREFILL` = `off` | `memoOff` | `trigger` (= unset). Read once. Same `isUITesting &&` guard as every sibling flag here.
+    static let uiTestingCitationPrefillMode: UITestingCitationPrefillMode? =
+        citationPrefillMode(environment: ProcessInfo.processInfo.environment, isUITesting: isUITesting)
+
+    /// True when every Rich Text page must run with its citation memo off (the "today" column of the measurement).
+    static var isUITestingCitationMemoOff: Bool { uiTestingCitationPrefillMode == .memoOff }
+
+    /// Whether `EditorPreloader.startPreloading()` creates the citation-prefill scheduler: always, except in a UI test that asked for
+    /// `off` or `memoOff`. Unit tests never start the preloader, so they never get one either way.
+    static var isCitationPrefillSchedulerEnabled: Bool { citationPrefillSchedulerEnabled(for: uiTestingCitationPrefillMode) }
+
+    /// The pure part of `isCitationPrefillSchedulerEnabled`.
+    static func citationPrefillSchedulerEnabled(for mode: UITestingCitationPrefillMode?) -> Bool {
+        switch mode {
+        case .off?, .memoOff?: return false
+        case .trigger?, nil: return true
+        }
     }
 
     /// Clears UserDefaults keys that could interfere with test isolation.

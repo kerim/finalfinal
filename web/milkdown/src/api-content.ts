@@ -1,6 +1,6 @@
 // Content-related API method implementations for window.FinalFinal
 
-import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import { type Editor, editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { closeHistory, history as pmHistory } from '@milkdown/kit/prose/history';
 import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Fragment, Slice } from '@milkdown/kit/prose/model';
@@ -808,12 +808,38 @@ export function cleanupSerializedMarkdown(markdown: string, sourceEnabled: boole
   return result;
 }
 
+/**
+ * The last raw serialisation and the ProseMirror document object it was made from. A ProseMirror
+ * document is immutable and the serializer's output depends on nothing but that document (the
+ * custom `toMarkdown` runners in the plugins read node attributes only), so the same document
+ * object always serialises to the same text. Every transaction that changes the document produces
+ * a new object, so an edit invalidates this by itself; a selection-only transaction keeps the
+ * object and the text stays valid.
+ */
+let rawSerialisation: { doc: ProsemirrorNode; markdown: string } | null = null;
+
+/**
+ * The document as the serializer writes it, before any cleanup (`getMarkdown()`'s own output).
+ * Serialising a book-length document takes hundreds of milliseconds, and the switch to Markdown
+ * reads it twice in a row (`getContent()` for the text, then `getCursorPosition()` for the caret
+ * line), so both go through here and the second read reuses the first. Only the RAW text is kept:
+ * `getContent()` post-processes it (`cleanupSerializedMarkdown`), `getCursorPosition()` uses it as
+ * is, so neither can see the other's version of the text.
+ */
+export function getRawSerialisedMarkdown(editorInstance: Editor): string {
+  const doc = editorInstance.ctx.get(editorViewCtx).state.doc;
+  if (rawSerialisation?.doc === doc) return rawSerialisation.markdown;
+  const markdown = getMarkdown()(editorInstance.ctx);
+  rawSerialisation = { doc, markdown };
+  return markdown;
+}
+
 export function getContent(): string {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return getCurrentContent();
 
   const sourceEnabled = isSourceModeEnabled();
-  const rawMarkdown = getMarkdown()(editorInstance.ctx);
+  const rawMarkdown = getRawSerialisedMarkdown(editorInstance);
   const markdown = cleanupSerializedMarkdown(rawMarkdown, sourceEnabled);
   if (markdown !== rawMarkdown) {
     syncLog('API:getContent', 'serializer cleanup applied (heading/footnote/backtick/double-## unescape)');
@@ -845,6 +871,7 @@ export function resetEditorState(): void {
  */
 export function resetForProjectSwitch(cloakToken?: number): void {
   clearContentPushTimer(); // Defense in depth — prevent stale timer from old project
+  rawSerialisation = null; // Do not keep the previous project's document and its text alive
   // A project switch is a changed document identity: unconditional teardown of the
   // typewriter reserve, re-armed once this reset's own dispatch has applied, and the
   // first-load rule is re-armed so the project's real content clears and re-centres again.

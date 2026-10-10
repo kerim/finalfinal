@@ -2,6 +2,8 @@
 
 import type { BlockChanges } from './block-sync-plugin';
 import type { CSLItem } from './citation-plugin';
+import type { PrefillBeginResult, PrefillStepResult } from './citation-prefill';
+import type { CitationMemoStats } from './citeproc-engine';
 
 // Find/replace options and result types
 export interface FindOptions {
@@ -146,6 +148,18 @@ declare global {
       // Lazy resolution API
       requestCitationResolution: (keys: string[]) => void;
       addCitationItems: (items: CSLItem[]) => void;
+      /** Ahead-of-time citation fill (citation-prefill.ts). Parses `markdown` with the page's own parser WITHOUT touching the editor
+       * (no dispatch, no content-set flag, no key resolution request) and queues the document's distinct citation groups that the
+       * citation memo does not hold yet. `status` is `notReady` before the editor exists and `parseFailed` if the parser threw; nothing
+       * is queued then. A later call replaces the queue. */
+      prefillCitationsBegin: (markdown: string) => PrefillBeginResult;
+      /** Formats queued groups into the citation memo for about `budgetMs` (at least one per call) and reports progress. Safe to call
+       * repeatedly, with nothing queued, and safe to stop calling at any point. */
+      prefillCitationsStep: (budgetMs: number) => PrefillStepResult;
+      /** Citation-memo switch for the UI-test comparison runs; production never calls it. Applies to the running engine and to one built later. */
+      setCitationMemoEnabled: (on: boolean) => void;
+      /** Citation-memo size and hit/miss counts (`misses` = calls that ran the citation processor). Never builds the engine. */
+      getCitationMemoStats: () => CitationMemoStats;
       // CAYW picker callbacks
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
       citationPickerCancelled: (requestId: number) => void;

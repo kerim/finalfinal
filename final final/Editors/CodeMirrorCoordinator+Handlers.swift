@@ -101,6 +101,15 @@ extension CodeMirrorEditor.Coordinator {
         }
     }
 
+    /// The JavaScript call that reads the Markdown editor's document just before a switch. It asks for the RAW document, the hidden
+    /// section anchors and the bibliography start marker, end marker and zoom-notes marker included, which is what the page's own push
+    /// delivers into `sourceContent` too. `getContent()` is NOT used: it strips every hidden marker (`stripAnchors` in
+    /// web/codemirror/src/anchor-plugin.ts, whose regex has listed the end marker since 2026-08-09), and a document parsed without
+    /// `BlockParser.bibliographyEndMarker` stores its bibliography heading and entries as ordinary blocks
+    /// (`BibliographyOpeningSelector`, tier 2 needs the terminator). The switch to Rich Text saves this text
+    /// (`EditorViewState.commitMarkdownTextForRichTextSwitch`), so it must carry the marker.
+    static let preSwitchContentScript = "window.FinalFinal.getContentRaw()"
+
     /// Save cursor and post notification for two-phase toggle
     /// IMPORTANT: Also syncs content to binding BEFORE cursor save to prevent content loss
     func saveAndNotify() {
@@ -134,14 +143,14 @@ extension CodeMirrorEditor.Coordinator {
         }
 
         // CONTENT SYNC: Fetch and save content BEFORE cursor to prevent content loss during toggle
-        webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] contentResult, _ in
+        webView.evaluateJavaScript(Self.preSwitchContentScript) { [weak self] contentResult, _ in
             guard let self, !self.isCleanedUp else {
                 self?.saveCursorAndNotify()
                 return
             }
 
             if let content = contentResult as? String {
-                DebugLog.log(.sync, "[CM-SAVE+NOTIFY] getContent returned length=\(content.count)")
+                DebugLog.log(.sync, "[CM-SAVE+NOTIFY] getContentRaw returned length=\(content.count)")
                 // Update binding immediately to ensure content is preserved
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
