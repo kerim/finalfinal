@@ -211,9 +211,13 @@ extension ContentView {
     /// .bibliographyUpdate`, the reparse is silently dropped -- losing that pending edit
     /// outright; (b) even without that race, the reparse's STALE captured content would
     /// overwrite the just-renamed row with pre-rename text once it does fire. Calling the
-    /// flush closure first closes both: `flushContentToDatabase()`'s first act is cancelling
-    /// `blockReparseTask`, which is exactly what removes the stale-content write that would
-    /// otherwise revert the rename.
+    /// flush closure first closes both: its write (`MarkdownBlockWriter.writeNow`, or
+    /// `flushContentToDatabase()` on its fallback) cancels `blockReparseTask` first, which is
+    /// exactly what removes the stale-content write that would otherwise revert the rename.
+    /// (Since Phase 4a the per-block fire reads the CURRENT `editorState.content` at fire time,
+    /// never the text captured at schedule time, so a surviving schedule can no longer write
+    /// pre-rename text; the cancel remains so the fire does not also run a second, needless
+    /// compare.)
     ///
     /// `isReconciliationOnly` (default `false`): set when this call was triggered by
     /// `ExportSettingsManager.setBibliographyHeaderName`'s no-op path -- the SETTING isn't

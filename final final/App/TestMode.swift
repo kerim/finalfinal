@@ -152,6 +152,17 @@ enum TestMode {
         return value
     }
 
+    /// UI-test-only: `FF_UI_TESTING_MD_LEGACY_REPARSE=1` turns EVERY piece of the Phase 4a per-block Markdown save OFF for the
+    /// whole process, so a UI test can measure today's code in the same VM run as the new code: the debounced Markdown re-parse
+    /// runs `legacyWholeDocumentReparse` (a whole-document `replaceBlocks`, outside the writer), the bibliography flush runs
+    /// `flushContentToDatabase(overrideContent:)`, `BlockSyncService.ensureWriter` is not called, and the set-point hooks
+    /// (`MarkdownBlockWriter.noteLoaded`, `noteDirectWholeWrite`, `reset`) do nothing. `MarkdownBlockWriter.isLegacyReparse` reads
+    /// this once, when an editor state is created. Same `isUITesting &&` guard as every sibling flag here, so a value left in a
+    /// shell profile can never switch the per-block save off for a real user, and a unit-test run can never set it.
+    static var isUITestingMarkdownLegacyReparse: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_MD_LEGACY_REPARSE"] == "1"
+    }
+
     /// UI-test-only deterministic main-window width, consumed by
     /// `FinalFinalApp.defaultWindowPlacement` and, as a backstop once the window exists, by
     /// `AppDelegate.applyUITestingWindowWidthOverride(to:)`. Exists because the Outline sidebar's

@@ -350,7 +350,8 @@ extension MilkdownEditor.Coordinator {
                 return
             }
 
-            if let content = contentResult as? String {
+            if let reply = contentResult as? String {
+                let content = reply.contiguousUTF8Copy  // native text once, where it arrives (see `BlockSyncService.fetchContentFromWebView`)
                 DebugLog.log(.editor, "[SAVE+NOTIFY] getContent returned length=\(content.count)")
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content

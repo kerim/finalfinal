@@ -110,7 +110,9 @@ class BlockSyncService {
         }
         switch outcome {
         case .finished(let value):
-            return value
+            // Native, contiguous UTF-8 once, where the text arrives: the web view's answer is a bridged `NSString`, on which every
+            // later `count` / `index(offsetBy:)` (close-time section sync, `SectionSyncService.parseHeaders`) is about 40 times slower.
+            return value?.contiguousUTF8Copy
         case .timedOut:
             DebugLog.log(.lifecycle, "[BlockSyncService] fetchContentFromWebView: timed out after \(timeout)")
             return nil
@@ -592,7 +594,10 @@ class BlockSyncService {
     /// the retry keeps failing. That trades a silent-drop failure for a no-write
     /// failure, which is lossless: nothing has been consumed JS-side yet, so the
     /// batch stays queued and is re-offered next tick.
-    private var needsEpochBump = false
+    ///
+    /// Internal (was private) in Phase 4a: `ensureWriter` (BlockSyncService+Markdown.swift) mirrors `configure`'s
+    /// new-writer branch, which sets it.
+    var needsEpochBump = false
 
     /// Set synchronously by a bibliography/Notes/footnote rebuild the instant it bumps
     /// `contentGeneration` (i.e. the instant it sets `editorState.contentState =
@@ -1600,7 +1605,10 @@ class BlockSyncService {
     /// is itself synchronous (nonisolated, Mutex-guarded), so sequence order still
     /// equals fetch order with no `await` in between, exactly as the old chain install
     /// guaranteed.
-    private func reserveWriterTurn(database: ProjectDatabase, projectId: String) -> (WriterTicket, BlockWriteStamp)? {
+    ///
+    /// Internal (was private) in Phase 4a so `BlockSyncService+Markdown.swift` reuses this body rather than duplicating
+    /// it: the Markdown entry reserves its turn exactly as the poll does (epoch-bump retry, epoch read, `reserve()`).
+    func reserveWriterTurn(database: ProjectDatabase, projectId: String) -> (WriterTicket, BlockWriteStamp)? {
         // A `configure`/`reconfigure` epoch bump that FAILED is retried here, on THIS
         // cycle's own `database`/`projectId`, before the epoch is read below - otherwise
         // this session's low sequences would be measured against the previous
@@ -2262,7 +2270,8 @@ extension BlockSyncService {
         """
 
         let result = try? await webView.evaluateJavaScript(script)
-        guard let markdown = result as? String else { return nil }
+        guard let reply = result as? String else { return nil }
+        let markdown = reply.contiguousUTF8Copy  // native text once, where it arrives (see `fetchContentFromWebView`)
 
         // Sync lastPushedContent to prevent updateNSView from firing plain setContent()
         NotificationCenter.default.post(

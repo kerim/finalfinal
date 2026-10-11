@@ -178,6 +178,12 @@ extension CodeMirrorEditor {
         /// the stale string that was suppressed. See that function's own doc comment.
         var onContentRecompute: (() -> Void)?
 
+        /// Phase 4a (t-94369a83): called from `setContent`, with the text, every time SWIFT pushes text into this editor
+        /// (the one function through which every Swift-side text reaches CodeMirror after the page is ready). ContentView
+        /// wires it to `MarkdownBlockWriter.noteLoaded`, so the per-block Markdown writer's baseline goes back to the stored
+        /// rows. Never called for text the user typed (that arrives through `handleContentPush`).
+        var onSwiftContentPushed: ((String) -> Void)?
+
         /// P2 (undo-mode-switch-focus second timing gap): backing closure for
         /// CodeMirrorEditor's matching property -- see its doc comment.
         var isReconciliationPending: (() -> Bool)?

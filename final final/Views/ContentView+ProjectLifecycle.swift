@@ -112,13 +112,13 @@ extension ContentView {
     ) -> (_ scheduledForProjectId: String, _ overrideContent: String?) async -> Void {
         { [weak editorState] scheduledForProjectId, overrideContent in
             // t-94369a83 3a-1b round C4 (N50): while a close / switch / quit holds the editor this is a SILENT
-            // skip, ahead of every other guard and of `flushContentToDatabase`. FB already wrote this content
-            // through the ordered queue; this out-of-queue `replaceBlocks` would land after it. Step 7's own
-            // bibliography refresh reaches this hook, so it must neither write, nor assert, nor report.
+            // skip, ahead of every other guard and of any write. FB already wrote this content through the ordered
+            // queue; a write from here would land after it. Step 7's own bibliography refresh reaches this hook, so
+            // it must neither write, nor assert, nor report.
             guard let editorState, editorState.activeLifecycle == nil else { return }
             // Same three guards as the sibling debounced re-parse this flush stands in for
             // (ViewNotificationModifiers.swift's blockReparseTask, contentState/editorMode/
-            // zoomedSectionId check): both do the same wholesale replaceBlocks() write, so
+            // zoomedSectionId check): both write the editor's text into the block table, so
             // both must refuse to run mid-transition (drag reorder, zoom, project switch,
             // editor-mode switch) against stale or partial editorState.content.
             guard editorState.contentState == .idle,
@@ -163,8 +163,21 @@ extension ContentView {
             // freshly-fetched value `flushAllPendingContent()` already flushed, so this call either
             // no-ops-equivalently re-flushes the identical content or (outside a project
             // switch, where callers pass `nil`) falls back to reading `editorState.content`
-            // exactly as before. flushContentToDatabase() also cancels the pending debounced
-            // re-parse task, closing the other half of the race.
+            // exactly as before. The write also cancels the pending debounced re-parse task,
+            // closing the other half of the race.
+            //
+            // Phase 4a (t-94369a83, plan v2 section 1(f), judge M5/C3): the write goes through the
+            // per-block Markdown writer (`MarkdownBlockWriter.writeNow`), ON THE QUEUE: the rebuild
+            // that follows reads the rows, so the user's typing must land first and in order, and a
+            // direct whole-document write would re-create every paragraph id on every citation edit.
+            // `writeNow` waits for the write already in flight, and that wait can span a lifecycle
+            // arming, a mode change, a zoom or a project switch, so it RE-CHECKS every guard above
+            // after the wait (the same `guardsHold` below) and writes nothing if one failed. It falls
+            // back to today's `flushContentToDatabase(overrideContent:)` when there is no writer, and
+            // when the open-fence guard trips (the text ends inside an open code fence or `$$`
+            // block: a per-block write would skip, and the rebuild would then read rows without the
+            // user's text and could push them over what is on screen). The legacy UI-test flag
+            // (`FF_UI_TESTING_MD_LEGACY_REPARSE`) always takes that fallback.
             //
             // Deliberately does NOT call pushBlockIds(for:) afterward, unlike
             // flushLiveContentToDatabase's other callers (see EditorViewState+Zoom.swift's doc
@@ -179,8 +192,39 @@ extension ContentView {
             // guards above) -- logging at the call site there would fire unconditionally,
             // including on the WYSIWYG path where this closure no-ops.
             DebugLog.log(.bib, "[BibSync] flushing live editor content to blocks before bibliography write")
-            editorState.flushContentToDatabase(overrideContent: overrideContent)
+            guard editorState.markdownWriter.isEnabled else {
+                editorState.flushContentToDatabase(overrideContent: overrideContent)
+                return
+            }
+            let outcome = await editorState.markdownWriter.writeNow(
+                overrideContent: overrideContent,
+                editorState: editorState,
+                guardsHold: { [weak editorState] in
+                    guard let editorState else { return false }
+                    return Self.bibliographyFlushGuardsHold(editorState, scheduledForProjectId: scheduledForProjectId)
+                },
+                refire: { [weak editorState] in
+                    guard let editorState else { return }
+                    editorState.lifecycleHost?.scheduleSourceModeReparse(editorState.content)
+                }
+            )
+            if outcome == .fallBackToDirectWrite {
+                editorState.flushContentToDatabase(overrideContent: overrideContent)
+            }
         }
+    }
+
+    /// Every guard of the bibliography flush hook, as one answer: no lifecycle holds the editor, the content is idle, the
+    /// editor is in Markdown and not zoomed, and it is still on the project the update was scheduled for. The hook checks it
+    /// once up front (as five separate guards) and `MarkdownBlockWriter.writeNow` checks it AGAIN after waiting for the write
+    /// already in flight (judge M5).
+    @MainActor
+    static func bibliographyFlushGuardsHold(_ editorState: EditorViewState, scheduledForProjectId: String) -> Bool {
+        editorState.activeLifecycle == nil
+            && editorState.contentState == .idle
+            && editorState.editorMode == .source
+            && editorState.zoomedSectionId == nil
+            && editorState.currentProjectId == scheduledForProjectId
     }
 
     /// Builds the closure assigned to `editorState.onSectionsUpdated`.
@@ -373,6 +417,10 @@ extension ContentView {
                     updateSourceContentIfNeeded(intentionalReplacement: true)
                 }
             }
+            // Phase 4a: the editor's text was just loaded from (or written to) the stored rows, in all three branches: the
+            // Markdown per-block writer compares with the stored rows from here. (CodeMirror's `onWebViewReady` and every
+            // later Swift push into it do the same; calling it more often than needed only costs one re-align.)
+            editorState.markdownWriter.noteLoaded(text: editorState.content, pid: pid)
         } catch {
             DebugLog.log(.lifecycle, "[ContentView] Failed to load content: \(error.localizedDescription)")
         }

@@ -149,7 +149,8 @@ extension CodeMirrorEditor.Coordinator {
                 return
             }
 
-            if let content = contentResult as? String {
+            if let reply = contentResult as? String {
+                let content = reply.contiguousUTF8Copy  // native text once, where it arrives (see `BlockSyncService.fetchContentFromWebView`)
                 DebugLog.log(.sync, "[CM-SAVE+NOTIFY] getContentRaw returned length=\(content.count)")
                 // Update binding immediately to ensure content is preserved
                 self.lastPushedContent = content
@@ -397,6 +398,11 @@ extension CodeMirrorEditor.Coordinator {
         DebugLog.log(.sync, "[CodeMirrorEditor] setContent len=\(markdown.count) anchorCount=\(anchorCount)")
         lastPushedContent = markdown
         lastPushTime = Date()  // Record push time to prevent poll feedback
+        // Phase 4a: Swift is putting text into the editor, so the Markdown per-block writer's baseline (what the last write
+        // says the stored rows look like) no longer describes what the editor shows; its next fire compares with the stored
+        // rows. This is the one function every Swift-side push reaches (`updateSourceContentIfNeeded`, the direct
+        // `sourceContent` assignments, deferred retries); the user's own typing never does.
+        onSwiftContentPushed?(markdown)
         // Note: Escapes all $ (not just ${) for CodeMirror content
         let escaped = markdown.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")

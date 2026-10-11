@@ -19,6 +19,13 @@
 //  Source-Mode-only, project-identity-guarded call to
 //  EditorViewState.flushContentToDatabase().
 //
+//  Phase 4a (t-94369a83): since then the hook saves the live text BLOCK BY BLOCK through the write queue
+//  (MarkdownBlockWriter.writeNow) when the editor state has a block-sync writer, and falls back to that same
+//  flushContentToDatabase() whole-document write when it has none (and when a text ends inside an open code fence or
+//  `$$` block). The tests in THIS file build editor states with no block-sync service, so they pin the fallback --
+//  the hazard (a stale /cite or old bibliography text clobbering fresh rows) must stay closed there too. The same
+//  hazards with a writer installed are in Tier2/MarkdownBibliographyFlushTests.swift.
+//
 //  Follows BibliographySyncTests.swift's fixture + direct performBibliographyUpdate
 //  drive pattern, and ExportFlushTests.swift's pattern of constructing a standalone
 //  EditorViewState and wiring a hand-built closure that mirrors production wiring
@@ -42,22 +49,29 @@ import GRDB
 @Suite("Bibliography Source-Mode Flush — Tier 1: Silent Killers", .serialized)
 struct BibliographySourceModeFlushTests {
 
-    /// Builds the exact closure ContentView+ProjectLifecycle.swift's
-    /// configureForCurrentProject() wires onto `flushLiveEditorContentToBlocks`. Kept as
-    /// a single shared helper so every test here exercises the identical guard sequence
-    /// production uses, rather than N slightly-drifted copies.
+    /// Wraps the REAL closure ContentView+ProjectLifecycle.swift wires onto `flushLiveEditorContentToBlocks`
+    /// (`ContentView.makeBibliographyFlushHandler(for:)`, static since round C4), adding only the two probes the tests
+    /// below read: `onInvoked` (the hook was called) and `onExecuted` (every guard held, so the flush ran -- decided by the
+    /// production guard set `ContentView.bibliographyFlushGuardsHold` itself, never a copy of it).
+    ///
+    /// Phase 4a (t-94369a83): this used to be a hand-written MIRROR of the hook that called `flushContentToDatabase`
+    /// directly. The real hook now saves block by block through the writer when the editor state has one and falls back to
+    /// that same whole-document write when it has none; these editor states have no block-sync service, so each assertion
+    /// below still exercises the fallback, unchanged. The same hazards with a writer installed are in
+    /// `MarkdownBibliographyFlushTests`.
     @MainActor
     func productionFlushHook(
         editorState: EditorViewState,
         onInvoked: (() -> Void)? = nil,
         onExecuted: (() -> Void)? = nil
     ) -> (String, String?) async -> Void {
-        { [weak editorState] scheduledForProjectId, overrideContent in
+        let real = ContentView.makeBibliographyFlushHandler(for: editorState)
+        return { [weak editorState] scheduledForProjectId, overrideContent in
             onInvoked?()
-            guard let editorState, editorState.editorMode == .source else { return }
-            guard editorState.currentProjectId == scheduledForProjectId else { return }
-            onExecuted?()
-            editorState.flushContentToDatabase(overrideContent: overrideContent)
+            if let editorState, ContentView.bibliographyFlushGuardsHold(editorState, scheduledForProjectId: scheduledForProjectId) {
+                onExecuted?()
+            }
+            await real(scheduledForProjectId, overrideContent)
         }
     }
 

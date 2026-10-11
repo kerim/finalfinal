@@ -65,6 +65,11 @@ struct ContentSyncObserverHost<Content: View>: View {
             .onChange(of: editorState.editorMode) { _, _ in
                 editorState.blockReparseTask?.cancel()
                 editorState.blockReparseTask = nil
+                // Phase 4a: the Markdown per-block writer's baseline belongs to the editor that just went away. A write in
+                // flight is not cancelled (its reserved sequence must settle): it lands before the switch's own whole-document
+                // flush, or Milkdown's `configure` skips it (`skippedConsumed`); either way its completion sees the new
+                // version and leaves the baseline alone.
+                editorState.markdownWriter.reset()
             }
             .onChange(of: editorState.zoomedSectionId) { _, newValue in
                 services.sectionSync.isContentZoomed = (newValue != nil)
@@ -157,18 +162,28 @@ struct ContentSyncObserverHost<Content: View>: View {
         }
     }
 
-    /// Non-zoomed source-mode re-parse: rebuilds the full block table from `newValue`,
-    /// preserving existing heading metadata (status/tags/word goal).
+    /// Non-zoomed source-mode re-parse. Since Phase 4a (t-94369a83) it saves Markdown typing BLOCK BY BLOCK through the
+    /// ordered write queue (`MarkdownBlockWriter`): the fire parses the editor's text, compares it with what is stored
+    /// (the stored rows right after a load, the last written parse after a write) and sends only the changed blocks.
+    /// Today's whole-document `replaceBlocks`, preserving heading metadata, is kept as `legacyWholeDocumentReparse`
+    /// (the `FF_UI_TESTING_MD_LEGACY_REPARSE` arm, and the fallback when there is no writer).
     ///
-    /// t-94369a83 3a-1b round C4, P5 (obligation 24): this write is a direct whole-document `replaceBlocks`
-    /// outside the writer, and `db`/`pid` are read at SCHEDULE time. While a close / project switch / quit
-    /// holds the editor (`activeLifecycle != nil`) it is therefore not scheduled at all, and one scheduled
-    /// BEFORE the lifecycle armed does not write when it fires inside the window (the lifecycle's own
-    /// whole-document save, FB, already carries the same text, and a write landing after FB or after the
-    /// barrier is exactly what the queue exists to prevent). At fire time it also re-checks that the editor is
-    /// still on the project it was scheduled for: a keystroke typed after `openProject` swapped
-    /// `documentManager` to project B but before the tail reset the editor state would otherwise write A's
-    /// text into B.
+    /// t-94369a83 3a-1b round C4, P5 (obligation 24): `db`/`pid` are read at SCHEDULE time. While a close / project
+    /// switch / quit holds the editor (`activeLifecycle != nil`) it is therefore not scheduled at all, and one scheduled
+    /// BEFORE the lifecycle armed does not write when it fires inside the window (the lifecycle's own whole-document
+    /// save, FB, already carries the same text, and a write landing after FB or after the barrier is exactly what the
+    /// queue exists to prevent). At fire time it also re-checks that the editor is still on the project it was
+    /// scheduled for: a keystroke typed after `openProject` swapped `documentManager` to project B but before the tail
+    /// reset the editor state would otherwise write A's text into B. Every one of those gates is unchanged, in both
+    /// branches.
+    ///
+    /// Phase 4a (plan v2 section 1(d)): after the sleep the fire first waits for the write already in flight (a
+    /// `while let` loop, because a `writeNow` can publish another while this one waits), then re-checks cancellation and
+    /// the generation, then runs the gates above, then does ONE synchronous step (`runMarkdownReparseFire`): read the
+    /// CURRENT text, parse, compare, reserve the turn and start the write (judge C1 and model ruling M1). The text is
+    /// `editorState.content` read at fire time, never `newValue`: a push made while `contentState` is not `.idle` (a
+    /// bibliography or Notes rebuild, a structural op, a zoom) does not restart a scheduled re-parse, so `newValue` can
+    /// be older than the database. `newValue` is used only by the legacy branch.
     @MainActor
     private static func scheduleFullDocumentReparse(
         newValue: String,
@@ -189,6 +204,12 @@ struct ContentSyncObserverHost<Content: View>: View {
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
             guard editorState.blockReparseGeneration == myGeneration else { return }
+            if editorState.markdownWriter.isEnabled {
+                while let inFlight = editorState.markdownWriter.inFlight {
+                    await inFlight.value
+                }
+                guard !Task.isCancelled, editorState.blockReparseGeneration == myGeneration else { return }
+            }
             guard editorState.activeLifecycle == nil, editorState.currentProjectId == pid else {
                 DebugLog.log(.lifecycle, "[SourceReparse] full re-parse dropped at fire time: lifecycle armed or project changed")
                 return
@@ -196,25 +217,7 @@ struct ContentSyncObserverHost<Content: View>: View {
             guard editorState.contentState == .idle,
                   editorState.editorMode == .source,
                   editorState.zoomedSectionId == nil else { return }
-            let existing = try? db.fetchBlocks(projectId: pid)
-            var metadata: [String: SectionMetadata] = [:]
-            for block in existing ?? [] where block.blockType == .heading {
-                metadata[block.textContent] = SectionMetadata(
-                    status: block.status,
-                    tags: block.tags?.isEmpty == false ? block.tags : nil,
-                    wordGoal: block.wordGoal
-                )
-            }
-            // C5: highest-stakes site -- this IS the live, debounced Source Mode re-parse a
-            // hand-typed "## Notes" heading goes through, so the DB-resolved title is threaded
-            // explicitly rather than left to default.
-            let blocks = BlockParser.parse(
-                markdown: newValue,
-                projectId: pid,
-                existingSectionMetadata: metadata.isEmpty ? nil : metadata,
-                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
-            )
-            try? db.replaceBlocks(blocks, for: pid)
+            runMarkdownReparseFire(newValue: newValue, db: db, pid: pid, editorState: editorState, services: services)
         }
     }
 
@@ -663,6 +666,10 @@ extension View {
             // `forcedPushGeneration` bump needed here.
             editorState.sourceContent = withBibMarker
             editorState.toggleEditorMode()
+            // Phase 4a: Swift just handed the Markdown editor its text, assembled from the stored rows (the flush above wrote
+            // them, or found them unchanged): the per-block writer compares with the stored rows from here. The editorMode
+            // `onChange` resets it too at the next render; both leave the baseline on the rows, so their order does not matter.
+            editorState.markdownWriter.noteLoaded(text: withBibMarker, pid: editorState.currentProjectId)
             editorState.contentState = .idle
         } else {
             // Switching FROM source mode TO WYSIWYG - set state BEFORE flush

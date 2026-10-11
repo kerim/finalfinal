@@ -315,6 +315,16 @@ struct LossLedger: Sendable, Equatable {
     /// identity's own writer. 3a-1b's direct-write fallback may still write the document after an
     /// `.identityMismatch`; the count then stays, so for that outcome it is conservative.
     var lifecycleWholeDocumentLost = 0
+    /// Phase 4a (t-94369a83), plan v2 section 1(d) step 6, obligation N13: a Markdown typing batch
+    /// (`BlockSyncService.applyMarkdownTurn`) the database refused WHOLE because its epoch was stale
+    /// (`EditorApplyResult.rejectedWholeBatchForStaleEpoch`: a direct whole-document write, a lifecycle FB or a
+    /// `configure` bumped the epoch between the batch's reservation and its apply). Updates and deletes were
+    /// dropped and the inserts were dropped silently, so the typing in that batch did not reach the database; the
+    /// writer's baseline goes back to rows mode and the next gated fire re-sends it. A REAL, counted loss for that
+    /// batch (not for the document: the editor still holds the text), reported by the caller through
+    /// `noteMarkdownStaleEpochRejection`; the writer cannot see it itself (`rejectedWholeBatchForStaleEpoch` feeds no
+    /// other counter, only a log line). Counted for Markdown batches ONLY, so Rich Text's poll is unchanged.
+    var markdownStaleEpochRejections = 0
 }
 
 // MARK: - Internal state
@@ -615,6 +625,12 @@ actor DocumentWriter {
 
     nonisolated var ledger: LossLedger {
         state.withLock { $0.ledger }
+    }
+
+    /// Whether `retire(reason:)` has run. `BlockSyncService.ensureWriter` (Phase 4a) replaces a retired writer rather than
+    /// treating it as "already present".
+    nonisolated var isRetired: Bool {
+        state.withLock { $0.retired }
     }
 
     /// Non-locking: reads the effective turn-stall expiry straight off an
@@ -1974,6 +1990,21 @@ actor DocumentWriter {
         perform(signal)
     }
 
+    /// Counts and logs a Markdown typing batch the database refused whole for a stale epoch
+    /// (`LossLedger.markdownStaleEpochRejections`, Phase 4a). Reported by `BlockSyncService.applyMarkdownTurn`, the
+    /// only caller: the writer's own apply path counts nothing for a stale-epoch refusal (Rich Text's poll relies on
+    /// that, so the count is made here, for Markdown only). Synchronous and callable from anywhere.
+    nonisolated func noteMarkdownStaleEpochRejection(updates: Int, inserts: Int, deletes: Int) {
+        DebugLog.alwaysPersisted(
+            "[DocumentWriter] Markdown batch REJECTED for a stale epoch: u/i/d=\(updates)/\(inserts)/\(deletes) "
+            + "-- the baseline returns to rows mode and the next fire re-sends the typing")
+        let signal = state.withLock { writerState -> Signal in
+            writerState.ledger.markdownStaleEpochRejections += 1
+            return Signal(handler: writerState.testEventHandler)
+        }
+        perform(signal)
+    }
+
     // MARK: - Drain
 
     nonisolated func drainForLifecycle(timeout: TimeInterval) async -> DrainOutcome {
@@ -2140,7 +2171,12 @@ actor DocumentWriter {
 
     // MARK: - Apply (actor-isolated: the synchronous DB write runs serialized, on the actor)
 
-    func applyEditorBatch(_ seq: UInt64, _ changes: BlockChanges, stamp: BlockWriteStamp) -> WriterApplyOutcome {
+    /// `renumberSortOrdersIfCrowded` (Phase 4a, default OFF): the per-block Markdown writer passes `true`; it is handed
+    /// straight to `ProjectDatabase.applyBlockChangesFromEditor`. A held op the writer cascades later never carries it
+    /// (those are updates and deletes). Rich Text's poll never passes it.
+    func applyEditorBatch(
+        _ seq: UInt64, _ changes: BlockChanges, stamp: BlockWriteStamp, renumberSortOrdersIfCrowded: Bool = false
+    ) -> WriterApplyOutcome {
         let admission: AdmissionResult = state.withLock { writerState in
             if writerState.skipped.contains(seq) { return .refuse(.skipped) }
             let late = isPassableLateLocked(seq, writerState)
@@ -2192,7 +2228,8 @@ actor DocumentWriter {
         let tombstoneSnapshot = state.withLock { $0.tombstones }
         do {
             let result = try database.applyBlockChangesFromEditor(
-                toApply, for: projectId, stamp: stamp, tombstones: tombstoneSnapshot)
+                toApply, for: projectId, stamp: stamp, tombstones: tombstoneSnapshot,
+                renumberSortOrdersIfCrowded: renumberSortOrdersIfCrowded)
             let (mintedTempIds, tombstoneSignal): ([String], Signal) = state.withLock { writerState in
                 for (tempId, permanentId) in result.idMapping { writerState.tempIdMap[tempId] = permanentId }
                 var sig = Signal(handler: writerState.testEventHandler)

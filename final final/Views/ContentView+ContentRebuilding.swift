@@ -232,16 +232,11 @@ extension ContentView {
                     fetchedBlocks = try db.fetchBlocks(projectId: pid)
                 }
 
-                // Sort with same tie-breaking as assembleMarkdown
-                let sorted = fetchedBlocks.sorted { a, b in
-                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-                    return aKey < bKey
-                }
-
                 // Build block-ID → Character offset map
-                // MUST stay in sync with BlockParser.assembleMarkdown filtering
-                let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
+                // MUST stay in sync with BlockParser.assembleMarkdown filtering: sorted with the same tie-breaking
+                // (a heading before a non-heading at the same sortOrder), empty fragments dropped. One shared
+                // function (Phase 4a) -- the per-block Markdown writer aligns the stored rows in the same order.
+                let nonEmpty = MarkdownBlockDiff.assemblyOrderedNonEmpty(fetchedBlocks)
                 var blockOffset: [String: Int] = [:]
                 var offset = 0
                 for (i, block) in nonEmpty.enumerated() {

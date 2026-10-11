@@ -131,6 +131,11 @@ extension EditorViewState {
 
         // Flush any pending editor edits before zooming
         flushContentToDatabase()
+        // Phase 4a: a zoom starts. The zoomed Markdown save (`scheduleZoomedReparse`, `replaceBlocksInRange`) stays direct
+        // and untouched, and the editor text from here is a section of the document, so the per-block writer's baseline
+        // describes nothing. Leaving the zoom pushes the full text through `setContent`, which puts the baseline back to
+        // the stored rows.
+        markdownWriter.reset()
 
         // If already zoomed to a different section, unzoom first
         if zoomedSectionId != nil && zoomedSectionId != sectionId {
@@ -929,6 +934,10 @@ extension EditorViewState {
             } else {
                 // Not zoomed: full document replace (existing behavior)
                 try writeWholeDocumentRows(blocks, to: db, projectId: pid, skipUnchangedWrite: skipUnchangedWrite)
+                // Phase 4a: a direct whole-document write replaced the rows (new ids for most block types, or none written
+                // when `skipUnchangedWrite` found them unchanged). The Markdown per-block writer's baseline ids are
+                // stale either way; its next fire compares with the stored rows again.
+                markdownWriter.noteDirectWholeWrite(text: contentToParse)
             }
         } catch {
             DebugLog.log(.zoom, "[EditorViewState] flushContentToDatabase error: \(error)")

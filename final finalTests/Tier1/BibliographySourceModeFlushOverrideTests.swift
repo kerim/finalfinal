@@ -20,6 +20,11 @@
 //  real hook stands down while the token is armed (N50) because the sequence's own whole-document write
 //  already saved the fetched text.
 //
+//  Phase 4a (t-94369a83): the real hook now saves through the Markdown block writer when the editor state has a block-sync
+//  writer. The editor states in THIS file have none, so the hook takes its whole-document fallback and every assertion
+//  below keeps its meaning unchanged. The override / staged-content fallback chain with a writer installed is pinned in
+//  Tier2/MarkdownBibliographyFlushTests.swift.
+//
 
 import Testing
 import Foundation

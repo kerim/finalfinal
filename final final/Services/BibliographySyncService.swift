@@ -112,10 +112,17 @@ final class BibliographySyncService {
     /// Hook invoked at the start of every bibliography update, BEFORE any bibliography row
     /// is written, so the block table reflects the live editor's current text.
     ///
-    /// Wired unconditionally by ContentView (both editor modes) to a closure that calls
-    /// `EditorViewState.flushContentToDatabase()`, but the closure itself gates on
+    /// Wired unconditionally by ContentView (both editor modes) to a closure that writes the
+    /// live Markdown text into the block table, but the closure itself gates on
     /// `editorMode == .source` and self-guards to a no-op in WYSIWYG, where
     /// `BlockSyncService`'s incremental poll already keeps the block table current.
+    ///
+    /// Phase 4a (t-94369a83): the write is the per-block Markdown write on the ordered queue
+    /// (`MarkdownBlockWriter.writeNow`: only the blocks whose text differs from what is stored are
+    /// sent, bibliography rows are never touched, and the user's text lands before this update's own
+    /// rows). It falls back to today's wholesale `EditorViewState.flushContentToDatabase()` when
+    /// the service has no writer, when the text ends inside an open code fence or `$$` block, and
+    /// for the UI-test legacy flag (`FF_UI_TESTING_MD_LEGACY_REPARSE`).
     ///
     /// Exists because in Source Mode the ONLY writer of live editor text into the block
     /// table is a 1s-debounced re-parse whose fire-time guard silently drops the write --
@@ -408,10 +415,14 @@ final class BibliographySyncService {
         #endif
 
         // Flush the live editor's text into the block table before writing anything.
-        // MUST run BEFORE both write branches below: the Source-Mode flush is a wholesale
-        // delete-and-reinsert of every block parsed from the live editor content, so running
-        // it afterwards would re-parse the editor's now-stale bibliography text and clobber
-        // the fresh rows this update is about to write.
+        // MUST run BEFORE both write branches below. Since Phase 4a the Source-Mode flush
+        // normally sends only the blocks whose text differs from what is stored and never
+        // touches bibliography rows, so running it afterwards could not clobber the fresh rows;
+        // but its fallback (no writer, a text that ends inside an open code fence or `$$`
+        // block, the legacy UI-test flag) is still a wholesale delete-and-reinsert of every
+        // block parsed from the live editor content, which WOULD re-parse the editor's
+        // now-stale bibliography text and clobber the fresh rows this update is about to write.
+        // And the rebuild that follows reads the rows, so the user's text must be in them first.
         // Safe to place here: this function never reads block/body content itself -- it
         // derives the bibliography purely from the citekey snapshot -- and the markdown that
         // actually reaches the editor is assembled later, elsewhere (ContentView's
@@ -460,7 +471,7 @@ final class BibliographySyncService {
             // must still be committed here, or `checkAndUpdateBibliography`'s own
             // `currentSet != lastKnownCitekeys` guard sees a "change" on every future
             // check forever, rescheduling a full run (a Zotero fetch, and in Source
-            // Mode a wholesale delete-and-reinsert flush) every tick with nothing to
+            // Mode a flush of the live editor text) every tick with nothing to
             // show for it. This IS a legitimate "handled" outcome, not a failure --
             // `lastGeneratedHash` is deliberately left as-is since the content itself
             // genuinely didn't change.

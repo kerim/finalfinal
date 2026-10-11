@@ -138,8 +138,17 @@ extension LifecycleEntryStatic {
                 rig.editorState.blockReparseTask,
                 "P5's schedule-time gate dropped the catch-up: no re-parse Task exists")
             await task.value
+            // Phase 4a (t-94369a83): the fire now saves BLOCK BY BLOCK through the write queue (this rig has a writer),
+            // so the fire's Task returns as soon as the turn is reserved and the write itself is the writer's in-flight
+            // Task. Wait for that too (the same `while let` wait the next fire and `writeNow` use).
+            while let pending = rig.editorState.markdownWriter.inFlight {
+                await pending.value
+            }
             let texts = try rig.paragraphTexts()
             #expect(texts.contains("CAUGHT UP paragraph."), "the catch-up re-parse must write; got \(texts)")
+            #expect(
+                rig.editorState.markdownWriter.lastTimingLine?.contains("outcome=applied") == true,
+                "the catch-up went through the writer (not the legacy whole-document write)")
             #expect(!texts.contains("fresh Y paragraph."))
             #expect(rig.pushes.isEmpty, "Markdown has no block ids to restore")
             #expect(rig.sync.testPollTimerIsArmed, "polling restarts in both modes")

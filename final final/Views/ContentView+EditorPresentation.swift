@@ -372,6 +372,9 @@ extension ContentView {
                         // total no-op for the rest of the window's life with no visible cause.
                         escapeLadder.isComposing = false
                         restoreEditorFocus(webView)
+                        // Phase 4a: the freshly-mounted Markdown editor is about to be handed its text (`batchInitialize`),
+                        // which comes from the stored rows, and the per-block Markdown writer needs a writer on the queue.
+                        prepareMarkdownBlockWriter()
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
                         if let json = annotationDisplayModesJSON(editorState) {
@@ -396,6 +399,12 @@ extension ContentView {
                         // the Coordinator's settle-window-suppressed-push retry timer
                         // (undo-mode-switch-focus fix, must-fix F2). Never a stale replay.
                         updateSourceContentIfNeeded()
+                    },
+                    onSwiftContentPushed: { pushedText in
+                        // Phase 4a: Swift just put `pushedText` into CodeMirror (every Swift-side push goes through
+                        // `CodeMirrorCoordinator.setContent`), so the per-block Markdown writer compares with the
+                        // stored rows from here. Never called for the user's own typing.
+                        editorState.markdownWriter.noteLoaded(text: pushedText, pid: editorState.currentProjectId)
                     },
                     isReconciliationPending: {
                         // P2 (undo-mode-switch-focus second timing gap): consulted by

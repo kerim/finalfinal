@@ -733,6 +733,13 @@ class EditorViewState {
     /// Generation counter for blockReparseTask cooperative cancellation guard
     var blockReparseGeneration: Int = 0
 
+    /// Phase 4a (t-94369a83): saves Markdown typing block by block through the ordered write queue. Owns the baseline (what the
+    /// last write or the last load says the stored rows look like) and the write in flight; the debounced re-parse
+    /// (`ContentSyncObserverHost.scheduleFullDocumentReparse`) and the bibliography flush (`ContentView.makeBibliographyFlushHandler`)
+    /// call it. The Swift-side pushes into the Markdown editor, direct whole-document writes, zoom entry, mode changes and project
+    /// resets tell it to drop its baseline. See `MarkdownBlockWriter`.
+    let markdownWriter = MarkdownBlockWriter()
+
     /// How long the Source Mode re-parse waits after a content change before it writes (both the full-document
     /// and the zoomed branch, `ContentSyncObserverHost.scheduleSourceModeReparse`). One second in the app; a
     /// test shortens it on its own editor state so it does not have to wait.

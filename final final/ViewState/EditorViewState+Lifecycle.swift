@@ -304,7 +304,9 @@ extension EditorViewState {
     /// 4. F: drain the in-flight poll, then force one (skipped after a watchdog hit or a timeout). RICH TEXT
     ///    ONLY. In Markdown there is no F: nothing was polled from CodeMirror (block-sync's poll belongs to the
     ///    Milkdown editor), its edits reach Swift only through the 50ms-debounced content push, and the debounced
-    ///    re-parse that would have written them was cancelled at step 0. The fresh fetch at step 5 asks
+    ///    re-parse that would have written them was cancelled at step 0. (A per-block Markdown write the
+    ///    re-parse had ALREADY reserved before step 0 is not cancelled: it sits in the queue ahead of FB and lands
+    ///    first, Phase 4a.) The fresh fetch at step 5 asks
     ///    CodeMirror for its live document itself, which is what F is for in Rich Text;
     /// 5. fresh fetch (skipped after a watchdog hit or with `opStillRunning`); nil falls back to
     ///    `content`, `""` is valid. Markdown: CodeMirror's own `getContent()` through the CAPTURED view, with
@@ -394,8 +396,17 @@ extension EditorViewState {
             // Step 6b: as the old `flushAllPendingContent` did. Zoomed content is a subset (the reconciler would
             // delete every section outside the zoom) and an empty document is no content to reconcile.
             if capture.zoomedSectionId == nil, !content.isEmpty {
+                let sectionSyncStarted = ContinuousClock.now
                 await sectionSyncService?.syncNow(content)
                 await annotationSyncService?.syncNow(content)
+                let syncMilliseconds = Int((ContinuousClock.now - sectionSyncStarted) / .milliseconds(1))
+                // Whether the text is contiguous UTF-8 is what decides if this step takes about a second or tens of seconds
+                // on a book-length document (a bridged `NSString` makes `parseHeaders` quadratic).
+                let contiguous = content.utf8.withContiguousStorageIfAvailable { _ in true } != nil
+                DebugLog.log(
+                    .lifecycle,
+                    "[LifecycleFlush] 6b section+annotation sync: \(syncMilliseconds) ms, contiguousUTF8=\(contiguous), "
+                        + "\(content.utf8.count) UTF-8 bytes")
             }
 
             // Step 7: re-derive the bibliography and footnotes from the fresh content, AFTER FB.
@@ -422,7 +433,9 @@ extension EditorViewState {
 
     // MARK: Step 0
 
-    /// Step 0's editor-side half: stop the poll timer and cancel the debounced Markdown re-parse (both modes).
+    /// Step 0's editor-side half: stop the poll timer and cancel the debounced Markdown re-parse (both modes). A Markdown write
+    /// the re-parse already RESERVED (`MarkdownBlockWriter`, Phase 4a) is not cancelled: its sequence is in the queue before
+    /// FB and the barrier, and lands first.
     /// The token and `LifecycleEntry.current` were set by `LifecycleEntry.run`.
     ///
     /// Step 0 also SUSPENDS the footnote and bibliography sync services (round C3b, reviews C6/C23): they
@@ -590,7 +603,10 @@ extension EditorViewState {
         }
         let fresh: String
         if !result.watchdogHit, let fetch = capture.fetch, let fetched = await fetch(bound) {
-            fresh = isMarkdown ? SectionSyncService.stripBibliographyMarker(from: fetched) : fetched
+            // `fetched` is already contiguous UTF-8 (`fetchContentFromWebView`); `replacingOccurrences` goes through
+            // `NSString` and may hand back a bridged string again, so the Markdown result is made contiguous once more
+            // (no copy when it already is). Step 6b's section sync is slow on a bridged string.
+            fresh = isMarkdown ? SectionSyncService.stripBibliographyMarker(from: fetched).contiguousUTF8Copy : fetched
             result.fetchedContent = fresh
         } else {
             result.usedFallback = true
