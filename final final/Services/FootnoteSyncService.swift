@@ -69,8 +69,9 @@ final class FootnoteSyncService {
 
     /// The wait before a burst of reference changes is written, counted from its FIRST change (a fixed deadline: later
     /// changes ride along and never move it). Kept at 3 s because cutting and pasting a sentence that contains a footnote
-    /// needs it (t-2c022719), and so that one burst becomes one write. Tests shorten it.
-    @ObservationIgnored var debounceInterval: TimeInterval = 3.0
+    /// needs it (t-2c022719), and so that one burst becomes one write. Tests shorten it. A UI test can stretch it
+    /// (`TestMode.uiTestingRewriteDelaySeconds`, inert unless `FF_UI_TESTING=1` and the variable are both set).
+    @ObservationIgnored var debounceInterval: TimeInterval = TestMode.uiTestingRewriteDelaySeconds ?? 3.0
 
     /// The LATEST snapshot of the waiting burst (replaced by every later change, read when the deadline arrives).
     /// `pendingUpdate != nil` means "a burst is waiting"; every path that ends a burst clears it and cancels the timer.

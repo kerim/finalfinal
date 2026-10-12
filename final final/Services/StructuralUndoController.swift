@@ -234,6 +234,8 @@ final class StructuralUndoController {
 
         isPerforming = true
         defer { isPerforming = false }
+        var trace = StructTrace(label: "\(kind)")
+        trace.log("start")
 
         // MF-2 (Phase 5 review round): capture the timeline's generation counter right as this
         // sequence claims the latch. The two new Phase 5 barriers (project switch, mode switch)
@@ -280,15 +282,18 @@ final class StructuralUndoController {
         // undo-point snapshot misses whatever the live editor hadn't synced to the DB yet.
         await modeAwareFlush()
         spy("modeAwareFlush")
+        trace.log("after modeAwareFlush")
 
         // Step 3: JS closeHistory + capture checkpoint into the registry.
         let opId = UUID()
+        trace.opId = String(opId.uuidString.prefix(8))
         guard await evalBool("window.FinalFinal.beginStructuralOp('\(opId.uuidString)')") else {
             DebugLog.log(.undo, "[StructuralUndoController] beginStructuralOp failed for \(opId) -- aborting op")
             editorState.contentState = .idle
             return .refused
         }
         spy("beginStructuralOp")
+        trace.log("after beginStructuralOp")
 
         // Step 4: forced (no-dedup) undo-point snapshot -- MUST run after step 2's flush.
         let service = SnapshotService(database: db, projectId: pid)
@@ -306,6 +311,7 @@ final class StructuralUndoController {
             return .refused // pre-commit: mutate (step 5) has not run yet
         }
         spy("createUndoPointSnapshot")
+        trace.log("after createUndoPointSnapshot")
 
         // MF-3 (Phase 5 review round): `createUndoPointSnapshot()` just pinned `undoSnapshotId`
         // (plan §4.4/§9) -- every early return between here and the entry actually being
@@ -346,23 +352,29 @@ final class StructuralUndoController {
             }
         }
         spy(mutationSpyName)
+        trace.log("after database mutation (\(mutationSpyName))")
 
         // Step 6: force-and-await bibliography + footnote resync NOW, before postOpDoc
         // capture (H5) -- this covers the common case (the op's OWN resync) so equality
         // routing works immediately after the op with no reliance on a later JS-side rescue.
         // Any resync that still lands AFTER capture (RAF-time normalization, an unrelated
         // debounce firing late) is a second, independent line of defense: the JS-side §4.6
-        // advancement rule (`maybeAdvanceRegistryOnSyncOriginTx` in both editors'
-        // undo-coordinator.ts, wired into their dispatch pipelines) advances this entry's
-        // postOpDoc/preOpDoc forward across every sync-origin (addToHistory:false) transaction
-        // that lands afterward, so a resync that slips past this force-await no longer
-        // permanently bricks the entry's equality target the way it would without that rule.
+        // advancement rule (both editors' undo-coordinator.ts) advances this entry's
+        // postOpDoc/preOpDoc forward across every automatic (sync-origin or
+        // `derivedCorrection`-tagged) rewrite that lands afterward, so a resync that slips past
+        // this force-await no longer permanently bricks the entry's equality target the way it
+        // would without that rule. The two editors apply it differently: Rich Text advances once
+        // per dispatch chain (`runUndoTrackedDispatch`, wired into its `view.dispatch` override,
+        // because a nested dispatch leaves one transaction's own result behind the live document);
+        // Markdown advances per transaction (`maybeAdvanceRegistryOnSyncOriginTx`, from its update
+        // listener).
         await forceResyncDerivedContent(db: db, pid: pid)
         spy("forceResyncDerivedContent")
+        trace.log("after forceResyncDerivedContent")
 
         // Step 7: push resulting content to the live editor; settle block ids; reconcile
         // annotations; capture postOpDoc from the push transaction's own doc.
-        guard await pushPostOpContentAndFinalize(opId: opId, db: db, pid: pid) else {
+        guard await pushPostOpContentAndFinalize(opId: opId, db: db, pid: pid, trace: trace) else {
             // N6 (Phase B remediation plan): see the createUndoPointSnapshot catch block above.
             // Idempotent even if finalizeStructuralOpPostOpDoc's own failure already left the
             // entry gone -- deleteRegistryEntry on a missing key is a no-op.
@@ -381,13 +393,15 @@ final class StructuralUndoController {
         // heading-level fix enforcement makes lands as a sync-origin (addToHistory:false)
         // transaction AFTER capture, which is fine: `updateHeadingLevels`
         // (web/milkdown/src/api-content.ts) dispatches with `addToHistory: false` (verified),
-        // so the existing §4.6 advancement rule (`maybeAdvanceRegistryOnSyncOriginTx`) picks it
+        // so the existing §4.6 advancement rule (Rich Text: `runUndoTrackedDispatch`, per dispatch
+        // chain; Markdown: `maybeAdvanceRegistryOnSyncOriginTx`, per transaction) picks it
         // up and advances postOpDoc forward the same way it already does for a late
         // bibliography/footnote resync -- see that rule's own doc comment. See
         // `enforceHierarchyInSequence()`'s doc comment for the self-invalidation race this
         // whole in-sequence call still exists to close.
         await enforceHierarchyInSequence()
         spy("enforceHierarchyInSequence")
+        trace.log("after enforceHierarchyInSequence")
 
         // Step 7c (2026-08-22, real production bug found via Phase D's e2e suite -- see
         // `Database+SectionOps.swift`'s `deleteSections`/`duplicateSections` doc comments):
@@ -448,6 +462,7 @@ final class StructuralUndoController {
                 """
             )
         }
+        trace.log("after section-table resync")
 
         // MF-2 (Phase 5 review round): re-check the generation captured at the top of this
         // sequence, right before recording -- a barrier (project switch, mode switch, or any
@@ -485,6 +500,7 @@ final class StructuralUndoController {
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle
         spy("done")
+        trace.log("performed")
         return .performed
     }
 
@@ -494,7 +510,7 @@ final class StructuralUndoController {
     /// delete/duplicate can shift annotation charOffsets the same way an undo/redo restore
     /// can), then ask JS to capture `postOpDoc` from the push transaction's own doc. Returns
     /// `false` (no entry recorded) if either the content push or the postOpDoc capture fails.
-    private func pushPostOpContentAndFinalize(opId: UUID, db: ProjectDatabase, pid: String) async -> Bool {
+    private func pushPostOpContentAndFinalize(opId: UUID, db: ProjectDatabase, pid: String, trace: StructTrace) async -> Bool {
         guard let editorState else { return false }
 
         guard let result = fetchFullBlocksWithIds(db: db, pid: pid) else {
@@ -504,6 +520,7 @@ final class StructuralUndoController {
         editorState.content = result.markdown
         editorState.isResettingContent = true
         if editorState.editorMode == .wysiwyg {
+            trace.log("before setContentWithBlockIds push")
             await blockSyncService?.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
@@ -512,6 +529,7 @@ final class StructuralUndoController {
                 expectedBlocks: result.expectedBlocks,
                 managedBlockIds: result.managedBlockIds
             )
+            trace.log("after setContentWithBlockIds push")
         } else {
             // Source mode (review round #5): `blockSyncService`'s WebView is ALWAYS the
             // Milkdown editor (no block-sync channel in Source mode -- see modeAwareFlush's
@@ -533,6 +551,7 @@ final class StructuralUndoController {
             // equality check below.
             editorState.forcedPushGeneration += 1
             editorState.sourceContent = result.markdown
+            trace.log("before Source-mode setContent push")
             // Must-fix 4 (round-5 review): checked, not discarded -- a silently-failed push
             // here leaves CodeMirror's live doc at the PRE-op content even though the DB and
             // editorState.sourceContent already reflect the post-op markdown;
@@ -553,6 +572,7 @@ final class StructuralUndoController {
                 editorState.isResettingContent = false
                 return false
             }
+            trace.log("after Source-mode setContent push")
             NotificationCenter.default.post(
                 name: .blockSyncDidPushContent, object: nil, userInfo: ["markdown": result.markdown]
             )
@@ -587,6 +607,7 @@ final class StructuralUndoController {
             return false
         }
         spy("finalizeStructuralOpPostOpDoc")
+        trace.log("after finalizeStructuralOpPostOpDoc")
         return true
     }
 
@@ -1163,6 +1184,8 @@ final class StructuralUndoController {
 
         isPerforming = true
         defer { isPerforming = false }
+        let trace = StructTrace(label: "undo", opId: String(opId.uuidString.prefix(8)))
+        trace.log("start")
         // MF-2 (Phase 5 review round): see `performStructuralOp`'s matching comment -- captured
         // here too so this sequence can tell a genuine external barrier apart from its own
         // upcoming stack move at step 5 below.
@@ -1211,6 +1234,7 @@ final class StructuralUndoController {
         // between a fast-fingered undo/redo and this loss; this flush closes it at the source
         // instead, independent of that gate's timing.
         await modeAwareFlush()
+        trace.log("after modeAwareFlush")
 
         // Step 2: capture redo checkpoint (JS, WYSIWYG only) + redo snapshot (both modes).
         // Decision 1 (review round): Source mode NEVER checkpoint-swaps -- it uses the
@@ -1236,6 +1260,7 @@ final class StructuralUndoController {
                 editorState.contentState = .idle
                 return .fallback
             }
+            trace.log("after JS performStructuralSwap")
         }
         let service = SnapshotService(database: db, projectId: pid)
         let redoSnapshotId: String
@@ -1248,6 +1273,7 @@ final class StructuralUndoController {
             // Nothing has been written to the DB yet -- safe to report fallback.
             return .fallback
         }
+        trace.log("after redo snapshot")
 
         // MF (review round, gap closed post-Phase-5): mirrors `performStructuralOp`'s matching
         // comment -- `createUndoPointSnapshot()` just pinned `redoSnapshotId`, and every early
@@ -1295,6 +1321,7 @@ final class StructuralUndoController {
             editorState.contentState = .idle
             return .failed
         }
+        trace.log("after restoreEntireProject")
 
         guard await settleAfterDBRestore(db: db, pid: pid) else {
             DebugLog.log(
@@ -1307,9 +1334,11 @@ final class StructuralUndoController {
             editorState.contentState = .idle
             return .failed
         }
+        trace.log("after settleAfterDBRestore")
 
         // Step 4: force bibliography + footnote resync AND annotationSyncService.syncNow.
         await forceResyncDerivedContent(db: db, pid: pid)
+        trace.log("after forceResyncDerivedContent")
         await annotationSyncService?.syncNow(editorState.content)
 
         // MF-2 (Phase 4 review round 4): in-sequence hierarchy enforcement runs LAST among
@@ -1364,6 +1393,7 @@ final class StructuralUndoController {
         await pushDescriptor()
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle
+        trace.log("performed")
         return .performed
     }
 
@@ -1386,6 +1416,8 @@ final class StructuralUndoController {
 
         isPerforming = true
         defer { isPerforming = false }
+        let trace = StructTrace(label: "redo", opId: String(opId.uuidString.prefix(8)))
+        trace.log("start")
         // MF-2 (Phase 5 review round): see `performStructuralOp`'s matching comment.
         let epoch = unifiedUndoService.generation
 
@@ -1411,6 +1443,7 @@ final class StructuralUndoController {
         // below discards live content and before createUndoPointSnapshot() below captures the
         // DB state as the fresh undo point).
         await modeAwareFlush()
+        trace.log("after modeAwareFlush")
 
         // Decision 1 (review round) -- see performUndo's matching comment: Source mode never
         // checkpoint-swaps, so this must be gated the same way there.
@@ -1424,6 +1457,7 @@ final class StructuralUndoController {
                 editorState.contentState = .idle
                 return .fallback
             }
+            trace.log("after JS performStructuralSwap")
         }
         let service = SnapshotService(database: db, projectId: pid)
         let undoSnapshotId: String
@@ -1435,6 +1469,7 @@ final class StructuralUndoController {
             editorState.contentState = .idle
             return .fallback
         }
+        trace.log("after undo-point snapshot")
 
         // MF (review round, gap closed post-Phase-5): mirrors `performUndo`'s matching comment
         // -- `createUndoPointSnapshot()` just pinned `undoSnapshotId`, and every early return
@@ -1460,6 +1495,7 @@ final class StructuralUndoController {
             editorState.contentState = .idle
             return .failed
         }
+        trace.log("after restoreEntireProject")
 
         guard await settleAfterDBRestore(db: db, pid: pid) else {
             DebugLog.log(
@@ -1472,8 +1508,10 @@ final class StructuralUndoController {
             editorState.contentState = .idle
             return .failed
         }
+        trace.log("after settleAfterDBRestore")
 
         await forceResyncDerivedContent(db: db, pid: pid)
+        trace.log("after forceResyncDerivedContent")
         await annotationSyncService?.syncNow(editorState.content)
 
         // MF-2 (Phase 4 review round 4): see `performUndo`'s matching comment /
@@ -1512,6 +1550,7 @@ final class StructuralUndoController {
         await pushDescriptor()
         await editorState.refreshSectionsAwaiting()
         editorState.contentState = .idle
+        trace.log("performed")
         return .performed
     }
 
@@ -1784,9 +1823,10 @@ final class StructuralUndoController {
     /// call already "fixed", and (b) it mutates the actual post-op document, not a pre-capture
     /// one. Any heading-level fix this call makes lands as a sync-origin
     /// (`addToHistory:false`) transaction after `postOpDoc` capture, same as a late resync --
-    /// the existing §4.6 `maybeAdvanceRegistryOnSyncOriginTx` rule (both editors'
-    /// undo-coordinator.ts) already advances `postOpDoc` across exactly that shape of
-    /// transaction, so this doesn't reopen the H5 dead-entry hazard.
+    /// the existing §4.6 advancement rule (both editors' undo-coordinator.ts: Rich Text's
+    /// `runUndoTrackedDispatch` per dispatch chain, Markdown's
+    /// `maybeAdvanceRegistryOnSyncOriginTx` per transaction) already advances `postOpDoc`
+    /// across exactly that shape of transaction, so this doesn't reopen the H5 dead-entry hazard.
     private func enforceHierarchyInSequence() async {
         guard let editorState, let sectionSyncService else { return }
 
@@ -1974,6 +2014,28 @@ final class StructuralUndoController {
         #if DEBUG
         testOrderingSpy?(step)
         #endif
+    }
+
+    // MARK: - Structural-operation timing log (app clock)
+
+    /// Millisecond timeline of one structural op / undo / redo, logged under `.undo` with the
+    /// `[STRUCT-TRACE]` prefix (the same prefix the editor-side structural diagnostics use, so one
+    /// search reads both): how long each step takes, i.e. how long the editor stays typeable
+    /// between the flush and the content push. Reads only the monotonic clock (`systemUptime`) and
+    /// changes no behaviour. `t=` is milliseconds since boot, `+` is milliseconds since the op started.
+    private struct StructTrace {
+        let label: String
+        var opId: String = "--------"
+        let startMs: Int = StructTrace.nowMs()
+
+        static func nowMs() -> Int { Int(ProcessInfo.processInfo.systemUptime * 1000) }
+
+        func log(_ step: String) {
+            DebugLog.log(
+                .undo,
+                "[STRUCT-TRACE] t=\(StructTrace.nowMs())ms +\(StructTrace.nowMs() - startMs)ms \(label) op=\(opId) \(step)"
+            )
+        }
     }
 }
 

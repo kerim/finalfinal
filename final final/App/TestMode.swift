@@ -46,6 +46,21 @@ enum TestMode {
         return value
     }
 
+    /// UI-test-only stretch of the two waits in front of the automatic rewrites that follow a document change
+    /// (`FootnoteSyncService.debounceInterval`, normally 3 s, and `BibliographySyncService.debounceInterval`, normally
+    /// 1 s): the footnote renumber and the Notes update, and the bibliography update. Lets a test type a word BEFORE
+    /// those rewrites land every time, instead of racing a 3 s window (Phase 4b, Cmd-Z after typing early). `nil`
+    /// (unset, unparseable, <= 0, or `isUITesting` is false) leaves both waits at their real values; a unit test or a
+    /// normal launch never sees it. Computed on every access, but both services read it ONCE, in their
+    /// `debounceInterval` property initialiser, when the service is created: setting the variable later in a
+    /// running app has no effect.
+    static var uiTestingRewriteDelaySeconds: Double? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_REWRITE_DELAY_SECONDS"],
+              let value = Double(raw), value > 0 else { return nil }
+        return value
+    }
+
     /// UI-test-only bypass for `ZoteroService`'s real Zotero/Better-BibTeX network calls (Phase
     /// D, plan §8.2 "the Zotero seam") -- lets a citation-bearing e2e scenario exercise the CAYW
     /// insert path (and the N1 `cancelPendingInsertions` port, Phase B) without a real running

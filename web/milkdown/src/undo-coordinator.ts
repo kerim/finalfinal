@@ -20,6 +20,7 @@ import { commitAndCloseAnnotationEditPopup } from './annotation-edit-popup';
 import { clearEditorHistory, getContent } from './api-content';
 import { clearBlockIds } from './block-id-plugin';
 import {
+  hasPendingChanges,
   hasUnsettledLocalEdit,
   rebindCurrentStateFromView,
   resetAndSnapshot,
@@ -27,6 +28,7 @@ import {
 } from './block-sync-plugin';
 import { resetCAYWState } from './cayw';
 import { commitAndCloseEditPopup } from './citation-edit-popup';
+import { explainDerivedDifference } from './derived-equivalence';
 import { getEditorInstance, setCurrentContent } from './editor-state';
 import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
@@ -37,14 +39,15 @@ import { hideLinkPopups } from './link-tooltip';
 // diagnostic signal, not because it's still under investigation). ProseMirror equivalent of
 // the CodeMirror mirror's `Transaction.addToHistory` check -- `tr.getMeta('addToHistory')
 // !== false` is the same "not explicitly marked sync-origin" idiom
-// `maybeAdvanceRegistryOnSyncOriginTx` (below) already uses for the opposite check
-// (`=== false`). Wired into the `view.dispatch` override in main.ts.
+// `isRealUserEditTransaction` (below) shares with the registry advancement rule. Wired into the
+// `view.dispatch` override in main.ts (via `runUndoTrackedDispatch`).
 let userTxCount = 0;
 export function noteUserTransaction(tr: Transaction): void {
   // P3 (undo-mode-switch-focus second timing gap): a `derivedCorrection`-tagged
   // transaction IS user-undoable (addToHistory !== false) by design, but it isn't a real
-  // user keystroke -- exclude it so this diagnostic counter still means what its name says.
-  if (tr.docChanged && tr.getMeta('addToHistory') !== false && !tr.getMeta('derivedCorrection')) {
+  // user keystroke -- `isRealUserEditTransaction` (below) excludes it, so this diagnostic
+  // counter still means what its name says.
+  if (isRealUserEditTransaction(tr)) {
     userTxCount += 1;
   }
 }
@@ -237,7 +240,146 @@ export function resetUndoCoordinatorState(): void {
   descriptor = {};
   latched = false;
   inFlightOpId = null;
+  lastEquivalence = null;
+  lastRoutingMs = null;
   clearLatchTimeout();
+}
+
+// === Structural-operation diagnostics (permanent) ===
+// One-line records of what a structural operation (section delete / duplicate / reorder, version
+// restore, and the undo or redo of one) does to the editor, posted on the existing
+// `type: 'debug'` errorHandler channel under the `[STRUCT-TRACE]` prefix (the prefix is what log
+// readers and the end-to-end tests search for). Swift logs each as
+// `[MilkdownEditor] JS DEBUG: [STRUCT-TRACE] ...` (category `.editor`, via
+// MilkdownCoordinator+MessageDispatch.swift's logJSDiagnostic), and into the diagnostic log file
+// as `[editor] [MilkdownEditor] JS DEBUG: [STRUCT-TRACE] ...` when Diagnostics logging is on.
+// The lines: `finalize` (op saved its post-op document), `registry-advance` (an automatic rewrite
+// moved a saved document forward), `push-probe` (did the user type between the op's start and its
+// content push), `routing-refused` (why a Cmd-Z / Cmd-Shift-Z was not routed structurally),
+// `swap` and `settle` (the checkpoint swap and its settle). Every caller is a structural-op path
+// that only runs while a registry entry exists, and only on structural events -- never once per
+// keystroke -- and nothing here changes behaviour. Swift's matching timing lines are
+// `StructTrace` in StructuralUndoController.swift. A line NEVER carries document text (typed words,
+// heading or footnote text: docs/guides/debug-logging.md): sizes, counts, positions, node types and
+// timings only.
+
+function structTrace(message: string): void {
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[STRUCT-TRACE] ${message}`,
+  });
+}
+
+/** A diagnostic must never break the operation it observes: every probe below runs through this. */
+function guardedTrace(probe: () => void): void {
+  try {
+    probe();
+  } catch {
+    // Swallowed on purpose -- see the doc comment above.
+  }
+}
+
+function shortOpId(opId: string | undefined): string {
+  return opId === undefined ? 'none' : opId.slice(0, 8);
+}
+
+interface DocDiff {
+  eq: boolean;
+  /** First differing position in `a.content` coordinates (-1 when equal). */
+  firstDiffPos: number;
+  /** Index of the top-level child holding that first difference (-1 when equal). */
+  firstDiffChild: number;
+  /** Top-level children that differ position by position; surplus children on either side count. */
+  diffChildren: number;
+}
+
+function summarizeDocDiff(a: Node, b: Node): DocDiff {
+  if (a.eq(b)) return { eq: true, firstDiffPos: -1, firstDiffChild: -1, diffChildren: 0 };
+  const pos = a.content.findDiffStart(b.content);
+  const firstDiffChild = pos === null ? -1 : a.resolve(Math.min(pos, a.content.size)).index(0);
+  let diffChildren = Math.abs(a.childCount - b.childCount);
+  const shared = Math.min(a.childCount, b.childCount);
+  for (let i = 0; i < shared; i++) {
+    if (!a.child(i).eq(b.child(i))) diffChildren++;
+  }
+  return { eq: false, firstDiffPos: pos ?? -1, firstDiffChild, diffChildren };
+}
+
+function docShape(doc: Node): string {
+  // No `textContent`: on a book it builds a ~350,000-character string per call, and a refused Cmd-Z runs
+  // this twice. The size and the child count already say how far two documents are apart.
+  return `size=${doc.content.size} children=${doc.childCount}`;
+}
+
+/** [STRUCT-TRACE] push probe: called by api-content.ts's `setContentWithBlockIds` when
+ * `options.detectPausedEdits` is set, BEFORE the block-level replace. For the registry entry that
+ * is mid-op, reports whether the live document still equals that entry's `preOpDoc` -- i.e.
+ * whether the user typed (or otherwise changed the document) between `beginStructuralOp` and
+ * this push -- and, if not, how many top-level children differ and where the first difference is.
+ * Also reports whether block-sync's pending queue (or its 100ms debounce) holds an edit at this
+ * moment: the edits the replace below is about to overwrite. A no-op when the registry is empty
+ * or nothing is mid-op. */
+export function traceMidOpPushDrift(liveDoc: Node, incomingDoc: Node): void {
+  if (registry.size === 0) return;
+  guardedTrace(() => {
+    for (const [opId, entry] of registry) {
+      if (!entry.midOp) continue;
+      const d = summarizeDocDiff(liveDoc, entry.preOpDoc);
+      structTrace(
+        `push-probe opId=${shortOpId(opId)} eq=${d.eq} diffChildren=${d.diffChildren} firstDiffChild=${d.firstDiffChild} ` +
+          `firstDiffPos=${d.firstDiffPos} liveSize=${liveDoc.content.size} preOpSize=${entry.preOpDoc.content.size} ` +
+          `incomingSize=${incomingDoc.content.size} liveChildren=${liveDoc.childCount} ` +
+          `incomingChildren=${incomingDoc.childCount} pendingQueue=${hasPendingChanges()} ` +
+          `unsettledEdit=${hasUnsettledLocalEdit()}`
+      );
+    }
+  });
+}
+
+/** [STRUCT-TRACE] routing probe: called after every Cmd-Z/Cmd-Shift-Z routing decision. When the
+ * decision is not 'structural' although Swift's descriptor names a structural entry on top of the
+ * stack, reports which condition of `decideRouting` failed (checked in the same order it checks
+ * them: latched, no registry entry, pending local edit, documents not equal), and for the
+ * not-equal case the sizes of the live document and of the target document the entry holds. */
+function traceRoutingRefusal(view: EditorView, direction: 'undo' | 'redo', decision: RoutingDecision): void {
+  if (decision.action === 'structural') return;
+  const topOpId = direction === 'undo' ? descriptor.undoTopOpId : descriptor.redoTopOpId;
+  if (topOpId === undefined) return;
+  guardedTrace(() => {
+    const diagStart = performance.now();
+    const entry = registry.get(topOpId);
+    const unsettled = hasUnsettledLocalEdit();
+    const current = view.state.doc;
+    let failed = 'unknown';
+    let detail = '';
+    if (entry) {
+      const targetName = direction === 'undo' ? 'postOpDoc' : 'preOpDoc';
+      const target = direction === 'undo' ? entry.postOpDoc : entry.preOpDoc;
+      const d = summarizeDocDiff(current, target);
+      if (latched) failed = 'latched';
+      else if (unsettled) failed = 'pendingMapsEmpty=false';
+      else if (!d.eq) failed = 'docs-not-equal';
+      detail =
+        ` target=${targetName} docsEqual=${d.eq} midOp=${entry.midOp === true}` +
+        ` current(${docShape(current)}) target(${docShape(target)})` +
+        ` firstDiffChild=${d.firstDiffChild} firstDiffPos=${d.firstDiffPos} diffChildren=${d.diffChildren}` +
+        ` entryPreOpSize=${entry.preOpDoc.content.size} entryPostOpSize=${entry.postOpDoc.content.size}` +
+        ` checkpointSize=${entry.checkpoint.doc.content.size} hasRedoCheckpoint=${entry.redoCheckpoint !== undefined}`;
+    } else {
+      failed = latched ? 'latched' : 'no-registry-entry';
+      detail = ` registryIds=[${[...registry.keys()].slice(0, 5).map(shortOpId).join(',')}]`;
+    }
+    // `routingMs` is the whole routing decision for this press (decideLiveRouting); `diagMs` is what
+    // building THIS line cost on top, so the two together are what a refused Cmd-Z added to the press.
+    const diagMs = performance.now() - diagStart;
+    structTrace(
+      `routing-refused direction=${direction} decision=${decision.action} topOpId=${shortOpId(topOpId)} failed=${failed} ` +
+        `latched=${latched} registryEntry=${entry !== undefined} registrySize=${registry.size} ` +
+        `pendingMapsEmpty=${!unsettled} equivalent=${lastEquivalence === null ? 'not-run' : lastEquivalence.result} ` +
+        `routingMs=${lastRoutingMs === null ? 'n/a' : lastRoutingMs.toFixed(1)} diagMs=${diagMs.toFixed(1)}` +
+        `${lastEquivalence?.reason ? ` equivalenceReason=${lastEquivalence.reason}` : ''}${detail}`
+    );
+  });
 }
 
 // === Pure routing decision (see docs/architecture/unified-undo.md's routing section) ===
@@ -253,6 +395,10 @@ export interface RoutingParams<TDoc> {
   latched: boolean;
   currentDoc: TDoc;
   docsEqual: (a: TDoc, b: TDoc) => boolean;
+  /** Fallback comparison, consulted ONLY after `docsEqual` has failed: "equal modulo what the app
+   * regenerates" (footnote numbers, heading ids, Notes, bibliography -- see derived-equivalence.ts).
+   * Optional: absent means exact equality alone, exactly the behaviour before this fallback existed. */
+  docsEquivalent?: (a: TDoc, b: TDoc) => boolean;
 }
 
 function decideRouting<TDoc>(params: RoutingParams<TDoc>, direction: 'undo' | 'redo'): RoutingDecision {
@@ -267,7 +413,10 @@ function decideRouting<TDoc>(params: RoutingParams<TDoc>, direction: 'undo' | 'r
   if (!params.pendingMapsEmpty) return { action: 'fallthrough' };
 
   const target = direction === 'undo' ? entry.postOpDoc : entry.preOpDoc;
-  if (!params.docsEqual(params.currentDoc, target)) return { action: 'fallthrough' };
+  // Exact equality first and short-circuiting: on the everyday path the fallback is never called.
+  if (!params.docsEqual(params.currentDoc, target) && !(params.docsEquivalent?.(params.currentDoc, target) ?? false)) {
+    return { action: 'fallthrough' };
+  }
 
   return { action: 'structural', opId };
 }
@@ -311,6 +460,35 @@ function pendingMapsEmpty(): boolean {
   return !hasUnsettledLocalEdit();
 }
 
+/** The last fallback comparison made while deciding ONE Cmd-Z / Cmd-Shift-Z (null when none ran:
+ * exact equality held, or routing stopped before reaching the comparison). Reset by
+ * `decideLiveRouting` before every decision; read by the `routing-equivalence` trace line and by
+ * `traceRoutingRefusal`. */
+let lastEquivalence: { result: boolean; ms: number; reason: string | null } | null = null;
+
+/** Milliseconds the whole last routing decision took (`decideLiveRouting`: the live-parameter build, the
+ * exact comparison, the fallback comparison when it ran), null before the first press. Read by the
+ * `routing-equivalence` and `routing-refused` trace lines: it is what Cmd-Z pays per press, and a held key
+ * repeats it. Reset with the rest of the module state. */
+let lastRoutingMs: number | null = null;
+
+/** Longest `reason` the trace lines carry (the reason is one short line; this only bounds a pathological one). */
+const MAX_REASON_CHARS = 400;
+
+/** The fallback comparison, timed on the app's own clock so the book run can report what it costs. It runs
+ * `explainDerivedDifference` (the comparison itself, returning the reason it said "different", null when
+ * equivalent), so a refused Cmd-Z can log WHY; the boolean the routing uses is `reason === null`. */
+function docsEquivalentTimed(a: Node, b: Node): boolean {
+  const start = performance.now();
+  const reason = explainDerivedDifference(a, b);
+  lastEquivalence = {
+    result: reason === null,
+    ms: performance.now() - start,
+    reason: reason === null ? null : reason.slice(0, MAX_REASON_CHARS),
+  };
+  return reason === null;
+}
+
 function liveRoutingParams(view: EditorView): RoutingParams<Node> {
   return {
     descriptor,
@@ -319,7 +497,33 @@ function liveRoutingParams(view: EditorView): RoutingParams<Node> {
     latched,
     currentDoc: view.state.doc,
     docsEqual,
+    docsEquivalent: docsEquivalentTimed,
   };
+}
+
+/** The ONE live routing decision for a Cmd-Z / Cmd-Shift-Z: the keydown path and the menu path
+ * (`requestUnified`) both call it, so both use the fallback comparison and both log it. Runs only on
+ * those key presses, never per keystroke. */
+function decideLiveRouting(view: EditorView, direction: 'undo' | 'redo'): RoutingDecision {
+  const routingStart = performance.now();
+  lastEquivalence = null;
+  const params = liveRoutingParams(view);
+  const decision = direction === 'undo' ? decideUndoRouting(params) : decideRedoRouting(params);
+  const totalMs = performance.now() - routingStart;
+  lastRoutingMs = totalMs;
+  // `docsEquivalentTimed` (called from inside the decision above) sets this; TypeScript cannot see
+  // that assignment, so it would narrow the variable to `null` here without the cast.
+  const ran = lastEquivalence as { result: boolean; ms: number; reason: string | null } | null;
+  if (ran !== null) {
+    guardedTrace(() =>
+      structTrace(
+        `routing-equivalence direction=${direction} decision=${decision.action} result=${ran.result} ms=${ran.ms.toFixed(1)} ` +
+          `totalMs=${totalMs.toFixed(1)}` +
+          (ran.reason === null ? '' : ` reason=${ran.reason}`)
+      )
+    );
+  }
+  return decision;
 }
 
 /** True when the editor's own text undo/redo has nothing to do -- the trigger condition for
@@ -407,12 +611,12 @@ export function beginStructuralOp(opId: string): boolean {
  * live doc at the moment this is called, which Swift calls immediately after its own content
  * push (`setContentWithBlockIds`) resolves. See docs/architecture/unified-undo.md's
  * audited-sequences section, step 6: this deliberately does NOT
- * wait for RAF-time normalization transactions to settle first; `maybeAdvanceRegistryOnSyncOriginTx`
- * (below -- wired into the `view.dispatch` override in main.ts alongside
- * `maybeNotifyHistoryEdited`) is what actually absorbs any sync-origin transaction that lands
- * after this call, including RAF-time normalization and derived-content resyncs: it advances
- * this entry's `postOpDoc`/`preOpDoc` reference forward whenever the doc immediately before
- * such a transaction structurally matches one of them. */
+ * wait for RAF-time normalization transactions to settle first; `runUndoTrackedDispatch`
+ * (below -- the `view.dispatch` override in main.ts) is what actually absorbs any automatic
+ * rewrite that lands after this call, including RAF-time normalization and derived-content
+ * resyncs: once the outermost dispatch of such a rewrite returns, it advances this entry's
+ * `postOpDoc`/`preOpDoc` reference forward to the LIVE document whenever the doc the dispatch
+ * started from structurally matches one of them (and no transaction in it was a real user edit). */
 export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return false;
@@ -420,19 +624,45 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
   if (!entry) return false;
   const view = editorInstance.ctx.get(editorViewCtx);
   registry.set(opId, { ...entry, postOpDoc: view.state.doc, midOp: false });
+  guardedTrace(() => {
+    const doc = view.state.doc;
+    structTrace(
+      `finalize opId=${shortOpId(opId)} postOpSize=${doc.content.size} postOpChildren=${doc.childCount} ` +
+        `postOpTextLen=${doc.textContent.length} preOpSize=${entry.preOpDoc.content.size} ` +
+        `preOpChildren=${entry.preOpDoc.childCount}`
+    );
+  });
   return true;
 }
 
 /**
+ * The ONE definition of "this transaction is a real user edit": it changes the document, it adds a
+ * history step (`addToHistory` is not `false` -- the established sync-origin marker), and it is not
+ * tagged `derivedCorrection` (P3, undo-mode-switch-focus second timing gap: an automatic correction
+ * such as the heading-level overlap fix or the footnote renumber is dispatched WITHOUT
+ * addToHistory:false so it stays user-undoable, but it is not something the user typed).
+ *
+ * Shared by `runUndoTrackedDispatch` (the production, per-dispatch-chain path),
+ * `maybeAdvanceRegistryOnSyncOriginTx` (the single-transaction form the unit tests drive) and
+ * `noteUserTransaction`, so the shipped rule and the tested rule cannot drift apart.
+ */
+export function isRealUserEditTransaction(tr: Transaction): boolean {
+  return tr.docChanged && tr.getMeta('addToHistory') !== false && !tr.getMeta('derivedCorrection');
+}
+
+/**
  * Derived-content advancement rule (hazard H5, see docs/architecture/unified-undo.md's
- * registry/descriptor bridge protocol section): when a sync-origin transaction lands
- * (`addToHistory:false` -- the established provenance marker), for each registry entry, if the
- * doc BEFORE this transaction (`tr.before`) structurally equals the entry's `postOpDoc` or
- * `preOpDoc` reference, advance that reference to the doc AFTER this transaction (`tr.doc`).
+ * registry/descriptor bridge protocol section): for each registry entry, if `before` structurally
+ * equals the entry's `postOpDoc` or `preOpDoc` reference, advance that reference to `after`.
  * This is what keeps a structural entry's equality target (§4.2) tracking harmless
  * derived-content churn -- a delayed bibliography fetch, an async footnote renumber, a
- * block-ID push -- that lands after the entry was captured, instead of permanently bricking
- * the entry's equality check the moment such a resync fires after the op (H5).
+ * block-ID push, Milkdown's own heading-id write -- that lands after the entry was captured,
+ * instead of permanently bricking the entry's equality check the moment such a resync fires after
+ * the op (H5).
+ *
+ * Production calls this once per dispatch CHAIN (`runUndoTrackedDispatch`), with `before` = the
+ * live document before the outermost dispatch and `after` = the live document after it returned.
+ * The unit tests also drive it per transaction through `maybeAdvanceRegistryOnSyncOriginTx`.
  *
  * CROSS-ENTRY GUARD (found live 2026-08-18, notes.md): the mid-op skip below used to be scoped
  * to a single entry -- `if (entry.postOpDoc === entry.preOpDoc) continue`, protecting only an
@@ -440,8 +670,8 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
  * can be live in the registry at once (possible since Phase 7 made reorder a tracked op instead
  * of a registry-clearing barrier). Concrete collision: the user restores a section (op A
  * finalizes, `entryA.postOpDoc = DOC_A`), then immediately drag-reorders it (op B begins). Op
- * B's OWN primary content push is a sync-origin transaction with `tr.before = DOC_A` (nothing
- * changed between A finishing and B starting) and `tr.doc = DOC_B`. A single-entry guard only
+ * B's OWN primary content push is a sync-origin transaction with `before = DOC_A` (nothing
+ * changed between A finishing and B starting) and `after = DOC_B`. A single-entry guard only
  * skips B's own (still-placeholder) entry -- it does nothing to stop this same transaction from
  * scanning `entryA` too, finding `entryA.postOpDoc.eq(before)` true (`DOC_A == DOC_A`), and
  * wrongly advancing `entryA.postOpDoc` to `DOC_B`. After the user undoes B (back to `DOC_A`),
@@ -453,62 +683,139 @@ export function finalizeStructuralOpPostOpDoc(opId: string): boolean {
  * currently mid-op (tracked via the explicit `midOp` marker -- see `UndoRegistryEntry`'s doc
  * comment for why reference identity, `postOpDoc === preOpDoc`, was retired as the detector; at
  * most one entry can be mid-op at a time, since `StructuralUndoController.isPerforming`'s latch
- * prevents concurrent structural op sequences), skip advancing EVERY entry for this
- * transaction, not just the mid-op one. This is the rule's actual documented intent: only
- * genuine async derived-content churn landing OUTSIDE of any active op's own sequence window
- * should ever advance another entry -- never a new op's own primary push or its own
- * pre-finalize resyncs reaching back and silently mutating a DIFFERENT, already-finalized
- * entry's equality target.
+ * prevents concurrent structural op sequences), skip advancing EVERY entry, not just the mid-op
+ * one. This is the rule's actual documented intent: only genuine async derived-content churn
+ * landing OUTSIDE of any active op's own sequence window should ever advance another entry --
+ * never a new op's own primary push or its own pre-finalize resyncs reaching back and silently
+ * mutating a DIFFERENT, already-finalized entry's equality target.
  *
- * Deliberately disjoint from `maybeNotifyHistoryEdited`'s trigger condition (that one requires
- * `addToHistory !== false`; this one requires `=== false`), so call order relative to it in the
- * dispatch pipeline doesn't matter -- a transaction can only ever satisfy one of the two.
- * Costs one property read (`registry.size === 0`) per transaction in the common case (no
- * structural entries recorded yet), matching constraint 3 (no per-keystroke cost) -- the same
- * short-circuit shape as `maybeNotifyHistoryEdited`'s own descriptor check.
+ * Costs one property read (`registry.size === 0`) in the common case (no structural entries
+ * recorded yet), matching constraint 3 (no per-keystroke cost).
  */
-export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
-  if (registry.size === 0) return;
-  // P3 (undo-mode-switch-focus second timing gap): a `derivedCorrection`-tagged
-  // transaction is dispatched WITHOUT addToHistory:false (deliberately user-undoable,
-  // heading-level overlap fix) but must still be treated as sync-origin here -- it's an
-  // automatic correction, not a real user edit.
-  //
-  // FILED RESIDUAL, Phase-3 prerequisite (do not fix this round): widening this predicate
-  // means a derived correction now advances postOpDoc even though it's ALSO
-  // user-undoable. Undoing it could leave the live doc unequal to postOpDoc, so the next
-  // Cmd-Z would fall through to text-undo instead of routing to a structural entry --
-  // orphaning it (not corrupting anything, just missing an entry). Unreachable today: no
-  // structural entries exist yet (descriptor.undoTopOpId is never populated until Phase 3).
-  if (tr.getMeta('addToHistory') !== false && !tr.getMeta('derivedCorrection')) return;
-  if (!tr.docChanged) return;
+function advanceRegistryEntries(before: Node, after: Node): void {
+  if (registry.size === 0 || before === after) return;
 
   // Whole-function mid-op guard (see doc comment above): if ANY entry is currently mid-op, this
-  // transaction could be that op's own primary push (or one of its own pre-finalize resyncs)
+  // chain could be that op's own primary push (or one of its own pre-finalize resyncs)
   // reaching back onto a DIFFERENT, already-finalized entry -- never advance anything until the
   // in-flight op has finalized. Exact, not a heuristic: at most one entry is ever mid-op at a
   // time (StructuralUndoController.isPerforming's latch).
   const anyMidOp = [...registry.values()].some((entry) => entry.midOp);
   if (anyMidOp) return;
 
-  const before = tr.before;
-  const after = tr.doc;
+  const advanced: string[] = [];
   for (const [opId, entry] of registry) {
     const advancesPost = entry.postOpDoc.eq(before);
     const advancesPre = entry.preOpDoc.eq(before);
     if (!advancesPost && !advancesPre) continue;
+    advanced.push(`${shortOpId(opId)}:${advancesPost && advancesPre ? 'post+pre' : advancesPost ? 'post' : 'pre'}`);
     registry.set(opId, {
       ...entry,
       postOpDoc: advancesPost ? after : entry.postOpDoc,
       preOpDoc: advancesPre ? after : entry.preOpDoc,
     });
   }
+  // ONE line per chain, however many entries moved (up to 50 can match, and the zero-diff Document Note
+  // entries all do). Every matching entry held `before`, so the sizes are the old size of each one.
+  if (advanced.length > 0) {
+    guardedTrace(() =>
+      structTrace(
+        `registry-advance count=${advanced.length} opIds=${advanced.join(',')} ` +
+          `size=${before.content.size}->${after.content.size} children=${before.childCount}->${after.childCount}`
+      )
+    );
+  }
+}
+
+/**
+ * The advancement rule for ONE sync-origin transaction: `tr.before` -> `tr.doc`. Production does
+ * NOT call this (it advances per dispatch chain, `runUndoTrackedDispatch` below, because a nested
+ * dispatch can leave `tr.doc` one transaction behind the live document); it is kept as the thin
+ * single-transaction form the unit tests drive, and shares the "is this a real user edit"
+ * predicate (`isRealUserEditTransaction`) with the production path.
+ *
+ * A `derivedCorrection`-tagged transaction counts as sync-origin here -- an automatic correction,
+ * not a real user edit -- even though it is dispatched without addToHistory:false and so stays in
+ * the text history. That is safe for the structural entry: a correction can only be absorbed when
+ * the document equals the entry's `postOpDoc` (or `preOpDoc`) right before it, and while the
+ * document equals `postOpDoc`, Cmd-Z routes to the structural undo before any text undo of the
+ * correction could run (routing is by document equality, `decideRouting` above). The correction's
+ * own undo step is only reachable after the user has really edited -- the document then differs
+ * from every saved copy, and structural routing is off until their own text undo brings it back.
+ */
+export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
+  if (registry.size === 0 || !tr.docChanged || isRealUserEditTransaction(tr)) return;
+  advanceRegistryEntries(tr.before, tr.doc);
+}
+
+// Per-dispatch-chain state for `runUndoTrackedDispatch`. A "chain" is one outermost
+// `view.dispatch` call, plus every dispatch made inside it (Milkdown's own nested heading-id
+// write, a plugin's `dispatch` from a view update), plus anything a plugin appended to it.
+let chainDepth = 0;
+let chainBeforeDoc: Node | null = null;
+let chainHasUserEdit = false;
+
+/**
+ * The editor's `view.dispatch` override (main.ts) routes every transaction through this, so the
+ * undo bookkeeping around the real dispatch lives in one testable place: the real dispatch, then
+ * the `historyEdited` predicate, then the real user-transaction counter -- and, once per chain,
+ * the registry advancement rule.
+ *
+ * Why per chain, not per transaction (Phase 4b, Fault A): Milkdown's `syncHeadingIdPlugin` runs
+ * inside the plugin-view update of the OUTER dispatch and, whenever a freshly parsed heading's
+ * `id` attribute is out of date, dispatches a NESTED sync-origin transaction. The nested one
+ * finishes first and sees a `before` that no registry entry holds (the outer transaction's result
+ * is not yet the live document), so it advanced nothing; then the outer one advanced the entry to
+ * ITS `tr.doc` -- one transaction behind the live document -- and equality never returned. Every
+ * Notes or bibliography rebuild adds freshly parsed headings, so every rebuild did this. A
+ * plugin's `appendTransaction` result is likewise missing from the outer `tr.doc`.
+ *
+ * So: remember the live document at the OUTERMOST dispatch, run everything, and once the outermost
+ * call returns advance every entry whose saved copy equals that remembered document to the LIVE
+ * document -- the saved copy follows the live document, whatever the chain did to it.
+ *
+ * Fail-safe: nothing is advanced if any transaction in the chain was a real user edit
+ * (`isRealUserEditTransaction`) or if anything threw. A real user transaction changed the
+ * document, so the live document then differs from every saved copy until the user's own text
+ * undo brings it back exactly (the intended chronological rule). Absorption also needs
+ * `before.eq(saved copy)`, i.e. nothing unabsorbed happened since the operation, so an automatic
+ * rewrite can only follow the operation directly. Worst case for an untagged automatic dispatch is
+ * a refused structural undo (a beep), never a wrong one.
+ */
+export function runUndoTrackedDispatch(
+  view: EditorView,
+  tr: Transaction,
+  originalDispatch: (tr: Transaction) => void
+): void {
+  const outermost = chainDepth === 0;
+  if (outermost) {
+    chainBeforeDoc = view.state.doc;
+    chainHasUserEdit = false;
+  }
+  chainDepth += 1;
+  let completed = false;
+  try {
+    originalDispatch(tr);
+    maybeNotifyHistoryEdited(tr);
+    if (isRealUserEditTransaction(tr)) chainHasUserEdit = true;
+    noteUserTransaction(tr);
+    completed = true;
+  } finally {
+    chainDepth -= 1;
+    if (!completed) chainHasUserEdit = true; // a dispatch that threw is never absorbed
+    if (outermost) {
+      const before = chainBeforeDoc;
+      chainBeforeDoc = null;
+      if (before !== null && !chainHasUserEdit) advanceRegistryEntries(before, view.state.doc);
+    }
+  }
 }
 
 /** Undo-sequence step 2: capture the redo checkpoint (the post-op EditorState, as it stands
  * the moment undo fires) into the registry BEFORE the swap below moves the live view away
- * from it. Routing (§4.2) already guaranteed `currentDoc.eq(entry.postOpDoc)` before this is
- * reachable, so "the state right now" IS the correct redo target. */
+ * from it. Routing (§4.2) already guaranteed that `currentDoc` equals `entry.postOpDoc` OR is
+ * equivalent to it (`docsEquivalentIgnoringDerived`: equal except for what the app regenerates)
+ * before this is reachable, so "the state right now" IS the correct redo target. */
 function captureRedoCheckpoint(opId: string, view: EditorView): void {
   const entry = registry.get(opId);
   if (!entry) return;
@@ -544,8 +851,20 @@ export function performStructuralSwap(opId: string, direction: 'undo' | 'redo'):
   const target = direction === 'undo' ? entry?.checkpoint : entry?.redoCheckpoint;
   if (!entry || !target) return false;
 
+  const traceBefore = view.state.doc;
+  const traceQueuedAtStart = hasPendingChanges();
+  const traceUnsettledAtStart = hasUnsettledLocalEdit();
   setSyncPaused(true);
   view.updateState(target);
+  if (direction === 'redo') {
+    // Re-anchor (Phase 4b review R1): the document swapped in is the one the user saw when they undid
+    // -- the saved post-operation copy plus whatever rewrites had landed by then, which is NOT always
+    // the exact `postOpDoc` (the fallback comparison routed that undo when the typing came first).
+    // Anchor the entry's undo target to the document that is live now, so exact equality holds again
+    // and the next automatic rewrite is absorbed by the chain, instead of leaving every later Cmd-Z
+    // dependent on the fallback comparison.
+    registry.set(opId, { ...entry, postOpDoc: view.state.doc });
+  }
   rebindCurrentStateFromView(view);
   clearBlockIds();
   // N7 (minor, Phase B remediation plan): the original design specified a post-swap
@@ -557,6 +876,14 @@ export function performStructuralSwap(opId: string, direction: 'undo' | 'redo'):
   // in this codebase, e.g. find-replace.ts's goToMatch) rather than folded into the swap
   // itself, since `updateState` bypasses the normal dispatch/scrollIntoView pipeline.
   view.dispatch(view.state.tr.scrollIntoView());
+  guardedTrace(() => {
+    const after = view.state.doc;
+    structTrace(
+      `swap opId=${shortOpId(opId)} direction=${direction} sizeBefore=${traceBefore.content.size} ` +
+        `sizeAfter=${after.content.size} childrenBefore=${traceBefore.childCount} childrenAfter=${after.childCount} ` +
+        `pendingQueueAtStart=${traceQueuedAtStart} unsettledEditAtStart=${traceUnsettledAtStart}`
+    );
+  });
   return true;
 }
 
@@ -569,6 +896,11 @@ export function finishStructuralSwapSettle(): boolean {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return false;
   const view = editorInstance.ctx.get(editorViewCtx);
+  // [STRUCT-TRACE]: whether block-sync still holds edits at this moment -- exactly what the
+  // resetAndSnapshot below drops from the pending queue and from the 100ms debounce.
+  const traceBefore = view.state.doc;
+  const traceQueuedAtStart = hasPendingChanges();
+  const traceUnsettledAtStart = hasUnsettledLocalEdit();
   resetAndSnapshot(view.state.doc);
   setSyncPaused(false);
   // Content-mirror sync (see docs/architecture/unified-undo.md's audited-sequences section,
@@ -577,6 +909,14 @@ export function finishStructuralSwapSettle(): boolean {
   // stale pre-swap value until refreshed here -- left stale, a later stray read of it (e.g.
   // main.ts's init race-condition check) would see the wrong document.
   setCurrentContent(getContent());
+  guardedTrace(() => {
+    const after = view.state.doc;
+    structTrace(
+      `settle sizeBefore=${traceBefore.content.size} sizeAfter=${after.content.size} childrenBefore=${traceBefore.childCount} ` +
+        `childrenAfter=${after.childCount} pendingQueueAtStart=${traceQueuedAtStart} ` +
+        `unsettledEditAtStart=${traceUnsettledAtStart}`
+    );
+  });
   return true;
 }
 
@@ -619,8 +959,8 @@ function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
  * do so when this returns false -- false means "let it bubble to Milkdown's own keymap".
  */
 export function handleUnifiedUndoKeydown(e: KeyboardEvent, view: EditorView, direction: 'undo' | 'redo'): boolean {
-  const decision =
-    direction === 'undo' ? decideUndoRouting(liveRoutingParams(view)) : decideRedoRouting(liveRoutingParams(view));
+  const decision = decideLiveRouting(view, direction);
+  traceRoutingRefusal(view, direction, decision);
 
   // Permanent routing/history visibility (undo-mode-switch-focus investigation legacy --
   // kept because it proved useful for diagnosing undo behavior generally; DOM-focus state
@@ -703,8 +1043,8 @@ function requestUnified(direction: 'undo' | 'redo'): void {
   if (!editorInstance) return;
   const view = editorInstance.ctx.get(editorViewCtx);
 
-  const decision =
-    direction === 'undo' ? decideUndoRouting(liveRoutingParams(view)) : decideRedoRouting(liveRoutingParams(view));
+  const decision = decideLiveRouting(view, direction);
+  traceRoutingRefusal(view, direction, decision);
 
   if (decision.action === 'swallow') return; // in-flight -- drop, matches the keydown path
 

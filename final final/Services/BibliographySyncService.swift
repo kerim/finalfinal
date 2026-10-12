@@ -49,8 +49,9 @@ final class BibliographySyncService {
     /// Debounce timer for bibliography updates
     private var debounceTask: Task<Void, Never>?
 
-    /// Debounce interval (1 second for bibliography, longer than section sync's 500ms)
-    private let debounceInterval: TimeInterval = 1.0
+    /// Debounce interval (1 second for bibliography, longer than section sync's 500ms). A UI test can stretch it
+    /// (`TestMode.uiTestingRewriteDelaySeconds`, inert unless `FF_UI_TESTING=1` and the variable are both set).
+    private let debounceInterval: TimeInterval = TestMode.uiTestingRewriteDelaySeconds ?? 1.0
 
     /// Monotonic counter bumped by every scheduled debounce and by `regenerateBibliography`'s
     /// immediate write. A debounced rebuild captures this at schedule time; if a newer
@@ -188,11 +189,14 @@ final class BibliographySyncService {
             citekeys: currentCitekeys, projectId: projectId, generation: scheduledGeneration
         )
         debounceTask?.cancel()
+        // Read here, outside the `[weak self]` closure: inside it `self` is optional (so `self.debounceInterval`
+        // does not compile) and the implicit-self read it replaces is an error in the Swift 6 language mode.
+        let interval = debounceInterval
         debounceTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
 
             // Wait for debounce interval (derived from property to prevent drift)
-            try? await Task.sleep(for: .seconds(debounceInterval))
+            try? await Task.sleep(for: .seconds(interval))
 
             guard !Task.isCancelled else { return }
             self?.pendingUpdate = nil

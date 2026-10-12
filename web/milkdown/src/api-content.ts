@@ -62,6 +62,7 @@ import { getRecentUserEditSpan } from './recent-edit-span';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
+import { traceMidOpPushDrift } from './undo-coordinator';
 
 /**
  * Clear the ProseMirror undo/redo history stacks after a structural, DB-driven document
@@ -2019,6 +2020,11 @@ export function setContentWithBlockIds(
       const scrollAnchor = options?.scrollToStart
         ? undefined
         : { x: window.scrollX, y: window.scrollY, domTop: view.dom.scrollTop };
+      // [STRUCT-TRACE] push-probe (structural-operation diagnostics, read-only): BEFORE the replace
+      // below overwrites the live document, report whether it drifted from the mid-op registry
+      // entry's preOpDoc -- i.e. whether the user typed while a structural op was running. A no-op
+      // unless a registry entry is mid-op (see traceMidOpPushDrift's doc comment).
+      if (options?.detectPausedEdits) traceMidOpPushDrift(view.state.doc, doc);
       let tr = buildBlockLevelReplace(view.state.tr, view.state.doc, doc);
 
       if (options?.scrollToStart) {
