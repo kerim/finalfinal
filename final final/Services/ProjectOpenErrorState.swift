@@ -97,31 +97,4 @@ final class ProjectOpenErrorState {
     func clear() {
         pending = nil
     }
-
-    /// The sheet's write-back once a Repair or Open Anyway has finished (t-94369a83 3a-1b round C8b, must-fix #16).
-    ///
-    /// The sheet's buttons start an unstructured Task (the repair is `async`), so the user could press Cancel, or an
-    /// unrelated failure could arrive, while it runs. `expectedId` is the id of the failure the action was launched
-    /// against, captured BEFORE the await: nothing is written unless the sheet still shows that same failure. The
-    /// project really opening is not undoable and has already been reported by its own post, so it is never lost.
-    ///
-    /// The sheet is dismissed ONLY for `.opened`. `.stillBroken` keeps it up with the updated report, `.failed` keeps
-    /// it up with the error (the `.other` view; Repair cannot be retried from there, Cancel and reopen can), and a
-    /// lifecycle that never ran `perform` leaves it exactly as it was: a failed Repair is never silent.
-    func apply(_ outcome: ProjectRepairOutcome, expectedId: String, url: URL, blockedOpen: Bool) {
-        guard pending?.id == expectedId else {
-            DebugLog.log(.lifecycle, "[ProjectOpenError] repair outcome not applied: the sheet no longer shows this failure")
-            return
-        }
-        switch outcome {
-        case .opened:
-            clear()
-        case .stillBroken(let newReport):
-            pending = .integrity(report: newReport, url: url, blockedOpen: blockedOpen)
-        case .failed(let error):
-            pending = .other(message: error.localizedDescription, url: url)
-        case .notRun:
-            break
-        }
-    }
 }

@@ -77,34 +77,6 @@ extension EditorViewState {
         editorMode = editorMode == .wysiwyg ? .source : .wysiwyg
     }
 
-    /// Markdown -> Rich Text, the text half of the switch (everything `handleEditorModeToggle` does before `toggleEditorMode()`): takes
-    /// the text the Markdown editor holds NOW, strips the section anchors and the bibliography START marker, saves THAT to the database
-    /// and hands it to Rich Text as `content`. The bibliography END marker (`BlockParser.bibliographyEndMarker`) is deliberately NOT
-    /// stripped: it is what makes `BlockParser.parse` flag the bibliography heading and its entries, so a text without it stores them
-    /// as ordinary blocks (`BibliographyOpeningSelector`, tier 2). `content` always carried it in Markdown mode (the page's push), and
-    /// the Rich Text editor re-reads its document from the database right after (`onWebViewReady` sets `content` again).
-    ///
-    /// The text is `sourceContent`, not `content`. Just before the switch `CodeMirrorCoordinator.saveAndNotify` reads the page and
-    /// refreshes `sourceContent` only; `content` (the same text with the anchors stripped) is refreshed by the page's own push, which
-    /// runs 50 ms after the last key. Keys typed in that last 50 ms were therefore in `sourceContent` but not in `content`, and saving
-    /// `content` stored the text without them. The incoming Rich Text editor loads its document from the database, so they were lost.
-    ///
-    /// `sourceContent` must hold the RAW document, hidden markers included: `saveAndNotify` reads it with
-    /// `CodeMirrorEditor.Coordinator.preSwitchContentScript` (`getContentRaw()`), not `getContent()`, which strips the end marker (and
-    /// the zoom-notes marker a zoomed flush splits the mini-Notes on) before this function ever sees the text. Reading `getContent()`
-    /// here is what made every switch to Rich Text unflag the bibliography (2026-10-09, first seen in the VM runs of that day).
-    func commitMarkdownTextForRichTextSwitch(sectionSyncService: SectionSyncService) {
-        let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(markdown: sourceContent)
-        DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
-        sourceAnchors = anchors
-        // Also strip bibliography marker since Milkdown shouldn't see it
-        let plainText = SectionSyncService.stripBibliographyMarker(from: cleaned)
-        // `skipUnchangedWrite`: when the stored rows already are what this flush would store (no edit since the last save), nothing is
-        // written, so every row keeps its id. A zoomed flush ignores the flag.
-        flushContentToDatabase(overrideContent: plainText, skipUnchangedWrite: true)
-        content = plainText
-    }
-
     /// Request editor mode toggle - posts notification for current editor to save cursor first.
     /// Gates on debounce interval and blocks during data-sensitive transitions.
     func requestEditorModeToggle() {
@@ -128,20 +100,6 @@ extension EditorViewState {
         lastToggleRequestTime = Date()  // Record at entry point to close the race window
 
         NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
-    }
-
-    /// The not-zoomed write of `flushContentToDatabase`: replace every row of the project with `blocks`.
-    ///
-    /// With `skipUnchangedWrite` (passed only by the Markdown <-> Rich Text switch) it uses `replaceBlocksIfChanged`: when the
-    /// rows already stored are the rows this parse would store, nothing is written, every row keeps its id and the write counter
-    /// is not bumped. Otherwise it is `replaceBlocks`, as it always was.
-    func writeWholeDocumentRows(_ blocks: [Block], to db: ProjectDatabase, projectId: String, skipUnchangedWrite: Bool) throws {
-        guard skipUnchangedWrite else {
-            try db.replaceBlocks(blocks, for: projectId)
-            return
-        }
-        let wrote = try db.replaceBlocksIfChanged(blocks, for: projectId)
-        DebugLog.log(.zoom, "[FLUSH] switch flush: stored rows \(wrote ? "differed, wrote them" : "already matched, wrote nothing")")
     }
 
 }

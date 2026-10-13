@@ -14,9 +14,6 @@ extension MilkdownEditor.Coordinator {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isEditorReady = true
-        // UI-test-only (FF_UI_TESTING_CITATION_PREFILL=memoOff): a page created here runs without the citation memo, as the standby
-        // page does (EditorPreloader). A skipped `if` otherwise.
-        if TestMode.isUITestingCitationMemoOff { webView.evaluateJavaScript(CitationPrefillTestScripts.memoOff) { _, _ in } }
         applyPersistedToggleStates()
         batchInitialize()
         startPolling()
@@ -42,18 +39,12 @@ extension MilkdownEditor.Coordinator {
     /// toggle or path changes.
     ///
     /// Always reads and pushes `effectiveCSLStylePath`'s current value, even when it resolves
-    /// to the bundled default -- no Swift-side "skip if it's just the bundled style" or "already
-    /// pushed" flag. Reverting the toggle off after a custom style was active needs the bundled
-    /// style pushed explicitly, or the live editor keeps rendering citations in the old custom
-    /// style until the app relaunches, and a Swift-side flag could go stale after a Settings
-    /// change or a failed push.
-    ///
-    /// The skipping happens in the page instead: `CiteprocEngine.setStyle` compares the pushed
-    /// text with the style the engine is actually running and returns without rebuilding when
-    /// they are identical (rebuilding from the ~160 KB style takes about a second). A fresh page
-    /// already runs the bundled style, and `EditorPreloader` gives its standby page the current
-    /// style when that page finishes loading (and again when the style changes), so on a claimed
-    /// spare this push is normally free. A page holding a different style still rebuilds.
+    /// to the bundled default -- no "skip if it's just the bundled style" optimization. That
+    /// optimization would be safe at webview-ready (the citeproc engine already constructs
+    /// itself with the bundled style as its compiled-in default), but is NOT safe on the
+    /// notification path: reverting the toggle off after a custom style was active needs the
+    /// bundled style pushed explicitly, or the live editor keeps rendering citations in the
+    /// old custom style until the app relaunches.
     func pushCitationStyle() {
         guard let path = ExportSettingsManager.shared.settings.effectiveCSLStylePath,
               let styleXML = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8) else {

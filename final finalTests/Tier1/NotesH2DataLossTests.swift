@@ -400,7 +400,7 @@ struct NotesH2DataLossTests {
             // it via buildHeadingQueues before calling this). Passing it here is what a
             // realistic caller does, and isolates this test to protectingNotes's own
             // behavior rather than accidentally exercising a different mechanism.
-            try ProjectDatabase.deleteBlocksInRange(
+            try projectDb.deleteBlocksInRange(
                 db: db, projectId: projectId, startSortOrder: nil, endSortOrder: nil,
                 protectedHeadingIds: [heading.id], protectingNotes: true
             )

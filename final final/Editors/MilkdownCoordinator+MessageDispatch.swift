@@ -383,8 +383,7 @@ extension MilkdownEditor.Coordinator {
     func syncContentAfterFootnoteInsert(label: String) {
         guard let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
-            guard let self, let reply = result as? String else { return }
-            let content = reply.contiguousUTF8Copy  // native text once, where it arrives (see `BlockSyncService.fetchContentFromWebView`)
+            guard let self, let content = result as? String else { return }
             Task { @MainActor in
                 self.lastPushedContent = content
                 self.lastReceivedFromEditor = Date()

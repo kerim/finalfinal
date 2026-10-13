@@ -9,13 +9,10 @@
 //  loop, the non-critical auto-force-open fallback) are unchanged from the code
 //  this replaces. Behavior on SUCCESS is deliberately NOT unchanged, though: the
 //  old code called configureForCurrentProject() directly, which skipped flushing
-//  whatever project was open before the repair. Since t-94369a83 3a-1b round C8b
-//  the caller (ProjectCommands.repair / openAnyway, E6) runs these inside
-//  LifecycleEntry.run and posts the keyed .projectDidOpen from there, so the project
-//  that was open is saved and backed up first, through the same lifecycle every
-//  other open call site in the app uses -- a safer behavior change, not an
-//  oversight. A .stillBroken or .failed outcome makes the command throw out of that
-//  lifecycle, which restores the editor.
+//  whatever project was open before the repair. The caller (ProjectOpenErrorHost)
+//  posts .projectDidOpen instead, routing through the same flush-outgoing-project /
+//  reset / reconfigure teardown every other open call site in the app already
+//  uses -- a safer behavior change, not an oversight.
 //
 
 import Foundation

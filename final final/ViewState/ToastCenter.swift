@@ -379,46 +379,6 @@ enum ToastFactory {
         )
     }
 
-    // MARK: Close / Open Cancelled or Refused (t-94369a83 Phase 3a-1b, slice-3a-1b-everyday.md section 8)
-
-    // Three warnings for a project close or open that did not go ahead. All fade after 9s, the same
-    // reasoning as `gettingStartedNotSaved()`: a notice like this must not camp in the app's one
-    // persistent-warning slot (a queued Save Version / export confirmation would age past
-    // `ToastCenter.pendingSuccessCutoff` and be discarded behind it). They make no claim about keys typed
-    // during the wait. A repeated request of the SAME kind (Cmd-W during a close) shows nothing at all, so
-    // it has no factory method.
-
-    /// A close (Cmd-W, the red button, File > Close Project) gave up waiting for a section operation
-    /// that was still running. The project stays open and unchanged.
-    static func lifecycleCloseCancelled() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't close the project while an earlier change was still finishing. " +
-                "Try again in a moment.",
-            fadeDelayOverride: .seconds(9)
-        )
-    }
-
-    /// Any other open or switch (Open Project, Open Recent, Getting Started, New Project, Import, Save As,
-    /// Finder open, Repair) gave up for the same reason.
-    static func lifecycleCancelled() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't do that while an earlier change was still finishing. " +
-                "Try again in a moment.",
-            fadeDelayOverride: .seconds(9)
-        )
-    }
-
-    /// A different close or open request arrived while one was already saving.
-    static func lifecycleBusy() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't do that while the project was being saved. Try again in a moment.",
-            fadeDelayOverride: .seconds(9)
-        )
-    }
-
     // MARK: Zoom Root Lost (rename-empties-sidebar plan, M5 judge fix round)
 
     /// The "lost the zoom root entirely" auto-recovery (`EditorViewState.clearZoomRestoringEditor()`)

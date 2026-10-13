@@ -152,20 +152,9 @@ struct BlockSyncFetchContentTimeoutTests {
         stack.editorState.blockSyncService = stack.sync
         #expect(stack.editorState.blockSyncService === stack.sync)
 
-        // Entry (round C6): quit's flush is the lifecycle save sequence under an armed QUIT token
-        // (`QuitFlushTestSupport`, Helpers/); the barrier it holds to exit is released there.
-        let editorState = stack.editorState
-        guard let quitToken = QuitFlushTestSupport.armQuit(editorState) else {
-            Issue.record("could not arm the quit token")
-            return
-        }
-        let webView = stack.webView
-
         let clock = ContinuousClock()
         let start = clock.now
-        let quit = Task { @MainActor in
-            _ = await QuitFlushTestSupport.flush(editorState, token: quitToken, webView: webView)
-        }
+        let quit = Task { @MainActor in await stack.editorState.flushForQuit() }
         await wedge.waitUntilEntered()
 
         // Safety net, above the 5s elapsed bound below: flushForQuit's own fetch

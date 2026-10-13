@@ -4,8 +4,7 @@
 //
 //  Notification handlers extracted from body's modifier-chain closures to keep
 //  type-checking fast: bibliography/notes rebuilds, content-state transitions,
-//  and zoom-out resync. The footnote-insertion handlers live in
-//  ContentView+FootnoteHandlers.swift.
+//  footnote insertion, and zoom-out resync.
 //
 
 import SwiftUI
@@ -39,14 +38,14 @@ extension ContentView {
         DebugLog.log(.bib, {
             let contentIsEmpty = editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             return "[CV:bibNotif] contentState=\(editorState.contentState) suppress=\(editorState.suppressBibliographyRebuildsDuringSwitch) "
-                + "pendingBib=\(editorState.pendingBibliographyRebuild) content.isEmpty=\(contentIsEmpty)"
+                + "pendingBib=\(pendingBibliographyRebuild) content.isEmpty=\(contentIsEmpty)"
         }())
         // Skip if zoomed into a section (bibliography update only affects full document view).
         // Deferred, not dropped: a rename's retitle already landed in the block table before
         // this notification fired (see ContentView's `.bibliographyHeaderNameChanged`
         // observer), so the zoomed editor is now showing a stale heading until this rebuild
         // actually runs. Drained on zoom-exit by `handleZoomStateCleared()` (must-fix 7, judge
-        // round) -- a SEPARATE flag from `editorState.pendingBibliographyRebuild` below, which is
+        // round) -- a SEPARATE flag from `pendingBibliographyRebuild` above/below, which is
         // only drained by the shared idle-transition chain in `handleContentStateChange` and
         // would starve the notes/footnote-label queues that already share that chain if reused
         // here.
@@ -54,20 +53,17 @@ extension ContentView {
             editorState.pendingBibliographyRebuildAfterZoom = true
             return
         }
-        // Skip during any content transition (including editor switch). Also while a close / project switch /
-        // quit holds the editor (t-94369a83 3a-1b, round C4, item 23): nothing may START a rebuild inside its
-        // window, so the request is deferred, not dropped (a rebuild that already runs is awaited by the
-        // lifecycle's step 3). A cancelled lifecycle re-posts it (round C5a); a completed one drops it (C5b).
-        guard editorState.contentState == .idle, editorState.activeLifecycle == nil else {
-            editorState.pendingBibliographyRebuild = true
+        // Skip during any content transition (including editor switch)
+        guard editorState.contentState == .idle else {
+            pendingBibliographyRebuild = true
             return
         }
         // Skip rebuild when editor content is empty - no citations exist,
         // so rebuilding from blocks would restore stale content
         guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         // Skip every bibliography notification for the duration of a project switch (it
-        // may fire from the old project's debounced citekey check; before 3a-1b it could also come
-        // from the explicit pending-flush call the old `handleProjectOpened()` made). CHECKED, not consumed --
+        // may fire from the old project's debounced citekey check, or from the explicit
+        // pending-flush call `handleProjectOpened()` makes). CHECKED, not consumed --
         // round 4 (doc-open-blank-regression): a one-shot flag that resets itself here
         // protects only the FIRST of possibly two mid-switch posts, leaving a second one
         // free to run this handler's own Task below and reopen the blank-pane publish
@@ -77,6 +73,25 @@ extension ContentView {
             DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (project switch in progress)")
             return
         }
+        // Skip every bibliography notification for the duration of quit -- see
+        // `EditorViewState.suppressRebuildsForQuit`'s doc comment. Returning here, before
+        // `isResettingContent` is ever set true below, also keeps
+        // `ViewNotificationModifiers.withResettingContentRecovery`'s OWN forced-poll
+        // trigger (`pollBlockChangesNow()`, fired when `isResettingContent` clears) from
+        // ever arming for this handler's would-be rebuild -- there is no toggle for it to
+        // react to.
+        guard !editorState.suppressRebuildsForQuit else {
+            DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (quitting)")
+            return
+        }
+        // Skip every bibliography notification for the duration of project close -- see
+        // `EditorViewState.suppressRebuildsForClose`'s doc comment (mirrors the quit guard
+        // immediately above).
+        guard !editorState.suppressRebuildsForClose else {
+            DebugLog.log(.bib, "[ContentView] bibliographySectionChanged suppressed (closing)")
+            return
+        }
+
         // Atomic content+IDs push to prevent temp ID race condition.
         // Without this, setContent() triggers assignBlockIds() which creates temp IDs,
         // and the 100ms-delayed pushBlockIds() arrives too late — block-sync reports
@@ -95,8 +110,7 @@ extension ContentView {
         cursorPositionToRestore = nil
         editorState.isResettingContent = true  // prevent updateNSView → setContent()
 
-        // Registered so the lifecycle save sequence (step 3) can await this rebuild, push included (item 21).
-        let rebuildTask: Task<Void, Never> = Task {
+        Task {
             // Force-flush pending JS changes to DB before reading blocks
             if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
                 DebugLog.log(.bib, "[CV:bibRebuild] BEFORE poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
@@ -160,7 +174,6 @@ extension ContentView {
             await sectionSyncService.syncNow(editorState.content)
             await annotationSyncService.syncNow(editorState.content)
         }
-        editorState.registerRebuildTask(rebuildTask)
     }
 
     /// Bibliography heading name preference changed (Export preferences) -- retitle the open
@@ -211,13 +224,9 @@ extension ContentView {
     /// .bibliographyUpdate`, the reparse is silently dropped -- losing that pending edit
     /// outright; (b) even without that race, the reparse's STALE captured content would
     /// overwrite the just-renamed row with pre-rename text once it does fire. Calling the
-    /// flush closure first closes both: its write (`MarkdownBlockWriter.writeNow`, or
-    /// `flushContentToDatabase()` on its fallback) cancels `blockReparseTask` first, which is
-    /// exactly what removes the stale-content write that would otherwise revert the rename.
-    /// (Since Phase 4a the per-block fire reads the CURRENT `editorState.content` at fire time,
-    /// never the text captured at schedule time, so a surviving schedule can no longer write
-    /// pre-rename text; the cancel remains so the fire does not also run a second, needless
-    /// compare.)
+    /// flush closure first closes both: `flushContentToDatabase()`'s first act is cancelling
+    /// `blockReparseTask`, which is exactly what removes the stale-content write that would
+    /// otherwise revert the rename.
     ///
     /// `isReconciliationOnly` (default `false`): set when this call was triggered by
     /// `ExportSettingsManager.setBibliographyHeaderName`'s no-op path -- the SETTING isn't
@@ -254,82 +263,9 @@ extension ContentView {
             await flush(projectId, nil)
         }
 
-        // Phase 2 (t-94369a83), §2.2: reserve AFTER the flush above, not before -- so
-        // this write's turn in the ordered queue reflects when the flush (which can
-        // itself take a beat) actually finished, not when this function was first
-        // called.
-        let outcome: BibliographyHeadingRenamer.RenameOutcome
-        if let systemWriter = bibliographySyncService.systemWriter {
-            let identity = SystemWriteIdentity(projectId: projectId, database: database)
-            let result = await systemWriter.perform(
-                identity: identity, kind: .bibliographyRename,
-                stillWanted: { bibliographySyncService.database === identity.database },
-                body: { db in
-                    // Re-read the effective header name from INSIDE the transaction, NOT
-                    // this function's own captured `newName` -- so a rename that reserves
-                    // its turn after a concurrent one still converges on whichever name is
-                    // actually current in settings at the moment ITS write commits,
-                    // regardless of scheduling order (mirrors
-                    // `BibliographySyncService.writeBibliographyRows`'s own re-read of the
-                    // same setting, for the same reason).
-                    let effectiveName = ExportSettings.load().effectiveBibliographyHeaderName
-                    return SystemWriteBody(value: BibliographyHeadingRenamer.renameInTransaction(
-                        db: db, projectId: projectId, from: oldNames, to: effectiveName))
-                }
-            )
-            switch result.outcome {
-            case .applied(let renameOutcome):
-                // A `.noOp` here is a normal outcome of a completed write (see
-                // `renameInTransaction`'s own doc comment) -- handled by the shared
-                // switch below exactly like the pre-Phase-2 direct-write result was.
-                outcome = renameOutcome
-            case .refused(let reason):
-                // Review fix (finding #13): this used to post the SAME "database
-                // error" notification for every refusal reason. Most refusals here are
-                // completely benign -- the project switched away, the writer was
-                // replaced/retired, or this call nested inside another system write --
-                // exactly what `BibliographySyncService`'s own
-                // `.refused(.identityMismatch)/.refused(.writerRetired)/.refused(.notWanted)`
-                // handling already treats as "superseded or project changed -- nothing
-                // to do", with no user-facing error. Telling the user "database error"
-                // for a rename that simply no longer applies (they've moved to a
-                // different project) is actively misleading.
-                switch reason {
-                case .notWanted, .identityMismatch, .writerRetired, .nested,
-                     .skipped(.projectSwitch), .skipped(.writerReplaced), .skipped(.editorReplaced),
-                     .skipped(.lifecycleDrain), .skipped(.drainTimeout), .skipped(.close):
-                    // `.skipped(.close)` is reachable once 3a-1b calls `retire(.close)`;
-                    // nothing produces it today.
-                    DebugLog.log(.bib, "[ContentView] performBibliographyHeaderNameChange: rename refused " +
-                        "(\(reason)) -- benign supersession, no user-facing error")
-                case .outOfTurn, .noWriter, .skipped(.systemStalled):
-                    // A genuine problem -- the write never got its turn, no writer is
-                    // configured, or the I-SYS stall backstop fired because something
-                    // else blocked the queue. Still surfaced via the existing message
-                    // (not literally "the database threw", but the user-facing outcome
-                    // is the same: the rename did not happen and won't retry itself).
-                    NotificationCenter.default.post(
-                        name: .bibliographyHeadingRenameFailed, object: nil,
-                        userInfo: ["reason": BibliographyHeadingRenamer.NoOpReason.databaseError.message]
-                    )
-                }
-                return
-            case .failed:
-                // A write that actually threw -- this IS a real database error.
-                NotificationCenter.default.post(
-                    name: .bibliographyHeadingRenameFailed, object: nil,
-                    userInfo: ["reason": BibliographyHeadingRenamer.NoOpReason.databaseError.message]
-                )
-                return
-            }
-        } else {
-            // §2.0's `.noWriter` fallback -- no writer configured at all (defensive
-            // only; should not happen once `configureSyncServices` wires it).
-            outcome = BibliographyHeadingRenamer.rename(
-                in: database, projectId: projectId, from: oldNames, to: newName
-            )
-        }
-
+        let outcome = BibliographyHeadingRenamer.rename(
+            in: database, projectId: projectId, from: oldNames, to: newName
+        )
         switch outcome {
         case .renamed:
             NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
@@ -346,24 +282,26 @@ extension ContentView {
     /// Notes section was updated in the database - rebuild editor content
     @MainActor
     func handleNotesSectionChanged() {
-        guard editorState.zoomedSectionId == nil else {
-            FootnoteDiag.log("notesSectionChanged handler: skipped while zoomed")
+        guard editorState.zoomedSectionId == nil else { return }
+        guard editorState.contentState == .idle else {
+            pendingNotesRebuild = true
             return
         }
-        // Also deferred while a close / switch / quit holds the editor -- see `handleBibliographySectionChanged`
-        // (t-94369a83 3a-1b, round C4, item 23).
-        guard editorState.contentState == .idle, editorState.activeLifecycle == nil else {
-            FootnoteDiag.log("notesSectionChanged handler: DEFERRED (re-posted when idle) contentState=\(editorState.contentState) " +
-                "lifecycle=\(editorState.activeLifecycle != nil)")
-            editorState.pendingNotesRebuild = true
+        guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Skip every Notes notification for the duration of quit -- see
+        // `EditorViewState.suppressRebuildsForQuit`'s doc comment (mirrors the
+        // bibliography handler's matching guard above).
+        guard !editorState.suppressRebuildsForQuit else {
+            DebugLog.log(.bib, "[ContentView] notesSectionChanged suppressed (quitting)")
             return
         }
-        guard !editorState.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            FootnoteDiag.log("notesSectionChanged handler: skipped, the document is empty")
+        // Skip every Notes notification for the duration of project close -- see
+        // `EditorViewState.suppressRebuildsForClose`'s doc comment (mirrors the quit guard
+        // immediately above).
+        guard !editorState.suppressRebuildsForClose else {
+            DebugLog.log(.bib, "[ContentView] notesSectionChanged suppressed (closing)")
             return
         }
-        let diagStart = FootnoteDiag.nowMs()
-        FootnoteDiag.log("notes rebuild: starts")
 
         // Atomic content+IDs push (same pattern as bibliography)
         editorState.contentState = .bibliographyUpdate  // Reuse same state
@@ -380,12 +318,9 @@ extension ContentView {
         cursorPositionToRestore = nil
         editorState.isResettingContent = true
 
-        // Registered for the lifecycle save sequence's step 3, as in `handleBibliographySectionChanged`.
-        let rebuildTask: Task<Void, Never> = Task {
-            defer { FootnoteDiag.log("notes rebuild: finished duration=\(FootnoteDiag.nowMs() - diagStart)ms") }
+        Task {
             // Force-flush pending JS changes to DB before reading blocks
             await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
-            FootnoteDiag.log("notes rebuild: forced poll done after \(FootnoteDiag.nowMs() - diagStart)ms")
 
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
@@ -400,7 +335,6 @@ extension ContentView {
 
             await holdRebuildFlushWindowForUITesting()
 
-            let pushStart = FootnoteDiag.nowMs()
             let merged = await blockSyncService.setContentWithBlockIds(
                 markdown: result.markdown, blockIds: result.blockIds,
                 imageMeta: result.imageMeta,
@@ -409,7 +343,6 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks,
                 managedBlockIds: result.managedBlockIds,
                 preserveUserBlocks: true)
-            FootnoteDiag.log("notes rebuild: editor push done pushDuration=\(FootnoteDiag.nowMs() - pushStart)ms blocks=\(result.blockIds.count)")
             // t-6a0d195d: see handleBibliographySectionChanged's matching comment above -- the
             // merged push's actual markdown can differ from result.markdown.
             if let merged, merged != result.markdown {
@@ -432,16 +365,12 @@ extension ContentView {
             await sectionSyncService.syncNow(editorState.content)
             await annotationSyncService.syncNow(editorState.content)
         }
-        editorState.registerRebuildTask(rebuildTask)
     }
 
     /// Processes pending rebuilds when contentState returns to idle
     @MainActor
     func handleContentStateChange(from oldValue: EditorContentState, to newValue: EditorContentState) {
-        DebugLog.log(
-            .bib,
-            "[CV:stateChange] \(oldValue)→\(newValue) pendingBib=\(editorState.pendingBibliographyRebuild) "
-                + "pendingNotes=\(editorState.pendingNotesRebuild)")
+        DebugLog.log(.bib, "[CV:stateChange] \(oldValue)→\(newValue) pendingBib=\(pendingBibliographyRebuild) pendingNotes=\(pendingNotesRebuild)")
         guard newValue == .idle else { return }
         // Process ONE pending item per idle transition (if/else if chain).
         // Each rebuild sets contentState to non-idle; the next idle transition
@@ -451,20 +380,212 @@ extension ContentView {
         // withContentStateRecovery (which fires on the same idle transition).
         // Without this, the synchronous notification immediately sets
         // contentState back to non-idle, and the sidebar never renders.
-        if editorState.pendingBibliographyRebuild {
-            editorState.pendingBibliographyRebuild = false
+        if pendingBibliographyRebuild {
+            pendingBibliographyRebuild = false
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .bibliographySectionChanged, object: nil)
             }
-        } else if editorState.pendingNotesRebuild {
-            FootnoteDiag.log("pending notes rebuild re-posted: contentState is idle again (was \(oldValue))")
-            editorState.pendingNotesRebuild = false
+        } else if pendingNotesRebuild {
+            pendingNotesRebuild = false
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
             }
-        } else if !editorState.pendingFootnoteLabels.isEmpty {
+        } else if !pendingFootnoteLabels.isEmpty {
             drainNextPendingFootnoteIfPossible()
         }
+    }
+
+    /// Dequeues and re-posts exactly one pending footnote label, if contentState is
+    /// idle and the queue is non-empty. Called both from the idle-transition branch
+    /// above and from handleFootnoteInsertedImmediate's own early-return guard — the
+    /// latter closes a gap where a drained item that turns out unprocessable (nil
+    /// label/projectId) would otherwise never touch contentState, so no further idle
+    /// transition would occur to pick up whatever is left in the queue.
+    @MainActor
+    private func drainNextPendingFootnoteIfPossible() {
+        guard editorState.contentState == .idle,
+              let next = pendingFootnoteLabels.dequeue() else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .footnoteInsertedImmediate, object: nil,
+                userInfo: ["label": next])
+        }
+    }
+
+    /// Inserts a footnote definition into the Notes section after a slash-command insertion
+    @MainActor
+    func handleFootnoteInsertedImmediate(_ notification: Notification) {
+        DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: entry " +
+            "label=\(notification.userInfo?["label"] as? String ?? "nil") " +
+            "projectId=\(documentManager.projectId ?? "nil")")
+
+        guard let label = notification.userInfo?["label"] as? String,
+              let projectId = documentManager.projectId else {
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: skip " +
+                "reason=missing-label-or-projectId")
+            drainNextPendingFootnoteIfPossible()
+            return
+        }
+        // Zoom-aware handling: use zoom-specific insertion path
+        if editorState.zoomedSectionId != nil {
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: routing to zoom path " +
+                "label=\(label) zoomedSectionId=\(editorState.zoomedSectionId ?? "?")")
+            handleZoomedFootnoteInsertion(label: label, projectId: projectId)
+            return
+        }
+
+        // Rapid double-insertion safety: queue label if busy
+        guard editorState.contentState == .idle else {
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: queueing (busy) " +
+                "label=\(label) contentState=\(editorState.contentState)")
+            pendingFootnoteLabels.enqueue(label)
+            return
+        }
+
+        // Set content state BEFORE DB write to suppress sync
+        editorState.contentState = .bibliographyUpdate
+        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands --
+        // see handleBibliographySectionChanged above and
+        // BlockSyncService.checkGenerationGuard's doc comment. Placed here, before the
+        // database write below (handleImmediateInsertion), rather than only before the
+        // Task below, for defensive/consistent ordering with the other two handlers --
+        // NOT because a poll could otherwise observe the bump with no marker set: this
+        // whole run, from the `contentState` assignment above through this call, is one
+        // synchronous MainActor region with no suspension point in it, so no poll cycle
+        // can interleave between them regardless of exactly where in this region the
+        // marker is set.
+        blockSyncService.beginDatabaseRebuild()
+        // This is a synthetic content rebuild, not a mode switch — any cursor position
+        // already sitting in cursorPositionToRestore was computed against the
+        // pre-rebuild document and is stale by construction. Drop it so the stale
+        // mode-switch restore mechanism can't fire later and overwrite the correct
+        // footnote cursor placement Stage E is about to set below.
+        cursorPositionToRestore = nil
+        editorState.isResettingContent = true
+
+        DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: proceeding " +
+            "label=\(label) projectId=\(projectId)")
+        // E1/E4: capture the real DB id of the definition row just inserted for `label`, so
+        // it can ride along on the `.scrollToFootnoteDefinition` post below instead of being
+        // discarded -- lets Milkdown resolve the cursor target by block identity rather than
+        // a positional/label search.
+        let insertedBlockId = footnoteSyncService.handleImmediateInsertion(label: label, projectId: projectId)
+
+        Task {
+            // Force-flush pending JS changes to DB. This MUST complete before the
+            // fetchBlocksWithIds() read below: editorState.content above only reflects what
+            // the JS coordinator had already synced at notification-post time, but the
+            // background block poller runs on its own ~2s interval, so a just-typed edit
+            // to an existing footnote definition can still be sitting unflushed in JS when
+            // we get here. fetchBlocksWithIds reads block text straight from the DB, so if
+            // that read raced ahead of this flush it would silently rebuild the document
+            // from stale (pre-edit) text and stomp the user's edit when the result is pushed
+            // back to the editor below. Awaiting the flush makes the read see that edit in
+            // every healthy cycle (the drain waits out an in-flight cycle, then runs a fresh
+            // one), but it is BEST-EFFORT, not a guarantee: a cycle whose WebKit call never
+            // returns times out (8s) and this caller then proceeds WITHOUT its own edit in
+            // the DB (L8 in the poll-watchdog plan's loss-path table), which the
+            // unconditional timeout log states explicitly.
+            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: fresh flush guaranteed " +
+                "complete for label=\(label), reading blocks from DB")
+
+            // Single source of truth: one DB fetch produces markdown + IDs that are
+            // guaranteed mutually aligned (BlockParser.assembleMarkdown /
+            // idsForProseMirrorAlignment share filtering + list-merge logic). Previously
+            // this function hand-spliced a separately-derived string and paired it with
+            // this fetch's block IDs; when the two disagreed on top-level node arrangement,
+            // the editor's positional ID-assignment could attach an existing footnote's
+            // identity to the wrong (blank) node. Pushing result.markdown directly (the
+            // same pattern rebuildDocumentContent already uses) eliminates that mismatch.
+            guard let result = fetchBlocksWithIds() else {
+                DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: aborting " +
+                    "label=\(label) reason=fetchBlocksWithIds-returned-nil")
+                editorState.isResettingContent = false
+                editorState.contentState = .idle
+                resyncFootnotesAfterImmediateInsertion(projectId: projectId)
+                return
+            }
+
+            editorState.content = result.markdown
+            editorState.pendingImageMeta = result.imageMeta
+            // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
+            // action (footnote insertion) synthesizes new content, so a case could be made
+            // for INTENTIONAL, but this is exactly the call site the comment below already
+            // documents as a KNOWN residual data-loss window -- leaving it DERIVED means the
+            // new settle-window guard actively helps this pre-existing issue rather than
+            // bypassing it.
+            updateSourceContentIfNeeded()
+
+            // Formerly a "known residual limitation": a keystroke typed in the window between
+            // the flush above and setContentWithBlockIds below used to be lost the same way the
+            // bibliography/Notes rebuilds could lose one (t-6a0d195d) -- that push replaced
+            // every block that differed from the freshly-read DB content, including a user edit
+            // the DB hadn't caught up with yet. Fixed the same way: `preserveUserBlocks: true`
+            // below merges the push instead of replacing wholesale, so a block the user is
+            // still typing in keeps its live-editor identity and content. See
+            // mergeManagedBlocks's doc comment (api-content.ts) for the merge algorithm.
+
+            await holdRebuildFlushWindowForUITesting()
+
+            // Push fresh content with real block IDs atomically
+            // (same pattern as bibliography — prevents temp ID race)
+            let merged = await blockSyncService.setContentWithBlockIds(
+                markdown: result.markdown, blockIds: result.blockIds,
+                imageMeta: result.imageMeta,
+                cursorBoundary: result.bibBoundaryIndex,
+                cursorBoundaryEnd: result.bibBoundaryEndIndex,
+                expectedBlocks: result.expectedBlocks,
+                managedBlockIds: result.managedBlockIds,
+                preserveUserBlocks: true)
+            // t-6a0d195d: see handleBibliographySectionChanged's matching comment -- the merged
+            // push's actual markdown can differ from result.markdown. pendingImageMeta (set just
+            // above) is kept regardless -- image metadata isn't affected by which markdown wins.
+            if let merged, merged != result.markdown {
+                editorState.content = merged
+                updateSourceContentIfNeeded() // #12: keep the Markdown-mode source copy in sync
+            }
+
+            editorState.isResettingContent = false
+            editorState.contentState = .idle
+            resyncFootnotesAfterImmediateInsertion(projectId: projectId)
+
+            await Task.yield()
+
+            // Navigate cursor to new definition. E1: `blockId`, when present, is threaded
+            // through to Milkdown's id-addressed cursor placement (`focusFootnoteDefinition`)
+            // -- see MilkdownCoordinator+NotificationObservers.swift. CodeMirror's observer
+            // ignores `blockId` (E2's fix is region-anchored text search, not id-addressed;
+            // CodeMirror has no block ids).
+            DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: posting " +
+                "scrollToFootnoteDefinition label=\(label) blockId=\(insertedBlockId ?? "nil")")
+            var scrollUserInfo: [String: Any] = ["label": label]
+            if let insertedBlockId {
+                scrollUserInfo["blockId"] = insertedBlockId
+            }
+            NotificationCenter.default.post(
+                name: .scrollToFootnoteDefinition,
+                object: nil,
+                userInfo: scrollUserInfo
+            )
+        }
+    }
+
+    /// Guaranteed resync after an immediate footnote insertion returns `contentState` to
+    /// `.idle`. `handleImmediateInsertion` unconditionally cancels any outstanding debounce,
+    /// and `handleContentChange`'s `contentState == .idle` guard drops every `onChange` firing
+    /// for the whole duration of this flow — including the flow's own final content push — so
+    /// nothing else re-schedules a debounce for work that was dropped. Calling
+    /// `checkAndUpdateFootnotes` here closes that gap. Cheap no-op in the common case: it
+    /// early-exits when the live document's ref set already matches `lastKnownRefs`.
+    @MainActor
+    private func resyncFootnotesAfterImmediateInsertion(projectId: String) {
+        let refreshedRefs = FootnoteSyncService.extractFootnoteRefs(from: editorState.content)
+        footnoteSyncService.checkAndUpdateFootnotes(
+            footnoteRefs: refreshedRefs,
+            projectId: projectId,
+            fullContent: editorState.content
+        )
     }
 
     /// Re-syncs annotations, hierarchy, bibliography, and footnotes after zoom-out

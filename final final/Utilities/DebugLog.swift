@@ -2,8 +2,7 @@ import Foundation
 
 /// Lightweight category-based debug logging.
 /// - Call sites are simple one-liners: `DebugLog.log(.sync, "message")`
-/// - In release builds `log()` has no console output; it still forwards to `DiagnosticLogFile` when the user's
-///   Diagnostics toggle is on (in any build).
+/// - In release builds, `log()` compiles to nothing.
 /// - `always()` prints unconditionally (for safety guards that must never be silenced).
 /// - To enable more categories during development, edit `enabled` below.
 enum DebugLog {

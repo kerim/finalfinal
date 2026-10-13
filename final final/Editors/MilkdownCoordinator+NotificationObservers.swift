@@ -318,13 +318,13 @@ extension MilkdownEditor.Coordinator {
     }
 
     /// Mount-flash fix (doc-open-blank-regression follow-up): observes
-    /// `.willResetEditorForProjectSwitch`, posted by `ContentView+LifecycleTails.swift`'s
-    /// `resetEditorJavaScriptStateForProjectSwitch()` (the open tail) right before it would otherwise call
+    /// `.willResetEditorForProjectSwitch`, posted by `ContentView+ProjectLifecycle.swift`'s
+    /// `handleProjectOpened()` right before it would otherwise call
     /// `window.FinalFinal.resetForProjectSwitch()` directly.
     ///
     /// `queue: nil` (synchronous delivery, same reasoning as `subscribeToBlockSyncNotifications`'s
     /// `blockSyncPushObserver` above): `beginCloak()` must run, and mint its token, before
-    /// `resetEditorJavaScriptStateForProjectSwitch()` proceeds past the `post()` call -- a `.main`-queue observer
+    /// `handleProjectOpened()` proceeds past the `post()` call -- a `.main`-queue observer
     /// would defer this to a later runloop tick, breaking that ordering guarantee.
     ///
     /// `object`-filtered against `self.webView`, NOT a bare `object: nil` match: this is a

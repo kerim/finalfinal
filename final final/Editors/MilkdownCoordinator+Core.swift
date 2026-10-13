@@ -215,8 +215,8 @@ extension MilkdownEditor {
         /// MessageHandlers.swift).
         var latestCloakTokenForReason: [CloakReason: Int] = [:]
 
-        /// Observes `.willResetEditorForProjectSwitch` (posted by ContentView+LifecycleTails.swift's
-        /// resetEditorJavaScriptStateForProjectSwitch(), called from the open tail, filtered to THIS Coordinator's own
+        /// Observes `.willResetEditorForProjectSwitch` (posted by ContentView+
+        /// ProjectLifecycle.swift's handleProjectOpened(), filtered to THIS Coordinator's own
         /// webView -- see subscribeToProjectResetNotifications' doc comment for why a global
         /// notification needs that filter in a multi-window app).
         var projectResetObserver: NSObjectProtocol?

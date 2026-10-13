@@ -132,29 +132,6 @@ extension XCUIApplication {
         return lines.isEmpty ? "(no staticTexts found in editor-area)" : lines.joined(separator: "\n")
     }
 
-    /// Every String-valued StaticText under `editor-area` from ONE `snapshot()` (one AX round trip, walked in-process), for a
-    /// bulk read. LESSON (write-queue 3b M7, 2026-10-06): `allElementsBoundByIndex.compactMap { $0.value }` re-resolves each
-    /// element against a fresh snapshot; the status-bar word count (inside `editor-area`) vanished mid-loop and read 12 died with
-    /// "Failed to get matching snapshot: No matches found for Element at index 11", a hard failure, not a nil. Nil = no snapshot.
-    func editorStaticTextValues(attempts: Int = 4) -> [String]? {
-        for attempt in 1...attempts {
-            do {
-                return Self.staticTextValues(in: try editorArea.snapshot())
-            } catch {
-                print("[editorStaticTextValues] snapshot() of editor-area failed (attempt \(attempt)): \(error)")
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
-            }
-        }
-        return nil
-    }
-
-    private static func staticTextValues(in snapshot: XCUIElementSnapshot) -> [String] {
-        snapshot.children.flatMap { child -> [String] in
-            let own = (child.elementType == .staticText ? child.value as? String : nil).map { [$0] } ?? []
-            return own + staticTextValues(in: child)
-        }
-    }
-
     /// True if a StaticText inside `editor-area` whose value/label starts with `prefix` EXISTS
     /// (within `timeout`) AND its accessibility frame currently intersects `editor-area`'s own
     /// visible frame -- i.e. it is genuinely on screen right now, not merely present somewhere

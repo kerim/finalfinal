@@ -30,35 +30,25 @@ extension SectionSyncService {
     ///   - markdown: The markdown content
     ///   - sections: Current sections with their IDs
     /// - Returns: Markdown with anchors injected before headers
-    ///
-    /// One pass over `markdown`: the sections are taken in ascending `startOffset` order, a running index moves forward by the
-    /// distance between one offset and the next, and the text between two anchors is copied once into a new string. Offsets are
-    /// in characters (`Character`s of `markdown`), exactly as before. An offset past the end of `markdown` puts its anchor at the
-    /// very end. Sections that share an offset keep the order the old insert-from-the-end loop gave them (that loop's last
-    /// insertion lands first, which is this ascending order built by reversing the same descending sort). The previous loop did a
-    /// full `count`, an `index(offsetBy:)` and an `insert` for every section, which made it grow with the square of the document
-    /// (VM runs: 153 ms at BOOK-6, 769 ms at BOOK-12).
     func injectSectionAnchors(markdown: String, sections: [SectionViewModel]) -> String {
         guard !sections.isEmpty else { return markdown }
 
-        let ascendingSections = sections.sorted { $0.startOffset > $1.startOffset }.reversed()
+        // Build a map of header text to section ID
+        // We match by finding headers in the markdown and associating them with sections
+        var result = markdown
 
-        var result = ""
-        result.reserveCapacity(markdown.utf8.count + sections.count * 64)
+        // Sort sections by startOffset in reverse order (inject from end to avoid offset drift)
+        let sortedSections = sections.sorted { $0.startOffset > $1.startOffset }
 
-        var copiedUpTo = markdown.startIndex  // everything before this index is already in `result`
-        var charactersWalked = 0              // characters of `markdown` between startIndex and the last offset walked to
-        for section in ascendingSections {
-            let step = section.startOffset - charactersWalked
-            charactersWalked = section.startOffset
-            let insertionIndex = markdown.index(copiedUpTo, offsetBy: step, limitedBy: markdown.endIndex) ?? markdown.endIndex
+        for section in sortedSections {
+            // Find the header line at the section's start offset
+            let offset = min(section.startOffset, result.count)
+            let insertionIndex = result.index(result.startIndex, offsetBy: offset)
 
-            result.append(contentsOf: markdown[copiedUpTo..<insertionIndex])
             // Inject anchor on SAME LINE as header (no newline)
-            result.append("<!-- @sid:\(section.id) -->")
-            copiedUpTo = insertionIndex
+            let anchor = "<!-- @sid:\(section.id) -->"
+            result.insert(contentsOf: anchor, at: insertionIndex)
         }
-        result.append(contentsOf: markdown[copiedUpTo...])
 
         return result
     }

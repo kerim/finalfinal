@@ -7,23 +7,8 @@
 //  citation-revert-to-/cite background. This file covers review round 1's must-fix
 //  bibliography-flush clobber: performBibliographyUpdate's overrideContent winning over stale
 //  editorState.content, both for the direct override path and for a project-switch debounce
-//  firing with no override.
-//
-//  PORTED (t-94369a83 Phase 3a-1b, round C7b): tests 7 and 8 now wire the REAL hook
-//  (`ContentView.makeBibliographyFlushHandler(for:)`, static since round C4) instead of the
-//  `productionFlushHook(editorState:)` mirror in BibliographySourceModeFlushTests.swift: with no lifecycle
-//  token armed the two have the same guards, so each assertion keeps its meaning, and the mirror can no longer
-//  drift from production. They still exercise `performBibliographyUpdate`'s override and the
-//  `switchInProgressContent` fallback directly, which is what the unkeyed (Getting Started) switch path and the
-//  quit's best-effort flush still call. Test 9 is the same hazard entered through the entry a switch runs now:
-//  the lifecycle save sequence (the part of `LifecycleEntry.run(.projectSwitch)` before `perform`), where the
-//  real hook stands down while the token is armed (N50) because the sequence's own whole-document write
-//  already saved the fetched text.
-//
-//  Phase 4a (t-94369a83): the real hook now saves through the Markdown block writer when the editor state has a block-sync
-//  writer. The editor states in THIS file have none, so the hook takes its whole-document fallback and every assertion
-//  below keeps its meaning unchanged. The override / staged-content fallback chain with a writer installed is pinned in
-//  Tier2/MarkdownBibliographyFlushTests.swift.
+//  firing with no override, using the shared `productionFlushHook(editorState:)` helper defined
+//  in BibliographySourceModeFlushTests.swift.
 //
 
 import Testing
@@ -36,13 +21,13 @@ extension BibliographySourceModeFlushTests {
     // MARK: - 7. overrideContent wins over stale editorState.content
     // (review round 1 must-fix: the bibliography-flush clobber)
 
-    /// Reproduces the exact hazard review round 1 found: the project switch's flush
-    /// (`flushAllPendingContent()`, now the unkeyed path only) was followed immediately by
-    /// `editorState.flushPendingBibliographyAndFootnoteSync()` -- reaching this same flush hook
-    /// while `editorState.content` is DELIBERATELY stale for the whole duration of the switch
+    /// Reproduces the exact hazard review round 1 found: `ContentView.handleProjectOpened()`
+    /// calls `flushAllPendingContent()` then, immediately after, `editorState.
+    /// flushPendingBibliographyAndFootnoteSync()` -- reaching this same flush hook while
+    /// `editorState.content` is DELIBERATELY stale for the whole duration of that function
     /// (see `ContentView+VersionHistory.swift`'s `flushAllPendingContent` doc comment).
     /// Before the fix, the hook always read `editorState.content` directly and had no way
-    /// to receive the fresher value the flush had just written moments
+    /// to receive the fresher value `flushAllPendingContent()` had just flushed moments
     /// earlier, so this second flush clobbered those fresh blocks with a stale
     /// `replaceBlocks`. `overrideContent` closes that: the SAME fetched content threads
     /// through `performBibliographyUpdate` -> the flush hook -> `flushContentToDatabase
@@ -78,7 +63,7 @@ extension BibliographySourceModeFlushTests {
 
         let service = BibliographySyncService()
         service.configure(database: db, projectId: projectId)
-        service.flushLiveEditorContentToBlocks = ContentView.makeBibliographyFlushHandler(for: editorState)
+        service.flushLiveEditorContentToBlocks = productionFlushHook(editorState: editorState)
 
         // Stands in for the value ContentView.flushAllPendingContent() already fetched and
         // flushed moments earlier -- the fresh, in-flight-edit content that must win.
@@ -163,7 +148,7 @@ extension BibliographySourceModeFlushTests {
 
         let service = BibliographySyncService()
         service.configure(database: db, projectId: projectId)
-        service.flushLiveEditorContentToBlocks = ContentView.makeBibliographyFlushHandler(for: editorState)
+        service.flushLiveEditorContentToBlocks = productionFlushHook(editorState: editorState)
 
         // No overrideContent argument -- exactly what BibliographySyncService's debounceTask
         // closure passes when it fires on its own schedule (line ~143-145).
@@ -187,64 +172,5 @@ extension BibliographySourceModeFlushTests {
             round 2 found still open after round 1's explicit-override-only fix
             """
         )
-    }
-
-    // MARK: - 9. The same hazard through the entry a switch runs now (round C7b)
-
-    /// A bibliography update pending when the user switches projects (Markdown mode) must not clobber the fresh
-    /// blocks with the stale `editorState.content`. Entered through the switch's save sequence
-    /// (`LifecycleFlushHarness.run(.projectSwitch)`), with the REAL flush hook wired. Step 0 suspends the pending
-    /// update; step 5 stages the fetched text into `switchInProgressContent`; FB writes it through the ordered
-    /// queue; step 7 re-derives the bibliography from the fresh content, which reaches the hook while the token is
-    /// armed -- and the hook stands down (N50) instead of running a second, out-of-queue `replaceBlocks`.
-    @Test("""
-        a bibliography update during a project switch's save (Markdown) leaves the fetched content in place: the \
-        stale editorState.content never replaces it, the real flush hook stands down, and the refresh still runs
-        """)
-    @MainActor
-    func switchSaveWithPendingBibliographyKeepsFreshContent() async throws {
-        let staleContent = "# Test Document\n\nSTALE pre-switch text that must not survive."
-        let freshContent = "# Test Document\n\nFRESH content citing [@switchsavekey2026], fetched by the switch's save."
-        let rig = try LifecycleFlushHarness(content: staleContent)
-        rig.editorState.editorMode = .source
-        rig.editorState.content = staleContent // deliberately stale, as during a project switch
-        rig.fetchAnswer = freshContent
-
-        let itemJSON = """
-        {"id":"switchsavekey2026","type":"book","title":"Switch Save Title","author":[{"family":"Switchfam","given":"Sasha"}],\
-        "issued":{"date-parts":[[2026]]}}
-        """
-        let item = try JSONDecoder().decode(CSLItem.self, from: Data(itemJSON.utf8))
-        ZoteroService.shared.isConnected = true
-        ZoteroService.shared.loadItem(item)
-        defer {
-            ZoteroService.shared.isConnected = false
-            ZoteroService.shared.clearCache()
-        }
-
-        let service = rig.attachBibliographyService()
-        service.flushLiveEditorContentToBlocks = ContentView.makeBibliographyFlushHandler(for: rig.editorState)
-        // The update is pending (scheduled, not yet fired) exactly as if a citation was typed just before the switch.
-        service.checkAndUpdateBibliography(currentCitekeys: ["switchsavekey2026"], projectId: rig.pid)
-
-        let result = await rig.run(.projectSwitch)
-
-        #expect(result.outcome == .flushed)
-        #expect(result.bibliographyRefresh == .completed, "precondition: step 7 ran, so the bibliography refresh could reach the hook")
-        #expect(
-            rig.editorState.switchInProgressContent == freshContent,
-            "the fetched text is staged for the whole switch window, exactly as the old flush staged it"
-        )
-        let blocksAfter = try TestFixtureFactory.fetchBlocks(from: rig.db)
-        let assembled = BlockParser.assembleMarkdown(from: blocksAfter.filter { !$0.isBibliography })
-        #expect(
-            assembled.contains("FRESH content citing"),
-            "The switch's save wrote the fetched content and nothing replaced it"
-        )
-        #expect(
-            !assembled.contains("STALE pre-switch text"),
-            "The stale editorState.content must NOT clobber the fetched content during the switch's bibliography refresh"
-        )
-        withExtendedLifetime(service) {}
     }
 }

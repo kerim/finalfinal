@@ -171,8 +171,6 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
     let trailingHeader: TrailingHeader
 
     @Environment(ThemeManager.self) private var themeManager
-    @State private var hoveredSectionId: String?
-    @State private var scrollPosition: String?
 
     init(
         title: String,
@@ -218,48 +216,40 @@ struct DocumentPreviewView<TrailingHeader: View>: View {
             Divider()
 
             // Document content
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(sections) { section in
-                            SectionPreviewRow(
-                                section: section,
-                                isHighlighted: section.id == highlightedSectionId,
-                                isHovered: section.id == hoveredSectionId,
-                                showRestoreButtons: showRestoreButtons,
-                                showFullContent: showFullContent,
-                                changeType: changeTypes[section.id],
-                                wordDelta: sectionWordDeltas[section.id],
-                                onTap: {
-                                    onSectionTap?(section)
-                                },
-                                onRestore: { mode in
-                                    onRestoreSection?(section, mode)
-                                }
-                            )
-                            .id(section.id)
-                            .onHover { isHovered in
-                                hoveredSectionId = isHovered ? section.id : nil
+            ScrollView {
+                // A plain VStack, not a LazyVStack (t-65f85d38). Observed: with a LazyVStack here, hovering a row in a
+                // document with footnotes or citations hung the main thread while the stack was inside
+                // LazyHVStack layout (LazyHVStack.lengthAndSpacing / StackPlacement.flushMinorGroup) once the last
+                // rows (Notes, Bibliography) had been laid out. The mechanism itself is not proven. Same symptom
+                // reported elsewhere:
+                // https://github.com/manaflow-ai/cmux/issues/5764
+                // https://github.com/yahyabedirhan/shipyard/issues/94
+                // Trade-off: every row of both columns is built when the window opens, and again whenever a column's
+                // sections change (e.g. picking another saved version rebuilds the Selected column). Measured: one
+                // ~2 s main-thread pause at window open for a ~36k-word document in the test VM. Hover state lives
+                // in each row, so a hover redraws one row, not all.
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(sections) { section in
+                        SectionPreviewRow(
+                            section: section,
+                            isHighlighted: section.id == highlightedSectionId,
+                            showRestoreButtons: showRestoreButtons,
+                            showFullContent: showFullContent,
+                            changeType: changeTypes[section.id],
+                            wordDelta: sectionWordDeltas[section.id],
+                            onTap: {
+                                onSectionTap?(section)
+                            },
+                            onRestore: { mode in
+                                onRestoreSection?(section, mode)
                             }
-                        }
-                    }
-                    .padding()
-                }
-                .onChange(of: scrollPosition) { _, newValue in
-                    if let id = newValue {
-                        withAnimation {
-                            proxy.scrollTo(id, anchor: .top)
-                        }
+                        )
                     }
                 }
+                .padding()
             }
         }
         .background(themeManager.currentTheme.editorBackground)
-    }
-
-    /// Scroll to a specific section
-    func scrollTo(_ sectionId: String) {
-        scrollPosition = sectionId
     }
 }
 
@@ -292,7 +282,6 @@ extension DocumentPreviewView where TrailingHeader == EmptyView {
 struct SectionPreviewRow: View {
     let section: SnapshotSectionViewModel
     let isHighlighted: Bool
-    let isHovered: Bool
     let showRestoreButtons: Bool
     let showFullContent: Bool
     let changeType: SectionChangeType?
@@ -303,7 +292,6 @@ struct SectionPreviewRow: View {
     init(
         section: SnapshotSectionViewModel,
         isHighlighted: Bool,
-        isHovered: Bool,
         showRestoreButtons: Bool,
         showFullContent: Bool = false,
         changeType: SectionChangeType? = nil,
@@ -313,7 +301,6 @@ struct SectionPreviewRow: View {
     ) {
         self.section = section
         self.isHighlighted = isHighlighted
-        self.isHovered = isHovered
         self.showRestoreButtons = showRestoreButtons
         self.showFullContent = showFullContent
         self.changeType = changeType
@@ -323,6 +310,8 @@ struct SectionPreviewRow: View {
     }
 
     @Environment(ThemeManager.self) private var themeManager
+    /// Row-owned hover state (t-65f85d38): a hover invalidates only this row, not the whole preview.
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s4) {
@@ -343,7 +332,8 @@ struct SectionPreviewRow: View {
 
                 Spacer()
 
-                // Restore buttons (icon-only on hover)
+                // Replace / Insert buttons (small bordered buttons with a text label and an icon), shown only
+                // while this row is hovered
                 if showRestoreButtons && isHovered {
                     restoreButtons
                 }
@@ -403,6 +393,9 @@ struct SectionPreviewRow: View {
                     Label("Insert as New Section", systemImage: "doc.on.doc")
                 }
             }
+        }
+        .onHover { hovering in
+            isHovered = hovering
         }
     }
 

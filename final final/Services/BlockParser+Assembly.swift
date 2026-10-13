@@ -395,11 +395,7 @@ extension BlockParser {
     /// Shared assembly ordering: by `sortOrder`, with headings ahead of non-headings
     /// at the same `sortOrder`. Every `assemble…` entry point MUST use this, or
     /// an export can disagree with the editor about block order.
-    ///
-    /// Internal (was private) so the lifecycle whole-document write's check
-    /// (`LifecycleWholeDocumentWrite.rowsMatch`, Phase 3a-2) compares the stored rows in the SAME
-    /// order a reopen reads them, rather than duplicating this key.
-    static func assemblySorted(_ blocks: [Block]) -> [Block] {
+    private static func assemblySorted(_ blocks: [Block]) -> [Block] {
         blocks.sorted { a, b in
             let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
             let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)

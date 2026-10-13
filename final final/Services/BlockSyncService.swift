@@ -7,7 +7,6 @@
 //
 
 import Foundation
-import GRDB
 import WebKit
 
 /// Winner of `BlockSyncService.raceWithTimeout(seconds:work:)`.
@@ -18,6 +17,51 @@ private enum PollCycleRaceOutcome {
     /// the caller can cancel() it — the unstructured race never awaits the
     /// loser, which is the whole point (a `withThrowingTaskGroup`'s exit would).
     case timedOut(orphan: Task<Void, Error>)
+}
+
+/// One link in the apply chain (see `BlockSyncService.applyChainTail`).
+/// Installed and published synchronously at the moment a cycle issues its
+/// `getBlockChanges()` fetch; released by the OWNER's `defer` when its apply
+/// step ends — never by the bounded watchdog.
+///
+/// The chain is what makes a timed-out or drain-cancelled ORPHAN's
+/// already-consumed batch land in FETCH order (the JS-side queues are cleared
+/// the moment the fetch's JS function runs, so a consumed batch must be written
+/// or lost). Node order == fetch order because the tail capture, the install,
+/// the stamp and the JS call issue all happen with no `await` between them.
+@MainActor
+private final class ApplyChainNode {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isFinished = false
+    /// Set by a SUCCESSOR whose `applyChainWaitSeconds` valve expired while
+    /// waiting on this node. The owner must then not apply its (strictly older)
+    /// batch WHOLESALE: a newer batch may already have written some of its block
+    /// ids, so it applies only the blocks no newer batch has written — the
+    /// per-block merge in `doPollBlockChanges`, where shared ids keep the newer
+    /// text and this batch's own blocks still land. See the L6/L11 loss paths in
+    /// the plan (`docs`-level reasoning lives in the code comments at the two
+    /// checks: the sequence guard in `doPollBlockChanges` and the abandon check in
+    /// `recordApplyOutcome`).
+    private(set) var isAbandoned = false
+
+    func wait() async {                       // returns immediately once finished
+        if isFinished { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    /// Idempotent release; also called by `abandon()`.
+    func finish() {
+        isFinished = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+    /// Idempotent: marks this node abandoned AND releases any waiter (including
+    /// the operation task the valve's `awaitWithTimeout` abandoned), so nothing
+    /// is left parked on a node whose owner has been given up on.
+    func abandon() {
+        isAbandoned = true
+        finish()
+    }
 }
 
 /// Per-cycle progress for the poll watchdog's orphan back-pressure (M3/A5). One
@@ -57,37 +101,7 @@ class BlockSyncService {
 
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
-    /// Internal (was private) only so the DEBUG accessors in `BlockSyncService+Lifecycle.swift` can reach it.
-    weak var webView: WKWebView?
-    /// The JavaScript call `fetchContentFromWebView` makes. Rich Text: the editor's `getContent()`, as always (Milkdown has no
-    /// `getContentRaw`, and when zoomed it serializes the zoom-notes marker itself). Markdown (CodeMirror): the page's `getContent()`
-    /// strips EVERY hidden marker (`stripAnchors`, web/codemirror/src/anchor-plugin.ts; its regex has listed the end marker since
-    /// 2026-08-09), and the text this returns is SAVED, so two of those markers must survive it:
-    ///   - the bibliography END marker (`BlockParser.bibliographyEndMarker`): a document parsed without it stores its bibliography
-    ///     heading and entries as ordinary blocks (`BibliographyOpeningSelector`, tier 2 needs the terminator), and the next
-    ///     regeneration then adds a second bibliography;
-    ///   - the zoom-notes marker `<!-- ::zoom-notes:: -->`: `LifecycleWholeDocumentWrite.prepare` splits a zoomed section's mini-Notes
-    ///     off on exactly that marker (`SectionSyncService.stripZoomNotes`). Without it the trailing `# Notes` heading and the `[^n]:`
-    ///     definitions are parsed as part of the zoomed section and written into the middle of the document when that section is not
-    ///     the last (a second Notes heading, duplicate definitions), and an edit to a definition never reaches the real Notes.
-    /// So on a page that offers `getContentRaw()` this strips only the section anchors and the bibliography START marker, which is
-    /// the shape `editorState.content` has in Markdown mode (the page's own push, minus the anchors and the start marker; the zoomed
-    /// text there carries the zoom-notes marker too). The final branch keeps the literal `getContent()` call that the unit-test
-    /// harnesses (LifecycleFlushHarness, LifecycleTailHarness) answer by script text.
-    ///
-    /// Who can reach a Markdown page: only the lifecycle save sequence (close, quit, project switch), which hands
-    /// `fetchContentFromWebView` the captured CodeMirror view explicitly (`EditorViewState.captureForLifecycle`). Export
-    /// (`ContentView`'s `flushBeforeExport`), Save Version (`ContentView.handleSaveVersion`) and auto-backup
-    /// (`AutoBackupService.createAutoBackup`) pass no view, so they ask this service's own `webView`, which `configure` sets from the
-    /// Rich Text page only; in Markdown mode they get nil once that page is freed and flush the text on hand.
-    nonisolated static let fetchContentScript = """
-        (() => {
-            const ff = window.FinalFinal;
-            if (typeof ff.getContentRaw !== 'function') { return window.FinalFinal.getContent(); }
-            return ff.getContentRaw().replace(/<!-- @sid:[0-9a-fA-F-]+ -->|<!-- ::auto-bibliography:: -->/g, '');
-        })()
-        """
-
+    private weak var webView: WKWebView?
     /// Fetch content from the active WebView with a timeout.
     /// Returns nil if WebView is unavailable, JS call fails, or timeout elapses.
     ///
@@ -98,21 +112,14 @@ class BlockSyncService {
     /// quitting-can-hang-if-the-editor-stops-responding: this was the root cause of
     /// quit, Save Version, idle auto-backup, and structural undo all being able to
     /// hang indefinitely against a stuck WebKit content process).
-    ///
-    /// `webView` (t-94369a83 Phase 3a-1b): fetches from THIS WebView instead of the service's own
-    /// weak one. The lifecycle sequence captures the editor's WebView strongly at the start and
-    /// hands it to every later step, so a view swap or teardown during the sequence cannot make
-    /// the fetch silently ask a different (or no) view. Nil, the default, is today's behaviour.
-    func fetchContentFromWebView(timeout: Duration = .seconds(2), webView explicitWebView: WKWebView? = nil) async -> String? {
-        guard let webView = explicitWebView ?? self.webView else { return nil }
+    func fetchContentFromWebView(timeout: Duration = .seconds(2)) async -> String? {
+        guard let webView else { return nil }
         let outcome = await raceAgainstTimeout(timeout) {
-            (try? await self.evaluateJS(Self.fetchContentScript, in: webView)) as? String
+            (try? await self.evaluateJS("window.FinalFinal.getContent()", in: webView)) as? String
         }
         switch outcome {
         case .finished(let value):
-            // Native, contiguous UTF-8 once, where the text arrives: the web view's answer is a bridged `NSString`, on which every
-            // later `count` / `index(offsetBy:)` (close-time section sync, `SectionSyncService.parseHeaders`) is about 40 times slower.
-            return value?.contiguousUTF8Copy
+            return value
         case .timedOut:
             DebugLog.log(.lifecycle, "[BlockSyncService] fetchContentFromWebView: timed out after \(timeout)")
             return nil
@@ -127,15 +134,13 @@ class BlockSyncService {
     /// Reference to editor state for contentGeneration and contentState checks
     weak var editorState: EditorViewState?
 
-    /// t-94369a83 Phase 1: the single ordered write queue. Owns the sequence space
-    /// and the only temp->permanent block id map (DocumentWriter.swift replaces the
-    /// old apply chain plus `pendingConfirmations`/`confirmedTempIds`). Ownership
-    /// moves to `DocumentManager` in a later phase; for now `BlockSyncService` still
-    /// owns it, same as it owned the apply chain before.
-    ///
-    /// Internal (was private) only so `BlockSyncService+Lifecycle.swift` can reach it; callers outside
-    /// `BlockSyncService` still go through the service's own methods, never the writer directly.
-    var writer: DocumentWriter?
+    /// Pending ID confirmations (temp ID -> permanent ID) to send back to editor
+    private var pendingConfirmations: [String: String] = [:]
+
+    /// Cumulative temp→permanent ID mapping across all poll cycles.
+    /// Used to resolve stale temp IDs that arrive after confirmation
+    /// (race between JS debounce and Swift confirmBlockIds).
+    private var confirmedTempIds: [String: String] = [:]
 
     /// Whether a `checkForChanges` JS failure has already been logged since the last
     /// success (A8). Reset on the next successful call; without it the failure line
@@ -243,42 +248,10 @@ class BlockSyncService {
     /// that lands inside that window is therefore caught by the content-generation
     /// guards (pre- and post-fetch), not by the epoch check alone.
     func configure(database: ProjectDatabase, projectId: String, webView: WKWebView) {
-        // t-94369a83 Phase 1: same database and project -> skip everything this
-        // writer has reserved so far (a fresh WebView cannot adopt an in-flight
-        // turn from the old one); a different database/project -> retire the old
-        // writer (skips its reserved turns AND drops every held op) and start a new
-        // one, continuing its sequence space so stamps stay monotonic across the
-        // replacement (see "Sequence continuity" in the plan).
-        let sameProject = self.projectDatabase === database && self.projectId == projectId
-        if sameProject, let writer {
-            writer.skipAllReserved(reason: .editorReplaced)
-        } else {
-            let next = writer?.nextSequence ?? 1
-            // Test-only knobs (DEBUG-gated on DocumentWriter; no production effect) are
-            // per-INSTANCE, so replacing `writer` silently drops whatever a test wired
-            // onto the old one — a test that sets `testWriterEventHandler` (etc.) before
-            // triggering a writer replacement would otherwise see it go silently dark on
-            // the new instance. Carried forward here, mirroring "Sequence continuity"
-            // above for `nextSequence`.
-            #if DEBUG
-            let carriedEventHandler = writer?.testEventHandler
-            let carriedLateAfter = writer?.testLateAfterSeconds
-            let carriedDrainTimeout = writer?.testDrainTimeoutSeconds
-            let carriedLateAbandonAfter = writer?.testLateAbandonAfterSeconds
-            #endif
-            writer?.retire(reason: .writerReplaced)
-            writer = DocumentWriter(
-                database: database, projectId: projectId, firstSequence: next, assertsMainActorCallers: true)
-            #if DEBUG
-            writer?.testEventHandler = carriedEventHandler
-            writer?.testLateAfterSeconds = carriedLateAfter
-            writer?.testDrainTimeoutSeconds = carriedDrainTimeout
-            writer?.testLateAbandonAfterSeconds = carriedLateAbandonAfter
-            #endif
-        }
         self.projectDatabase = database
         self.projectId = projectId
         self.webView = webView
+        self.confirmedTempIds.removeAll()
         // A fresh WebView means every batch still in flight from the OLD editor was fetched
         // against a coordinate space this new editor does not share. Bump the persisted
         // epoch so those batches are refused wholesale in the write transaction - the
@@ -293,16 +266,16 @@ class BlockSyncService {
             needsEpochBump = true
             DebugLog.alwaysPersisted("[BlockSync] configure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
         }
+        // A6: a fresh WebView means any node still on the chain belongs to the OLD
+        // editor, so a new cycle must not adopt it and wait out its valve. The fetch
+        // stamps (`fetchSequence`/`lastAppliedFetchSequence`) stay monotonic on
+        // purpose — see `fetchSequence`.
+        self.applyChainTail = nil
         // Same reasoning for the M3/A5 back-pressure: an orphan still parked in the
         // OLD WebView's `evaluateJavaScript` must not keep the NEW editor's unforced
         // polling paused. Its `defer` releases against a counter that no longer
         // includes it, which the saturating decrement there tolerates.
         self.outstandingPrefetchOrphans = 0
-        // Addendum A1 (t-94369a83): a fresh WebView means any tolerance earned against
-        // the OLD one, and any pending "already logged this pause" flag for it, no
-        // longer describe anything relevant to the editor now being polled.
-        self.orphansToleratedWhileResponsive = 0
-        self.hasLoggedBackPressureSkip = false
         // A fresh WebView means any rebuild marker set against the OLD editor no longer
         // describes anything this service should keep a batch for.
         self.databaseRebuildGeneration = nil
@@ -331,35 +304,7 @@ class BlockSyncService {
     /// (the whole type is @MainActor), so nothing can observe a half-switched
     /// state once this returns.
     func reconfigure(database: ProjectDatabase, projectId: String) async {
-        await drainInFlightPoll()          // the ONLY await, unchanged (Race 1)
-        // --- synchronous from here: nothing can observe a half-switched state ---
-        // t-94369a83 Phase 1: retire the old writer (skips every turn it has
-        // reserved and drops every held op) and start a new one, continuing its
-        // sequence space so stamps stay monotonic across the switch (see
-        // "Sequence continuity" in the plan). The save before a switch is the
-        // lifecycle's own sequence (`EditorViewState.runLifecycleFlush`: the
-        // force-send, FB and the writer barrier, then the tail's retire); `retire`
-        // here refuses anything reserved after that, which the epoch bump below
-        // already rejects today.
-        let next = writer?.nextSequence ?? 1
-        // See the matching comment in `configure`'s writer-replacement branch: these
-        // are DEBUG-only test knobs, per-INSTANCE on the writer, that must survive a
-        // replacement the same way `nextSequence` continuity already does.
-        #if DEBUG
-        let carriedEventHandler = writer?.testEventHandler
-        let carriedLateAfter = writer?.testLateAfterSeconds
-        let carriedDrainTimeout = writer?.testDrainTimeoutSeconds
-        let carriedLateAbandonAfter = writer?.testLateAbandonAfterSeconds
-        #endif
-        writer?.retire(reason: .projectSwitch)
-        writer = DocumentWriter(
-            database: database, projectId: projectId, firstSequence: next, assertsMainActorCallers: true)
-        #if DEBUG
-        writer?.testEventHandler = carriedEventHandler
-        writer?.testLateAfterSeconds = carriedLateAfter
-        writer?.testDrainTimeoutSeconds = carriedDrainTimeout
-        writer?.testLateAbandonAfterSeconds = carriedLateAbandonAfter
-        #endif
+        await drainInFlightPoll()
         self.projectDatabase = database
         self.projectId = projectId
         // A fresh project means every batch still in flight from the OLD project was
@@ -376,6 +321,11 @@ class BlockSyncService {
             needsEpochBump = true
             DebugLog.alwaysPersisted("[BlockSync] reconfigure: could not bump blockWriteEpoch (\(error)) - the next poll will retry it")
         }
+        self.confirmedTempIds.removeAll()
+        // A6: a project switch must not let the first cycle of the NEW project adopt
+        // the previous project's chain tail and wait out its valve. The fetch stamps
+        // stay monotonic on purpose — see `fetchSequence`.
+        self.applyChainTail = nil
         // A rebuild marker set against the OLD project describes a generation bump that
         // no longer applies once the drain above has settled and this reassigns the
         // project references.
@@ -400,11 +350,32 @@ class BlockSyncService {
     /// `startPolling()` above, which must stay synchronous (it is not `async`, and
     /// re-polling right after starting has never needed to wait on a prior cycle).
     /// Callers that need a guarantee no poll cycle is still running afterward —
-    /// e.g. before flush work that itself writes to the database — await a raced
-    /// drain (`raceDrain(bound:)`, the lifecycle save sequence's step 4) instead.
+    /// e.g. before synchronous flush work that itself writes to the database —
+    /// must use `stopPollingAndDrain()` instead.
     func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
+    }
+
+    /// `stopPolling()` followed by draining any in-flight poll cycle. Use this
+    /// (not bare `stopPolling()`) at any call site whose very next synchronous
+    /// step also writes to the database — e.g. `handleProjectOpened()`'s or
+    /// `performProjectClose()`'s shared `flushAllPendingContent()` (review round 2:
+    /// close no longer calls `flushAllSync()` at all) —
+    /// so that cycle is BEST-EFFORT no longer running (and about to write)
+    /// underneath that later write. The drain narrows that window; it does not
+    /// close it: a cycle wedged inside a bare `evaluateJavaScript` cannot be forced
+    /// to finish, and a post-fetch orphan still applies its batch when its reply
+    /// finally arrives (L10 in the poll-watchdog plan's loss-path table).
+    func stopPollingAndDrain() async {
+        stopPolling()
+        await drainInFlightPoll()
+    }
+
+    /// Cancel any pending sync operations
+    func cancelPendingSync() {
+        pendingConfirmations.removeAll()
+        confirmedTempIds.removeAll()
     }
 
     /// Force an immediate poll of block changes (bypasses the 2s timer).
@@ -420,76 +391,17 @@ class BlockSyncService {
     /// even when the cycle's WebKit call never returns.
     ///
     /// What this does NOT guarantee (A2/A15): the forced flush returns when the
-    /// SPAWNER returns, and the cycle's work task can still be parked waiting for its
-    /// writer turn (`ticket.waitForTurn()`) when the watchdog fires (when the fetch
-    /// itself returned late). t-94369a83 Phase 1: a stuck predecessor's turn now goes
-    /// LATE after `DocumentWriter.lateAfterSeconds` (3.0s, strictly below this
-    /// watchdog's 8s with margin) rather than blocking this cycle forever, and any of
-    /// THIS cycle's own ops that depend on the stuck predecessor's not-yet-minted
-    /// temp ids are held (not lost) until it lands. Even so, a forced flush whose
-    /// cycle times out returns WITHOUT its own edit in the DB (L8 in the plan's
-    /// loss-path table), which the unconditional timeout log says explicitly.
-    /// Awaiting this narrows the stale-read window; it does not close it.
+    /// SPAWNER returns, and the cycle's work task can still be parked in the apply
+    /// chain's valve when the watchdog fires (when the fetch itself returned late).
+    /// The valve is now `applyChainWaitSeconds` (3s) rather than 30s specifically so
+    /// that window is shorter than one watchdog period with margin — the pre-change
+    /// 30s valve let a perfectly healthy forced flush return while its own apply was
+    /// still parked, so the caller read the DB before its edit was written. Even so,
+    /// a forced flush whose cycle times out returns WITHOUT its own edit in the DB
+    /// (L8 in the plan's loss-path table), which the unconditional timeout log says
+    /// explicitly. Awaiting this narrows the stale-read window; it does not close it.
     func pollBlockChangesNow() async {
         await pollBlockChanges(force: true)
-    }
-
-    /// Addendum A2 §1: replaces `drainWriterSettlement()`. Bounded, READ-ONLY wait
-    /// for the writer to actually SETTLE every sequence reserved as of this call --
-    /// not merely for `pollBlockChanges(force:)`'s own drain loop (`while let
-    /// inFlight = inFlightPoll { await inFlight.value }`) to return, which (per
-    /// this file's "What this does NOT guarantee" note above `pollBlockChangesNow`)
-    /// only waits for a stuck predecessor's OWN poll-level watchdog, not for its
-    /// real underlying work (a bare `evaluateJavaScript` call the watchdog cannot
-    /// observe completion of). `DocumentWriter.awaitSettled(through:timeout:)` is a
-    /// DIFFERENT, writer-internal wait: it polls `WriterState.phase` directly, so
-    /// it keeps waiting for a predecessor's real apply to land even after the
-    /// poll-level drain has already returned early. Bounded by THIS poll cycle's
-    /// own `watchdogSeconds` (DEBUG-overridable via
-    /// `testRebuildSettleTimeoutSeconds`) -- matching the "worst case bounded by
-    /// two watchdog periods" model `pollBlockChangesNow()`'s doc comment already
-    /// describes, and strictly above `DocumentWriter.lateAfterSeconds` with
-    /// margin, so a predecessor gets the chance to go late and apply before this
-    /// gives up.
-    ///
-    /// UNLIKE the old `drain`-based wait, timing out here changes NOTHING: no
-    /// skip, no held-op drop, no ledger change, no frontier move -- see
-    /// `awaitSettled`'s own doc comment. A rebuild that gives up waiting proceeds
-    /// against whatever is in the database right now. This narrows the residual
-    /// this method exists to close, but does not eliminate it: the remaining case
-    /// is a late batch that meets the generation guard's check AFTER this wait's
-    /// own bound has already been reached -- that case is now COUNTED (via
-    /// `testRebuildProceededUnsettledCount`, and via `awaitSettled`'s own
-    /// unconditional log line and `testAwaitSettledTimeoutCount` on the writer
-    /// itself), not silently skipped or dropped the way the old drain-based wait
-    /// would have forced it to be. Used by `pollBlockChangesNowForDatabaseRebuild()`
-    /// so it does not clear `databaseRebuildGeneration` -- closing the Finding #1
-    /// KEEP exception's window -- while a routine cycle it is meant to be waiting
-    /// on is still genuinely in flight underneath a watchdog-truncated Task handle
-    /// (t-94369a83 Phase 1, B4 regression: `checkGenerationGuard`'s own doc
-    /// comment names this exact class of gap).
-    @discardableResult
-    func awaitWriterSettlementForRebuild() async -> SettleWaitOutcome {
-        guard let writer else { return .settled }
-        let watermark = writer.nextSequence - 1
-        let outcome = await writer.awaitSettled(through: watermark, timeout: rebuildSettleTimeoutSeconds)
-        #if DEBUG
-        if case .stillOpen = outcome {
-            testRebuildProceededUnsettledCount += 1
-        }
-        #endif
-        return outcome
-    }
-
-    /// The rebuild-settlement wait bound this call site actually uses. DEBUG
-    /// builds may override it per instance for tests, mirroring
-    /// `watchdogSeconds`.
-    private var rebuildSettleTimeoutSeconds: TimeInterval {
-        #if DEBUG
-        testRebuildSettleTimeoutSeconds ?? watchdogSeconds
-        #else
-        watchdogSeconds
-        #endif
     }
 
     /// Handle to whichever poll cycle is currently running, or nil if none is.
@@ -499,10 +411,7 @@ class BlockSyncService {
     /// the root cause of a footnote/Notes data-loss bug: a forced flush arriving
     /// while a periodic poll was mid-flight used to return immediately without
     /// ever reading the caller's just-made edit.
-    ///
-    /// The Task's value is the cycle's `PollCycleResult` (Phase 3a-1b): the spawner carries the
-    /// watchdog-hit outcome out to whoever awaits it (`drainInFlightPoll()`, `pollBlockChanges`).
-    private var inFlightPoll: Task<PollCycleResult, Never>?
+    private var inFlightPoll: Task<Void, Never>?
 
     /// Whether `inFlightPoll` (when non-nil) is a *forced* cycle. Paired with
     /// `inFlightPoll` and set in the same synchronous window as its assignment in
@@ -522,82 +431,60 @@ class BlockSyncService {
     /// Number of watchdog-timed-out cycles that are still parked BEFORE their batch
     /// was handed to Swift (`CycleProgress.hasFetchedBatch == false`) — i.e. orphans
     /// whose `evaluateJavaScript` call has not returned, so no batch was consumed
-    /// yet. This bounds how much parked work (one work Task + watcher + JS
-    /// continuation per orphan) can accumulate against a content process that is
-    /// slow to reply or genuinely wedged — ordering and holding a successor's op
-    /// behind a stuck predecessor is no longer this counter's job; that's the
-    /// writer's (§2.2), which reserves a turn and queues independently of whether
-    /// THIS counter is zero. Addendum A1 (t-94369a83): a bare `== 0` guard used to
-    /// block every unforced tick for as long as ANY orphan remained outstanding,
-    /// which for a content process that never replies again is forever — a real,
-    /// periodic successor edit could never even attempt to reach the writer. See
-    /// `orphansToleratedWhileResponsive` and `maxOutstandingPrefetchOrphans` for the
-    /// fix: a bounded number of unforced cycles are now admitted as PROBES even
-    /// while orphans are outstanding, provided the content process has proven
-    /// recently responsive. Each claim is released by the orphan's own `defer` when
-    /// it actually ends (see `runPollCycle`), saturating at zero because `configure`
-    /// RESETS this to 0 when it installs a fresh WebView: an orphan parked in the OLD
-    /// WebView no longer belongs to the editor now being polled, so it must neither
-    /// keep the new editor's unforced ticks paused nor drive the count negative when
-    /// it finally releases. (`reconfigure` deliberately does NOT reset it: a project
-    /// switch keeps the same WebView and drains first, so any outstanding orphan is
-    /// still that WebView's.)
+    /// yet. While this is non-zero, UNFORCED ticks are skipped (M3/A5 back-pressure:
+    /// without it a permanently wedged content process accumulates one parked work
+    /// task + watcher + JS continuation + chain node per watchdog period, then
+    /// applies them in a burst on recovery). It is deliberately SEPARATE from
+    /// `inFlightPoll`: the slot is already free (the spawner returned at the
+    /// watchdog), and leaving a completed spawner in it would make the forced drain
+    /// loop in `pollBlockChanges(force:)` spin forever on it. Forced cycles bypass
+    /// the check entirely — a forced flush is a completion guarantee its caller
+    /// relies on. Each claim is released by the orphan's own `defer` when it actually
+    /// ends (see `runPollCycle`), saturating at zero because `configure` RESETS this
+    /// to 0 when it installs a fresh WebView: an orphan parked in the OLD WebView no
+    /// longer belongs to the editor now being polled, so it must neither keep the new
+    /// editor's unforced ticks paused nor drive the count negative when it finally
+    /// releases. (`reconfigure` deliberately does NOT reset it: a project switch keeps
+    /// the same WebView and drains first, so any outstanding orphan is still that
+    /// WebView's.)
     private var outstandingPrefetchOrphans = 0
 
-    /// Addendum A1 (t-94369a83): how many outstanding orphans the LAST proven-
-    /// responsive fetch tolerated -- i.e. the orphan count observed at the moment a
-    /// cycle's `getBlockChanges()` call actually RETURNED (see
-    /// `doPollBlockChanges`), not merely at the moment its cheap `hasBlockChanges()`
-    /// pre-check answered. Responsiveness has to come from `getBlockChanges`
-    /// specifically: `hasBlockChanges` is a trivial flag read the content process can
-    /// answer even while the SAME process is about to wedge on the very next,
-    /// heavier call -- proving that call alone would let a process that's actually
-    /// stuck on `getBlockChanges` look "responsive" forever and defeat the guard
-    /// below entirely. An unforced tick is admitted (as a PROBE) only while
-    /// `outstandingPrefetchOrphans` is no more than one past this tolerated count --
-    /// i.e. at most one MORE cycle may be outstanding, parked, than the process has
-    /// most recently proven it can still complete. Clamped down (never up) whenever
-    /// an orphan releases, so a stretch of genuine unresponsiveness can't leave a
-    /// stale, too-generous tolerance sitting around forever once the process goes
-    /// fully silent. See `maxOutstandingPrefetchOrphans` for the hard backstop this
-    /// works alongside.
-    private var orphansToleratedWhileResponsive = 0
+    /// Tail of the apply chain — the node belonging to the most recent cycle that
+    /// has issued a `getBlockChanges()` fetch. A new cycle captures this as its
+    /// `predecessor` and installs its own node in its place, all synchronously, so
+    /// the chain is ordered by FETCH order. See `ApplyChainNode`.
+    private var applyChainTail: ApplyChainNode?
 
-    /// Addendum A1 (t-94369a83): true once the current run of paused unforced ticks
-    /// has already logged its one `[BlockSync] Periodic poll paused` line -- reset
-    /// the moment a tick is admitted again, so a genuinely long stuck stretch logs
-    /// once per pause, not once per 2-second tick.
-    private var hasLoggedBackPressureSkip = false
+    /// Monotonic per-fetch stamp, incremented (wrapping, via `&+=`) at the same
+    /// synchronous install point that links a cycle into the apply chain — so stamp
+    /// order IS chain order IS fetch order IS batch-age order. `UInt64` wrap (after
+    /// 2^64 fetches, i.e. never in practice) is harmless because the sequence guard
+    /// relies only on the ORDER relation within the live chain, and a wrapped stamp
+    /// is still strictly greater than any predecessor's still-live stamp.
+    private var fetchSequence: UInt64 = 0
 
-    /// Addendum A1 (t-94369a83): hard backstop on `outstandingPrefetchOrphans`,
-    /// independent of `orphansToleratedWhileResponsive` -- no matter how responsive
-    /// the content process has recently proven itself, this many STILL-parked
-    /// orphans is the most this service will ever let accumulate before refusing
-    /// every further unforced tick outright, same as the pre-addendum behavior. This
-    /// is what keeps a content process that wedges on a DIFFERENT call every few
-    /// ticks (proving `getBlockChanges` responsive each time, but never actually
-    /// finishing one) from admitting an unbounded number of parked cycles.
-    private static let maxOutstandingPrefetchOrphans = 4
+    /// Highest stamp whose batch has actually been WRITTEN (not merely intended) —
+    /// set only after `applyAndConfirm` reports success, with `max` so the
+    /// anti-cascade valve letting two applies overlap cannot make it non-monotonic.
+    /// The belt-and-braces sequence guard in `doPollBlockChanges` compares against it.
+    private var lastAppliedFetchSequence: UInt64 = 0
 
     /// True when the last `bumpBlockWriteEpoch` attempt in `configure`/`reconfigure`
     /// FAILED. Set on every attempt (false on success), never left over from an earlier
     /// project.
     ///
     /// Why this exists: with the bump failed, the persisted epoch is still the previous
-    /// session's while the writer's sequence restarts low. Rows already edited last
-    /// session carry stamps like `(E, 300)`, so every update/delete this session's
-    /// low-sequence batches sent to those rows would be dropped as "superseded" until
-    /// the in-memory counter caught up -- silent loss of the user's typing.
-    /// `reserveWriterTurn` retries the bump — after `doPollBlockChanges`'s
-    /// fetch-boundary cancellation check, not at the top of the cycle — BEFORE it
-    /// reads the epoch and before anything is fetched, and defers the whole poll while
-    /// the retry keeps failing. That trades a silent-drop failure for a no-write
-    /// failure, which is lossless: nothing has been consumed JS-side yet, so the
-    /// batch stays queued and is re-offered next tick.
-    ///
-    /// Internal (was private) in Phase 4a: `ensureWriter` (BlockSyncService+Markdown.swift) mirrors `configure`'s
-    /// new-writer branch, which sets it.
-    var needsEpochBump = false
+    /// session's while `fetchSequence` restarts low. Rows already edited last session
+    /// carry stamps like `(E, 300)`, so every update/delete this session's low-sequence
+    /// batches sent to those rows would be dropped as "superseded" until the in-memory
+    /// counter caught up -- silent loss of the user's typing. `installApplyChainSlot`
+    /// retries the bump — after `doPollBlockChanges`'s fetch-boundary cancellation
+    /// check, not at the top of the cycle — BEFORE it reads the epoch and before
+    /// anything is fetched, and defers the whole poll while the retry keeps failing.
+    /// That trades a silent-drop failure for a no-write failure, which is lossless:
+    /// nothing has been consumed JS-side yet, so the batch stays queued and is
+    /// re-offered next tick.
+    private var needsEpochBump = false
 
     /// Set synchronously by a bibliography/Notes/footnote rebuild the instant it bumps
     /// `contentGeneration` (i.e. the instant it sets `editorState.contentState =
@@ -608,6 +495,32 @@ class BlockSyncService {
     /// cycle parked between its fetch and its generation re-check KEEP a batch that would
     /// otherwise be discarded as stale — the fix for Finding #1 (Calm_Bibliography).
     var databaseRebuildGeneration: Int?
+
+    /// How long a cycle waits for its chain predecessor's apply before assuming it
+    /// is wedged, marking it abandoned and proceeding. A wait bounded only by the
+    /// predecessor would let one wedged apply stall every later cycle forever; the
+    /// price is the L6/L11 loss paths named in the plan.
+    ///
+    /// 3.0s, not the 30.0s this started as: the valve MUST stay strictly below
+    /// `defaultPollWatchdogSeconds` (8s) with margin. A healthy predecessor's DB
+    /// write is milliseconds, so a park past a few seconds is already a wedge — and a
+    /// valve longer than the watchdog would let a FORCED flush's drain return at the
+    /// watchdog while this cycle's work task is still parked here, so the caller read
+    /// the DB before its own edit was written (the A2 defect this bound fixes). The
+    /// price of the shorter bound is more L6 drops (a slow-but-alive predecessor is
+    /// abandoned sooner), which is strictly better than a stale forced read.
+    private static let applyChainWaitSeconds: TimeInterval = 3.0
+
+    /// The apply-chain valve duration this cycle actually uses. DEBUG builds may
+    /// override it per instance for tests (`testApplyChainWaitSeconds`), mirroring
+    /// `watchdogSeconds`; release builds always use the constant.
+    private var chainWaitSeconds: TimeInterval {
+        #if DEBUG
+        testApplyChainWaitSeconds ?? Self.applyChainWaitSeconds
+        #else
+        Self.applyChainWaitSeconds
+        #endif
+    }
 
     #if DEBUG
     /// Test-only hook, awaited at the very top of every poll cycle
@@ -666,8 +579,8 @@ class BlockSyncService {
 
     /// Test-only entry point to the otherwise-private poll, so tests can drive
     /// forced/periodic cycles directly instead of waiting on the real timer.
-    func pollBlockChangesForTest(force: Bool = false, webView: WKWebView? = nil) async {
-        await pollBlockChanges(force: force, webView: webView)
+    func pollBlockChangesForTest(force: Bool = false) async {
+        await pollBlockChanges(force: force)
     }
 
     /// Test-only per-INSTANCE override of the poll watchdog duration
@@ -678,60 +591,23 @@ class BlockSyncService {
     /// DiagnosticLogFile.swift:57-61 keeps its own test override instance-scoped).
     var testPollWatchdogSeconds: TimeInterval?
 
-    /// Test-only per-INSTANCE override of the writer's turn-stall expiry
-    /// (`DocumentWriter.lateAfterSeconds`), mirroring `testPollWatchdogSeconds`.
-    /// Threaded straight through to the writer; nil until a writer exists.
-    var testWriterLateAfterSeconds: TimeInterval? {
-        get { writer?.testLateAfterSeconds }
-        set { writer?.testLateAfterSeconds = newValue }
-    }
-
-    /// Test-only read of the writer's loss ledger (skipped/discarded/failed/held
-    /// counts) -- see `LossLedger`. Empty (all zero) if no writer exists yet.
-    var testWriterLedger: LossLedger { writer?.ledger ?? LossLedger() }
-
-    /// Addendum A2 §1: test-only per-INSTANCE override of
-    /// `awaitWriterSettlementForRebuild()`'s own wait bound, mirroring
-    /// `testWriterLateAfterSeconds`. Nil means fall back to `watchdogSeconds`,
-    /// same as before this addendum.
-    var testRebuildSettleTimeoutSeconds: TimeInterval?
-
-    /// Addendum A2 §1: counts every time `awaitWriterSettlementForRebuild()` gave
-    /// up waiting (`SettleWaitOutcome.stillOpen`) and proceeded against the
-    /// database as-is. Distinct from `DocumentWriter`'s own
-    /// `testAwaitSettledTimeoutCount` (which counts every `awaitSettled` timeout
-    /// on the writer, not just ones reached through this rebuild wrapper) --
-    /// telemetry only, incremented from `awaitWriterSettlementForRebuild()` itself.
-    var testRebuildProceededUnsettledCount = 0
-
-    /// Test-only per-INSTANCE override of the writer's abandonment bound
-    /// (`DocumentWriter.lateAbandonAfterSeconds`, addendum A2 §3), mirroring
-    /// `testWriterLateAfterSeconds`. Threaded straight through to the writer; nil
-    /// until a writer exists. Carried across `configure`/`reconfigure` the same
-    /// way the other writer test knobs already are.
-    var testWriterLateAbandonAfterSeconds: TimeInterval? {
-        get { writer?.testLateAbandonAfterSeconds }
-        set { writer?.testLateAbandonAfterSeconds = newValue }
-    }
-
-    /// Test-only observation of the writer's currently-held op count
-    /// (`DocumentWriter.testHeldCount`). Zero if no writer exists yet.
-    var testWriterHeldCount: Int { writer?.testHeldCount ?? 0 }
-
-    /// Test-only pass-through to the writer's DEBUG event handler (see `WriterEvent`).
-    /// Nil until a writer exists (i.e. before the first `configure`).
-    var testWriterEventHandler: (@Sendable (WriterEvent) -> Void)? {
-        get { writer?.testEventHandler }
-        set { writer?.testEventHandler = newValue }
-    }
+    /// Test-only per-INSTANCE override of the apply-chain valve duration
+    /// (`chainWaitSeconds`), mirroring `testPollWatchdogSeconds` and instance-scoped
+    /// for the same reason. A test can only drive the L6 abandon path with a valve
+    /// SHORT enough to expire against a wedged predecessor, or keep a successor
+    /// waiting on one with a valve LONG enough that it never expires.
+    var testApplyChainWaitSeconds: TimeInterval?
 
     /// Test-only observation of the M3/A5 back-pressure counter. The counter itself
     /// is private (and never exposed for mutation), so a test can only read it.
     var testOutstandingPrefetchOrphans: Int { outstandingPrefetchOrphans }
 
-    /// Test-only observation of addendum A1's tolerance counter. Private (and never
-    /// exposed for mutation), so a test can only read it.
-    var testOrphansToleratedWhileResponsive: Int { orphansToleratedWhileResponsive }
+    /// Test-only count of batches MERGED because a successor's valve expired and
+    /// marked this cycle's chain node abandoned (`chainNode.isAbandoned` — the L6
+    /// path, now a per-block merge rather than a whole-batch drop). Lets a test
+    /// observe the event deterministically instead of racing the orphan's resume,
+    /// which has no other observable effect.
+    var testOwnBatchAbandonCount = 0
 
     /// Test-only signal invoked on MainActor from the watchdog's `.timedOut` arm,
     /// AFTER `testPollTimeoutForceFlags` is appended and BEFORE the unconditional
@@ -755,34 +631,11 @@ class BlockSyncService {
     /// replies — including a one-shot wedge — without a real WKWebView or a run loop.
     var testJSEvaluator: ((String) async throws -> Any?)?
 
-    /// Test-only (t-94369a83 3a-1b round C4, U7(a)): called with the WebView each `evaluateJS` call is made
-    /// against, before `testJSEvaluator` answers it. `testJSEvaluator` receives only the script, so without
-    /// this a test could not tell WHICH view a fetch went to -- the editor the user is typing in (CodeMirror
-    /// in Markdown) or the block-sync service's own, which is the Milkdown editor's.
-    var testJSWebViewObserver: ((WKWebView) -> Void)?
-
-    /// Test-only (t-94369a83 3a-1b round C5a): replaces the `evaluateJavaScript` call at the end of
-    /// `pushBlockIds(for:)` (which does NOT route through `evaluateJS`, so `testJSEvaluator` never sees it). It
-    /// receives the ordered block ids the push would have sent and is awaited in place of the real call, so a test
-    /// can record that (and when) the abort routine re-pushed ids, or park it to stand in for a push that never
-    /// returns (the real call has no timeout). No cost in release builds (property doesn't exist).
-    var testPushBlockIdsHook: (([String]) async -> Void)?
-
-    /// Test-only hook, awaited immediately after `ticket.noteFetched()` -- i.e.,
-    /// while this cycle's editor sequence is genuinely OPEN (`SystemWriteScope.
-    /// heldEditorSeq` is already set to it, and `DocumentWriter.isOpen(_:)` reports
-    /// `true`) but before `waitForTurn()`/`applyAndConfirm` have run. Lets a test
-    /// park a real poll cycle deterministically inside that window (W34) to drive
-    /// `performSystemWrite`'s A5 nesting check against a REAL open editor sequence
-    /// -- not a synthetic stand-in -- from a concurrent `Task`. No cost in release
-    /// builds (property doesn't exist).
-    var testAfterFetchHook: (() async -> Void)?
-
-    /// Test-only hook awaited immediately AFTER the apply step (the writer's
-    /// `applyEditorBatch` call, plus any `confirmBlockIds` round-trip). Tests must
-    /// NEVER park in it: parking here would hold up nothing on THIS cycle's own
-    /// account (unlike the old apply-chain valve), but it still runs before the
-    /// cycle's own defer/return, so a parked hook delays this test's own assertions.
+    /// Test-only hook awaited immediately AFTER the apply step (the DB write, plus
+    /// any `confirmBlockIds` round-trip) and after `lastAppliedFetchSequence` is
+    /// written on success (A10). Tests must NEVER park in it: it runs while this
+    /// cycle still holds its chain node, so a parked hook would stall the whole chain
+    /// (and the test) until the apply-chain valve (`chainWaitSeconds`) expires.
     var testAfterApplyHook: (() async -> Void)?
 
     /// Test-only record of every watchdog timeout, one entry per timeout carrying
@@ -802,56 +655,27 @@ class BlockSyncService {
     ///   the edit — so a forced call always (1) drains any cycle already in
     ///   flight, then (2) runs and awaits a *fresh* cycle of its own, whose
     ///   snapshot is guaranteed to be taken at or after the call.
-    ///
-    /// Phase 3a-1b (t-94369a83): `webView` polls THAT WebView instead of the service's own weak
-    /// one (nil, the default, is today's behaviour); the lifecycle sequence hands in the WebView
-    /// it captured strongly at the start. The result is the result of the cycle THIS call ran
-    /// (`.notRun` for an unforced tick that was skipped); every existing caller ignores it, and
-    /// the lifecycle sequence reads `hitWatchdog` to skip a fetch against a wedged editor.
-    /// Internal (not private) so `LifecycleDeadline.swift`'s `raceForcedPoll` can call it.
-    @discardableResult
-    func pollBlockChanges(force: Bool = false, webView explicitWebView: WKWebView? = nil) async -> PollCycleResult {
+    private func pollBlockChanges(force: Bool = false) async {
         if force {
             // Drain loop, not a single `if`/await: after `await inFlight.value`
             // returns, a *different* caller may have installed a new cycle
             // during that very suspension — recheck catches that.
             while let inFlight = inFlightPoll {
-                _ = await inFlight.value
+                await inFlight.value
             }
         } else {
-            guard inFlightPoll == nil else { return PollCycleResult(outcome: .notRun) }
-            // M3/A5 back-pressure for UNFORCED ticks only, addendum A1 (t-94369a83):
-            // while cycles that timed out BEFORE their batch was handed to Swift are
-            // still parked (a wedged `getBlockChanges` reply, L5), admit only a
-            // BOUNDED number of further unforced ticks as PROBES, rather than
-            // refusing outright for as long as any orphan remains outstanding. A
-            // bare `== 0` guard here blocks every later periodic tick forever
-            // against a content process that never replies again — exactly the "a
-            // stuck save no longer silently drops a successor's edit" scenario
-            // ordering now belongs to the writer (§2.2) for, which can only queue a
-            // successor's op if some cycle actually reaches it. Each admitted probe
-            // still counts as its own orphan if it also times out unresponsive (see
-            // `runPollCycle`), so the count self-corrects: it only keeps climbing
-            // while the content process keeps proving unresponsive, and
-            // `maxOutstandingPrefetchOrphans` is the hard backstop against unbounded
-            // parked work regardless. The counter is deliberately SEPARATE from
-            // `inFlightPoll`: the slot is already free here (the spawner returned at
-            // the watchdog), and leaving a completed spawner in it would make the
-            // forced drain loop above spin on it. Forced cycles skip this check
-            // entirely — a forced flush is a completion guarantee.
-            guard outstandingPrefetchOrphans <= orphansToleratedWhileResponsive + 1,
-                  outstandingPrefetchOrphans < Self.maxOutstandingPrefetchOrphans else {
-                if !hasLoggedBackPressureSkip {
-                    hasLoggedBackPressureSkip = true
-                    DebugLog.alwaysPersisted(
-                        "[BlockSync] Periodic poll paused: \(outstandingPrefetchOrphans) cycle(s) stuck before "
-                        + "their fetch returned (tolerated=\(orphansToleratedWhileResponsive), "
-                        + "cap=\(Self.maxOutstandingPrefetchOrphans)); forced flushes still run"
-                    )
-                }
-                return PollCycleResult(outcome: .notRun)
-            }
-            hasLoggedBackPressureSkip = false
+            guard inFlightPoll == nil else { return }
+            // M3/A5 back-pressure for UNFORCED ticks only: while a cycle that
+            // timed out BEFORE its batch was handed to Swift is still parked (a
+            // wedged `getBlockChanges` reply, L5), pause periodic ticks. Without
+            // this, a permanently wedged content process accumulates one parked work
+            // task + watcher + JS continuation + chain node per watchdog period and
+            // then applies them in a burst on recovery. The counter is deliberately
+            // SEPARATE from `inFlightPoll`: the slot is already free here (the
+            // spawner returned at the watchdog), and leaving a completed spawner in
+            // it would make the forced drain loop above spin on it. Forced cycles
+            // skip this check — a forced flush is a completion guarantee.
+            guard outstandingPrefetchOrphans == 0 else { return }
         }
 
         // Spawn this cycle and register its handle so a concurrent caller can
@@ -877,19 +701,13 @@ class BlockSyncService {
         // into the slot between this task's creation and its own eventual
         // completion — only this task's own body is ever "the" in-flight poll
         // for this particular slot occupancy.
-        //
-        // Phase 3a-1b: the body returns the cycle's `PollCycleResult` AFTER that clear, so the
-        // watchdog-hit outcome travels with the task to whoever awaits it, and the ordering
-        // guarantee above is untouched (the slot is cleared before the value becomes observable).
-        let task = Task { @MainActor [weak self] () -> PollCycleResult in
-            let result = await self?.runPollCycle(force: force, webView: explicitWebView)
-                ?? PollCycleResult(outcome: .notRun)
+        let task = Task { @MainActor [weak self] in
+            await self?.runPollCycle(force: force)
             self?.inFlightPoll = nil
-            return result
         }
         inFlightPoll = task
         inFlightPollIsForced = force
-        return await task.value
+        await task.value
     }
 
     /// Cancels and awaits any in-flight poll cycle, looping because a resumed
@@ -944,15 +762,7 @@ class BlockSyncService {
     /// forced to finish, and a post-fetch orphan still applies its batch when its
     /// reply finally arrives (see the invariant at the fetch boundary in
     /// `doPollBlockChanges`). Waiting here narrows that window; it cannot close it.
-    ///
-    /// Phase 3a-1b (obligation 20): returns whether ANY cycle this drain waited for ended at its poll
-    /// watchdog (`PollCycleResult.hitWatchdog`), OR-ed across the loop's iterations. The lifecycle
-    /// sequence reads it to skip a forced poll and a fetch against an editor that just proved
-    /// wedged; every existing caller ignores it (`@discardableResult`). Internal (not private) so
-    /// `LifecycleDeadline.swift`'s `raceDrain(bound:)` can call it.
-    @discardableResult
-    func drainInFlightPoll() async -> Bool {
-        var hitWatchdog = false
+    private func drainInFlightPoll() async {
         while let task = inFlightPoll {
             if !inFlightPollIsForced { task.cancel() }   // never a forced cycle
             // Cancelling the spawner now also cancels the work task (via
@@ -964,10 +774,8 @@ class BlockSyncService {
             // iterate more than once — each iteration still waits at most one
             // watchdog period for the task it is holding, and a post-fetch orphan
             // (L10) can still write after this returns.
-            let result = await task.value
-            hitWatchdog = hitWatchdog || result.hitWatchdog
+            await task.value
         }
-        return hitWatchdog
     }
 
     /// How long `runPollCycle(force:)` waits for a cycle's work task before
@@ -992,6 +800,23 @@ class BlockSyncService {
         #else
         Self.defaultPollWatchdogSeconds
         #endif
+    }
+
+    /// Races `operation` against a `seconds`-second timeout. Returns `true` if
+    /// `operation` finished first, `false` if the timeout did.
+    ///
+    /// Thin wrapper around the shared `raceAgainstTimeout(_:_:)` (TimeoutRace.swift)
+    /// — see that function's doc comment for why two independent, UNSTRUCTURED
+    /// `Task`s (rather than a `withTaskGroup`/`withThrowingTaskGroup` race) are what
+    /// make the timeout real, and for what a losing `operation` keeps alive.
+    ///
+    /// Exactly one caller now: the apply-chain valve (`chainWaitSeconds`, whose
+    /// release default is `applyChainWaitSeconds`) in `awaitPredecessorOrAbandon`. The
+    /// poll cycle's own watchdog uses `raceWithTimeout(seconds:work:)` instead,
+    /// because it needs the work task's handle to cancel the loser.
+    private static func awaitWithTimeout(seconds: TimeInterval, operation: @escaping () async -> Void) async -> Bool {
+        if case .finished = await raceAgainstTimeout(.seconds(seconds), operation) { return true }
+        return false
     }
 
     /// Races the poll cycle's already-created `work` task against `seconds`,
@@ -1040,22 +865,7 @@ class BlockSyncService {
     /// watchdog's `orphan.cancel()` is governed by whether the cycle had already
     /// fetched its batch (A16), not by the forced flag; `inFlightPollIsForced`
     /// governs only the DRAIN (see `drainInFlightPoll()`).
-    ///
-    /// Phase 3a-1b (obligation 20): returns the cycle's `PollCycleResult`, whose `hitWatchdog` is
-    /// true exactly when the `.timedOut` arm below ran. `webView` is threaded to `doPollBlockChanges`.
-    private func runPollCycle(force: Bool, webView explicitWebView: WKWebView? = nil) async -> PollCycleResult {
-        // Captured ONCE, here, rather than re-read later via the `watchdogSeconds`
-        // computed property: `watchdogSeconds` reads the LIVE `testPollWatchdogSeconds`
-        // override, which a test is free to mutate for a LATER cycle while this one is
-        // still running (e.g. B4's `forcedRebuildFlush...` test sets 0.2 for cycle 1,
-        // then 8 for the rebuild flush right after spawning cycle 1). The RACE itself
-        // (`raceWithTimeout` below) always correctly used the value in effect at ITS
-        // OWN call site -- this bug was only in the TIMED-OUT log line re-reading the
-        // (by-then-mutated) property instead of the value actually raced against,
-        // which made a cycle that genuinely timed out at 0.2s misleadingly log "TIMED
-        // OUT after 8.0s" once some other code had since changed the override. Purely a
-        // diagnostic-accuracy fix -- the race's actual timing was never affected.
-        let watchdogBound = watchdogSeconds
+    private func runPollCycle(force: Bool) async {
         // Created HERE (not inside the race) so its handle is cancellable from
         // both sites below. Cancelling the SPAWNER does not reach an unstructured
         // child task, hence the cancellation handler.
@@ -1075,26 +885,21 @@ class BlockSyncService {
                 // release; without the clamp it would drive the count negative.
                 if progress.countedAsOrphan {
                     self.outstandingPrefetchOrphans = max(0, self.outstandingPrefetchOrphans - 1)
-                    // Addendum A1 (t-94369a83): clamp DOWN only, never up -- a stretch of
-                    // genuine unresponsiveness must not leave a stale, too-generous
-                    // tolerance sitting around once the process has gone fully silent
-                    // (see `orphansToleratedWhileResponsive`'s own doc comment).
-                    self.orphansToleratedWhileResponsive = min(self.orphansToleratedWhileResponsive, self.outstandingPrefetchOrphans)
                 }
             }
             #if DEBUG
             await self.testPollCycleHook?()
             #endif
-            try await self.doPollBlockChanges(force: force, webView: explicitWebView, progress: progress)
+            try await self.doPollBlockChanges(force: force, progress: progress)
         }
         let outcome = await withTaskCancellationHandler {
-            await Self.raceWithTimeout(seconds: watchdogBound, work: work)
+            await Self.raceWithTimeout(seconds: watchdogSeconds, work: work)
         } onCancel: {
             work.cancel()
         }
         switch outcome {
         case .finished:
-            return PollCycleResult(outcome: .finished)
+            break
         case .failed(let error):
             // A8: a routine drain cancel (`drainInFlightPoll`) unwinds at a pre-fetch
             // checkpoint and lands here as `CancellationError`. That happens on every
@@ -1102,10 +907,9 @@ class BlockSyncService {
             // error line, and (unlike `.timedOut`) no flag and no unconditional line.
             if error is CancellationError {
                 DebugLog.log(.sync, "[BlockSync] Poll cycle cancelled (drain) force=\(force)")
-                return PollCycleResult(outcome: .cancelled)
+            } else {
+                DebugLog.log(.sync, "[BlockSync] Poll cycle ended with error: \(error) force=\(force)")
             }
-            DebugLog.log(.sync, "[BlockSync] Poll cycle ended with error: \(error) force=\(force)")
-            return PollCycleResult(outcome: .failed)
         case .timedOut(let orphan):
             #if DEBUG
             // M5/A13: record the flag BEFORE firing the test signal, so a test that
@@ -1118,7 +922,7 @@ class BlockSyncService {
             testPollTimeoutHandler?()
             #endif
             DebugLog.alwaysPersisted(
-                "[BlockSync] Poll cycle TIMED OUT after \(watchdogBound)s (likely a wedged WebKit call) — "
+                "[BlockSync] Poll cycle TIMED OUT after \(watchdogSeconds)s (likely a wedged WebKit call) — "
                 + "force=\(force). A cycle that timed out before its batch was fetched is cancelled and "
                 + "unwinds at its next checkpoint; one that already holds a consumed batch is left to "
                 + "finish on its own."
@@ -1147,7 +951,6 @@ class BlockSyncService {
             if !progress.hasFetchedBatch {
                 orphan.cancel()
             }
-            return PollCycleResult(outcome: .timedOut)
         }
     }
 
@@ -1171,9 +974,7 @@ class BlockSyncService {
     /// `progress` is the watchdog's per-cycle back-pressure state (M3/A5); it is
     /// optional so every other caller (and any future one) can keep calling this
     /// without threading it.
-    private func doPollBlockChanges(
-        force: Bool = false, webView explicitWebView: WKWebView? = nil, progress: CycleProgress? = nil
-    ) async throws {
+    private func doPollBlockChanges(force: Bool = false, progress: CycleProgress? = nil) async throws {
         try Task.checkCancellation()
 
         guard force || editorState?.contentState == .idle else {
@@ -1181,10 +982,7 @@ class BlockSyncService {
             return
         }
 
-        // `explicitWebView` (Phase 3a-1b): the lifecycle sequence's strongly captured WebView, polled
-        // instead of the service's own weak one. Without it this is exactly the old `isConfigured`
-        // guard (database, project id and WebView all present).
-        guard let webView = explicitWebView ?? self.webView, let database = projectDatabase, let projectId else { return }
+        guard isConfigured, let webView, let database = projectDatabase, let projectId else { return }
 
         // Captured here — BEFORE `flushPendingJSChanges`'s `await` below, in the same
         // suspension-free window as the `database`/`projectId` locals just captured
@@ -1204,11 +1002,11 @@ class BlockSyncService {
         let wasEditorStateWiredAtPoll = editorState != nil
         // Scoped to THIS cycle only (a fresh `false` on every `doPollBlockChanges` call,
         // never a stored property): `checkGenerationGuard` is invoked at up to three
-        // checkpoints below (preFetch, postFetch, postTurnWait) against the SAME
+        // checkpoints below (preFetch, postFetch, postChainWait) against the SAME
         // unchanged (generationAtPoll, databaseRebuildGeneration) snapshot whenever
         // nothing else moves the generation between them — unlike an abandon, which
         // short-circuits the cycle at its first checkpoint and so can only ever fire
-        // once, a KEEP does not return, so postFetch and postTurnWait both legitimately
+        // once, a KEEP does not return, so postFetch and postChainWait both legitimately
         // re-evaluate and would both find the same rebuild-in-flight condition true.
         // That is one save rescued from discard, not two, so the diagnostic counter/log
         // is gated on this flag to fire only at the first checkpoint that finds it.
@@ -1253,154 +1051,147 @@ class BlockSyncService {
 
         // Last lossless cancellation checkpoint. INVARIANT (do not weaken): there
         // must be NO cancellation-OBSERVING await between here and
-        // `applyAndConfirm` below. The steps between here and the write are
-        // `reserveWriterTurn` (sync: epoch-bump retry, epoch read, `writer.reserve()`
-        // — the same no-await region the old chain install used), the `evaluateJS`
-        // call inside `getBlockChanges` (WebKit's async API does not observe Swift
-        // task cancellation), the synchronous guards/logs (`classifyBatch`),
-        // `ticket.waitForTurn()` (a continuation only, resumed by the writer — never
-        // by this cycle's own cancellation, which it never observes), and
-        // `applyAndConfirm` (an actor hop into `DocumentWriter.applyEditorBatch` plus
-        // a synchronous write; actor hops do not observe cancellation). None of this
-        // is cancellation-observing. That is exactly what makes the watchdog's
+        // `applyAndConfirm` below. Every post-fetch step — `installApplyChainSlot`
+        // (synchronous epoch-bump retry, epoch read, and chain install), the
+        // `evaluateJS` call inside `getBlockChanges` (WebKit's async API does not
+        // observe Swift task cancellation), the synchronous guards/logs
+        // (`batchNeedsApplying`), the apply-chain valve (`awaitPredecessorOrAbandon`,
+        // whose `withCheckedContinuation` races two fresh, unstructured tasks that
+        // this cycle's cancellation cannot reach), `applyAndConfirm`'s
+        // `Task.detached` write (detached tasks do not inherit cancellation, and the
+        // region catches internally), `confirmBlockIds`, the post-apply bookkeeping
+        // in `recordApplyOutcome`, the DEBUG `testAfterApplyHook` (tests must not
+        // park), and the closing `defer { chainNode.finish() }` — is
+        // non-cancellation-observing. That is exactly what makes the watchdog's
         // `orphan.cancel()` and the drain's `task.cancel()` safe: cancellation stops
         // this cycle only at its four pre-fetch checkpoints, so a batch already
-        // consumed JS-side is always written (in writer order) rather than lost.
+        // consumed JS-side is always written (in chain order) rather than lost.
         // The checkpoint immediately below, BEFORE this call, is the last safe
         // place to bail out losslessly.
         try Task.checkCancellation()
 
-        guard let (ticket, stamp) = reserveWriterTurn(database: database, projectId: projectId) else { return }
+        guard let slot = installApplyChainSlot(database: database, projectId: projectId) else { return }
+        let chainNode = slot.node
+        // Released when THIS cycle's apply step ends — on every path below.
+        // Deliberately NOT in runPollCycle: that returns at the watchdog while
+        // this work task is still running, and a successor must wait for the real
+        // apply. Guaranteed to run because there is no cancellation checkpoint
+        // after this point and applyChanges's Task.detached does not inherit
+        // cancellation.
+        defer { chainNode.finish() }
 
-        // Phase 2 (t-94369a83), §1.3: this editor sequence is open -- reserved and
-        // (about to be) fetched -- from here through `applyAndConfirm` returning or
-        // the `defer` below settling it. `SystemWriteScope.heldEditorSeq` names it for
-        // that whole window so `performSystemWrite`'s nesting check (A5) can refuse
-        // `.nested` rather than deadlock if something reachable from inside this
-        // window ever tries to start a system write against the SAME writer this
-        // cycle is holding a turn on. This wraps the EXISTING body verbatim in
-        // `withValue(_:operation:)` -- a synchronous save/restore of the task-local
-        // around the same `await`s already here -- and changes NOTHING about control
-        // flow, suspension points, or the INVARIANT documented above
-        // `reserveWriterTurn` (no cancellation-observing `await` between the fetch and
-        // `applyAndConfirm`): `withValue` itself introduces no suspension of its own.
-        await SystemWriteScope.$heldEditorSeq.withValue(ticket.seq) {
-            // Idempotent (S2/S3): a no-op once `applyAndConfirm` below has already
-            // settled this sequence, on every path below including an early return.
-            defer { ticket.settleIfOpen(.noBatch) }
+        // Get the changes
+        guard let changes = await getBlockChanges(webView: webView) else { return }
+        // M3/A5: from here the batch is CONSUMED — the JS side cleared its queues when
+        // `getBlockChanges()` ran — so this cycle is no longer a pre-fetch orphan for
+        // back-pressure purposes, and a timeout from here on is left to finish rather
+        // than cancelled (A16). Recorded in the same synchronous region as
+        // `logFetchedUpdates`, immediately after the guard.
+        progress?.hasFetchedBatch = true
+        logFetchedUpdates(changes, force: force)
 
-            // Get the changes
-            let changes: BlockChanges
-            switch await getBlockChanges(webView: webView) {
-            case .success(let fetched):
-                changes = fetched
-            case .noData:
-                return
-            case .decodeFailed:
-                // The JS call succeeded (the batch was consumed, JS-side queues cleared)
-                // but decoding it on the Swift side failed -- a real, counted loss, not
-                // the uncounted `.noBatch` the `defer` above would otherwise settle it as
-                // (item 7, plan's S6 settlement rule).
-                ticket.settleIfOpen(.discarded(.decodeFailed))
-                return
-            }
-            // M3/A5: from here the batch is CONSUMED — the JS side cleared its queues when
-            // `getBlockChanges()` ran — so this cycle is no longer a pre-fetch orphan for
-            // back-pressure purposes, and a timeout from here on is left to finish rather
-            // than cancelled (A16). Recorded in the same synchronous region as
-            // `logFetchedUpdates`, immediately after the guard.
-            progress?.hasFetchedBatch = true
-            // Addendum A1 (t-94369a83): a fetch just returned, so the content process can
-            // complete the call that wedges -- every orphan outstanding right now is a
-            // lost reply, not a wedge THIS process is currently in. Deliberately recorded
-            // here, not in `checkForChanges`'s cheap `hasBlockChanges` pre-check: that
-            // call proves nothing about the heavier call that actually wedges, and a
-            // process stuck specifically on `getBlockChanges` could otherwise look
-            // "responsive" forever. See `orphansToleratedWhileResponsive`'s own doc
-            // comment for the full guard this feeds.
-            orphansToleratedWhileResponsive = outstandingPrefetchOrphans
-            ticket.noteFetched()
-            logFetchedUpdates(changes, force: force)
-            #if DEBUG
-            await testAfterFetchHook?()
-            #endif
-
-            // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
-            // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
-            // already cleared the JS-side pendingUpdates/pendingInserts/pendingDeletes, so this
-            // batch will not be re-offered on a later poll — returning now genuinely discards
-            // it. That's still the right call for a mode toggle, zoom, or project switch: there
-            // is no lossless option inside this window, and the alternative — re-queuing the
-            // already-fetched batch for a later poll — would mean writing pre-rewrite content
-            // against a document that's actively being rebuilt from the DB, corrupting the
-            // rebuild instead of just dropping one already-stale batch.
-            //
-            // ONE EXCEPTION (Finding #1, Calm_Bibliography, t-7c1d3fd8): a bibliography/Notes/
-            // footnote rebuild is different in kind from those other rewrites — for THOSE, the
-            // database is the FRESHER copy and this parked batch is the stale one; for a
-            // database rebuild, this parked batch is the FRESHER copy (it may hold the very
-            // citation/footnote edit that triggered the rebuild) and the database — which the
-            // rebuild is about to read via `fetchBlocksWithIds()` — is the OLDER one. Discarding
-            // here would let the rebuild overwrite the editor with its own stale pre-edit text.
-            // `allowDatabaseRebuildKeep: true` lets `checkGenerationGuard` below KEEP (not
-            // abandon) a batch in that one specific case — see that function's doc comment for
-            // why it's safe: the rebuild cannot read the database until ITS forced flush
-            // returns, and that forced flush awaits this very poll cycle first, so a kept batch
-            // is normally written before the rebuild's read (see that doc comment's KNOWN
-            // RESIDUAL for the narrow hung-WebKit-watchdog window where it is not).
-            if checkGenerationGuard(
-                generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
-                stage: "postFetch", force: force, allowDatabaseRebuildKeep: true,
-                alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
-            ) {
-                ticket.settleIfOpen(.discarded(.generationChanged("postFetch")))
-                return
-            }
-
-            switch classifyBatch(changes, database: database, projectId: projectId, force: force) {
-            case .apply:
-                break
-            case .empty:
-                ticket.settleIfOpen(.empty)
-                return
-            case .staleSnapshot:
-                ticket.settleIfOpen(.discarded(.staleSnapshot))
-                return
-            }
-
-            // A non-`.go` result means the writer's own `skip()` call already logged
-            // (`DebugLog.alwaysPersisted`, item 1) and counted this sequence in its ledger.
-            guard await ticket.waitForTurn() == .go else { return }
-
-            // Writer jobs cannot slip into this gap: the writer admits seq+1 only after
-            // seq settles. A MainActor write that does NOT bump the epoch can still
-            // land while `await applyEditorBatch` is suspended. Review fix (finding
-            // #12): bibliography/Notes/heading-level writes no longer belong on this
-            // list -- Phase 2 (t-94369a83) routed them through `performSystemWrite`,
-            // the same ordered queue. What's still genuinely outside it: `SectionOps`,
-            // `SectionReconciler`, and `StructuralUndoController`'s own direct
-            // `reorderAllBlocks` call (see `Database+BlockWriteStamp.swift`'s own
-            // comment for the authoritative, up-to-date list). That is the same
-            // residual documented on `applyChanges`, not yet closed for those
-            // remaining writers.
-            if checkGenerationGuard(
-                generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
-                stage: "postTurnWait", force: force, allowDatabaseRebuildKeep: true,
-                alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
-            ) {
-                ticket.settleIfOpen(.discarded(.generationChanged("postTurnWait")))
-                return
-            }
-
-            await applyAndConfirm(ticket, changes, webView: webView, stamp: stamp)
-            #if DEBUG
-            await testAfterApplyHook?()
-            #endif
+        // Unlike the preFetch check above, abandoning HERE is NOT lossless: by this point
+        // getBlockChanges() (block-sync-plugin.ts's getBlockChanges(), ~line 704-707) has
+        // already cleared the JS-side pendingUpdates/pendingInserts/pendingDeletes, so this
+        // batch will not be re-offered on a later poll — returning now genuinely discards
+        // it. That's still the right call for a mode toggle, zoom, or project switch: there
+        // is no lossless option inside this window, and the alternative — re-queuing the
+        // already-fetched batch for a later poll — would mean writing pre-rewrite content
+        // against a document that's actively being rebuilt from the DB, corrupting the
+        // rebuild instead of just dropping one already-stale batch.
+        //
+        // ONE EXCEPTION (Finding #1, Calm_Bibliography, t-7c1d3fd8): a bibliography/Notes/
+        // footnote rebuild is different in kind from those other rewrites — for THOSE, the
+        // database is the FRESHER copy and this parked batch is the stale one; for a
+        // database rebuild, this parked batch is the FRESHER copy (it may hold the very
+        // citation/footnote edit that triggered the rebuild) and the database — which the
+        // rebuild is about to read via `fetchBlocksWithIds()` — is the OLDER one. Discarding
+        // here would let the rebuild overwrite the editor with its own stale pre-edit text.
+        // `allowDatabaseRebuildKeep: true` lets `checkGenerationGuard` below KEEP (not
+        // abandon) a batch in that one specific case — see that function's doc comment for
+        // why it's safe: the rebuild cannot read the database until ITS forced flush
+        // returns, and that forced flush awaits this very poll cycle first, so a kept batch
+        // is normally written before the rebuild's read (see that doc comment's KNOWN
+        // RESIDUAL for the narrow hung-WebKit-watchdog window where it is not).
+        if checkGenerationGuard(
+            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+            stage: "postFetch", force: force, allowDatabaseRebuildKeep: true,
+            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+        ) {
+            return
         }
+
+        guard batchNeedsApplying(changes, database: database, projectId: projectId, force: force) else { return }
+
+        await awaitPredecessorOrAbandon(slot.predecessor)
+        // A successor gave up on THIS cycle, so our batch is strictly older than the one
+        // it applied. Do NOT drop the batch: the persisted (epoch, sequence) stamp in the
+        // write transaction now decides, per row, which of its blocks a newer batch has
+        // already written - the same merge the removed `lastWriterStampByBlockId` used to
+        // compute here, but from the DB, where the answer is atomic with the write.
+        // Belt-and-braces (defense-in-depth): for a cycle that did NOT take the merge
+        // path this is unreachable today. The reason is the CHAIN INVARIANT, not the
+        // two checks' adjacency: a successor cannot pass its `predecessor.wait()`
+        // until that node finished — either its apply succeeded and advanced
+        // lastAppliedFetchSequence to at least its own (strictly higher) stamp, or it
+        // failed, leaving lastApplied unchanged and this cycle's stamp still higher —
+        // or it was `abandon()`ed, which sets isAbandoned and is handled above. So any
+        // non-merged batch that reaches this line already has a stamp above
+        // lastApplied. Kept because it is the property we actually care about, and
+        // because inserting any `await` before it would reopen the window.
+        //
+        // The MERGE path is deliberately exempt: a merged batch is by construction
+        // OLDER than the successor that advanced lastAppliedFetchSequence, so this
+        // stamp-level guard would always drop it — defeating the merge entirely. It
+        // is safe to skip precisely because the batch this cycle is about to write is
+        // filtered row by row in the write transaction against the persisted stamp: every
+        // id it still carries is one NO newer apply wrote, so landing it cannot resurrect
+        // newer text — the only hazard this guard exists to catch.
+        guard chainNode.isAbandoned || slot.fetchSequence > lastAppliedFetchSequence else {
+            DebugLog.alwaysPersisted(
+                "[BlockSync] apply chain: ABANDONED batch from an older fetch "
+                + "(fetchSeq=\(slot.fetchSequence), lastApplied=\(lastAppliedFetchSequence)) — "
+                + "a newer batch already landed; applying this one would resurrect older text")
+            return
+        }
+
+        // M1/A1: the valve above widened the pre-write window from one scheduling hop
+        // to up to `chainWaitSeconds`, and it sits AFTER the last generation re-check
+        // (the postFetch one). Re-run the guard here — the last point before the DB
+        // write, with no `await` between it and `applyAndConfirm` (only the synchronous
+        // temp-id resolution) — so a mode toggle /
+        // zoom / bibliography-or-notes rebuild / project switch landing during the
+        // park (none of which drain the poll) cannot get this pre-rewrite batch
+        // written over it. Abandoning here is not lossless (the batch was consumed
+        // JS-side), but a stale write over a fresh rebuild is the worse outcome —
+        // the same trade the postFetch check above already makes. `allowDatabaseRebuildKeep:
+        // true` for the same reason as the postFetch call above — see that call site's
+        // comment and `checkGenerationGuard`'s doc comment.
+        if checkGenerationGuard(
+            generationAtPoll: generationAtPoll, wasWiredAtPoll: wasEditorStateWiredAtPoll,
+            stage: "postChainWait", force: force, allowDatabaseRebuildKeep: true,
+            alreadyKeptForRebuild: &keptForDatabaseRebuildThisCycle
+        ) {
+            return
+        }
+
+        // Resolution must run AFTER the valve, not before: a predecessor's applyAndConfirm()
+        // merges its pendingConfirmations into confirmedTempIds BEFORE its chain node
+        // finishes (the node is released by doPollBlockChanges's defer), and
+        // awaitPredecessorOrAbandon above parked this cycle until then — resolving any
+        // earlier misses that mapping.
+        let resolvedChanges = resolvingStaleTempIds(changes)
+
+        let result = await applyAndConfirm(resolvedChanges, database: database, projectId: projectId,
+                                           webView: webView, stamp: slot.stamp)
+        recordApplyOutcome(result, chainNode: chainNode, fetchSequence: slot.fetchSequence)
+        #if DEBUG
+        await testAfterApplyHook?()
+        #endif
     }
 
     /// Mid-flight generation re-check, shared by all three call sites in
-    /// `doPollBlockChanges` (preFetch, postFetch, postTurnWait — the last one added
+    /// `doPollBlockChanges` (preFetch, postFetch, postChainWait — the last one added
     /// by M1/A1 to cover the window the apply-chain valve opens).
     /// Runs unconditionally — including in force mode — because `force` only bypasses the
     /// contentState *precondition* at the top of the cycle, never mid-flight invalidation:
@@ -1409,9 +1200,8 @@ class BlockSyncService {
     /// true (and logs + counts, DEBUG only) when the caller must abandon this poll's batch.
     ///
     /// Note: this guard is inert for the three force callers in
-    /// `ContentView+NotificationHandlers.swift` and `ContentView+FootnoteHandlers.swift`
-    /// (bibliography rebuild, notes rebuild, immediate footnote insertion) with respect
-    /// to their OWN transition — each sets
+    /// `ContentView+NotificationHandlers.swift` (bibliography rebuild, notes rebuild,
+    /// immediate footnote insertion) with respect to their OWN transition — each sets
     /// `editorState.contentState` to a non-idle value (bumping `contentGeneration`)
     /// *before* spawning the `Task` that calls `pollBlockChangesNow()`, so `generationAtPoll`
     /// is always captured post-bump and those callers never observe a mid-flight change
@@ -1431,52 +1221,42 @@ class BlockSyncService {
     /// earlier or additional rewrite (`shouldKeepBatchForDatabaseRebuild` enforces this
     /// precisely) — abandoning it here would DISCARD the very edit the rebuild is about to
     /// overwrite with older database text. Safe because of ordering, not luck: the rebuild's
-    /// force-flush (`pollBlockChangesNowForDatabaseRebuild`) awaits THIS cycle's REAL
-    /// settlement before it can return — not just the poll-level drain, see the (now
-    /// closed) FORMER KNOWN RESIDUAL below — so a kept batch is written before the
-    /// rebuild's read. `allowDatabaseRebuildKeep: false` at the preFetch call
+    /// force-flush (`pollBlockChangesNowForDatabaseRebuild`) awaits THIS cycle before it can
+    /// return (the forced-cycle drain/await machinery in `pollBlockChanges(force:)`), and
+    /// the rebuild does not touch the database until that await returns — so a kept batch is
+    /// normally fully written before the rebuild's read (see the KNOWN RESIDUAL below for the
+    /// narrow case where it is not). `allowDatabaseRebuildKeep: false` at the preFetch call
     /// site because a discard there is lossless anyway (nothing has been consumed JS-side, and
     /// the rebuild's own forced flush re-fetches from scratch) — the exception only matters,
-    /// and is only enabled, once a batch has actually been consumed (postFetch, postTurnWait).
+    /// and is only enabled, once a batch has actually been consumed (postFetch, postChainWait).
     ///
-    /// FORMER KNOWN RESIDUAL, CLOSED (t-94369a83 Phase 1, B4 regression fix) for the
-    /// rebuild path specifically: "the rebuild does not touch the database until that
-    /// await returns" used to be true only of the SPAWNER (`pollBlockChanges(force:)`'s
-    /// drain loop, `while let inFlight = inFlightPoll { await inFlight.value }`), which
-    /// can return at its OWN `defaultPollWatchdogSeconds` (8s) watchdog even while the
-    /// underlying WORK TASK — which already holds this kept batch and is mid-write, or
-    /// (the deterministic case a short poll watchdog exposes) hasn't even reached this
-    /// checkpoint yet — is still running (`runPollCycle`'s `.timedOut` arm releases the
-    /// slot without cancelling a post-fetch-consumed cycle; see that arm's own comment).
-    /// Previously, if the rebuild's forced flush then found no further changes and
-    /// returned WITHOUT joining that still-running work task's own completion, the
-    /// marker would clear and the rebuild would read the database (or a routine cycle
-    /// still in flight would find the KEEP window already closed) before the real write
-    /// landed, not after.
+    /// KNOWN RESIDUAL (same hung-WebKit class as L8/L10 above — a doc-comment-only limit,
+    /// not chased further here): "the rebuild does not touch the database until that await
+    /// returns" is true of the SPAWNER (`pollBlockChanges(force:)`'s drain loop, `while let
+    /// inFlight = inFlightPoll { await inFlight.value }`), but the spawner itself can return
+    /// at its OWN `defaultPollWatchdogSeconds` (8s) watchdog even while the underlying WORK
+    /// TASK — which already holds this kept batch and is mid-write — is still running
+    /// (`runPollCycle`'s `.timedOut` arm releases the slot without cancelling a
+    /// post-fetch-consumed cycle; see that arm's own comment). If the rebuild's forced flush
+    /// then finds no further changes and returns WITHOUT joining that still-running work
+    /// task's own completion, the marker clears and the rebuild reads the database BEFORE
+    /// the kept write lands, not after. Needs a WebKit reply arriving right at the 8s limit
+    /// to trigger. Consequence, stated plainly: the editor is repainted with the rebuilt
+    /// content MINUS the kept edit; the kept write then lands in the database moments later,
+    /// so editor and database now disagree; nothing re-syncs that gap until the next edit to
+    /// that same block, and that next routine save's own postFetch/postChainWait check then
+    /// overwrites the out-of-order write with the editor's (still-missing-the-edit) state —
+    /// a correct, ordinary generation-guard write at THAT point, not a further bug. The same
+    /// window can also make one physical batch log as both KEPT (at postFetch, before the
+    /// watchdog fires) and REJECTED (at postChainWait or a later cycle's preFetch, once the
+    /// marker has cleared) — if the `[SYNC-DIAG:BlockPoll]` log ever shows that pair for what
+    /// looks like one save, this residual is why; it is not a decision-reversal bug. A cheap
+    /// fix was considered (having the forced flush additionally wait, with its own short time
+    /// limit, for the current apply-chain tail before returning) and was not judged worth the
+    /// added complexity for a window this narrow; revisit if it is ever observed in practice
+    /// rather than reasoned about.
     ///
-    /// `pollBlockChangesNowForDatabaseRebuild()` (`BlockSyncService+DatabaseRebuild.swift`)
-    /// now closes this by calling `awaitWriterSettlementForRebuild()` after
-    /// `pollBlockChangesNow()` returns and before its `defer` clears the marker: that
-    /// waits on the WRITER's own internal state
-    /// (`DocumentWriter.awaitSettled(through:timeout:)`, bounded by this cycle's own
-    /// watchdog), READ-ONLY, rather than on the poll cycle's Task, so it keeps waiting
-    /// for a stuck predecessor's REAL apply to land — kept-batch-mid-write or
-    /// not-yet-fetched-at-all — even after the poll-level drain above has already
-    /// returned early. Bounded, not unconditional: addendum A2 §1 replaced the earlier
-    /// `drainWriterSettlement()` (backed by `DocumentWriter.drain(timeout:)`, which used
-    /// to skip/drop a predecessor still stuck past the bound) with this read-only wait,
-    /// which changes NOTHING on its own timeout — no skip, no drop, no ledger change, no
-    /// frontier move. NARROWED, NOT CLOSED: the residual this guards against is now a
-    /// late batch that meets the generation guard's check after this wait's own bound has
-    /// already been reached — still possible, but now COUNTED (this wait's own
-    /// `alwaysPersisted` log line and `testAwaitSettledTimeoutCount` on the writer, plus
-    /// `BlockSyncService.testRebuildProceededUnsettledCount`) rather than silently forced
-    /// into a skip or drop that never happened here in the first place. This fix is
-    /// specific to the rebuild wrapper; a forced flush that calls `pollBlockChangesNow()`
-    /// directly (not through the rebuild path) is not covered and remains subject to the
-    /// general L8/L10 residuals described elsewhere in this file.
-    ///
-    /// `alreadyKeptForRebuild` (`inout`): postFetch and postTurnWait both pass
+    /// `alreadyKeptForRebuild` (`inout`): postFetch and postChainWait both pass
     /// `allowDatabaseRebuildKeep: true` and, when nothing moves the generation between
     /// them, both independently find the SAME keep condition true against the SAME
     /// unchanged snapshot -- unlike an abandon, which returns immediately and so can only
@@ -1501,7 +1281,7 @@ class BlockSyncService {
         ) {
             // `alreadyKeptForRebuild` is one flag, scoped to and owned by THIS cycle's
             // `doPollBlockChanges` call (see its declaration there): postFetch and
-            // postTurnWait both call this on the SAME unchanged snapshot whenever
+            // postChainWait both call this on the SAME unchanged snapshot whenever
             // nothing moves the generation between them, so both independently find
             // this condition true. That is one save rescued from discard, not two --
             // log and count it once, at whichever checkpoint reaches it first.
@@ -1542,7 +1322,6 @@ class BlockSyncService {
     /// timeout), and routing them would widen the seam past what the tests need.
     private func evaluateJS(_ script: String, in webView: WKWebView) async throws -> Any? {
         #if DEBUG
-        testJSWebViewObserver?(webView)
         if let testJSEvaluator { return try await testJSEvaluator(script) }
         #endif
         return try await webView.evaluateJavaScript(script)
@@ -1569,351 +1348,70 @@ class BlockSyncService {
         }
     }
 
-    /// Outcome of a `getBlockChanges` call. Distinguishes a genuine "nothing to fetch"
-    /// (the JS call itself never completed, or returned no usable string/data --
-    /// lossless, since the JS-side queues were never cleared) from a decode failure
-    /// AFTER the JS side already consumed the batch (item 7): the caller must count
-    /// the latter as a real loss rather than settle it as the uncounted `.noBatch`.
-    private enum GetBlockChangesResult {
-        case success(BlockChanges)
-        case noData
-        case decodeFailed
-    }
-
     /// Get block changes from the editor
-    private func getBlockChanges(webView: WKWebView) async -> GetBlockChangesResult {
+    private func getBlockChanges(webView: WKWebView) async -> BlockChanges? {
         guard let jsonString = try? await evaluateJS(
             "JSON.stringify(window.FinalFinal.getBlockChanges())", in: webView
         ) as? String,
               let data = jsonString.data(using: .utf8) else {
-            return .noData
-        }
-        do {
-            return .success(try JSONDecoder().decode(BlockChanges.self, from: data))
-        } catch {
-            DebugLog.log(.sync, "[BlockSyncService] Failed to decode block changes: \(error)")
-            return .decodeFailed
-        }
-    }
-
-    /// Retries a deferred `blockWriteEpoch` bump, reads the current write epoch, and
-    /// reserves this cycle's turn on the writer -- immediately before
-    /// `doPollBlockChanges` calls `getBlockChanges()`. MUST stay synchronous and
-    /// non-throwing (no `await`, no `throws`): it is part of the "no
-    /// cancellation-OBSERVING await between here and `applyAndConfirm`" invariant
-    /// documented at `doPollBlockChanges`'s fetch-boundary comment. `writer.reserve()`
-    /// is itself synchronous (nonisolated, Mutex-guarded), so sequence order still
-    /// equals fetch order with no `await` in between, exactly as the old chain install
-    /// guaranteed.
-    ///
-    /// Internal (was private) in Phase 4a so `BlockSyncService+Markdown.swift` reuses this body rather than duplicating
-    /// it: the Markdown entry reserves its turn exactly as the poll does (epoch-bump retry, epoch read, `reserve()`).
-    func reserveWriterTurn(database: ProjectDatabase, projectId: String) -> (WriterTicket, BlockWriteStamp)? {
-        // A `configure`/`reconfigure` epoch bump that FAILED is retried here, on THIS
-        // cycle's own `database`/`projectId`, before the epoch is read below - otherwise
-        // this session's low sequences would be measured against the previous
-        // session's persisted row stamps and silently drop real edits (see
-        // `needsEpochBump`). If the retry fails too, return WITHOUT fetching - lossless,
-        // because nothing has been consumed JS-side yet, so the batch stays queued and is
-        // re-offered next tick. Logged unconditionally every time, since a persistently
-        // failing bump means nothing is being written.
-        if needsEpochBump {
-            do {
-                _ = try database.bumpBlockWriteEpoch(projectId: projectId)
-                needsEpochBump = false
-            } catch {
-                DebugLog.alwaysPersisted(
-                    "[BlockSync] write-stamp: retry of the deferred blockWriteEpoch bump failed (\(error)) - "
-                    + "deferring this poll BEFORE the fetch; the batch stays queued JS-side")
-                return nil
-            }
-        }
-        guard let writer else { return nil }
-        let myWriteEpoch: Int64
-        do {
-            myWriteEpoch = try database.currentBlockWriteEpoch(projectId: projectId)
-        } catch {
-            DebugLog.alwaysPersisted(
-                "[BlockSync] write-stamp: could not read blockWriteEpoch (\(error)) - "
-                + "abandoning this poll BEFORE the fetch; the batch stays queued JS-side")
             return nil
         }
-        let ticket = writer.reserve()
-        let stamp = BlockWriteStamp(epoch: myWriteEpoch, sequence: Int64(clamping: ticket.seq))
-        return (ticket, stamp)
-    }
-
-    /// Applies `changes` through the writer (an actor hop plus a synchronous DB
-    /// write, serialized against every other sequence -- see
-    /// `DocumentWriter.applyEditorBatch`), then confirms whatever temp->permanent id
-    /// mapping THIS write produced back to the editor. Known gap (not closed this
-    /// phase): a held op the writer cascades onto a LATER mint, inside the same actor
-    /// turn, produces its own idMapping entries that are merged into the writer's
-    /// `tempIdMap` but not currently surfaced back out to this caller, so a cascaded
-    /// confirmation does not yet reach `confirmBlockIds`. Tracked for a follow-up
-    /// pass, not silently accepted.
-    private func applyAndConfirm(
-        _ ticket: WriterTicket, _ changes: BlockChanges, webView: WKWebView, stamp: BlockWriteStamp
-    ) async {
-        let outcome = await ticket.writer.applyEditorBatch(ticket.seq, changes, stamp: stamp)
-        switch outcome {
-        case .applied(let result):
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
-            if !result.idMapping.isEmpty {
-                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Confirming \(result.idMapping.count) IDs")
-                await confirmBlockIds(webView: webView, mapping: result.idMapping)
-            }
-        case .refused(let reason):
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] writer refused seq \(ticket.seq): \(reason)")
-            // `.skipped` is already logged and counted by the `skip()` call that
-            // produced it (its phase entry is already gone, so the caller's `defer`
-            // settle is a no-op). `.outOfTurn` is different: the phase entry is still
-            // open here (`applyEditorBatch`'s admission check never removes it on this
-            // path), so without this the caller's `defer { ticket.settleIfOpen(.noBatch) }`
-            // would settle it uncounted. Give it its own counted outcome (item 7,
-            // plan's S6 settlement rule).
-            if reason == .outOfTurn {
-                ticket.settleIfOpen(.discarded(.outOfTurn))
-            }
-        case .failed(let error):
-            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
+        do {
+            return try JSONDecoder().decode(BlockChanges.self, from: data)
+        } catch {
+            DebugLog.log(.sync, "[BlockSyncService] Failed to decode block changes: \(error)")
+            return nil
         }
     }
 
-    #if DEBUG
-    /// Test-only escape hatch for W32 (`DocumentWriterSystemWriteTests`): lets a test
-    /// force `.nested` by calling `performSystemWrite` from inside
-    /// `SystemWriteScope.$active.withValue(true)` without tripping the DEBUG
-    /// `assertionFailure` that would otherwise crash the test process.
-    var testSuppressNestedAssert = false
+    /// Apply block changes to the database (off main thread).
+    ///
+    /// Known open window, not closed by the generation guard above: `checkGenerationGuard`'s
+    /// postFetch check only proves the generation was still current the INSTANT before this
+    /// call. `try await Task.detached { ... }.value` below then stays suspended for the
+    /// ENTIRE `applyBlockChangesFromEditor` SQLite write, not just "one scheduling hop" —
+    /// and GRDB's write serialization guarantees each write is atomic, but does NOT
+    /// guarantee ordering between this write and a concurrent `replaceBlocks` call that a
+    /// wholesale content rewrite might issue on MainActor while this await is suspended. A
+    /// `replaceBlocks` that starts and finishes entirely within this window could still let
+    /// this now-stale write land after it. Closing this fully would require making the
+    /// rewrite path (e.g. `handleEditorModeToggle`) wait for any in-flight poll to drain
+    /// before its own synchronous flush — deliberately out of scope for this guard.
+    ///
+    /// The apply chain added above (`applyChainTail`/`ApplyChainNode`) narrows a different
+    /// half of this: it serializes POLL applies against each other in fetch order, so a
+    /// timed-out or drain-cancelled orphan's already-consumed batch cannot land after a
+    /// newer cycle's. It does NOT order a poll apply against a MainActor `replaceBlocks` —
+    /// that is exactly this window, and the residual below remains open.
+    ///
+    /// A second, related residual case, also not closed here: a forced poll that STARTS
+    /// while `contentState` is ALREADY non-idle captures that already-bumped generation as
+    /// its own `generationAtPoll` baseline — `contentGeneration` increments only on an
+    /// idle→non-idle transition (see `contentState`'s `didSet`), never on the matching
+    /// return-to-idle. If the in-flight rewrite this poll started alongside finishes
+    /// underneath it before `applyChanges` runs, there's no generation delta left for
+    /// either `checkGenerationGuard` call to detect. Neither residual case is a defect in
+    /// this fix — the stale-write window is strictly narrower than before, not eliminated
+    /// for every interleaving — but a future reader should not conclude force-mode polls
+    /// are now fully immune to this class of race.
+    ///
+    /// Applies `changes` in one DB transaction, under the (epoch, sequence) write
+    /// guard, and returns what that write actually did — including the temp→permanent
+    /// block id mapping (empty when the batch contained no inserts, or when the whole
+    /// batch was rejected for a stale epoch).
+    @discardableResult
+    private func applyChanges(
+        _ changes: BlockChanges, database: ProjectDatabase, projectId: String, stamp: BlockWriteStamp
+    ) async throws -> EditorApplyResult {
+        let result = try await Task.detached(priority: .utility) {
+            try database.applyBlockChangesFromEditor(changes, for: projectId, stamp: stamp)
+        }.value
 
-    /// Test-only (review fix M24): bumped by EVERY `reportLifecycleWholeDocumentLost` call,
-    /// including the no-writer branch that only logs -- the writer's own
-    /// `lifecycleWholeDocumentLost` ledger counter cannot show a report that had no writer to
-    /// count on (and `testWriterLedger` is all-zero then), so an assertion on the ledger alone
-    /// cannot tell "reported, no writer" from "never reported".
-    var testLifecycleLossReports = 0
-    #endif
-
-    /// Phase 2 (t-94369a83), §1.1: the ONE public entry point for a non-editor
-    /// (bibliography/Notes/heading-level) write, routed through the same ordered
-    /// queue `DocumentWriter` already serializes every editor-diff write through. See
-    /// `docs/architecture/document-writer.md`'s "System writes" section for the full
-    /// design (settlement, the I-SYS backstop, why system writes do not stamp rows -- bar the
-    /// one exception, `.lifecycleWholeDocument`, which bumps and restamps the epoch).
-    ///
-    /// Steps, in order (the only suspensions are `waitForTurn` and the actor hop):
-    /// 1. Nesting check (`SystemWriteScope.active`, `SystemWriteScope.heldEditorSeq`).
-    /// 2. `stillWanted()` -- refuses `.notWanted` WITHOUT reserving.
-    /// 3. Writer/identity checks -- `.noWriter`/`.identityMismatch`, no reservation.
-    /// 4. Reserve (`SystemReservation(writer.reserveSystem())`).
-    /// 5. Run `prepare?()` synchronously; record `prepareRan`.
-    /// 6. Wait for turn -- a skip settles via the writer itself; reads back the real
-    ///    reason from `systemSkipReason`.
-    /// 7. Re-check `stillWanted()` -- ONLY when `prepare == nil` (once `prepare` has
-    ///    run, e.g. posted a `.renumberFootnotes`, there is no safe way to "un-notify"
-    ///    the editor, so the write must proceed and let the caller's OWN recovery
-    ///    table decide what to do with a stale result).
-    /// 8. Apply.
-    ///
-    /// Phase 3a-1a (t-94369a83, coder-obligations item 15): a `.lifecycleWholeDocument` write
-    /// whose outcome is anything but `.applied` is reported as a LOSS through
-    /// `reportLifecycleWholeDocumentLost`, from this single choke point so every refusal and
-    /// failure path (nested, identity mismatch, skipped, out of turn, retired, failed) is
-    /// covered by the one hook. The exception (judge adjustment B6) is `.refused(.noWriter)`:
-    /// that is the direct-write fallback plan §2.3 gives the caller, not a loss, so it is only
-    /// logged. Every other `kind` is untouched by the hook. The loss is counted on the writer
-    /// captured at entry (review fix M18), not on whatever `writer` has become by the time the
-    /// outcome is known; the counter overlays an ordinary one -- see `LossLedger.lifecycleWholeDocumentLost`.
-    ///
-    /// Phase 3a-1b (C3b): `onReserved` (default nil) runs synchronously right after step 4's reservation,
-    /// in the same MainActor turn, before the first suspension. The lifecycle save sequence uses it to know
-    /// that FB holds its place in the queue BEFORE it enqueues the writer barrier (N9): a barrier enqueued
-    /// first would park FB behind itself.
-    @MainActor
-    func performSystemWrite<R: Sendable>(
-        identity: SystemWriteIdentity,
-        kind: SystemWriteKind,
-        stillWanted: @escaping () -> Bool,
-        prepare: (() -> Void)? = nil,
-        onReserved: (() -> Void)? = nil,
-        body: @escaping @Sendable (Database) throws -> SystemWriteBody<R>
-    ) async -> SystemWriteResult<R> {
-        // Review fix M18: the writer THIS call used is the one in place at entry (the steps below
-        // read it before their first suspension). `configure`/`reconfigure` can replace
-        // `self.writer` on the MainActor while this call is suspended (a close/switch race), so
-        // the loss must be counted on the entry writer, not re-read after the await.
-        let writerAtEntry = writer
-        let result = await performSystemWriteSteps(
-            identity: identity, kind: kind, stillWanted: stillWanted, prepare: prepare,
-            onReserved: onReserved, body: body)
-        if kind == .lifecycleWholeDocument {
-            noteLifecycleWholeDocumentOutcome(result.outcome, writerAtEntry: writerAtEntry)
+        // Back on MainActor — store the mapping for sending back to the editor
+        for (tempId, permanentId) in result.idMapping {
+            self.pendingConfirmations[tempId] = permanentId
         }
         return result
-    }
-
-    /// Classifies a `.lifecycleWholeDocument` outcome for `performSystemWrite`'s loss hook (see
-    /// its doc comment): `.applied` is not a loss, `.refused(.noWriter)` is the caller's
-    /// direct-write fallback (B6, logged at `.lifecycle`, never counted), everything else is.
-    private func noteLifecycleWholeDocumentOutcome<R: Sendable>(
-        _ outcome: SystemWriteOutcome<R>, writerAtEntry: DocumentWriter?
-    ) {
-        switch outcome {
-        case .applied:
-            break
-        case .refused(.noWriter):
-            DebugLog.log(.lifecycle, "[SystemWrite] lifecycleWholeDocument: no writer -- not a loss, the caller's direct write is the fallback")
-        case .refused(let reason):
-            reportLifecycleWholeDocumentLost(reason: "refused(\(reason))", on: writerAtEntry)
-        case .failed(let error):
-            reportLifecycleWholeDocumentLost(reason: "failed(\(error))", on: writerAtEntry)
-        }
-    }
-
-    /// Counts and logs a `.lifecycleWholeDocument` write that did not happen, on this service's
-    /// writer (`DocumentWriter.noteLifecycleWholeDocumentLost`). Internal rather than private so
-    /// `performLifecycleWholeDocumentWrite` (LifecycleWholeDocumentWrite.swift) can report its
-    /// own pre-reservation refusal through the SAME hook -- `writer` is private to this file.
-    /// With no writer there is no ledger to count on, so the loss is only logged
-    /// (`alwaysPersisted`).
-    func reportLifecycleWholeDocumentLost(reason: String) {
-        reportLifecycleWholeDocumentLost(reason: reason, on: writer)
-    }
-
-    /// The same report, counted on an explicit `writer` (review fix M18): `performSystemWrite`
-    /// passes the writer it captured at entry, so a loss observed after the await lands on the
-    /// writer the write actually used -- not on whatever `self.writer` has become since (a
-    /// replacement project's). Counts on `writer` when it is non-nil (even if that writer is
-    /// retired by now); only when it is nil is there nothing to count on and the loss is just
-    /// logged. Bumps `testLifecycleLossReports` either way.
-    func reportLifecycleWholeDocumentLost(reason: String, on writer: DocumentWriter?) {
-        #if DEBUG
-        testLifecycleLossReports += 1
-        #endif
-        guard let writer else {
-            DebugLog.alwaysPersisted("[SystemWrite] lifecycle whole-document write LOST (no writer to count it on): \(reason)")
-            return
-        }
-        writer.noteLifecycleWholeDocumentLost(reason: reason)
-    }
-
-    /// The eight documented steps of `performSystemWrite` (see its doc comment), unchanged by
-    /// Phase 3a-1a: split out so the wrapper above can classify the outcome of EVERY return path
-    /// -- including the early refusals -- in one place.
-    @MainActor
-    private func performSystemWriteSteps<R: Sendable>(
-        identity: SystemWriteIdentity,
-        kind: SystemWriteKind,
-        stillWanted: @escaping () -> Bool,
-        prepare: (() -> Void)? = nil,
-        onReserved: (() -> Void)? = nil,
-        body: @escaping @Sendable (Database) throws -> SystemWriteBody<R>
-    ) async -> SystemWriteResult<R> {
-        // Step 1: nesting.
-        if SystemWriteScope.active {
-            return SystemWriteResult(outcome: .refused(.nested), prepareRan: false)
-        }
-        if let heldSeq = SystemWriteScope.heldEditorSeq, let writer, writer.isOpen(heldSeq) {
-            #if DEBUG
-            if !testSuppressNestedAssert {
-                assertionFailure("[SystemWrite] performSystemWrite called while editor seq \(heldSeq) is still open")
-            }
-            #endif
-            DebugLog.alwaysPersisted("[SystemWrite] refused .nested -- editor seq \(heldSeq) still open")
-            return SystemWriteResult(outcome: .refused(.nested), prepareRan: false)
-        }
-
-        // Step 2: wanted, pre-reserve.
-        guard stillWanted() else {
-            return SystemWriteResult(outcome: .refused(.notWanted), prepareRan: false)
-        }
-
-        // Step 3: writer + identity.
-        guard let writer else {
-            // Fallback (§2.0): the caller runs the write directly against its OWN
-            // captured identity. Every Phase 2 caller now implements this fallback --
-            // `BibliographySyncService`/`FootnoteSyncService` each have a direct-write
-            // path for every `.refused(.noWriter)` outcome (defensive only: should not
-            // happen once `configureSyncServices` wires a writer, but exercised
-            // deliberately by `DocumentWriterSystemWriteTests`). `.noWriter` still
-            // counts as a real refusal outcome; the fallback write itself is the
-            // CALLER's responsibility, never this function's.
-            DebugLog.log(.sync, "[SystemWrite] no writer - direct write is the caller's responsibility")
-            return SystemWriteResult(outcome: .refused(.noWriter), prepareRan: false)
-        }
-        guard identity.database === writer.database, identity.projectId == writer.projectId else {
-            return SystemWriteResult(outcome: .refused(.identityMismatch), prepareRan: false)
-        }
-
-        // Step 4: reserve.
-        // §2.8: EditorViewState's contentStateWatchdog waits this out rather than
-        // force-resetting contentState mid-write -- incremented here (reserve) and
-        // decremented via `defer` on every exit from this point on (steps 6-8),
-        // spanning the whole reserve-through-apply window.
-        //
-        // Review fix (finding #13): `editorState` is a `weak var` -- reading it twice
-        // (once to increment, once via `defer` to decrement) risked the two reads
-        // resolving to DIFFERENT instances if `self.editorState` were reassigned (or
-        // deallocated) in between, permanently stranding the first instance's counter
-        // incremented and never reflecting the increment on the new one. Captured ONCE
-        // into a local so both operations always target the exact same instance.
-        let systemWriteEditorState = editorState
-        systemWriteEditorState?.systemWriteInFlight += 1
-        defer { systemWriteEditorState?.systemWriteInFlight -= 1 }
-        let reservation = SystemReservation(writer.reserveSystem())
-        onReserved?()   // Phase 3a-1b (C3b): see `performSystemWrite`'s doc comment
-
-        // Steps 5-8, all wrapped in ONE `SystemWriteScope.active` window. Review fix
-        // (finding #11): the doc comment on `SystemWriteScope.active`
-        // (DocumentWriter+SystemWrite.swift) has always described this as covering
-        // "performSystemWrite's own steps 6-8 (wait through apply)", but the code only
-        // ever wrapped step 6 (`waitForTurnAsync`) -- `prepare` (step 5) and `apply`
-        // (step 8) both ran OUTSIDE it, so a system write started synchronously from
-        // inside `prepare` (e.g. a `.renumberFootnotes` notification observer) or from
-        // inside the `body` closure passed to `applySystemWrite` would NOT have been
-        // caught by the `.nested` guard. Widened to genuinely cover prepare through
-        // apply, matching the documented invariant.
-        let (outcome, prepareRan) = await SystemWriteScope.$active.withValue(true) { () async -> (SystemWriteOutcome<R>, Bool) in
-            // Step 5: prepare.
-            prepare?()
-            let prepareRan = prepare != nil
-
-            // Step 6: wait.
-            let turnResult = await reservation.ticket.writer.waitForTurnAsync(reservation.ticket.seq)
-            if turnResult == .skipped {
-                let reason = reservation.ticket.writer.systemSkipReason(reservation.ticket.seq) ?? .writerReplaced
-                // `systemSkipReason` only peeks (see its doc comment) -- this call is
-                // what actually retires the entry now that its value has been consumed,
-                // so `skipReasons` doesn't grow unboundedly for this (the common) path.
-                reservation.ticket.writer.discardSystemSkipReason(reservation.ticket.seq)
-                reservation.consume()
-                return (.refused(.skipped(reason)), prepareRan)
-            }
-
-            // Step 7: re-check, only when prepare was never supplied.
-            if prepare == nil, !stillWanted() {
-                reservation.ticket.writer.settleSystemNotWanted(reservation.ticket.seq)
-                reservation.consume()
-                return (.refused(.notWanted), prepareRan)
-            }
-
-            // Step 8: apply.
-            let outcome = await reservation.ticket.writer.applySystemWrite(
-                reservation.ticket.seq, kind: kind, identity: identity, body: body)
-            switch outcome {
-            case .applied, .failed:
-                // The writer itself already removed the phase entry on both these paths.
-                reservation.consume()
-            case .refused:
-                // Out-of-turn or retired: `applySystemWrite` deliberately does NOT settle
-                // this (mirroring `applyEditorBatch`'s own unsettled out-of-turn refusal)
-                // -- `reservation`'s `deinit` is the safety net that settles it.
-                break
-            }
-            return (outcome, prepareRan)
-        }
-        return SystemWriteResult(outcome: outcome, prepareRan: prepareRan)
     }
 
     /// Send ID confirmations back to the editor
@@ -2019,13 +1517,6 @@ extension BlockSyncService {
                     "(range start=\(range.start), end=\(String(describing: range.end)))")
             }
 
-            #if DEBUG
-            if let testPushBlockIdsHook {
-                await testPushBlockIdsHook(orderedIds)
-                return
-            }
-            #endif
-
             guard let jsonData = try? JSONSerialization.data(withJSONObject: orderedIds),
                   let jsonString = String(data: jsonData, encoding: .utf8) else { return }
 
@@ -2096,7 +1587,7 @@ extension BlockSyncService {
         /// this push's content, so an edit typed in the window between the rebuild's DB read
         /// and this push landing survives instead of being silently overwritten. See
         /// `mergeManagedBlocks`'s doc comment (api-content.ts). Used ONLY by the three rebuild
-        /// handlers in `ContentView+NotificationHandlers.swift` and `ContentView+FootnoteHandlers.swift`; every other call site omits it
+        /// handlers in `ContentView+NotificationHandlers.swift`; every other call site omits it
         /// (defaults `false`), preserving today's whole-diff push byte-for-byte.
         preserveUserBlocks: Bool = false
     ) async -> String? {
@@ -2270,8 +1761,7 @@ extension BlockSyncService {
         """
 
         let result = try? await webView.evaluateJavaScript(script)
-        guard let reply = result as? String else { return nil }
-        let markdown = reply.contiguousUTF8Copy  // native text once, where it arrives (see `fetchContentFromWebView`)
+        guard let markdown = result as? String else { return nil }
 
         // Sync lastPushedContent to prevent updateNSView from firing plain setContent()
         NotificationCenter.default.post(
@@ -2388,27 +1878,246 @@ extension BlockSyncService {
         return false
     }
 
-    /// Classifies a fetched batch right after the fetch: empty (nothing to apply),
-    /// rejected as a stale snapshot, or ready to apply. Not a pure predicate: it also
-    /// calls `logChangeDigest` (which logs) and runs the stale-snapshot rejection
-    /// check as a side effect before answering. MUST stay synchronous and
-    /// non-throwing (no `await`): it sits inside the "no cancellation-OBSERVING await
-    /// between here and `applyAndConfirm`" window documented on
-    /// `doPollBlockChanges`'s fetch-boundary comment. Temp-id resolution is no longer
-    /// done here -- `DocumentWriter.applyEditorBatch` resolves (and, while a late
-    /// sequence is open, holds) temp-id references itself, as the only id authority.
-    private enum BatchApplicability { case apply, empty, staleSnapshot }
+    /// Resolve stale temp IDs using cumulative confirmation mapping (defense-in-depth).
+    /// Must run after the apply-chain valve — see the call site in `doPollBlockChanges`.
+    private func resolvingStaleTempIds(_ changes: BlockChanges) -> BlockChanges {
+        var resolvedChanges = changes
+        resolvedChanges.updates = changes.updates.map { update in
+            if update.id.hasPrefix("temp-"), let permanentId = confirmedTempIds[update.id] {
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Resolved stale temp ID: \(update.id.prefix(13)) → \(permanentId.prefix(8))")
+                return BlockUpdate(id: permanentId, textContent: update.textContent,
+                                   markdownFragment: update.markdownFragment, headingLevel: update.headingLevel)
+            }
+            return update
+        }
+        resolvedChanges.inserts = changes.inserts.map { insert in
+            if let afterId = insert.afterBlockId, afterId.hasPrefix("temp-"),
+               let permanentId = confirmedTempIds[afterId] {
+                return BlockInsert(tempId: insert.tempId, blockType: insert.blockType,
+                                   textContent: insert.textContent, markdownFragment: insert.markdownFragment,
+                                   headingLevel: insert.headingLevel, afterBlockId: permanentId,
+                                   atDocumentStart: insert.atDocumentStart)
+            }
+            return insert
+        }
+        return resolvedChanges
+    }
 
-    private func classifyBatch(
-        _ changes: BlockChanges, database: ProjectDatabase, projectId: String, force: Bool
-    ) -> BatchApplicability {
+    /// Apply changes to database: writes the resolved changes under the stamped write
+    /// guard, merges the resulting pending confirmations into the cumulative
+    /// `confirmedTempIds` tracker, and — if any inserts produced temp→permanent ID
+    /// mappings — pushes those ID confirmations back to the editor via
+    /// `confirmBlockIds`.
+    ///
+    /// Returns what the DB write actually did when it SUCCEEDED, or `nil` when the
+    /// write FAILED (A10). This is the old `Bool` success signal widened to carry the
+    /// full `EditorApplyResult` — the caller still advances `lastAppliedFetchSequence`
+    /// only on a non-nil result: a failed write must not publish its stamp, or a
+    /// later, genuinely newer batch would be rejected as "older" against a stamp that
+    /// never landed. On the batch-level-rejected path, `idMapping` is empty by
+    /// construction (the transaction returns before `processEditorInserts` runs), so
+    /// no upstream check is needed — `pendingConfirmations`/`confirmedTempIds` simply
+    /// gets nothing added. This function does NOT suppress the `pendingConfirmations`
+    /// push based on rejection — that dictionary is shared across concurrent applies
+    /// (an existing, separate fix) and suppressing it would regress that.
+    ///
+    /// Window widened by the apply chain (M1/A1): this function runs only after
+    /// `awaitPredecessorOrAbandon`'s `predecessor.wait()` valve, which can park the
+    /// cycle for up to `chainWaitSeconds` after the postFetch generation check. That
+    /// widened pre-write window is covered by the `postChainWait` re-check of
+    /// `checkGenerationGuard` that runs immediately before this call — not by anything
+    /// in here.
+    @discardableResult
+    private func applyAndConfirm(
+        _ resolvedChanges: BlockChanges,
+        database: ProjectDatabase,
+        projectId: String,
+        webView: WKWebView,
+        stamp: BlockWriteStamp
+    ) async -> EditorApplyResult? {
+        do {
+            let result = try await applyChanges(resolvedChanges, database: database, projectId: projectId, stamp: stamp)
+
+            // Merge new mappings into cumulative tracker
+            for (tempId, permanentId) in pendingConfirmations {
+                confirmedTempIds[tempId] = permanentId
+            }
+
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Applied changes to DB successfully")
+
+            // Send ID confirmations back to editor if there were inserts
+            if !pendingConfirmations.isEmpty {
+                // A9: snapshot exactly what this apply is about to send, and remove only
+                // those keys afterwards. `removeAll()` discarded mappings a concurrent,
+                // overlapping apply inserted while `confirmBlockIds` was suspended, so
+                // those inserted blocks never got their temp→permanent confirmation
+                // (`pendingConfirmations` is shared between overlapping applies via the
+                // valve/L11 windows).
+                let mapping = pendingConfirmations
+                DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Confirming \(mapping.count) IDs")
+                await confirmBlockIds(webView: webView, mapping: mapping)
+                for key in mapping.keys {
+                    pendingConfirmations.removeValue(forKey: key)
+                }
+            }
+            return result
+        } catch {
+            DebugLog.log(.blockPoll, "[SYNC-DIAG:BlockPoll] Error applying changes: \(error)")
+            return nil
+        }
+    }
+
+    /// Slot handed back by `installApplyChainSlot(database:projectId:)`: this cycle's
+    /// predecessor link, its newly-installed chain node, and the (fetchSequence, stamp)
+    /// pair computed in the same synchronous region as the install. `private` because it
+    /// carries the file-private `ApplyChainNode`.
+    private struct ApplyChainSlot {
+        let predecessor: ApplyChainNode?
+        let node: ApplyChainNode
+        let fetchSequence: UInt64
+        let stamp: BlockWriteStamp
+    }
+
+    /// Retries a deferred `blockWriteEpoch` bump, reads the current write epoch, and
+    /// installs this cycle's node onto the apply chain, immediately before
+    /// `doPollBlockChanges` calls `getBlockChanges()`. MUST stay synchronous and
+    /// non-throwing (no `await`, no `throws`): it is part of the "no
+    /// cancellation-OBSERVING await between here and `applyAndConfirm`" invariant
+    /// documented at `doPollBlockChanges`'s fetch-boundary comment. Nothing may run in
+    /// here AFTER the chain node is installed (`applyChainTail = node`) — both failure
+    /// paths (the `needsEpochBump` retry and the epoch read) return `nil` BEFORE that
+    /// install, so an early return here can never wedge a successor waiting on a
+    /// half-installed node.
+    private func installApplyChainSlot(database: ProjectDatabase, projectId: String) -> ApplyChainSlot? {
+        // A `configure`/`reconfigure` epoch bump that FAILED is retried here, on THIS
+        // cycle's own `database`/`projectId`, before the epoch is read below - otherwise
+        // this session's low fetch sequences would be measured against the previous
+        // session's persisted row stamps and silently drop real edits (see
+        // `needsEpochBump`). Synchronous (no `await`), and placed before the chain node
+        // is installed: an early `return` AFTER installation and before `finish()` would
+        // wedge every successor. If the retry fails too, return WITHOUT fetching - lossless,
+        // because nothing has been consumed JS-side yet, so the batch stays queued and is
+        // re-offered next tick. Logged unconditionally every time, since a persistently
+        // failing bump means nothing is being written.
+        if needsEpochBump {
+            do {
+                _ = try database.bumpBlockWriteEpoch(projectId: projectId)
+                needsEpochBump = false
+            } catch {
+                DebugLog.alwaysPersisted(
+                    "[BlockSync] write-stamp: retry of the deferred blockWriteEpoch bump failed (\(error)) - "
+                    + "deferring this poll BEFORE the fetch; the batch stays queued JS-side")
+                return nil
+            }
+        }
+
+        // --- apply-chain install (synchronous: no `await` between the tail
+        // capture, the install, the stamp and the JS call `doPollBlockChanges` issues
+        // via `getBlockChanges()` right after this returns, so chain order IS stamp
+        // order IS fetch order IS batch-age order — a node's predecessor therefore
+        // ALWAYS carries a strictly lower stamp, which is what makes the sequence
+        // guard in `doPollBlockChanges` incapable of discarding newer text).
+        let predecessor = applyChainTail
+        // (epoch, sequence) write stamp. The epoch is read HERE - synchronously, before
+        // the JS fetch and before the chain install - for three reasons: it lands in the
+        // same no-await region as `fetchSequence &+= 1` below, so chain order IS stamp
+        // order; nothing has been consumed JS-side yet, so a read failure can still
+        // return LOSSLESSLY; and there is no cleanup to unwind, because `node` is
+        // not installed yet.
+        let myWriteEpoch: Int64
+        do {
+            myWriteEpoch = try database.currentBlockWriteEpoch(projectId: projectId)
+        } catch {
+            DebugLog.alwaysPersisted(
+                "[BlockSync] write-stamp: could not read blockWriteEpoch (\(error)) - "
+                + "abandoning this poll BEFORE the fetch; the batch stays queued JS-side")
+            return nil
+        }
+        let node = ApplyChainNode()
+        applyChainTail = node
+        fetchSequence &+= 1
+        let myFetchSequence = fetchSequence
+        let stamp = BlockWriteStamp(epoch: myWriteEpoch, sequence: Int64(clamping: myFetchSequence))
+        return ApplyChainSlot(predecessor: predecessor, node: node, fetchSequence: myFetchSequence, stamp: stamp)
+    }
+
+    /// Empty-batch check, change-digest log, and stale-snapshot rejection, run as one
+    /// unit right after the fetch. Not a pure predicate: it also calls
+    /// `logChangeDigest` (which logs) and runs the stale-snapshot rejection check as
+    /// side effects before answering. MUST stay synchronous and non-throwing (no
+    /// `await`): it sits inside the "no cancellation-OBSERVING await between here and
+    /// `applyAndConfirm`" window documented on `doPollBlockChanges`'s fetch-boundary
+    /// comment. Returns `false` — nothing to apply — for an empty batch or a rejected
+    /// stale snapshot; the caller returns immediately either way.
+    private func batchNeedsApplying(_ changes: BlockChanges, database: ProjectDatabase, projectId: String, force: Bool) -> Bool {
+        // Skip if no actual changes
         guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {
-            return .empty
+            return false
         }
+
         logChangeDigest(changes, force: force)
+
         if shouldRejectStaleSnapshot(changes, database: database, projectId: projectId) {
-            return .staleSnapshot
+            return false
         }
-        return .apply
+
+        return true
+    }
+
+    /// The apply-chain valve: waits (bounded by `chainWaitSeconds`) for `predecessor` to
+    /// finish, abandoning it if it doesn't. MUST stay `async` — never `async throws` —
+    /// and MUST NOT contain a `Task.checkCancellation()` or a throwing `Task.sleep`:
+    /// this guarantees no `CancellationError` can propagate out of it, which is exactly
+    /// what the "no cancellation-OBSERVING await between here and `applyAndConfirm`"
+    /// invariant documented on `doPollBlockChanges`'s fetch-boundary comment requires of
+    /// this step. The `withCheckedContinuation` inside `awaitWithTimeout` races two
+    /// fresh, unstructured tasks that this cycle's cancellation cannot reach, so
+    /// awaiting it here is likewise safe.
+    private func awaitPredecessorOrAbandon(_ predecessor: ApplyChainNode?) async {
+        guard let predecessor else { return }
+        let finished = await Self.awaitWithTimeout(seconds: chainWaitSeconds) {
+            await predecessor.wait()
+        }
+        if !finished {
+            // Mark the slow predecessor ABANDONED: when it reaches the sequence
+            // check in `doPollBlockChanges` it will MERGE its (older) batch per
+            // block — landing only the blocks no newer batch has written — instead
+            // of applying it wholesale after ours. If its `Task.detached` write is
+            // already in flight, nothing here can recall it — residual L11.
+            predecessor.abandon()
+            DebugLog.alwaysPersisted(
+                "[BlockSync] apply chain: predecessor did not apply within "
+                + "\(chainWaitSeconds)s — marking it abandoned and proceeding"
+            )
+        }
+    }
+
+    /// Post-apply bookkeeping: logs an own-batch-abandoned merge, bumps the DEBUG
+    /// counter, and advances `lastAppliedFetchSequence` — called unconditionally right
+    /// after `applyAndConfirm`. MUST stay synchronous and non-throwing (no `await`):
+    /// the "no cancellation-OBSERVING await between here and `applyAndConfirm`"
+    /// invariant documented on `doPollBlockChanges`'s fetch-boundary comment covers
+    /// everything from the fetch boundary onward — including steps, like this one,
+    /// that run after the apply; the window does not end AT `applyAndConfirm`. This
+    /// runs right before the DEBUG `testAfterApplyHook`, which stays in the caller.
+    private func recordApplyOutcome(_ result: EditorApplyResult?, chainNode: ApplyChainNode, fetchSequence: UInt64) {
+        // Written ONLY after a SUCCESSFUL apply (A10) — the DB write, not the intent.
+        // A failed write must not publish its stamp, or a later, genuinely newer batch
+        // would be rejected as "older" against a stamp that never landed. `max` keeps
+        // it monotonic even though the valve can let two applies overlap — and it is
+        // still right for a MERGED apply: `lastAppliedFetchSequence` already holds the
+        // successor's newer stamp, so `max` deliberately keeps that newer value rather
+        // than moving it back to this (older) cycle's stamp.
+        guard let result else { return }
+        if chainNode.isAbandoned {
+            DebugLog.alwaysPersisted(
+                "[BlockSync] apply chain: own batch arrived after a successor applied - "
+                + "merged=\(result.writtenCount) superseded=\(result.droppedCount) "
+                + "(fetchSeq=\(fetchSequence))")
+            #if DEBUG
+            testOwnBatchAbandonCount += 1
+            #endif
+        }
+        lastAppliedFetchSequence = max(lastAppliedFetchSequence, fetchSequence)
     }
 }

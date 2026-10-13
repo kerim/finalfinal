@@ -10,15 +10,11 @@ import SwiftUI
 extension EditorViewState {
 
     /// Reset all project-specific state for a clean project switch.
-    /// Called by the lifecycle tails (`ContentView.runCloseTail`, and `runProjectOpenSequence(kind: .projectSwitch)`
-    /// from `runOpenTail`), which replaced the old `handleProjectOpened()` and `performProjectClose()`.
+    /// Call from handleProjectOpened() and performProjectClose().
     func resetForProjectSwitch() {
         // Cancel in-flight tasks first
         blockReparseTask?.cancel()
         blockReparseTask = nil
-        // Phase 4a: the Markdown per-block writer's baseline describes the project that is going away. A write still in
-        // flight is not cancelled (its reserved sequence must settle); it sees the new version and leaves the baseline alone.
-        markdownWriter.reset()
         currentPersistTask?.cancel()
         currentPersistTask = nil
 

@@ -944,13 +944,6 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   if (tr.docChanged) {
     // Application-origin: the typewriter trigger table marks the renumber dispatch as
     // "no trigger" (plan §2.4.1).
-    //
-    // `derivedCorrection` (Phase 4b, Fault B): the renumber is an automatic rewrite, not typing.
-    // Untagged, the undo coordinator counted it as a real user edit, so after a section delete it
-    // moved the document away from the saved post-operation copy for good and Cmd-Z was refused.
-    // Deliberately NOT addToHistory:false -- the renumber stays its own text-undo step (the
-    // footnote undo-checkpoint design relies on "undo the renumber" being a separate Cmd-Z).
-    tr.setMeta('derivedCorrection', true);
     withSettingContent(() => view.dispatch(tr));
   }
 

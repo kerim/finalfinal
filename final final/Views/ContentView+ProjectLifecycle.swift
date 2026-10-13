@@ -74,11 +74,7 @@ extension ContentView {
         annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)
         bibliographySyncService.flushLiveEditorContentToBlocks = makeBibliographyFlushHandler()
-        // Phase 2 (t-94369a83), §2.0: the typed handle bibliography/Notes sync route
-        // their writes through -- see DocumentWriter+SystemWrite.swift's `SystemWriter`.
-        bibliographySyncService.systemWriter = SystemWriter(blockSync: blockSyncService)
         footnoteSyncService.configure(database: db, projectId: pid)
-        footnoteSyncService.systemWriter = SystemWriter(blockSync: blockSyncService)
         autoBackupService.configure(database: db, projectId: pid)
         autoBackupService.editorState = editorState
 
@@ -102,26 +98,14 @@ extension ContentView {
     /// `editorState.content` -- see the parameter's own note below for why this exists
     /// (review round 1's must-fix: the bibliography-flush clobber).
     private func makeBibliographyFlushHandler() -> (_ scheduledForProjectId: String, _ overrideContent: String?) async -> Void {
-        Self.makeBibliographyFlushHandler(for: editorState)
-    }
-
-    /// The closure itself, static so a unit test drives the REAL hook (not a copy of its guards).
-    @MainActor
-    static func makeBibliographyFlushHandler(
-        for editorState: EditorViewState
-    ) -> (_ scheduledForProjectId: String, _ overrideContent: String?) async -> Void {
         { [weak editorState] scheduledForProjectId, overrideContent in
-            // t-94369a83 3a-1b round C4 (N50): while a close / switch / quit holds the editor this is a SILENT
-            // skip, ahead of every other guard and of any write. FB already wrote this content through the ordered
-            // queue; a write from here would land after it. Step 7's own bibliography refresh reaches this hook, so
-            // it must neither write, nor assert, nor report.
-            guard let editorState, editorState.activeLifecycle == nil else { return }
             // Same three guards as the sibling debounced re-parse this flush stands in for
             // (ViewNotificationModifiers.swift's blockReparseTask, contentState/editorMode/
-            // zoomedSectionId check): both write the editor's text into the block table, so
+            // zoomedSectionId check): both do the same wholesale replaceBlocks() write, so
             // both must refuse to run mid-transition (drag reorder, zoom, project switch,
             // editor-mode switch) against stale or partial editorState.content.
-            guard editorState.contentState == .idle,
+            guard let editorState,
+                  editorState.contentState == .idle,
                   editorState.editorMode == .source,
                   editorState.zoomedSectionId == nil else { return }
             // Hardening: verify this update is still for the currently-open project. Checked
@@ -137,8 +121,7 @@ extension ContentView {
             //
             // NOTE this guard is a no-op during a project-switch flush specifically:
             // `editorState.currentProjectId` isn't reassigned to the NEW project until
-            // `configureForCurrentProject()` runs later in the open tail
-            // (`configureAndPushContentAfterProjectSwitch`), so it
+            // `configureForCurrentProject()` runs later in `handleProjectOpened()`, so it
             // still holds the OLD (matching) project id for this entire call. That's exactly
             // why `overrideContent` below matters -- this closure WILL run during a project
             // switch, on every occasion its other three guards pass.
@@ -149,35 +132,21 @@ extension ContentView {
             // scheduled from stale content there.
             //
             // During a project-switch flush, though, `editorState.content` is DELIBERATELY
-            // stale for the entire duration of the lifecycle window -- see
-            // `EditorViewState.switchInProgressContent`'s doc comment for the mechanism (review
-            // round 1 finding: this closure used to call `flushContentToDatabase()` with no
-            // override, reading that deliberately-stale property, which clobbered the fresh
-            // blocks the old `flushAllPendingContent()` had just written moments earlier with a
-            // second, stale `replaceBlocks`). `overrideContent`, which the old
-            // `ContentView.handleProjectOpened()` threaded here via `EditorViewState.
+            // stale for the entire duration of `handleProjectOpened()` -- see
+            // `flushAllPendingContent()`'s doc comment for the full mechanism (review round 1
+            // finding: this closure used to call `flushContentToDatabase()` with no override,
+            // reading that deliberately-stale property, which clobbered the fresh blocks
+            // `flushAllPendingContent()` had just written moments earlier with a second,
+            // stale `replaceBlocks`). `overrideContent`, threaded here from
+            // `ContentView.handleProjectOpened()` via `EditorViewState.
             // flushPendingBibliographyAndFootnoteSync(overrideContent:)` ->
             // `BibliographySyncService.flushPendingSync(overrideContent:)` ->
-            // `performBibliographyUpdate(..., overrideContent:)` (no production caller does since
-            // 3a-1b; the guard above skips this hook while a lifecycle is armed), was the SAME
-            // freshly-fetched value `flushAllPendingContent()` already flushed, so this call either
+            // `performBibliographyUpdate(..., overrideContent:)`, is the SAME freshly-fetched
+            // value `flushAllPendingContent()` already flushed, so this call now either
             // no-ops-equivalently re-flushes the identical content or (outside a project
             // switch, where callers pass `nil`) falls back to reading `editorState.content`
-            // exactly as before. The write also cancels the pending debounced re-parse task,
-            // closing the other half of the race.
-            //
-            // Phase 4a (t-94369a83, plan v2 section 1(f), judge M5/C3): the write goes through the
-            // per-block Markdown writer (`MarkdownBlockWriter.writeNow`), ON THE QUEUE: the rebuild
-            // that follows reads the rows, so the user's typing must land first and in order, and a
-            // direct whole-document write would re-create every paragraph id on every citation edit.
-            // `writeNow` waits for the write already in flight, and that wait can span a lifecycle
-            // arming, a mode change, a zoom or a project switch, so it RE-CHECKS every guard above
-            // after the wait (the same `guardsHold` below) and writes nothing if one failed. It falls
-            // back to today's `flushContentToDatabase(overrideContent:)` when there is no writer, and
-            // when the open-fence guard trips (the text ends inside an open code fence or `$$`
-            // block: a per-block write would skip, and the rebuild would then read rows without the
-            // user's text and could push them over what is on screen). The legacy UI-test flag
-            // (`FF_UI_TESTING_MD_LEGACY_REPARSE`) always takes that fallback.
+            // exactly as before. flushContentToDatabase() also cancels the pending debounced
+            // re-parse task, closing the other half of the race.
             //
             // Deliberately does NOT call pushBlockIds(for:) afterward, unlike
             // flushLiveContentToDatabase's other callers (see EditorViewState+Zoom.swift's doc
@@ -192,39 +161,8 @@ extension ContentView {
             // guards above) -- logging at the call site there would fire unconditionally,
             // including on the WYSIWYG path where this closure no-ops.
             DebugLog.log(.bib, "[BibSync] flushing live editor content to blocks before bibliography write")
-            guard editorState.markdownWriter.isEnabled else {
-                editorState.flushContentToDatabase(overrideContent: overrideContent)
-                return
-            }
-            let outcome = await editorState.markdownWriter.writeNow(
-                overrideContent: overrideContent,
-                editorState: editorState,
-                guardsHold: { [weak editorState] in
-                    guard let editorState else { return false }
-                    return Self.bibliographyFlushGuardsHold(editorState, scheduledForProjectId: scheduledForProjectId)
-                },
-                refire: { [weak editorState] in
-                    guard let editorState else { return }
-                    editorState.lifecycleHost?.scheduleSourceModeReparse(editorState.content)
-                }
-            )
-            if outcome == .fallBackToDirectWrite {
-                editorState.flushContentToDatabase(overrideContent: overrideContent)
-            }
+            editorState.flushContentToDatabase(overrideContent: overrideContent)
         }
-    }
-
-    /// Every guard of the bibliography flush hook, as one answer: no lifecycle holds the editor, the content is idle, the
-    /// editor is in Markdown and not zoomed, and it is still on the project the update was scheduled for. The hook checks it
-    /// once up front (as five separate guards) and `MarkdownBlockWriter.writeNow` checks it AGAIN after waiting for the write
-    /// already in flight (judge M5).
-    @MainActor
-    static func bibliographyFlushGuardsHold(_ editorState: EditorViewState, scheduledForProjectId: String) -> Bool {
-        editorState.activeLifecycle == nil
-            && editorState.contentState == .idle
-            && editorState.editorMode == .source
-            && editorState.zoomedSectionId == nil
-            && editorState.currentProjectId == scheduledForProjectId
     }
 
     /// Builds the closure assigned to `editorState.onSectionsUpdated`.
@@ -340,11 +278,7 @@ extension ContentView {
     }
 
     /// Load content from blocks (or fall back to legacy content table).
-    ///
-    /// Internal (not private) so a test can pin the N2 Import path (t-94369a83 3a-1b round C8b): an imported project is
-    /// created with its Markdown in the content table and NO blocks, and the NEW ContentView that Import from Getting
-    /// Started builds finds it here, on mount, through the legacy-content branch below.
-    func loadInitialContent(db: ProjectDatabase, pid: String) {
+    private func loadInitialContent(db: ProjectDatabase, pid: String) {
         do {
             // B10: this used to re-run `deleteOrphanedFootnoteDefinitions` on EVERY
             // project open. Demoted to a one-time migration (`v16_notes_orphan_sweep`,
@@ -417,10 +351,6 @@ extension ContentView {
                     updateSourceContentIfNeeded(intentionalReplacement: true)
                 }
             }
-            // Phase 4a: the editor's text was just loaded from (or written to) the stored rows, in all three branches: the
-            // Markdown per-block writer compares with the stored rows from here. (CodeMirror's `onWebViewReady` and every
-            // later Swift push into it do the same; calling it more often than needed only costs one re-align.)
-            editorState.markdownWriter.noteLoaded(text: editorState.content, pid: pid)
         } catch {
             DebugLog.log(.lifecycle, "[ContentView] Failed to load content: \(error.localizedDescription)")
         }
@@ -440,37 +370,177 @@ extension ContentView {
         }
     }
 
+    /// Handle project opened notification
+    ///
+    /// N9 (Phase B remediation plan): the `isRestore` parameter this function used to take is
+    /// gone -- every `.projectDidOpen` post site (grepped and confirmed) passes bare
+    /// `object: nil`, so `notification.userInfo?["isRestore"]` was always `nil`/`false` at the
+    /// one caller (`ViewNotificationModifiers.swift`'s `withFileNotifications`), meaning
+    /// `isRestore` was already dead on arrival: version-history restores are routed entirely
+    /// through `StructuralUndoController`'s own audited sequence today (plan §4.4), not through
+    /// this notification at all.
+    func handleProjectOpened() async {
+        // Judge round 2 (doc-open-blank-regression, round 3): arm this BEFORE anything else
+        // in this function runs, not after `configureForCurrentProject()` as before. A
+        // bibliography debounce firing anywhere in this function's window (before
+        // `bibliographySyncService.reset()` cancels it, several statements below) can
+        // complete and post `.bibliographySectionChanged` while `contentState == .idle` and
+        // `zoomedSectionId == nil` still hold (both still reflect the OLD project, since
+        // neither is reset until later) -- `handleBibliographySectionChanged`'s guards would
+        // then all pass, and its own unstructured `Task` sets `isResettingContent = true`
+        // then later `false` on a schedule this function doesn't control, which can clear
+        // the flag AFTER this function sets it `true` below, reopening the original
+        // blank-pane publish window this whole task exists to close. Arming the suppression
+        // here, before the flush that can trigger that debounce even starts, closes it for
+        // the entire function, not just the tail end after `configureForCurrentProject()`.
+        //
+        // Round 4: this is a WINDOW (checked, never self-consumed by the handler), not a
+        // one-shot flag -- see `EditorViewState.suppressBibliographyRebuildsDuringSwitch`'s
+        // own doc comment for why round 3's one-shot shape was itself a new gap (a second
+        // mid-switch post left unsuppressed once the first consumed the flag), and (round
+        // 4.1) for why it lives on EditorViewState rather than as a `@State` here.
+        // Cleared at the 3 sites below, further down this function, where the switch's own
+        // machinery declares `editorState.isResettingContent` settled again.
+        editorState.suppressBibliographyRebuildsDuringSwitch = true
+
+        // Barrier (plan §4.5, Phase 5 backlog): a project switch must invalidate the unified
+        // undo timeline -- it's per-project in-memory state (plan §4.1/§4.8), and
+        // `unifiedUndoService` is a single `@State` instance owned by ContentView, so it
+        // persists across a project switch within the SAME window rather than being recreated
+        // per-project. Real justification (MF-6, Phase 5 review round -- corrected: an earlier
+        // draft of this comment cited stale Undo/Redo MENU ENABLEMENT, which isn't actually the
+        // hazard -- `UndoRedoCommands.canUndo`/`canRedo` are almost always `true` anyway via
+        // `mayHaveTextUndo`, so the menu's enabled/disabled look barely changes either way):
+        // this call is what makes `StructuralUndoController`'s in-flight generation/epoch check
+        // (MF-2, `performStructuralOp`/`performUndo`/`performRedo`) actually fire. Without it, a
+        // structural op already in flight when the user switches projects -- deliberately NOT
+        // aborted here (`invalidateAll` is intentionally unguarded by `isPerforming`; do not
+        // "fix" this by adding one -- see that epoch mechanism's doc comment for why skipping
+        // the barrier instead would be worse) -- could still finish and record its entry,
+        // re-seeding the NEW project's (now-current)
+        // timeline with an entry that actually describes a mutation performed against the OLD
+        // project's database. Runs first, before any of the flush/reset work below, so a late
+        // in-flight structural op's epoch check has the earliest possible chance to catch this.
+        unifiedUndoService.invalidateAll(reason: "project switch")
+
+        // Stop block polling FIRST — prevents poll timer from firing during
+        // the await suspension points in flushAllPendingContent() and writing
+        // conflicting data to the database. `stopPollingAndDrain()` (not bare
+        // `stopPolling()`): a poll cycle that was already in flight when we get
+        // here could otherwise still be running — suspended inside its own
+        // `evaluateJavaScript` awaits — while `flushAllPendingContent()`
+        // (ContentView+VersionHistory.swift) does its own reads/writes against the OLD project, racing that
+        // in-flight cycle's eventual write. This is the load-bearing half of the
+        // block-sync-poll-races fix (race 1): the drain inside
+        // `blockSyncService.reconfigure(...)` further down this function also
+        // matters, but by the time that call runs, `editorState.resetForProjectSwitch()`
+        // has already discarded the old project's in-memory state, so a stale
+        // write landing between here and there is the window that actually causes
+        // observable corruption.
+        await blockSyncService.stopPollingAndDrain()
+
+        // Flush all pending content to OLD project's database before switching.
+        let flushedContent = await flushAllPendingContent(fetchContent: fetchContentFromWebView)
+
+        // Flush pending debounced bibliography/footnote updates before the reset()
+        // calls below discard them. Bounded to ~3s via the same helper the quit path
+        // uses, so a hung Zotero/BBT fetch can't stall a project switch indefinitely.
+        //
+        // `overrideContent: flushedContent` (review round 1 must-fix): threads the same
+        // fetched content through THIS explicit path into the bibliography flush hook. Kept
+        // for this one already-pending-update path even though `flushAllPendingContent()`
+        // above now also stages `editorState.switchInProgressContent` (judge round 2's
+        // invariant fix, doc-open-blank-regression round 3) -- that property is what
+        // actually closes the hazard for a debounce firing on its OWN schedule mid-switch,
+        // which has no explicit-override call site to thread anything through at all. See
+        // `EditorViewState.switchInProgressContent`'s doc comment for the full mechanism;
+        // this explicit forward is now redundant with it for THIS path specifically, but
+        // deleting it would still be a regression against `flushPendingSync`'s own signature
+        // contract (an explicit override, when the caller has one on hand, should always win
+        // over an implicit fallback) -- kept intentionally.
+        // The footnote half of this call has no equivalent hazard: FootnoteSyncService
+        // never re-reads `editorState.content` at flush time, it replays the fullContent
+        // string captured when the debounce was originally scheduled.
+        await editorState.flushPendingBibliographyAndFootnoteSync(overrideContent: flushedContent)
+
+        // Stop remaining services
+        editorState.stopObserving()
+        blockSyncService.cancelPendingSync()
+        sectionSyncService.cancelPendingSync()
+        annotationSyncService.cancelPendingSync()
+        bibliographySyncService.reset()
+        footnoteSyncService.reset()
+
+        // Create auto-backup of old project before switching
+        await autoBackupService.projectWillSwitch()
+        autoBackupService.reset()
+
+        // Set flag to prevent polling from overwriting empty content during reset
+        editorState.isResettingContent = true
+
+        // REMOVED: isEditorPreloadReady = false — WebView stays alive to avoid blank screen
+
+        // Reset JS-side transient state (undo history, CAYW, search, block IDs). Milkdown's
+        // mount-flash cloak (beginCloak/endCloak, MilkdownCoordinator+CloakOwnership.swift)
+        // needs to mint its `.projectReset` token BEFORE the JS call reaches the WebView, so
+        // it can embed that token in the SAME call -- routing through a notification its
+        // Coordinator observes synchronously lets it own both steps atomically. See
+        // .willResetEditorForProjectSwitch's doc comment (EditorViewState+Types.swift).
+        // CodeMirror has no cloak (CodeMirrorCoordinator+MessageDispatch.swift's deliberate-
+        // divergence comment) and is unaffected either way, so Source mode keeps the direct,
+        // uncloaked call it always had.
+        if editorState.editorMode == .wysiwyg, let webView = findBarState.activeWebView {
+            let handledMarker = NotificationHandledMarker()
+            NotificationCenter.default.post(
+                name: .willResetEditorForProjectSwitch, object: webView,
+                userInfo: ["handledMarker": handledMarker]
+            )
+            // Must-fix #3 (review round 2): a plain post() has no return value -- if this
+            // webView doesn't match ANY live Coordinator's own webView (e.g. a stale
+            // findBarState.activeWebView left over from a torn-down editor), the notification
+            // is silently a no-op AND resetForProjectSwitch() never runs at all: no cloak, and
+            // the JS-side reset (undo history, search state, block IDs) never happens either,
+            // leaking the previous project's state into the new one with nothing to show for
+            // it. Detect the miss and fall back to the direct, uncloaked call so the reset
+            // itself still happens even though the mount-flash cloak is skipped this once.
+            if !handledMarker.handled {
+                DebugLog.log(.lifecycle,
+                    "[handleProjectOpened] WARNING: .willResetEditorForProjectSwitch had no matching Coordinator "
+                    + "observer -- falling back to direct resetForProjectSwitch() call, mount-flash cloak will be skipped this time")
+                webView.evaluateJavaScript("window.FinalFinal.resetForProjectSwitch()") { _, _ in }
+            }
+        } else {
+            findBarState.activeWebView?.evaluateJavaScript(
+                "window.FinalFinal.resetForProjectSwitch()"
+            ) { _, _ in }
+        }
+
+        // Reset project-specific state (content, zoom, tasks, ...), load and publish the new project's
+        // annotation display settings, configure + push content, publish again: one shared sequence
+        // (EditorViewState.runProjectOpenSequence, which the tests call too).
+        await editorState.runProjectOpenSequence(kind: .projectSwitch, publish: annotationDisplayPublisher) { publishAfterContent in
+            await configureAndPushContentAfterProjectSwitch(publishAfterContent: publishAfterContent)
+        }
+    }
+
     /// The view-only middle of a project switch, between the sequence's two publishes. Returns as
     /// soon as the content push has been STARTED (as before the sequence existed: the push is a
     /// separate un-awaited task); `publishAfterContent` is called as that task's last step, or at
     /// the end of the Source-mode branch.
-    ///
-    /// Called by the lifecycle's open tail only (t-94369a83 3a-1b rounds C5b and C8b; the old `handleProjectOpened`
-    /// is gone). The open tail RETIRES the old project's writer (P6), so in Markdown mode it must also give the
-    /// block-sync service a writer for the new project (plan section 4.4 open-tail step 8: `reconfigure` runs in
-    /// BOTH modes; only the content push and `startPolling` stay Rich-Text-only).
-    func configureAndPushContentAfterProjectSwitch(
-        publishAfterContent: @escaping @MainActor () -> Void
-    ) async {
+    private func configureAndPushContentAfterProjectSwitch(publishAfterContent: @escaping @MainActor () -> Void) async {
         await configureForCurrentProject()
 
-        // editorState.suppressBibliographyRebuildsDuringSwitch is armed by the open tail
-        // (`runOpenTail`) before this function runs (see that property's doc comment) -- these remaining resets
+        // editorState.suppressBibliographyRebuildsDuringSwitch is armed at the very top of
+        // this function now (see that assignment's doc comment) -- these remaining resets
         // still belong here, discarding any OTHER pending-rebuild flag a mid-switch
         // notification may have set via handleBibliographySectionChanged's
         // zoomed/contentState-busy guards.
-        editorState.pendingBibliographyRebuild = false
+        pendingBibliographyRebuild = false
         editorState.pendingBibliographyRebuildAfterZoom = false
-        editorState.pendingNotesRebuild = false
-        editorState.pendingFootnoteLabels.reset()
+        pendingNotesRebuild = false
+        pendingFootnoteLabels.reset()
 
-        // Reconfigure BlockSyncService with new DB (weak WebView ref still valid). Markdown mode here (the old writer
-        // was retired); Rich Text reconfigures in the branch below.
-        if editorState.editorMode == .source,
-           let db = documentManager.projectDatabase,
-           let pid = documentManager.projectId {
-            await blockSyncService.reconfigure(database: db, projectId: pid)
-        }
+        // Reconfigure BlockSyncService with new DB (weak WebView ref still valid)
         if editorState.editorMode == .wysiwyg,
            let db = documentManager.projectDatabase,
            let pid = documentManager.projectId {
@@ -543,32 +613,170 @@ extension ContentView {
         }
     }
 
-    /// The `.projectDidClose` post of the GETTING STARTED close (`LifecycleEntry.gettingStartedCloseUserInfo`; every
-    /// other close is a managed lifecycle whose keyed post `LegacyProjectNotifications` ignores). See
-    /// `closeGettingStartedProject()`.
-    func handleProjectClosed() {
-        Task { await closeGettingStartedProject() }
-    }
-
-    /// Closing Getting Started (t-94369a83 3a-1b round C8b). It is an ephemeral playground, re-copied from the app
-    /// bundle each time it opens, so there is nothing to save, no automatic version and no lifecycle: no flush, no
-    /// fetch, no token, no barrier. `ProjectCommands.close` has already closed it in `DocumentManager`; what is left
-    /// is this view's own state. That is exactly the managed close tail without its automatic version (the throwaway
-    /// token says Getting Started, which the tail reads to skip it, N1) -- stop observing, cancel and reset the
-    /// sync services, retire the writer, reset the editor state, then `onProjectClosed` (the picker) -- plus
-    /// stopping the poll timer, which a managed lifecycle stops at arm. Nothing here reads `DocumentManager` for the
-    /// closing project (N7): by now it holds none.
+    /// Handle project closed notification
     ///
-    /// This replaces the old `performProjectClose` (flush, fetch, bibliography flush, backup, reset), which had no
-    /// other caller once Close Project, Open, Open Recent, Save As, Finder open, New Project, Import, Repair and
-    /// Help > Getting Started all went through `LifecycleEntry.run`. Getting Started to Getting Started is not a
-    /// close at all (`ProjectCommands.openGettingStarted`).
-    func closeGettingStartedProject() async {
-        blockSyncService.stopPolling()
-        let token = LifecycleToken(kind: .close, wasGettingStarted: true)
-        await runCloseTail(token: token, callOnProjectClosed: true)
+    /// A2 (review round 2): captures `findBarState.activeWebView` as a STRONG reference
+    /// SYNCHRONOUSLY here, before the `Task` below starts -- not by reading the same
+    /// (`weak`, `FindBarState.swift`) property again from inside the `Task` after its own
+    /// suspension points. `FinalFinalApp.handleProjectClosed()` observes the same
+    /// `.projectDidClose` notification this function does and sets `appViewState = .picker`
+    /// synchronously as soon as it fires -- which can swap `ContentView` out of the SwiftUI
+    /// tree before this function's `Task` even starts running, let alone before
+    /// `performProjectClose`'s first `await`. Reading `findBarState.activeWebView` again
+    /// after that point made whether the close-time fetch reached a live web view depend on
+    /// SwiftUI teardown timing, with nothing to prove either way. Capturing the strong
+    /// reference here instead makes liveness hold BY CONSTRUCTION: `webView` below keeps the
+    /// `WKWebView` alive for the whole fetch regardless of what happens to
+    /// `findBarState.activeWebView` in the meantime -- the same guarantee
+    /// `fetchContentFromWebView()` gets implicitly by reading the (still-live) property
+    /// synchronously at its own call time, which only works there because that call always
+    /// happens BEFORE any teardown, unlike this one.
+    func handleProjectClosed() {
+        // Judge round 1 (close-suppress-rebuilds, must-fix #6): arm the close-time rebuild
+        // suppression HERE, synchronously, before the `Task` below even starts -- not only at
+        // the top of `performProjectClose` (kept there too, for `ProjectCloseStaleContentTests`,
+        // which calls that function directly with no `handleProjectClosed()` call to arm it
+        // first). A debounced bibliography/Notes update firing in the gap between
+        // `.projectDidClose` arriving and this `Task`'s first run could otherwise still reach
+        // `handleBibliographySectionChanged`/`handleNotesSectionChanged` unguarded and start the
+        // forced re-poll this flag exists to block. See
+        // `EditorViewState.suppressRebuildsForClose`'s doc comment for the full mechanism.
+        editorState.suppressRebuildsForClose = true
+        let webView = findBarState.activeWebView
+        Task {
+            await performProjectClose(fetchContent: {
+                guard let webView else {
+                    DebugLog.log(.lifecycle, "[ContentView] performProjectClose fetch: no web view captured")
+                    return nil
+                }
+                return await Self.raceContentFetch(timeout: .seconds(2)) {
+                    await withCheckedContinuation { continuation in
+                        webView.evaluateJavaScript("window.FinalFinal.getContent()") { result, error in
+                            if let error {
+                                DebugLog.log(.lifecycle, "[ContentView] performProjectClose fetch JS error: \(error)")
+                            }
+                            continuation.resume(returning: result as? String)
+                        }
+                    }
+                }
+            })
+        }
     }
 
-    // handleSaveVersion() -- Save Version handling -- lives in ContentView+VersionHistory.swift, moved there to
-    // keep this file under SwiftLint's file_length limit.
+    /// `fetchContent` is injected (mirrors `flushAllPendingContent(fetchContent:)`'s own
+    /// parameter) so `ProjectCloseStaleContentTests` can drive this exact function -- the
+    /// real close call site -- with a stubbed fetch instead of a live WebView. Production's
+    /// real call site is `handleProjectClosed()` above, which builds its own web-view fetch
+    /// closure from a strong reference captured synchronously before that function's `Task`
+    /// starts -- see its own doc comment (A2, review round 2) for why. (There used to be an
+    /// intermediate zero-argument `performProjectClose()` wrapper passing
+    /// `fetchContentFromWebView` straight through; it's gone now that `handleProjectClosed()`
+    /// needs to build the closure itself from a value only it can capture at the right time,
+    /// and nothing else called it.)
+    func performProjectClose(fetchContent: () async -> String?) async {
+        // Arm the close-time rebuild suppression FIRST, before anything else in this
+        // function -- see `EditorViewState.suppressRebuildsForClose`'s doc comment for why
+        // this must be the very first statement (mirrors `flushForQuit()`'s own ordering
+        // for `suppressRebuildsForQuit`). `handleProjectClosed()` above already arms this
+        // same flag synchronously, before its own `Task` (which calls this function) even
+        // starts -- kept here too because this function is also called directly, with a
+        // stubbed fetch, by `ProjectCloseStaleContentTests`, which has no
+        // `handleProjectClosed()` call to arm it first. Setting an already-`true` flag again
+        // is harmless.
+        editorState.suppressRebuildsForClose = true
+
+        // Stop observation and drain any in-flight poll cycle FIRST, BEFORE the
+        // flush below -- mirrors `handleProjectOpened()`'s drain-then-flush order
+        // (MF2, block-sync-poll-races review round 2: this used to run the other
+        // way around). `stopPollingAndDrain()` (not bare `stopPolling()`): a poll
+        // cycle already in flight when the user clicks close could be suspended
+        // inside its own `evaluateJavaScript` awaits at this exact moment. Flushing
+        // BEFORE draining (the old order) left a window where that cycle could
+        // resume and land a stale write to the project's database AFTER the
+        // close-time flush had just landed the user's real, current content --
+        // silently reverting their last edit with no error surfaced anywhere.
+        // Draining first guarantees no poll cycle is still alive by the time the
+        // flush below runs, so nothing can write underneath it.
+        editorState.stopObserving()
+        await blockSyncService.stopPollingAndDrain()
+
+        // Fetch fresh content from the WebView before flushing, the same way project
+        // switch does (TLA+ Finding #5, GuardFetchOnClose in DocSyncCurrent.tla). The old
+        // `editorState.flushAllSync()` call here read `editorState.content` directly, which
+        // "is current" only if the last push landed -- but a push dropped mid-rebuild, zoom,
+        // or heading fix leaves `content` stale while the drain above has just saved the
+        // user's REAL, newer edit. Flushing that stale copy afterward silently reverted it,
+        // with no error surfaced anywhere. `flushAllPendingContent` (ContentView+
+        // VersionHistory.swift) never assigns the fetched content to `editorState.content`
+        // (nothing to publish into -- the WebView is closing), and stages
+        // `switchInProgressContent` so a bibliography debounce firing during
+        // `autoBackupService.projectWillClose()` below also sees the fresh copy;
+        // `resetForProjectSwitch()` clears that staged value afterward
+        // (EditorViewState+ProjectReset.swift).
+        //
+        // The fetch itself needs a live web view to reach, which is also the reason A2
+        // (review round 2) exists: `handleProjectClosed()` above captures
+        // `findBarState.activeWebView` as a strong reference SYNCHRONOUSLY, before its own
+        // `Task` (and therefore before `FinalFinalApp.handleProjectClosed()`'s synchronous
+        // `appViewState = .picker` can swap this view out of the tree) even starts, and
+        // builds the `fetchContent` closure passed in here from that captured reference --
+        // so by the time `fetchContent` actually runs, its liveness no longer depends on
+        // SwiftUI teardown timing at all.
+        // A6 (review round 2): `fetchContent` is wrapped, not called directly, purely to
+        // capture its raw result into `rawFetchResult` for the log line below -- the wrap
+        // does not change WHEN the fetch runs: `flushAllPendingContent` still calls this
+        // closure at the exact same point it always did (after staging
+        // `switchInProgressContent` from whatever's on hand, per that function's own doc
+        // comment), so the "stage before fetch" ordering that narrows the debounce-race
+        // window is unaffected. Nil/empty here can mean any of the outcomes
+        // `fetchContentFromWebView`/`raceContentFetch` already log individually at their own
+        // call sites (no web view, a JS error, or a real timeout) -- this line adds the one
+        // thing only this call site knows: whether the flush actually used the fetch's
+        // result or fell back to `editorState.content`, and how long each one was.
+        var rawFetchResult: String?
+        let flushedContent = await flushAllPendingContent(fetchContent: {
+            let value = await fetchContent()
+            rawFetchResult = value
+            return value
+        })
+        await editorState.flushPendingBibliographyAndFootnoteSync(overrideContent: flushedContent)
+        let fallbackLength = editorState.content.count
+        if let rawFetchResult, !rawFetchResult.isEmpty {
+            DebugLog.log(.lifecycle,
+                "[ContentView] performProjectClose: fetch outcome=fetched fetchedLength=\(rawFetchResult.count) "
+                + "fallbackLength=\(fallbackLength)")
+        } else {
+            DebugLog.log(.lifecycle,
+                "[ContentView] performProjectClose: fetch outcome=fallback fetchedLength=\(rawFetchResult?.count ?? 0) "
+                + "fallbackLength=\(fallbackLength)")
+        }
+
+        // Create auto-backup before closing if there are unsaved changes (not for
+        // Getting Started). Must stay AFTER the flush above -- `needsLiveFlush`
+        // defaults to false here because this caller already flushed upstream (see
+        // `AutoBackupService.createBackupIfNeeded`'s doc comment), so the backup
+        // would otherwise snapshot stale content.
+        if !documentManager.isGettingStartedProject {
+            await autoBackupService.projectWillClose()
+        }
+
+        blockSyncService.cancelPendingSync()
+        sectionSyncService.cancelPendingSync()
+        annotationSyncService.cancelPendingSync()
+        bibliographySyncService.reset()
+        footnoteSyncService.reset()
+        autoBackupService.reset()
+
+        // Reset all project-specific state (content, sourceContent, zoom, tasks, etc.)
+        editorState.resetForProjectSwitch()
+
+        // Notify parent to show picker
+        onProjectClosed?()
+    }
+
+    // handleSaveVersion() -- Save Version handling -- and fetchContentFromWebView(),
+    // contentToFlushOnProjectSwitch(fetched:current:), and flushAllPendingContent(fetchContent:)
+    // -- the content-flush helpers project switch/close and Save Version share -- live in
+    // ContentView+VersionHistory.swift, moved there to keep this file under SwiftLint's
+    // file_length limit.
 }

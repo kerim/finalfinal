@@ -26,7 +26,6 @@ import { type EditorState, type Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { clearHistory } from './api';
 import { derivedCorrection } from './derived-correction';
-import { explainTextDifference } from './derived-equivalence';
 import { getEditorView } from './editor-state';
 
 // Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
@@ -205,7 +204,6 @@ export function resetUndoCoordinatorState(): void {
   descriptor = {};
   latched = false;
   inFlightOpId = null;
-  lastEquivalence = null;
   clearLatchTimeout();
 }
 
@@ -223,11 +221,6 @@ export interface RoutingParams<TDoc> {
   latched: boolean;
   currentDoc: TDoc;
   docsEqual: (a: TDoc, b: TDoc) => boolean;
-  /** Fallback comparison, consulted ONLY after `docsEqual` has failed: "equal modulo what the app
-   * regenerates" (footnote numbers, section anchors, Notes, bibliography -- see
-   * derived-equivalence.ts). Optional: absent means exact equality alone, exactly the behaviour before
-   * this fallback existed. Mirrors Milkdown's undo-coordinator.ts. */
-  docsEquivalent?: (a: TDoc, b: TDoc) => boolean;
 }
 
 function decideRouting<TDoc>(params: RoutingParams<TDoc>, direction: 'undo' | 'redo'): RoutingDecision {
@@ -242,10 +235,7 @@ function decideRouting<TDoc>(params: RoutingParams<TDoc>, direction: 'undo' | 'r
   if (!params.pendingMapsEmpty) return { action: 'fallthrough' };
 
   const target = direction === 'undo' ? entry.postOpDoc : entry.preOpDoc;
-  // Exact equality first and short-circuiting: on the everyday path the fallback is never called.
-  if (!params.docsEqual(params.currentDoc, target) && !(params.docsEquivalent?.(params.currentDoc, target) ?? false)) {
-    return { action: 'fallthrough' };
-  }
+  if (!params.docsEqual(params.currentDoc, target)) return { action: 'fallthrough' };
 
   return { action: 'structural', opId };
 }
@@ -263,28 +253,6 @@ function docsEqual(a: Text, b: Text): boolean {
   return a.eq(b);
 }
 
-/** The last fallback comparison made while deciding ONE Cmd-Z / Cmd-Shift-Z (null when none ran:
- * exact equality held, or routing stopped before reaching the comparison). Reset by
- * `decideLiveRouting` before every decision. Mirrors Milkdown's undo-coordinator.ts. */
-let lastEquivalence: { result: boolean; ms: number; reason: string | null } | null = null;
-
-/** Longest `reason` the trace line carries (the reason is one short line; this only bounds a pathological one). */
-const MAX_REASON_CHARS = 400;
-
-/** The fallback comparison, timed on the app's own clock so the book run can report what it costs. It runs
- * `explainTextDifference` (the comparison itself, returning the reason it said "different", null when
- * equivalent), so a refused Cmd-Z can log WHY; the boolean the routing uses is `reason === null`. */
-function textsEquivalentTimed(a: Text, b: Text): boolean {
-  const start = performance.now();
-  const reason = explainTextDifference(a, b);
-  lastEquivalence = {
-    result: reason === null,
-    ms: performance.now() - start,
-    reason: reason === null ? null : reason.slice(0, MAX_REASON_CHARS),
-  };
-  return reason === null;
-}
-
 function liveRoutingParams(view: EditorView): RoutingParams<Text> {
   return {
     descriptor,
@@ -293,55 +261,7 @@ function liveRoutingParams(view: EditorView): RoutingParams<Text> {
     latched,
     currentDoc: view.state.doc,
     docsEqual,
-    docsEquivalent: textsEquivalentTimed,
   };
-}
-
-/** [STRUCT-TRACE] one line per Cmd-Z / Cmd-Shift-Z that reached the fallback comparison, on the
- * existing `type: 'debug'` errorHandler channel (the same prefix and wording Milkdown's undo
- * coordinator uses, so one log search finds both editors). Never per keystroke. */
-function traceRoutingEquivalence(
-  direction: 'undo' | 'redo',
-  decision: RoutingDecision,
-  topOpId: string | undefined,
-  totalMs: number
-): void {
-  // `textsEquivalentTimed` (called from inside the decision) sets this; TypeScript cannot see that
-  // assignment, so it would narrow the variable to `null` here without the cast.
-  const ran = lastEquivalence as { result: boolean; ms: number; reason: string | null } | null;
-  if (ran === null) return;
-  try {
-    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
-      type: 'debug',
-      message:
-        `[STRUCT-TRACE] routing-equivalence direction=${direction} decision=${decision.action} ` +
-        `result=${ran.result} ms=${ran.ms.toFixed(1)} totalMs=${totalMs.toFixed(1)} ` +
-        `topOpId=${topOpId === undefined ? 'none' : topOpId.slice(0, 8)}` +
-        (ran.reason === null ? '' : ` reason=${ran.reason}`),
-    });
-  } catch {
-    // A diagnostic must never break the undo it observes.
-  }
-}
-
-/** The ONE live routing decision for a Cmd-Z / Cmd-Shift-Z: the keydown path and the menu path
- * (`requestUnified`) both call it, so both use the fallback comparison and both log it. Runs only on
- * those key presses, never per keystroke. */
-function decideLiveRouting(view: EditorView, direction: 'undo' | 'redo'): RoutingDecision {
-  const routingStart = performance.now();
-  lastEquivalence = null;
-  const params = liveRoutingParams(view);
-  const decision = direction === 'undo' ? decideUndoRouting(params) : decideRedoRouting(params);
-  // The whole decision's time (what Cmd-Z pays per press, not only the fallback comparison), taken before
-  // the trace line is built.
-  const totalMs = performance.now() - routingStart;
-  traceRoutingEquivalence(
-    direction,
-    decision,
-    direction === 'undo' ? descriptor.undoTopOpId : descriptor.redoTopOpId,
-    totalMs
-  );
-  return decision;
 }
 
 /** True when CodeMirror's own text undo/redo has nothing to do -- the trigger condition for
@@ -449,16 +369,14 @@ export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
   // transaction is dispatched WITHOUT `addToHistory: false` (it's deliberately
   // user-undoable, §4b) but must still be treated as sync-origin here -- it's an automatic
   // correction, not a real user edit, and a structural entry's postOpDoc/preOpDoc equality
-  // target must keep tracking it exactly as it would any other derived refresh. The footnote
-  // renumber (api.ts `renumberFootnotes`) is tagged the same way.
+  // target must keep tracking it exactly as it would any other derived refresh.
   //
-  // Why that is safe although the correction is ALSO user-undoable (this was once filed as a
-  // residual risk, "undoing it could leave the live doc unequal to postOpDoc"): a correction is
-  // only absorbed when the doc equals the entry's postOpDoc (or preOpDoc) right before it, and
-  // while the doc equals postOpDoc, Cmd-Z routes to the structural undo (routing is by document
-  // equality) before any text undo of the correction could run. The correction's own undo step
-  // is only reachable after the user has really edited -- the doc then differs from every saved
-  // copy, and structural routing stays off until their own text undo brings it back exactly.
+  // FILED RESIDUAL, Phase-3 prerequisite (do not fix this round): widening this predicate
+  // means a derived correction now advances postOpDoc even though it's ALSO user-undoable.
+  // Undoing it could leave the live doc unequal to postOpDoc, so the next Cmd-Z would fall
+  // through to text-undo instead of routing to a structural entry -- orphaning it (not
+  // corrupting anything, just missing an entry). Unreachable today: no structural entries
+  // exist yet (descriptor.undoTopOpId is never populated until Phase 3).
   if (tr.annotation(Transaction.addToHistory) !== false && !tr.annotation(derivedCorrection)) return;
   if (!tr.docChanged) return;
 
@@ -512,7 +430,8 @@ function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
  * this returns false -- false means "let it bubble to CodeMirror's own keymap".
  */
 export function handleUnifiedUndoKeydown(e: KeyboardEvent, view: EditorView, direction: 'undo' | 'redo'): boolean {
-  const decision = decideLiveRouting(view, direction);
+  const decision =
+    direction === 'undo' ? decideUndoRouting(liveRoutingParams(view)) : decideRedoRouting(liveRoutingParams(view));
 
   // Permanent routing/history visibility (undo-mode-switch-focus investigation legacy --
   // kept because it proved useful for diagnosing undo behavior generally, not because it's
@@ -579,7 +498,8 @@ function requestUnified(direction: 'undo' | 'redo'): void {
   const view = getEditorView();
   if (!view) return;
 
-  const decision = decideLiveRouting(view, direction);
+  const decision =
+    direction === 'undo' ? decideUndoRouting(liveRoutingParams(view)) : decideRedoRouting(liveRoutingParams(view));
 
   if (decision.action === 'swallow') return; // in-flight -- drop, matches the keydown path
 

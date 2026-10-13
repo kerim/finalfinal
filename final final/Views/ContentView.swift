@@ -66,11 +66,21 @@ struct ContentView: View {
     // never observed by a later method call. See EditorViewState.swift's doc comment on the
     // property for the full mechanism.
 
-    // pendingFootnoteLabels, pendingBibliographyRebuild and pendingNotesRebuild moved to EditorViewState
-    // (t-94369a83 3a-1b round C4), and so did pendingBibliographyRebuildAfterZoom before them -- see their
-    // doc comments there for why a bare ContentView `@State` value doesn't reliably commit on a
-    // bare-constructed, never-mounted ContentView() in tests. They hold the rebuild requests a rebuild handler
-    // could not run yet (editor busy, or a close / switch / quit holding it); the idle transition drains them.
+    /// Queue of footnote labels awaiting insertion while contentState != .idle.
+    /// Drained one label per idle transition by drainNextPendingFootnoteIfPossible().
+    /// internal (not private): reset() is called from the ContentView+ProjectLifecycle.swift
+    /// extension on project switch, matching the other pending-rebuild flags below.
+    @State internal var pendingFootnoteLabels = PendingFootnoteQueue()
+
+    /// Queued bibliography/notes rebuild flags.
+    /// If a rebuild notification arrives while contentState != .idle, store the flag
+    /// and process it when contentState returns to .idle.
+    @State internal var pendingBibliographyRebuild = false
+    @State internal var pendingNotesRebuild = false
+
+    // pendingBibliographyRebuildAfterZoom moved to EditorViewState -- see its doc comment
+    // there (near pendingSectionReorderRequest) for why a bare ContentView `@State` scalar
+    // doesn't reliably commit on a bare-constructed, never-mounted ContentView() in tests.
 
     /// N2 (Phase B remediation plan): honest failure reporting for sidebar section
     /// delete/duplicate. Previously any refusal or failure just logged to DebugLog and showed
@@ -126,7 +136,14 @@ struct ContentView: View {
         // for the mechanism.
         ContentSyncObserverHost(
             editorState: editorState,
-            services: contentSyncServices
+            services: ContentSyncServices(
+                sectionSync: sectionSyncService,
+                annotationSync: annotationSyncService,
+                bibliographySync: bibliographySyncService,
+                footnoteSync: footnoteSyncService,
+                autoBackup: autoBackupService,
+                documentManager: documentManager
+            )
         ) {
             mainContentView
         }
@@ -138,10 +155,13 @@ struct ContentView: View {
                 unifiedUndoService: unifiedUndoService
             )
             .withFindNotifications(findBarState: findBarState)
-            // t-94369a83 3a-1b C8b: a project switch, create or managed close is run by the lifecycle's tail
-            // (ContentView+LifecycleTails.swift); the only project post this view acts on itself is the Getting
-            // Started close (nothing to save, no token).
             .withFileNotifications(
+                editorState: editorState,
+                syncService: sectionSyncService,
+                // N9 (Phase B remediation plan): handleProjectOpened() no longer takes an
+                // isRestore parameter -- see its own doc comment for why (no caller ever
+                // passed true).
+                onOpened: { _ in await handleProjectOpened() },
                 onClosed: { handleProjectClosed() }
             )
             .withVersionNotifications(
@@ -295,21 +315,12 @@ struct ContentView: View {
         // to `NSWindow.title`, and nothing else in the app sets the title. Both carry the same
         // string, so they cannot disagree while both are active -- see `WindowTitleHost`.
         .background(WindowTitleHost(title: documentManager.projectTitle ?? "Untitled"))
-        // Registers this view's editor state with the window it lands in. The close / switch / quit lifecycle then
-        // finds the MAIN window's state, never the extra window Finder creates for an open-document event (see
-        // `EditorStateRegistry`).
-        .background(HostWindowReader { window in
-            AppDelegate.shared?.registerEditorState(editorState, in: window)
-        })
         .toolbar { EditorToolbar(editorState: editorState) }
         // Hide window toolbar in focus mode for distraction-free writing
         .toolbar(editorState.focusModeHidesToolbar ? .hidden : .visible, for: .windowToolbar)
         .task {
+            AppDelegate.shared?.editorState = editorState
             AppDelegate.shared?.autoBackupService = autoBackupService
-            // First, before anything awaits: the close / switch / quit lifecycle finds this editor through
-            // `AppDelegate.shared?.editorState` (registered per window by the `HostWindowReader` above) and calls back
-            // through this host.
-            installLifecycleHost()
             escapeLadder.findBarState = findBarState
             escapeLadder.editorState = editorState
             DocumentManager.shared.flushBeforeExport = { [weak editorState] in
@@ -377,12 +388,6 @@ struct ContentView: View {
             // sequence (initializeProject() above) has normally done this already, before its first
             // publish; this is then a no-op (a snapshot exists), and covers a launch with no project.
             editorState.reenterFocusModeIfRestored()
-        }
-        // Teardown (item 11): the host's closures reach this view's state, so drop them with the view. Only THIS view's
-        // host: an extra window going away must not touch the main window's. A lifecycle already running keeps the
-        // host it captured at arm; it never reads this property again.
-        .onDisappear {
-            EditorStateRegistry.contentViewDidDisappear(editorState)
         }
     }
 

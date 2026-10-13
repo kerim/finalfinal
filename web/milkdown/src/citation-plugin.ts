@@ -17,7 +17,7 @@ import {
   parseCitationBracket,
   serializeCitation,
 } from './citation-types';
-import { type CitationOptions, getCiteprocEngine } from './citeproc-engine';
+import { getCiteprocEngine } from './citeproc-engine';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
 export {
@@ -227,29 +227,6 @@ export function mergeCitations(existing: string, newCitation: string): string {
   return `[${existingInner}; ${newInner}]`;
 }
 
-/** The citekeys of a citation node, as the node view reads them (split on commas, blanks dropped; no trimming, no case change). */
-export function citationKeysOf(attrs: CitationAttrs): string[] {
-  return attrs.citekeys.split(',').filter((k) => k.trim());
-}
-
-/**
- * Exactly what the Rich Text node view asks `CiteprocEngine.formatCitation` for, for one citation node. The node view and the
- * ahead-of-time fill (citation-prefill.ts) both build their request here, so the fill can only warm the memo with the entries a real
- * load will look up. Throws if `attrs.locators` is not valid JSON (the node view catches that and shows its short form).
- */
-export function citationFormatRequest(attrs: CitationAttrs): { citekeys: string[]; options: CitationOptions } {
-  const citekeys = citationKeysOf(attrs);
-  return {
-    citekeys,
-    options: {
-      suppressAuthors: attrs.suppressAuthor ? citekeys.map(() => true) : undefined,
-      locators: attrs.locators ? JSON.parse(attrs.locators) : undefined,
-      prefix: attrs.prefix,
-      suffix: attrs.suffix,
-    },
-  };
-}
-
 // NodeView for custom rendering with formatted citation display
 // This must be in the same file as citationNode to maintain atom identity with $view
 // NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
@@ -269,7 +246,7 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
     // Update display content
     const updateDisplay = () => {
       // Compute citekeys fresh from current attrs (not stale closure)
-      const citekeys = citationKeysOf(attrs);
+      const citekeys = attrs.citekeys.split(',').filter((k) => k.trim());
 
       // Source mode: show raw markdown syntax
       if (isSourceModeEnabled()) {
@@ -314,8 +291,12 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
         if (isResolved) {
           // Get formatted citation from citeproc
           try {
-            const request = citationFormatRequest(attrs);
-            displayText = engine.formatCitation(request.citekeys, request.options);
+            displayText = engine.formatCitation(citekeys, {
+              suppressAuthors: attrs.suppressAuthor ? citekeys.map(() => true) : undefined,
+              locators: attrs.locators ? JSON.parse(attrs.locators) : undefined,
+              prefix: attrs.prefix,
+              suffix: attrs.suffix,
+            });
 
             // Build tooltip with full citation info
             const items = citekeys.map((k) => engine.getItem(k)).filter(Boolean) as CSLItem[];
