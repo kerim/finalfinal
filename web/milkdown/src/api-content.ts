@@ -1,6 +1,6 @@
 // Content-related API method implementations for window.FinalFinal
 
-import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
+import { type Editor, editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { closeHistory, history as pmHistory } from '@milkdown/kit/prose/history';
 import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Fragment, Slice } from '@milkdown/kit/prose/model';
@@ -62,6 +62,7 @@ import { getRecentUserEditSpan } from './recent-edit-span';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
+import { traceMidOpPushDrift } from './undo-coordinator';
 
 /**
  * Clear the ProseMirror undo/redo history stacks after a structural, DB-driven document
@@ -808,12 +809,38 @@ export function cleanupSerializedMarkdown(markdown: string, sourceEnabled: boole
   return result;
 }
 
+/**
+ * The last raw serialisation and the ProseMirror document object it was made from. A ProseMirror
+ * document is immutable and the serializer's output depends on nothing but that document (the
+ * custom `toMarkdown` runners in the plugins read node attributes only), so the same document
+ * object always serialises to the same text. Every transaction that changes the document produces
+ * a new object, so an edit invalidates this by itself; a selection-only transaction keeps the
+ * object and the text stays valid.
+ */
+let rawSerialisation: { doc: ProsemirrorNode; markdown: string } | null = null;
+
+/**
+ * The document as the serializer writes it, before any cleanup (`getMarkdown()`'s own output).
+ * Serialising a book-length document takes hundreds of milliseconds, and the switch to Markdown
+ * reads it twice in a row (`getContent()` for the text, then `getCursorPosition()` for the caret
+ * line), so both go through here and the second read reuses the first. Only the RAW text is kept:
+ * `getContent()` post-processes it (`cleanupSerializedMarkdown`), `getCursorPosition()` uses it as
+ * is, so neither can see the other's version of the text.
+ */
+export function getRawSerialisedMarkdown(editorInstance: Editor): string {
+  const doc = editorInstance.ctx.get(editorViewCtx).state.doc;
+  if (rawSerialisation?.doc === doc) return rawSerialisation.markdown;
+  const markdown = getMarkdown()(editorInstance.ctx);
+  rawSerialisation = { doc, markdown };
+  return markdown;
+}
+
 export function getContent(): string {
   const editorInstance = getEditorInstance();
   if (!editorInstance) return getCurrentContent();
 
   const sourceEnabled = isSourceModeEnabled();
-  const rawMarkdown = getMarkdown()(editorInstance.ctx);
+  const rawMarkdown = getRawSerialisedMarkdown(editorInstance);
   const markdown = cleanupSerializedMarkdown(rawMarkdown, sourceEnabled);
   if (markdown !== rawMarkdown) {
     syncLog('API:getContent', 'serializer cleanup applied (heading/footnote/backtick/double-## unescape)');
@@ -845,6 +872,7 @@ export function resetEditorState(): void {
  */
 export function resetForProjectSwitch(cloakToken?: number): void {
   clearContentPushTimer(); // Defense in depth — prevent stale timer from old project
+  rawSerialisation = null; // Do not keep the previous project's document and its text alive
   // A project switch is a changed document identity: unconditional teardown of the
   // typewriter reserve, re-armed once this reset's own dispatch has applied, and the
   // first-load rule is re-armed so the project's real content clears and re-centres again.
@@ -1652,7 +1680,12 @@ function pushPreservingUserBlocks(
   view: EditorView,
   newDoc: ProsemirrorNode,
   newIds: string[],
-  options: { imageMeta?: ImageBlockMeta[]; managedBlockIds?: string[]; expected?: ExpectedBlockMeta[] }
+  options: {
+    imageMeta?: ImageBlockMeta[];
+    managedBlockIds?: string[];
+    expected?: ExpectedBlockMeta[];
+    traceKind?: string;
+  }
 ): { markdown: string; baseline: Map<string, BlockSnapshot> } | null {
   const oldDoc = view.state.doc;
   const oldBlockIds = getAllBlockIds();
@@ -1780,7 +1813,7 @@ function pushPreservingUserBlocks(
   }
   syncFigureBlockIdAttrs(view);
 
-  reconcilePendingQueueAfterManagedRebuild(managedIdsThisPush, mergedIds);
+  reconcilePendingQueueAfterManagedRebuild(managedIdsThisPush, mergedIds, options.traceKind);
 
   // Always captured (unconditional on options.detectPausedEdits) — this push's whole purpose
   // is to protect in-window typing, so the RAF-deferred detect-without-clearing step
@@ -1832,6 +1865,9 @@ export function setContentWithBlockIds(
     // omits it, preserving today's whole-diff behavior byte-for-byte. Changes this function's
     // return value from always-`undefined` to the pushed markdown (see the return type).
     preserveUserBlocks?: boolean;
+    // Slice 0 measurement only: which rebuild this push is ('notes' | 'bibliography' | 'footnote'). Swift sends it only while
+    // tracing is on; it is read only by the typing trace (typing-trace.ts) and changes nothing about the push.
+    traceKind?: string;
   }
 ): string | undefined {
   clearContentPushTimer(); // Cancel stale timers before document replacement
@@ -1992,6 +2028,11 @@ export function setContentWithBlockIds(
       const scrollAnchor = options?.scrollToStart
         ? undefined
         : { x: window.scrollX, y: window.scrollY, domTop: view.dom.scrollTop };
+      // [STRUCT-TRACE] push-probe (structural-operation diagnostics, read-only): BEFORE the replace
+      // below overwrites the live document, report whether it drifted from the mid-op registry
+      // entry's preOpDoc -- i.e. whether the user typed while a structural op was running. A no-op
+      // unless a registry entry is mid-op (see traceMidOpPushDrift's doc comment).
+      if (options?.detectPausedEdits) traceMidOpPushDrift(view.state.doc, doc);
       let tr = buildBlockLevelReplace(view.state.tr, view.state.doc, doc);
 
       if (options?.scrollToStart) {
@@ -2687,8 +2728,35 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
   if (!editorInstance || changes.length === 0) return;
 
   syncLog('API:updateHeadingLevels', `${changes.length} changes`);
+  // t-94369a83 Phase 2, §3: flush any edit still sitting in block-sync's own 100ms
+  // debounce BEFORE pausing sync. Once paused, blockSyncPlugin's apply() no-ops on the
+  // heading-level dispatch below, and -- more importantly -- the RAF callback's own
+  // detectPausedEditsKeepingPending (in the `finally` below) unconditionally clears any
+  // still-armed debounce timer when it fires. Without flushing here first, an edit typed
+  // just before this call (still only in the debounce, not yet a genuine pending change)
+  // would be silently cancelled rather than promoted -- this is the last chance to drain
+  // it through the normal detection path.
+  flushPendingBlockChangesPlugin();
   setSyncPaused(true);
   setIsSettingContent(true);
+  // Captured before any dispatch below, at the moment this call begins (reflecting
+  // whatever was just flushed above) -- NOT the ambient last-known state, which the
+  // heading-level dispatch below is about to change. See
+  // detectPausedEditsKeepingPending's own doc comment (block-sync-plugin.ts) for why an
+  // explicit, correctly-timed baseline is required rather than reusing ambient state.
+  //
+  // Review fix (finding #14): captured HERE, before `editorInstance.action(...)` is
+  // even called, rather than as the first statement inside its callback. If
+  // `action()` throws before ever invoking its callback (or the callback's own first
+  // line, `ctx.get(editorViewCtx)`, throws) `baseline` used to stay `undefined`, and
+  // the `finally` block below would then fall back to the OLD full-wipe
+  // `resetAndSnapshot` -- silently discarding any pending edit, the exact bug this
+  // whole phase (t-94369a83 Phase 2 §3) exists to close, just reachable through a
+  // throw instead of the ordinary path. `editorInstance.ctx.get(editorViewCtx)` is the
+  // same accessor the callback below would otherwise use, called one level up --
+  // already the established pattern at every OTHER call site in this file that needs
+  // the view outside an `action()` block (see e.g. `deferredSnapshotAndUnpause` above).
+  const baseline: Map<string, BlockSnapshot> = snapshotBlocks(editorInstance.ctx.get(editorViewCtx).state.doc);
   try {
     editorInstance.action((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -2773,7 +2841,12 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
     });
   } finally {
     setIsSettingContent(false);
-    // Delay snapshot + unpause to RAF so normalization transactions are absorbed
-    deferredSnapshotAndUnpause();
+    // Delay snapshot + unpause to RAF so normalization transactions are absorbed.
+    // t-94369a83 Phase 2, §3: keepPending=true routes through
+    // detectPausedEditsKeepingPending instead of the full-wipe resetAndSnapshot -- an
+    // edit or pending insert queued before this call (including the heading-level
+    // change itself, diffed against `baseline` above) survives instead of being
+    // silently discarded.
+    deferredSnapshotAndUnpause(true, baseline, true);
   }
 }

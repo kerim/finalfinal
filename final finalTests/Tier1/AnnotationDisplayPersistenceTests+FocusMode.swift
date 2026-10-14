@@ -95,7 +95,7 @@ extension AnnotationDisplayPersistenceTests {
 
     /// Opens project B (every type saved Inline, Panel Only saved off) and runs the project-open
     /// sequence a switch runs in production (`EditorViewState.runProjectOpenSequence`, the very
-    /// function ContentView.handleProjectOpened() calls), publishing to `editors`. Returns B's
+    /// function the lifecycle's open tail calls -- `ContentView.runOpenTail`, round C5b), publishing to `editors`. Returns B's
     /// settings rows as they were saved, before the switch touched anything.
     @MainActor
     private func switchToProjectB(
@@ -376,10 +376,13 @@ extension AnnotationDisplayPersistenceTests {
         let rowsA = try rows(of: opened.databases[0])
         #expect(state.preFocusModeState?.annotationDisplayModes != nil)
 
-        // The close sequence, exactly as production runs it: performProjectClose resets, then the
-        // project goes away. There is no load on the close path, so nothing re-arms anything.
-        state.resetForProjectSwitch()
+        // The close, in the order production runs it now (round C7b): `LifecycleEntry.run(.close)`'s `perform`
+        // closes the project (`DocumentManager.closeProject()`), and the close tail then resets the editor state
+        // (`resetForProjectSwitch()`, `ContentView.runCloseTail` step 5). There is no load on the close path, so
+        // nothing re-arms anything. (The reset never reads the project, so the order cannot change what it
+        // leaves behind; it is kept as production's so the test follows the real sequence.)
         DocumentManager.shared.closeProject()
+        state.resetForProjectSwitch()
 
         #expect(state.preFocusModeState?.annotationDisplayModes == nil)
         #expect(state.preFocusModeState?.annotationPanelOnly == nil)

@@ -98,6 +98,208 @@ extension XCUIApplication {
     }
 }
 
+// MARK: - Caret Placement by Click (confirmed)
+
+/// What `XCUIApplication.placeCaretByClicking` did, with the evidence for each click attempt.
+struct CaretClickResult {
+    /// One entry per click attempt: attempt, dx, leaf value, the in-view note, leaf frame, click point, editor frame, whether the
+    /// point had to be clamped into the editor frame, hittable, and that attempt's probe result.
+    var attempts: [[String: Any]] = []
+    /// "ok" (the selection probe confirmed the caret sits at that line's edge), "wrong (...)", "unreadable (...)", "retired" (the
+    /// caller switched the probe off) or "not-found" (no such paragraph in the editor).
+    var probe = "not-run"
+    var confirmed: Bool { probe == "ok" }
+}
+
+extension XCUIApplication {
+    /// Click a paragraph so the caret lands in it, and CONFIRM that it did. Use this instead of a bare click on a leaf.
+    ///
+    /// LESSON (write-queue Phase 3b key-replay POC, second VM run, 2026-10-06, CONFIRMED from the exported `placement`
+    /// evidence): a click at `dx: 0.02` of a leaf's reported frame landed at x=281-293 while the editor's own frame began at
+    /// x=301 -- LEFT of the editor, so it hit nothing -- because the leaf's frame is stale (20-32 pt left of where it settles)
+    /// for a moment after the previous repetition's typing/switch. The same click in the middle of the leaf (`dx: 0.5`, x=462)
+    /// worked on every on-screen anchor. Separately, a leaf within about a line of the editor's bottom edge (y=679-701 in an
+    /// editor ending at y=710) could not be clicked at all: the click was inert and the status bar kept the old selection.
+    /// So this helper (1) waits for the leaf's frame to settle, (2) scrolls a leaf that is within about two lines of the
+    /// editor's top or bottom edge toward the middle first and re-resolves it, (3) clicks the MIDDLE of the leaf (first
+    /// attempt; the second attempt a quarter along), keeping the click point inside the editor frame, and (4) checks the
+    /// outcome with `caretSelectionProbe`, retrying once with the different click. Every step lands in `attempts`.
+    ///
+    /// Not for a paragraph that contains an inline annotation (a click on or near it opens its popup or selects the atom) nor
+    /// for one that wraps onto several visual lines (the probe selects one visual line). `runProbe: false` skips the
+    /// confirmation (the click, the Cmd-Left/Right to the exact line edge and the evidence still happen).
+    func placeCaretByClicking(paragraphStartingWith text: String, atEnd: Bool, runProbe: Bool = true,
+                              findTimeout: TimeInterval = 45) -> CaretClickResult {
+        var result = CaretClickResult()
+        for attempt in 1...2 {
+            if attempt == 2 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8)) }
+            let (found, inViewNote) = bringParagraphIntoView(startingWith: text, findTimeout: findTimeout)
+            guard let leaf = found else {
+                result.probe = "not-found"
+                return result
+            }
+            let along: CGFloat = attempt == 1 ? 0.5 : 0.25
+            let value = leaf.exists ? ((leaf.value as? String) ?? leaf.label) : text
+            var info: [String: Any] = ["attempt": attempt, "dx": Double(along), "leafValue": String(value.prefix(60))]
+            if !inViewNote.isEmpty { info["inView"] = inViewNote }
+            let probe: String
+            if clickParagraphLeaf(leaf, dx: along, into: &info) {
+                typeKey(atEnd ? .rightArrow : .leftArrow, modifierFlags: .command)
+                let words = value.split(whereSeparator: { $0.isWhitespace }).count
+                probe = runProbe ? caretSelectionProbe(expectedWords: words, atEnd: atEnd) : "retired"
+            } else {
+                probe = "wrong (no click was made: the leaf is not inside the editor frame)"
+            }
+            info["probe"] = probe
+            result.attempts.append(info)
+            result.probe = probe
+            if !probe.hasPrefix("wrong") { break }
+        }
+        return result
+    }
+
+    /// Finds the paragraph and, when it sits within about two lines of the editor's top or bottom edge, moves it toward the
+    /// middle: up to two mouse-wheel scrolls of the editor area by the MEASURED distance (the same `scroll(byDeltaX:deltaY:)`
+    /// the Outline-sidebar scroll test proves; the sign is flipped if the first scroll moved the leaf the wrong way, and a
+    /// scroll that loses the leaf from the accessibility tree is undone), then one Page Down / Page Up key as a last resort.
+    /// Each step re-resolves the leaf and waits for its frame to settle. Bounded; never fails: when nothing helps it returns
+    /// the leaf as it is and says so in the note, and the caller's own checks decide what that means. Returns a nil leaf only
+    /// when the paragraph cannot be found at all.
+    func bringParagraphIntoView(startingWith text: String, findTimeout: TimeInterval = 45) -> (leaf: XCUIElement?, note: String) {
+        var steps: [String] = []
+        var current = editorStaticText(startingWith: text, timeout: findTimeout)
+        var wheelSign: CGFloat = 1
+        for round in 1...4 {
+            guard let leaf = current else { break }
+            waitForStableFrame(leaf)
+            guard leaf.exists else {
+                steps.append("the leaf vanished while its frame settled")
+                current = editorStaticText(startingWith: text, timeout: 10)
+                continue
+            }
+            let frame = leaf.frame
+            let editor = editorArea.frame
+            let margin = frame.height * 2 + 8
+            guard frame.maxY > editor.maxY - margin || frame.minY < editor.minY + margin else {
+                if round > 1 { steps.append("now in view at y=\(Int(frame.minY))") }
+                return (leaf, steps.joined(separator: "; "))
+            }
+            if round == 4 {
+                steps.append("still within two lines of an editor edge at y=\(Int(frame.minY)) (editor y=\(Int(editor.minY))-\(Int(editor.maxY)))")
+                return (leaf, steps.joined(separator: "; "))
+            }
+            let before = frame.minY
+            let wanted = editor.midY - frame.midY
+            var wheelDelta: CGFloat = 0
+            if round <= 2 {
+                wheelDelta = wanted * wheelSign
+                editorArea.scroll(byDeltaX: 0, deltaY: wheelDelta)
+                steps.append("wheel \(Int(wheelDelta)) from y=\(Int(before))")
+            } else {
+                typeKey(wanted < 0 ? .pageDown : .pageUp, modifierFlags: [])
+                steps.append("\(wanted < 0 ? "PageDown" : "PageUp") from y=\(Int(before))")
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
+            current = editorStaticText(startingWith: text, timeout: 10)
+            if current == nil, wheelDelta != 0 {
+                steps[steps.count - 1] += " (leaf left the accessibility tree; scrolled back)"
+                editorArea.scroll(byDeltaX: 0, deltaY: -wheelDelta)
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
+                current = editorStaticText(startingWith: text, timeout: 10)
+            }
+            if let after = current, after.exists {
+                waitForStableFrame(after)
+                let now = after.frame.minY
+                steps[steps.count - 1] += " to y=\(Int(now))"
+                if round == 1, wheelDelta != 0, (now - before) * wanted < 0 { wheelSign = -1 }
+            }
+        }
+        return (current, steps.joined(separator: "; "))
+    }
+
+    /// One click on a leaf, `dx` (the fraction `along`) of the way along its middle line. The point is kept inside the editor frame
+    /// (12 pt in from each edge); a leaf whose middle line lies outside the editor frame vertically gets no click (returns false). Fills `info`.
+    func clickParagraphLeaf(_ leaf: XCUIElement, dx along: CGFloat, into info: inout [String: Any]) -> Bool {
+        let editor = editorArea.frame
+        info["editorFrame"] = Self.describeFrame(editor)
+        guard leaf.exists else {
+            info["leafFrame"] = "leaf vanished before its frame could be read"
+            return false
+        }
+        let frame = leaf.frame
+        info["leafFrame"] = Self.describeFrame(frame)
+        info["leafHittable"] = leaf.isHittable
+        let wantedX = frame.minX + frame.width * along
+        let wantedY = frame.midY
+        let pointX = min(max(wantedX, editor.minX + 12), editor.maxX - 12)
+        let pointY = min(max(wantedY, editor.minY + 12), editor.maxY - 12)
+        info["clickPoint"] = "(\(Int(pointX)), \(Int(pointY)))"
+        let clamped = abs(pointX - wantedX) > 0.5 || abs(pointY - wantedY) > 0.5
+        info["clamped"] = clamped
+        guard wantedY >= editor.minY, wantedY <= editor.maxY else { return false }
+        activateAndWaitForForeground()
+        if clamped {
+            editorArea.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: pointX - editor.minX, dy: pointY - editor.minY)).click()
+        } else {
+            leaf.coordinate(withNormalizedOffset: CGVector(dx: along, dy: 0.5)).click()
+        }
+        return true
+    }
+
+    /// Reads where the caret is without touching the document: selects from the caret to the line's other end (Shift-Cmd-Left
+    /// when the caret should be at the end, Shift-Cmd-Right at the start), reads the status bar's "N of M words" selection count,
+    /// then collapses the selection back to the caret's own edge. For a single-visual-line paragraph of `expectedWords` words, a
+    /// selection of exactly that many means the caret is at that line's edge. It cannot say WHICH such line (equal lines read
+    /// alike); that needs the app's own caret position. Returns "ok", "wrong (...)" (a selection of another size: the caret is
+    /// somewhere else) or "unreadable (...)" (the status bar showed no new selection at all).
+    func caretSelectionProbe(expectedWords: Int, atEnd: Bool) -> String {
+        let baseline = wordCountStatusText()
+        typeKey(atEnd ? .leftArrow : .rightArrow, modifierFlags: [.command, .shift])
+        var seen = baseline
+        let deadline = Date(timeIntervalSinceNow: 2.5)
+        repeat {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+            seen = wordCountStatusText()
+            if seen != baseline, Self.leadingNumber(seen) == expectedWords { break }
+        } while Date() < deadline
+        typeKey(atEnd ? .rightArrow : .leftArrow, modifierFlags: [])
+        if seen == baseline { return "unreadable (status bar still read \"\(seen)\")" }
+        if Self.leadingNumber(seen) == expectedWords { return "ok" }
+        return "wrong (status bar read \"\(seen)\", expected a selection of \(expectedWords) words)"
+    }
+
+    /// The status bar's word-count text: "N words", or "K of N words" while a selection exists. Empty if the element is absent.
+    func wordCountStatusText() -> String {
+        let element = staticTexts["status-bar-word-count"]
+        guard element.exists else { return "" }
+        return (element.value as? String) ?? element.label
+    }
+
+    static func leadingNumber(_ text: String) -> Int? {
+        text.split(separator: " ").first.flatMap { Int($0) }
+    }
+
+    static func describeFrame(_ frame: CGRect) -> String {
+        "x=\(Int(frame.minX)) y=\(Int(frame.minY)) w=\(Int(frame.width)) h=\(Int(frame.height))"
+    }
+
+    /// Polls an element's frame until two reads 0.4 s apart agree (at most `timeout`). An element's frame is stale for a moment
+    /// after a layout change; clicking from a stale frame is how a click ends up outside the editor.
+    func waitForStableFrame(_ element: XCUIElement, timeout: TimeInterval = 3) {
+        guard element.exists else { return }
+        var last = element.frame
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.4))
+            guard element.exists else { return }
+            let now = element.frame
+            if now == last { return }
+            last = now
+        }
+    }
+}
+
 // MARK: - System Alert Interruption Handling
 
 extension XCTestCase {

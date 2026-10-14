@@ -13,9 +13,50 @@
 //  rewrites (`replaceBlocks`, both its default and its preserving-machine-managed path,
 //  and `replaceBlocksInRange`) and the `configure`/`reconfigure` epoch bump each advance
 //  the project's epoch, so any batch fetched before them is refused. Native structural
-//  writers (SectionOps delete/duplicate, reorder, bibliography/footnote sync,
-//  SectionReconciler, `deleteAllBlocks`) do NOT bump the epoch and are OUT OF SCOPE for
-//  this guard; rows they create land at the default (0, 0) stamp.
+//  writers (SectionOps delete/duplicate, reorder, SectionReconciler, `deleteAllBlocks`)
+//  do NOT bump the epoch and are OUT OF SCOPE for this guard; rows they create land at
+//  the default (0, 0) stamp.
+//
+//  Bibliography/Notes/heading-level sync is DIFFERENT as of t-94369a83 Phase 2: those
+//  writes route through `DocumentWriter`'s "system write" queue
+//  (`BlockSyncService.performSystemWrite`, see docs/architecture/document-writer.md's
+//  "System writes" section), so they now participate in ordering against a concurrent
+//  editor batch -- just not through THIS guard. A system write (bar the ONE exception
+//  below) still never bumps the epoch or writes an (epoch, sequence) stamp of its own
+//  (rows it touches keep whatever stamp, including the default (0, 0), they already
+//  carried); what arbitrates it against a concurrent editor batch instead is
+//  reserve-time and apply-time identity plus the writer's own strict sequence ordering,
+//  not this per-row stamp comparison.
+//
+//  ONE DELIBERATE EXCEPTION (t-94369a83 Phase 3a-1a, plan §2.3; obligation 16): the
+//  `.lifecycleWholeDocument` system write (FB, the queued whole-document save a close, project
+//  switch or quit takes, Phase 3a-1b step 6) DOES bump and restamp the epoch WHEN IT WRITES -- a
+//  checked FB (Phase 3a-2, Option A per the user's decision) whose stored rows already match what it
+//  would write writes nothing and bumps nothing -- inside its OWN
+//  transaction, because its body runs the `replaceBlocks*` statics, which call
+//  `stampWholeProjectForRewrite` on the writer's `Database`. It adds no second bump. A
+//  whole-document rewrite is exactly what the epoch exists to invalidate stale batches for. An
+//  editor batch reserved before FB's commit carries epoch E and is refused whole by rule 1 of
+//  `applyBlockChangesFromEditor` below, but only if it applies AFTER FB's commit; a lower-numbered
+//  batch that gets its turn before FB applies normally and is then replaced by FB's content.
+//
+//  Why that is safe: the lifecycle makes FB's content cover every batch that could still apply
+//  after it (polling is stopped first, F drains the poll in flight and forces one more poll, FB
+//  writes a fresh fetch of the editor), so the refusal only lands on a late or orphaned batch
+//  holding OLDER content than FB's fetch; and because polling is stopped, no editor sequence is
+//  reserved between FB's reservation and its commit (it would also read E and be refused
+//  wholesale although the writer orders it after FB). Only when the editor does not answer (FB
+//  falls back to `editorState.content`) can edits in flight be refused, lost and uncounted
+//  (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter, only the log line in rule 1): the
+//  known hung-editor gap. Every other kind of system write still never stamps or bumps.
+//
+//  After a SKIPPED (unchanged) FB nothing is refused by the epoch, since none was bumped: a late batch
+//  that applies afterwards is arbitrated by rule 2 below (a late update or delete on a row a newer batch
+//  wrote is dropped), by the writer holding updates and deletes that name an unminted temp id, and by
+//  FB's own comparison (content not yet applied makes the rows differ, so FB writes and bumps).
+//
+//  Bibliography rows and Notes-label renames are additionally covered by
+//  `applyUpdateToExistingBlock`'s own refusal (Database+Blocks.swift) regardless.
 //
 //  Comparison is lexicographic, epoch-major. A row stamped in an older epoch therefore
 //  always compares below any batch carrying the current epoch, whatever their sequences.
@@ -46,6 +87,15 @@ struct BlockWriteStamp: Equatable, Sendable, Comparable {
     }
 }
 
+/// Where a deleted block's anchor pointed, recorded at the moment a newer batch
+/// deletes it -- addendum A2 (t-94369a83), §2. Lets a still-in-flight (late or
+/// abandoned) insert whose own anchor turns out to be one of these deleted ids
+/// re-anchor onto the anchor's own predecessor instead of being silently dropped.
+enum DeletedAnchor: Sendable, Equatable {
+    case after(String)
+    case documentStart
+}
+
 /// What a stamped `applyBlockChangesFromEditor` actually wrote, so the caller can
 /// report and account for it without keeping any parallel in-memory state.
 struct EditorApplyResult: Sendable {
@@ -60,6 +110,19 @@ struct EditorApplyResult: Sendable {
     /// True when the batch's epoch was below the project's current epoch and the
     /// ENTIRE batch - inserts included - was refused.
     var rejectedWholeBatchForStaleEpoch = false
+    /// Addendum A2 §2: each row this write ACTUALLY deleted, keyed by its own id,
+    /// recording what it was anchored after (or that it was the document's first
+    /// block) at the moment it was deleted. Excludes any delete `processEditorDeletes`
+    /// itself refused (its bibliography/notes safety net) -- only a row that really
+    /// left the table gets a tombstone.
+    var deletedAnchors: [String: DeletedAnchor] = [:]
+    /// Temp ids whose insert re-anchored via the tombstone chain (§2(a)) instead of
+    /// resolving directly against its own anchor -- telemetry, not loss.
+    var reanchoredInserts: [String] = []
+    /// Temp ids whose insert was rejected because its anchor was missing and the
+    /// tombstone chain could not resolve it to a live row either -- a real,
+    /// counted loss (`staleAnchorInsertsRejected`).
+    var rejectedStaleAnchorInserts: [String] = []
 
     var writtenCount: Int { writtenUpdateIds.count + writtenInsertIds.count + writtenDeleteIds.count }
     var droppedCount: Int { droppedUpdateIds.count + droppedDeleteIds.count }
@@ -165,10 +228,16 @@ extension ProjectDatabase {
     ///   3. INSERTS are always processed when rule 1 did not fire: a temp id is unique to
     ///      the batch that minted it, so no newer batch can have written that block.
     /// Only rows actually written are stamped (rule 4, in `stamp(db:blockIds:stamp:)`).
+    ///
+    /// `renumberSortOrdersIfCrowded` (Phase 4a, plan v2 section 1(b), review M8; default OFF, so every Rich Text
+    /// caller is unchanged): the per-block Markdown writer passes `true`. See `renumberSortOrdersIfCrowded(db:projectId:)`
+    /// for what it does, and for the answer to "does it restamp rows or bump the epoch" (no, neither).
     func applyBlockChangesFromEditor(
         _ changes: BlockChanges,
         for projectId: String,
-        stamp batchStamp: BlockWriteStamp
+        stamp batchStamp: BlockWriteStamp,
+        tombstones: [String: DeletedAnchor] = [:],
+        renumberSortOrdersIfCrowded renumberIfCrowded: Bool = false
     ) throws -> EditorApplyResult {
         var result = EditorApplyResult()
 
@@ -232,13 +301,48 @@ extension ProjectDatabase {
                     + "deletesDropped=\(result.droppedDeleteIds.count) wholeBatchRejected=false")
             }
 
+            // Addendum A2 §2: record each about-to-be-deleted row's own predecessor
+            // WHILE it still exists (the SQL needs its sortOrder) -- before any row is
+            // actually removed. `processEditorDeletes` below can still refuse some of
+            // these (its bibliography/notes safety net), so this is filtered down to
+            // `writtenDeleteIds` afterward; only a row that really left the table gets
+            // a tombstone recorded in the result.
+            var candidateDeletedAnchors: [String: DeletedAnchor] = [:]
+            for id in deletesToApply {
+                if let predecessorId = try String.fetchOne(db, sql: """
+                        SELECT id FROM block WHERE projectId = ? \
+                        AND sortOrder < (SELECT sortOrder FROM block WHERE id = ?) \
+                        ORDER BY sortOrder DESC LIMIT 1
+                        """, arguments: [projectId, id]) {
+                    candidateDeletedAnchors[id] = .after(predecessorId)
+                } else {
+                    candidateDeletedAnchors[id] = .documentStart
+                }
+            }
+
             // Order preserved from the original: deletes, then inserts (so idMapping is
             // populated for temp-id updates), then updates.
             result.writtenDeleteIds = try processEditorDeletes(db: db, deletes: deletesToApply)
+            // Efficiency (t-94369a83 addendum A2 v2, judge small fix): a `Set`
+            // membership check is O(1); filtering with `Array.contains` directly
+            // made this whole filter O(N*M) across candidate anchors x written
+            // deletes.
+            let writtenDeleteIdSet = Set(result.writtenDeleteIds)
+            result.deletedAnchors = candidateDeletedAnchors.filter { writtenDeleteIdSet.contains($0.key) }
 
-            // RULE 3 - inserts always run once rule 1 has not fired.
-            try processEditorInserts(db: db, inserts: changes.inserts, projectId: projectId,
-                                     nextSortOrder: &nextSortOrder, idMapping: &result.idMapping)
+            // RULE 3 - inserts always run once rule 1 has not fired. Addendum A2 §2(a):
+            // an insert whose anchor is missing at write time can re-anchor via the
+            // tombstone chain instead of being silently dropped -- see
+            // `processEditorInserts`'s own doc comment.
+            if renumberIfCrowded {
+                try processEditorInsertsRenumberingIfCrowded(
+                    db: db, inserts: changes.inserts, projectId: projectId, tombstones: tombstones, result: &result)
+            } else {
+                try processEditorInserts(db: db, inserts: changes.inserts, projectId: projectId,
+                                         nextSortOrder: &nextSortOrder, idMapping: &result.idMapping,
+                                         tombstones: tombstones, reanchored: &result.reanchoredInserts,
+                                         rejected: &result.rejectedStaleAnchorInserts)
+            }
             result.writtenInsertIds = Array(result.idMapping.values)
 
             result.writtenUpdateIds = try processEditorUpdates(db: db, updates: updatesToApply,
@@ -253,5 +357,125 @@ extension ProjectDatabase {
         }
 
         return result
+    }
+
+    // MARK: - Sort-order crowding (Phase 4a, plan v2 section 1(b), review M8)
+
+    /// Two adjacent rows whose `sortOrder` values are closer than this (2^-30), or equal, are "crowded".
+    ///
+    /// Why it exists. `resolveInsertPlacement` puts an insert at the midpoint between its anchor and the next row,
+    /// so a run of paragraphs added in ONE spot halves the gap every time: after about 50 of them a double has no
+    /// room left, two rows get the SAME `sortOrder`, and their order is lost. Rich Text has the same latent collapse
+    /// (parked, not changed here: its callers pass `false`). Markdown typing makes it reachable in one batch: the
+    /// per-block writer sends a pasted run of paragraphs as ONE batch of chained inserts after one anchor.
+    static let crowdedSortOrderGap: Double = 1.0 / 1_073_741_824.0
+
+    /// Renumbers the project's `sortOrder`s as 1.0, 2.0, 3.0, ... in assembly order (`BlockParser.assemblySorted`:
+    /// by `sortOrder`, a heading before a non-heading at the same value) when any two adjacent rows are crowded.
+    /// Returns whether it renumbered. Runs on the caller's `db` handle, i.e. inside the batch's own transaction.
+    ///
+    /// RESOLVED VERIFY-FIRST (plan v2 section 1(b)): this restamps NOTHING and bumps NO epoch. It is a plain
+    /// `UPDATE block SET sortOrder = ?`: `lastWriteEpoch`, `lastWriteSequence` and `project.blockWriteEpoch` are not
+    /// touched (compare `stampWholeProjectForRewrite`, which does both). So no batch fetched earlier is refused
+    /// because of it, and the per-row "newer write wins" rule is unaffected. The ORDER of the rows is unchanged;
+    /// only the numbers move.
+    ///
+    /// What the numbers feed, and what that means if this were on for Rich Text (it stays OFF there): nothing in the
+    /// editor holds a `sortOrder` (a block is identified by its id; the poll's anchors are ids), so a Rich Text
+    /// batch in flight is unaffected. What DOES observe the numbers re-reads once: `observeOutlineBlocks` and the
+    /// section word counts (sums over `sortOrder` ranges, recomputed from the rows), because every row changed in
+    /// one transaction (one re-emit). `recomputeSectionParents` runs after this in the same transaction and reads
+    /// the new numbers. Anything that keeps a row's OLD number across the batch would see it move; the only such
+    /// holder found is a native structural-undo restore of a deleted section's rows (Phase 4b territory).
+    @discardableResult
+    static func renumberSortOrdersIfCrowded(db: Database, projectId: String) throws -> Bool {
+        let ordered = try assemblyOrderedSortOrders(db: db, projectId: projectId)
+        guard zip(ordered, ordered.dropFirst()).contains(where: { $1.sortOrder - $0.sortOrder < crowdedSortOrderGap }) else {
+            return false
+        }
+        try rewriteSortOrders(db: db, orderedIds: ordered.map { $0.id })
+        DebugLog.log(.data, "[BlockWriteStamp] sort orders crowded - renumbered \(ordered.count) rows (no restamp, no epoch bump)")
+        return true
+    }
+
+    /// The project's `(id, sortOrder)` pairs in assembly order.
+    private static func assemblyOrderedSortOrders(db: Database, projectId: String) throws -> [(id: String, sortOrder: Double)] {
+        let rows = try Row.fetchAll(
+            db, sql: "SELECT id, sortOrder, blockType FROM block WHERE projectId = ?", arguments: [projectId])
+        let headingRaw = BlockType.heading.rawValue
+        let items = rows.enumerated().map { offset, row in
+            (offset: offset, id: row["id"] as String, sortOrder: row["sortOrder"] as Double,
+             headingRank: (row["blockType"] as String) == headingRaw ? 0 : 1)
+        }
+        return items.sorted { lhs, rhs in
+            (lhs.sortOrder, lhs.headingRank, lhs.offset) < (rhs.sortOrder, rhs.headingRank, rhs.offset)
+        }.map { ($0.id, $0.sortOrder) }
+    }
+
+    private static func rewriteSortOrders(db: Database, orderedIds: [String]) throws {
+        let statement = try db.cachedStatement(sql: "UPDATE block SET sortOrder = ? WHERE id = ?")
+        for (index, id) in orderedIds.enumerated() {
+            try statement.execute(arguments: [Double(index + 1), id])
+        }
+    }
+
+    /// Whether inserting `insert` where it is anchored would leave a gap below `crowdedSortOrderGap` (the new
+    /// row lands at the midpoint, so each side gets half of the gap that exists now). False for an append at the
+    /// end (it lands a full 1.0 after the last row) and for an anchor that does not resolve (`processEditorInserts`
+    /// rejects it or falls back as it always does).
+    private static func insertWouldCrowd(
+        db: Database, insert: BlockInsert, projectId: String, idMapping: [String: String]
+    ) throws -> Bool {
+        if let rawAfterId = insert.afterBlockId {
+            let anchorId = idMapping[rawAfterId] ?? rawAfterId
+            guard let anchor = try Double.fetchOne(
+                db, sql: "SELECT sortOrder FROM block WHERE id = ?", arguments: [anchorId]),
+                  let next = try Double.fetchOne(
+                    db, sql: "SELECT MIN(sortOrder) FROM block WHERE projectId = ? AND sortOrder > ?",
+                    arguments: [projectId, anchor]) else { return false }
+            return (next - anchor) / 2.0 < crowdedSortOrderGap
+        }
+        if insert.atDocumentStart == true {
+            guard let first = try Double.fetchOne(
+                db, sql: "SELECT MIN(sortOrder) FROM block WHERE projectId = ?", arguments: [projectId]) else { return false }
+            return first / 2.0 < crowdedSortOrderGap
+        }
+        return false
+    }
+
+    /// `processEditorInserts` for the per-block Markdown writer: the inserts one at a time, with the crowding
+    /// check BEFORE each (renumber first when this insert would crowd, so a batch of 80 chained inserts after one
+    /// paragraph keeps every row distinct and in order), and one check after the last (any crowding left).
+    ///
+    /// The check cannot wait until after the batch: by then the chained inserts have halved the same gap 50+ times,
+    /// rows share a `sortOrder`, and their order is already lost. One insert per call also means the within-batch
+    /// image de-duplication in `processEditorInserts` does not apply here, on purpose: it exists for Rich Text's
+    /// poll race, and a Markdown document that holds the same image line twice must keep two rows.
+    private func processEditorInsertsRenumberingIfCrowded(
+        db: Database,
+        inserts: [BlockInsert],
+        projectId: String,
+        tombstones: [String: DeletedAnchor],
+        result: inout EditorApplyResult
+    ) throws {
+        // Only the no-anchor fallback of `processEditorInserts` reads this; the Markdown writer never sends one, but
+        // keep it truthful across a renumber (the end of the document is then `count + 1`).
+        var nextSortOrder = (try Double.fetchOne(
+            db, sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?", arguments: [projectId]) ?? 0) + 1.0
+        for insert in inserts {
+            if try Self.insertWouldCrowd(db: db, insert: insert, projectId: projectId, idMapping: result.idMapping) {
+                let ordered = try Self.assemblyOrderedSortOrders(db: db, projectId: projectId)
+                try Self.rewriteSortOrders(db: db, orderedIds: ordered.map { $0.id })
+                nextSortOrder = Double(ordered.count) + 1.0
+                DebugLog.log(.data, "[BlockWriteStamp] insert would crowd sort orders - renumbered \(ordered.count) rows first")
+            }
+            try processEditorInserts(
+                db: db, inserts: [insert], projectId: projectId, nextSortOrder: &nextSortOrder,
+                idMapping: &result.idMapping, tombstones: tombstones, reanchored: &result.reanchoredInserts,
+                rejected: &result.rejectedStaleAnchorInserts)
+        }
+        if !inserts.isEmpty {
+            try Self.renumberSortOrdersIfCrowded(db: db, projectId: projectId)
+        }
     }
 }

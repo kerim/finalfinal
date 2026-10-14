@@ -20,10 +20,22 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         case claimed
     }
 
-    private var preloadedMilkdownView: WKWebView?
+    /// Read by the citation fill (`EditorPreloader+CitationPrefill.swift`) to tell whether a spare is still the standby page; written only here.
+    private(set) var preloadedMilkdownView: WKWebView?
     private var preloadedCodeMirrorView: WKWebView?
+    private var citationStyleObserver: NSObjectProtocol?
     private(set) var milkdownState: State = .idle
     private(set) var codemirrorState: State = .idle
+
+    /// Bumped whenever the Rich Text spare is replaced (`startMilkdownPreloading`) or claimed (`claimMilkdownView`). A citation fill
+    /// remembers the generation it started on and stops the moment this differs (`CitationPrefillGuard`).
+    private(set) var milkdownSpareGeneration = 0
+    /// The generation of the spare most recently handed out by `claimMilkdownView()`; lets a stopped fill say "claimed" rather than "replaced".
+    private(set) var milkdownClaimedGeneration: Int?
+    /// Decides when the spare works the document's citations out ahead of time (`EditorPreloader+CitationPrefill.swift`). Created by
+    /// `startPreloading()` unless `TestMode.isCitationPrefillSchedulerEnabled` is false; nil in unit tests, which never start the preloader.
+    /// Not `private(set)`: `installCitationPrefillScheduler()` lives in `EditorPreloader+CitationPrefill.swift`, a different file.
+    var citationPrefillScheduler: CitationPrefillScheduler?
 
     private override init() {
         super.init()
@@ -35,9 +47,51 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
     /// Call from AppDelegate.applicationDidFinishLaunching
     func startPreloading() {
-        guard !TestMode.isTesting else { return }
+        // `FF_UI_TESTING_ENABLE_PRELOADER=1` (UI tests only) lets the preloader run under test exactly as in production; unset,
+        // the guard is the same `!TestMode.isTesting` as always.
+        guard !TestMode.isTesting || TestMode.isUITestingEditorPreloaderEnabled else { return }
+        if TestMode.isCitationPrefillSchedulerEnabled { installCitationPrefillScheduler() }
+        observeCitationStyleChanges()
         startMilkdownPreloading()
         startCodeMirrorPreloading()
+    }
+
+    // MARK: - Citation style for the Rich Text spare
+
+    /// Keeps the standby Rich Text page on the current citation style. Starts at launch (after the test guard above, so
+    /// unit tests never observe), once.
+    private func observeCitationStyleChanges() {
+        guard citationStyleObserver == nil else { return }
+        citationStyleObserver = NotificationCenter.default.addObserver(
+            forName: .citationStyleChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            // `queue: .main`: this runs on the main thread, so main-actor isolation is assumed.
+            MainActor.assumeIsolated { self?.citationStyleDidChange() }
+        }
+    }
+
+    /// Gives the Rich Text spare the current effective citation style (custom if configured and valid, else the bundled one)
+    /// ahead of the user's switch, so the engine rebuild a different style needs -- about a second -- happens in the standby
+    /// page instead of while the user waits. Called when the spare's page finishes loading and again when the style changes
+    /// while a spare is ready. A spare that is still loading is not touched: its own page-finished call reads the style then.
+    ///
+    /// The mount-time push (`MilkdownCoordinator.pushCitationStyle`) stays unconditional and always re-reads the file; the
+    /// page compares what it is pushed with what it already runs and skips an identical one. So a spare that missed this
+    /// push (a failed evaluation, a change in between) still ends up on the right style at mount, just not for free.
+    /// A failed push is logged, never retried here.
+    func pushCitationStyleToMilkdownSpare(reason: String) {
+        guard case .ready = milkdownState, let webView = preloadedMilkdownView else { return }
+        guard let path = ExportSettingsManager.shared.settings.effectiveCSLStylePath,
+              let styleXML = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8) else {
+            DebugLog.log(.zotero, "[EditorPreloader] Could not read CSL style file to push to the Milkdown spare (\(reason))")
+            return
+        }
+        DebugLog.log(.zotero, "[EditorPreloader] Pushing CSL style to the Milkdown spare (\(reason), \(styleXML.utf16.count) chars)")
+        webView.evaluateJavaScript(MilkdownEditor.Coordinator.setCitationStyleScript(styleXML)) { _, error in
+            if let error {
+                DebugLog.log(.zotero, "[EditorPreloader] Pushing CSL style to the Milkdown spare failed (\(reason)): \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Milkdown Preloading
@@ -101,6 +155,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
         webView.load(URLRequest(url: url))
         preloadedMilkdownView = webView
+        milkdownSpareGeneration += 1
     }
 
     // MARK: - CodeMirror Preloading
@@ -172,6 +227,12 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         if webView === preloadedMilkdownView {
             milkdownState = .ready
             DebugLog.log(.editor, "[EditorPreloader] Milkdown preload complete")
+            // UI-test-only (FF_UI_TESTING_CITATION_PREFILL=memoOff): the standby page runs without the citation memo from the start.
+            // A skipped `if` otherwise.
+            if TestMode.isUITestingCitationMemoOff { webView.evaluateJavaScript(CitationPrefillTestScripts.memoOff) { _, _ in } }
+            pushCitationStyleToMilkdownSpare(reason: "page loaded")
+            // After the style push above (the page runs its calls in order), so the fill finds the engine on the right style.
+            citationPrefillScheduler?.spareBecameReady()
         } else if webView === preloadedCodeMirrorView {
             codemirrorState = .ready
             DebugLog.log(.editor, "[EditorPreloader] CodeMirror preload complete")
@@ -271,6 +332,9 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
             return nil
         }
         preloadedMilkdownView = nil
+        milkdownClaimedGeneration = milkdownSpareGeneration
+        milkdownSpareGeneration += 1  // any citation fill running on this spare stops at its next check
+        citationPrefillScheduler?.spareClaimed()
         DebugLog.log(.editor, "[EditorPreloader] Milkdown WebView claimed successfully")
 
         restartMilkdownPreloading()

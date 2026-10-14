@@ -55,6 +55,9 @@ extension ContentView {
             )
             return
         }
+        // Slice 0 measurement (StructuralTrace.swift): the event that is current when the menu action fires is the click that
+        // chose the menu item. Read here, before the Task hop below. Silent unless tracing is on.
+        StructuralTrace.noteCommandClick(label: "sectionDelete", event: NSApp.currentEvent)
         Task {
             let outcome = await structuralUndoController.performSectionDelete(rootId: sectionId)
             // N2 (Phase B remediation plan): honest three-way reporting -- previously ANY
@@ -67,12 +70,19 @@ extension ContentView {
                 break
             case .refused:
                 DebugLog.log(.undo, "[ContentView] deleteSectionFromSidebar: op refused for section \(sectionId)")
+                // A command the lifecycle cancelled (a close, quit or switch started) is not a failure to report: the window is
+                // going away and the command was never run (addendum A21: no toast, no alert).
+                guard !editorState.structuralGate.isClosedToNewWork else { break }
                 sectionOperationAlert = SectionOperationAlert(
                     title: "Couldn't Delete Section",
                     message: "Nothing was changed."
                 )
             case .failedAfterCommit:
-                DebugLog.log(.undo, "[ContentView] deleteSectionFromSidebar: op committed but failed to finish recording for section \(sectionId) -- not undoable via Cmd-Z")
+                DebugLog.log(
+                    .undo,
+                    "[ContentView] deleteSectionFromSidebar: op committed but failed to finish recording "
+                        + "for section \(sectionId) -- not undoable via Cmd-Z"
+                )
                 sectionOperationAlert = SectionOperationAlert(
                     title: "Couldn't Undo This Change",
                     message: "The section was deleted, but the change couldn't be added to Undo history."
@@ -91,6 +101,7 @@ extension ContentView {
             )
             return
         }
+        StructuralTrace.noteCommandClick(label: "sectionDuplicate", event: NSApp.currentEvent) // slice 0 measurement, as above
         Task {
             let outcome = await structuralUndoController.performSectionDuplicate(rootId: sectionId)
             switch outcome {
@@ -98,12 +109,17 @@ extension ContentView {
                 break
             case .refused:
                 DebugLog.log(.undo, "[ContentView] duplicateSectionFromSidebar: op refused for section \(sectionId)")
+                guard !editorState.structuralGate.isClosedToNewWork else { break }   // cancelled by the lifecycle: see delete above
                 sectionOperationAlert = SectionOperationAlert(
                     title: "Couldn't Duplicate Section",
                     message: "Nothing was changed."
                 )
             case .failedAfterCommit:
-                DebugLog.log(.undo, "[ContentView] duplicateSectionFromSidebar: op committed but failed to finish recording for section \(sectionId) -- not undoable via Cmd-Z")
+                DebugLog.log(
+                    .undo,
+                    "[ContentView] duplicateSectionFromSidebar: op committed but failed to finish recording "
+                        + "for section \(sectionId) -- not undoable via Cmd-Z"
+                )
                 sectionOperationAlert = SectionOperationAlert(
                     title: "Couldn't Undo This Change",
                     message: "The section was duplicated, but the change couldn't be added to Undo history."

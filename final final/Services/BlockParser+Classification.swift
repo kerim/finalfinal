@@ -17,19 +17,26 @@ extension BlockParser {
     static func detectBlockType(_ content: String) -> (BlockType, Int?) {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // The checks below that use a regular expression are all anchored at the start of the text (`^`, which in
+        // `String.range(of:options: .regularExpression)` means the start of the whole string, not of a line), so each is
+        // tried only when the text's first character is one it can start with. Every other block skips the regex (a new
+        // pattern compile and a match) without changing the result. `trimmed` has no leading whitespace, so a pattern's own
+        // leading `\s*` matches nothing.
+        let firstScalar = trimmed.unicodeScalars.first
+
         // Heading: starts with # (1-6) — the only type carrying a level
-        if let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
+        if firstScalar == "#", let match = trimmed.range(of: "^(#{1,6})\\s+", options: .regularExpression) {
             let hashes = trimmed[match].filter { $0 == "#" }
             return (.heading, hashes.count)
         }
 
-        return (fencedOrQuotedType(trimmed) ?? listTableOrMediaType(trimmed), nil)
+        return (fencedOrQuotedType(trimmed, firstScalar: firstScalar) ?? listTableOrMediaType(trimmed, firstScalar: firstScalar), nil)
     }
 
     /// Fence-, rule- and quote-style types, or nil if `trimmed` is none of them.
     /// ORDER IS LOAD-BEARING: `$$` and ``` must be tested before the `---` horizontal-rule
     /// pattern, and the section-break comment before the `>` blockquote prefix.
-    private static func fencedOrQuotedType(_ trimmed: String) -> BlockType? {
+    private static func fencedOrQuotedType(_ trimmed: String, firstScalar: Unicode.Scalar?) -> BlockType? {
         // Display math block: starts with $$ (either $$...$$ on one line or multi-line).
         // Checked against the block's FIRST LINE only, via the exact same opener
         // predicate `RawBlockSplitter.consumeDisplayMath` (BlockParser+Splitting.swift)
@@ -41,16 +48,22 @@ extension BlockParser {
         // "$$E = mc^2$$ is the famous equation." — a legitimate embedded closing `$$`
         // followed by trailing prose, never a genuine fence opener) as `.mathDisplay`
         // just because its content happened to start with `$$`.
-        let firstLine = trimmed.components(separatedBy: "\n").first ?? trimmed
-        if mathDisplayFenceLineRole(firstLine.trimmingCharacters(in: .whitespaces)).isOpener {
-            return .mathDisplay
+        //
+        // Only a block that starts with `$$` can open a fence (`mathDisplayFenceLineRole` needs the `$$` prefix, or the line
+        // to BE `$$`), and `trimmed` has no leading whitespace, so the first line is only split out for those blocks.
+        if trimmed.hasPrefix("$$") {
+            let firstLine = trimmed.components(separatedBy: "\n").first ?? trimmed
+            if mathDisplayFenceLineRole(firstLine.trimmingCharacters(in: .whitespaces)).isOpener {
+                return .mathDisplay
+            }
         }
         // Code block: starts with ```
         if trimmed.hasPrefix("```") { return .codeBlock }
         // Horizontal rule: ---, ***, ___
-        if trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil { return .horizontalRule }
+        if firstScalar == "-" || firstScalar == "*" || firstScalar == "_",
+           trimmed.range(of: "^[-*_]{3,}$", options: .regularExpression) != nil { return .horizontalRule }
         // Section break: <!-- ::break:: -->
-        if isSectionBreakMarker(trimmed) { return .sectionBreak }
+        if isSectionBreakMarker(ofTrimmed: trimmed) { return .sectionBreak }
         // Blockquote: starts with >
         if trimmed.hasPrefix(">") { return .blockquote }
         return nil
@@ -177,20 +190,30 @@ extension BlockParser {
             .trimmingCharacters(in: .whitespaces) == sectionBreakMarker
     }
 
+    /// `isSectionBreakMarker` for text that has already been trimmed of whitespace AND newlines at both ends (`BlockParser.parse`'s
+    /// raw blocks, `detectBlockType`'s own `trimmed`). Such text has no leading whitespace, so its first line can only equal the
+    /// marker if the text starts with the marker's first character, "<"; every other block is answered without scanning its
+    /// first line. Same result as `isSectionBreakMarker` for any text it is allowed to be called with.
+    static func isSectionBreakMarker(ofTrimmed trimmed: String) -> Bool {
+        trimmed.hasPrefix("<") && isSectionBreakMarker(trimmed)
+    }
+
     /// List, table, image and bibliography types, falling back to `.paragraph`.
     /// Only reached when `fencedOrQuotedType` found no match.
-    private static func listTableOrMediaType(_ trimmed: String) -> BlockType {
+    private static func listTableOrMediaType(_ trimmed: String, firstScalar: Unicode.Scalar?) -> BlockType {
         // Bullet list: starts with - * +
-        if trimmed.range(of: "^\\s*[-*+]\\s+", options: .regularExpression) != nil { return .bulletList }
-        // Ordered list: starts with 1. 2. etc
-        if trimmed.range(of: "^\\s*\\d+\\.\\s+", options: .regularExpression) != nil { return .orderedList }
+        if firstScalar == "-" || firstScalar == "*" || firstScalar == "+",
+           trimmed.range(of: "^\\s*[-*+]\\s+", options: .regularExpression) != nil { return .bulletList }
+        // Ordered list: starts with 1. 2. etc (`\\d` is any Unicode decimal digit, not only 0-9)
+        if let firstScalar, firstScalar.properties.generalCategory == .decimalNumber,
+           trimmed.range(of: "^\\s*\\d+\\.\\s+", options: .regularExpression) != nil { return .orderedList }
         // Table: starts with |
         if trimmed.hasPrefix("|") { return .table }
         // Caption + Image: <!-- caption: text -->\n...\n![alt](url)
         if trimmed.hasPrefix("<!--"), trimmed.contains("caption:"),
            trimmed.range(of: "!\\[", options: .regularExpression) != nil { return .image }
         // Image: ![alt](url)
-        if trimmed.range(of: "^!\\[", options: .regularExpression) != nil { return .image }
+        if firstScalar == "!", trimmed.range(of: "^!\\[", options: .regularExpression) != nil { return .image }
         // Bibliography marker
         if trimmed.contains("<!-- ::auto-bibliography:: -->") { return .bibliography }
         // Default: paragraph
@@ -203,10 +226,15 @@ extension BlockParser {
     /// content with no blank line in between (see the call site in
     /// `RawBlockSplitter.consumeContentLine` for why this matters).
     static func listMarkerKind(_ trimmedLine: String) -> BlockType? {
-        if trimmedLine.range(of: "^[-*+]\\s+", options: .regularExpression) != nil {
+        // Both patterns are anchored at the start of the line, so a line whose first character cannot start either of them
+        // (nearly every line of prose) skips both regular expressions.
+        guard let first = trimmedLine.unicodeScalars.first else { return nil }
+        if first == "-" || first == "*" || first == "+",
+           trimmedLine.range(of: "^[-*+]\\s+", options: .regularExpression) != nil {
             return .bulletList
         }
-        if trimmedLine.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil {
+        if first.properties.generalCategory == .decimalNumber,
+           trimmedLine.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil {
             return .orderedList
         }
         return nil
@@ -305,11 +333,14 @@ extension BlockParser {
         return codeLines.joined(separator: "\n")
     }
 
+    /// Compiled once. `strippingFootnoteDefinitionPrefixes` used to compile it again for every block it was called on.
+    private static let footnoteDefinitionPrefixRegex = try? NSRegularExpression(
+        pattern: #"^\[\^\d+\]:\s*"#, options: .anchorsMatchLines
+    )
+
     /// Strips footnote definition prefixes: `[^N]:` at line start.
     private static func strippingFootnoteDefinitionPrefixes(_ text: String) -> String {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"^\[\^\d+\]:\s*"#, options: .anchorsMatchLines
-        ) else { return text }
+        guard let regex = footnoteDefinitionPrefixRegex else { return text }
         let range = NSRange(text.startIndex..., in: text)
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
     }

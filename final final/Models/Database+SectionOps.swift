@@ -38,7 +38,8 @@ extension ProjectDatabase {
     /// Resolve the ordered block ids making up a section's full subtree: the leader block
     /// (heading or section-break/pseudo-section) itself, its own body blocks, and every
     /// deeper-level descendant leader (+ its own body blocks) that immediately follows it in
-    /// document order -- stopping at the first sibling-or-shallower leader.
+    /// document order -- stopping at the first sibling-or-shallower leader, or at the first
+    /// Notes/Bibliography row (see the stop in `resolveSectionSubtree`'s leader loop).
     ///
     /// Mirrors two existing pieces of the codebase rather than inventing a third: the
     /// leader/body grouping `reorderAllBlocks` uses (`groupBlocksBySections` in
@@ -55,6 +56,22 @@ extension ProjectDatabase {
         try read { db in
             try Self.resolveSectionSubtree(db: db, rootId: rootId, projectId: projectId)?.blockIds
         }
+    }
+
+    /// Whether `rootId` is a block `sectionBlockIds` would resolve a subtree for, decided from that ONE row: it exists in this
+    /// project, is a heading or a section break (`isPseudoSection`), and is neither the Notes nor the Bibliography row. Those are
+    /// exactly the cases where `resolveSectionSubtree` returns nil, so `isDeletableSectionRoot == (sectionBlockIds != nil)` for every
+    /// id. Exists because the editor-first delete only needs the yes or no before it calls the editor, and `resolveSectionSubtree`
+    /// answers it by fetching and decoding every block row of the project (about 1,100 on the twelve-chapter book) on the main thread.
+    func isDeletableSectionRoot(rootId: String, projectId: String) throws -> Bool {
+        try read { db in
+            try Self.isDeletableSectionRoot(db: db, rootId: rootId, projectId: projectId)
+        }
+    }
+
+    static func isDeletableSectionRoot(db: Database, rootId: String, projectId: String) throws -> Bool {
+        guard let root = try Block.fetchOne(db, key: rootId), root.projectId == projectId else { return false }
+        return (root.blockType == .heading || root.isPseudoSection) && !root.isBibliography && !root.isNotes
     }
 
     /// Ordered block ids of a section's subtree, plus the root leader's display title.
@@ -79,6 +96,16 @@ extension ProjectDatabase {
 
         var subtreeLeaders = [root]
         for leader in leaders[(rootIndex + 1)...] {
+            // Never reaches a Notes or Bibliography row, whatever its level (t-94369a83 Phase 4b, D1.0):
+            // those regions are machine-managed, so the section ends before the first one. Without
+            // this stop, a final top-level chapter followed by a Notes heading one level below it (a
+            // Notes H2 after an H1 chapter) took the Notes heading too. BEHAVIOUR CHANGE, named: Delete and
+            // Duplicate of such a final chapter no longer take or copy the Notes heading row and the
+            // footnote rows grouped under it (they hang under the Notes heading as its body). The
+            // editor's own range rule (`deleteSectionEditorFirst`, web/milkdown) uses the same stop,
+            // so the two paths agree. A section break is a leader at effective level 1
+            // (`headingLevel ?? 1`, as below); an `hr` is never a leader (it is not in `leaders`).
+            if leader.isNotes || leader.isBibliography { break }
             let level = leader.headingLevel ?? 1
             guard level > rootLevel else { break }
             subtreeLeaders.append(leader)
@@ -93,6 +120,13 @@ extension ProjectDatabase {
         for block in allBlocks {
             if leaderIds.contains(block.id) {
                 currentLeaderId = block.id
+            } else if block.isBibliography || block.isNotes {
+                // t-94369a83 Phase 4b fix round 2a, item 10: a Notes or Bibliography row that is NOT a leader (the bibliography's
+                // opening marker, `BlockParser` keeps it as its own `.bibliography` row, or a headingless bibliography run) ends
+                // body grouping. Without this it was filed under the last user chapter before it, so deleting the LAST chapter of
+                // a document with a bibliography deleted that marker row in the database while the editor (whose range rule stops
+                // at the first managed row) kept it, and Duplicate copied it.
+                currentLeaderId = nil
             } else if let leaderId = currentLeaderId {
                 bodyByLeader[leaderId, default: []].append(block)
             }
@@ -133,23 +167,31 @@ extension ProjectDatabase {
     @discardableResult
     func deleteSections(rootId: String, projectId: String) throws -> String? {
         try write { db in
-            guard let subtree = try Self.resolveSectionSubtree(db: db, rootId: rootId, projectId: projectId) else {
-                return nil
-            }
-            let orderedIds = subtree.blockIds
-            guard !orderedIds.isEmpty else { return nil }
-
-            let fetched = try Block.filter(keys: orderedIds).fetchAll(db)
-            guard fetched.count == orderedIds.count else { return nil }
-
-            try Block.filter(keys: orderedIds).deleteAll(db)
-
-            // Deleting a section's subtree can change which heading precedes which --
-            // re-persist sectionParentId to match. See Database+BlockParents.swift.
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
-
-            return subtree.rootTitle
+            try Self.deleteSections(db: db, rootId: rootId, projectId: projectId)?.rootTitle
         }
+    }
+
+    /// The body of `deleteSections(rootId:projectId:)` on an open `Database`, for a caller already inside a write
+    /// transaction (t-94369a83 Phase 4b, slice 2a: `SectionDeleteJob` deletes the rows in the same transaction that wrote the
+    /// Version History snapshot). Returns the deleted subtree (its ordered row ids and the root's title), or `nil` -- with
+    /// nothing deleted -- when the root is not a deletable leader, exactly as `deleteSections(rootId:projectId:)` returns nil.
+    static func deleteSections(db: Database, rootId: String, projectId: String) throws -> SectionSubtree? {
+        guard let subtree = try Self.resolveSectionSubtree(db: db, rootId: rootId, projectId: projectId) else {
+            return nil
+        }
+        let orderedIds = subtree.blockIds
+        guard !orderedIds.isEmpty else { return nil }
+
+        let fetched = try Block.filter(keys: orderedIds).fetchAll(db)
+        guard fetched.count == orderedIds.count else { return nil }
+
+        try Block.filter(keys: orderedIds).deleteAll(db)
+
+        // Deleting a section's subtree can change which heading precedes which --
+        // re-persist sectionParentId to match. See Database+BlockParents.swift.
+        try Self.recomputeSectionParents(db: db, projectId: projectId)
+
+        return subtree
     }
 
     /// Duplicate a section's full subtree: every Block row in it is deep-copied verbatim with a

@@ -4,24 +4,27 @@
 //
 //  Tier 2: Visible Breakage — reproduction test for TLA+ Finding #8
 //  (Calm_InsertThenQuit, docs/architecture/tla/DocSyncCurrent.tla): before
-//  `EditorViewState.flushForQuit()` (EditorViewState+Quit.swift), quit never
-//  stopped the 2s block-sync poll before flushing. A poll cycle already
+//  quit drained the poll, it never stopped the 2s block-sync poll before flushing. A poll cycle already
 //  running (or one whose timer simply hadn't been invalidated yet) could fire
 //  after the quit-time flush had already written a freshly-typed paragraph to
 //  the database via a full re-parse, and re-apply the editor's still-pending,
 //  unconfirmed "insert" change for that same paragraph through the ordinary
 //  incremental poll path — landing it a second time as a duplicate row.
 //
-//  `flushForQuit()` fixes this by calling `stopPollingAndDrain()` BEFORE
-//  fetching fresh content and flushing (mirroring `performProjectClose()`),
-//  so any poll cycle already in flight is drained (cancelled, for an unforced
-//  cycle) before the flush ever writes anything — no later apply can land on
-//  top of it.
+//  Quit fixes this by stopping and draining the poll BEFORE fetching fresh
+//  content and writing it, so any poll cycle already in flight is drained
+//  (cancelled, for an unforced cycle) before the write ever lands — no later
+//  apply can land on top of it. Since round C6 (t-94369a83 3a-1b) that drain is
+//  step 0 and step 4 of the lifecycle save sequence, which quit runs through
+//  `EditorViewState.flushForQuit(token:host:...)` (EditorViewState+Quit.swift)
+//  under a QUIT token; each test below keeps its assertion and changes only its
+//  entry (`QuitFlushTestSupport`, Helpers/).
 //
 //  WHY A SIMULATED POLL CYCLE, NOT A REAL TIMER: an earlier version of this
 //  test called the real `sync.startPolling()` and waited on a `Task.sleep`
 //  loop for its repeating `Timer` to fire naturally. That passed (1 row) even
-//  with `stopPollingAndDrain()` disabled -- a vacuous pass, because a `Timer`
+//  with the poll drain disabled (step 0's `stopPolling()` and step 4's
+//  `raceDrain(bound:)`) -- a vacuous pass, because a `Timer`
 //  doesn't reliably fire while this test host's MainActor is busy inside a
 //  `Task.sleep` loop rather than running the CFRunLoop that services it (the
 //  same RunLoop-dependency failure mode documented in
@@ -35,11 +38,12 @@
 //  cycle via `pollBlockChangesForTest(force: false)` -- simulating exactly
 //  what the real Timer's tick would invoke -- and parks it at the very top of
 //  its cycle, registered in `BlockSyncService`'s private `inFlightPoll` slot,
-//  via `testPollCycleHook`, so `stopPollingAndDrain()`'s `drainInFlightPoll()`
-//  has a real in-flight cycle to cancel/await. `flushForQuit()` is called
+//  via `testPollCycleHook`, so the sequence's drain (step 4's `raceDrain(bound:)`,
+//  which awaits `drainInFlightPoll()`) has a real in-flight cycle to cancel/await.
+//  `flushForQuit()` is called
 //  INLINE (not spawned concurrently) while that cycle is parked: with the fix
 //  restored, its own drain call cancels the parked cycle from the inside (see
-//  `QuitPollGate` below) before `flushForQuit()` ever fetches or flushes
+//  `QuitPollGate` below) before the sequence ever fetches or writes
 //  anything, so the inline `await` only returns once the parked cycle has
 //  actually unwound.
 //
@@ -111,8 +115,8 @@ private struct GateState: Sendable {
 /// `BlockSyncProjectSwitchDrainTests.swift`'s `SwitchGate` (that one is
 /// private to its own file and can't be reused directly from here).
 ///
-/// CANCELLATION-AWARE: once `flushForQuit()`'s `stopPollingAndDrain()` call is
-/// restored, quitting cancels this parked cycle's own work task WHILE it is
+/// CANCELLATION-AWARE: once `flushForQuit()`'s poll drain (step 4's
+/// `raceDrain(bound:)`) is in place, quitting cancels this parked cycle's own work task WHILE it is
 /// sitting inside `waitAtGate()` -- `BlockSyncService.runPollCycle`'s
 /// `withTaskCancellationHandler` calls `work.cancel()` on it directly.
 /// `waitAtGate()` installs its own `withTaskCancellationHandler` so that
@@ -279,7 +283,7 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         )
 
         // Push the watchdog well past both flushForQuit()'s worst case (up to one
-        // poll watchdog period for stopPollingAndDrain()'s own drain wait --
+        // poll watchdog period for the sequence's own poll drain wait --
         // BlockSyncService.defaultPollWatchdogSeconds, 8s by default -- plus a 2s
         // WebView fetch timeout plus a 3s bibliography/footnote flush bound) and the
         // 15s safety net below, so only the fix's own drain cancellation or that
@@ -321,16 +325,18 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         XCTAssertFalse(sync.testInFlightPollIsNil, "the poll cycle must be genuinely in flight before quit begins")
 
         // Simulate quit while that poll cycle is still parked -- exactly the race
-        // `flushForQuit()`'s `stopPollingAndDrain()` call exists to close. Called
+        // `flushForQuit()`'s poll drain (step 0's `stopPolling()`, step 4's
+        // `raceDrain(bound:)`) exists to close. Called
         // INLINE (not spawned concurrently): once the fix is restored,
-        // `stopPollingAndDrain()`'s drain cancels this parked cycle from the inside
+        // the sequence's drain cancels this parked cycle from the inside
         // (via `QuitPollGate`'s `withTaskCancellationHandler`) before `flushForQuit()`
         // ever fetches or flushes anything, so this `await` only returns once the
         // parked cycle has actually unwound. With the fix still disabled, this
         // returns immediately (the flush never waits on the poll at all), leaving the
         // cycle parked for `gate.open()` below to release afterward -- reproducing the
         // duplicate-insert race.
-        await editorState.flushForQuit()
+        guard let quitToken = QuitFlushTestSupport.armQuit(editorState) else { return XCTFail("could not arm the quit token") }
+        await QuitFlushTestSupport.flush(editorState, token: quitToken, webView: helper.webView)
 
         // Direct assertion on the drain's own effect -- more robust than relying only on
         // the downstream row count below, which could still read 1 by coincidence (e.g.
@@ -360,7 +366,7 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
     // MARK: - Test 2: quit disarms the periodic timer
 
     /// Regression test for the OTHER half of the fix: quit must disarm the
-    /// periodic poll Timer itself (`stopPolling()`, inside `stopPollingAndDrain()`),
+    /// periodic poll Timer itself (`stopPolling()`, the save sequence's step 0),
     /// not just drain whatever cycle happens to be in flight at the moment of quit —
     /// otherwise a fresh tick could still fire and re-insert after the flush. No
     /// WebView or database wiring needed: `flushForQuit()` tolerates an unconfigured
@@ -375,13 +381,14 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         defer { sync.stopPolling() }
         sync.startPolling()
         XCTAssertTrue(sync.testPollTimerIsArmed)
-        await editorState.flushForQuit()
+        guard let quitToken = QuitFlushTestSupport.armQuit(editorState) else { return XCTFail("could not arm the quit token") }
+        await QuitFlushTestSupport.flush(editorState, token: quitToken, webView: nil)
         XCTAssertFalse(sync.testPollTimerIsArmed,
             "quit must disarm the periodic poll so no fresh cycle can re-insert after the flush")
     }
 
-    // MARK: - Test 3: forced Notes rebuild poll (the OTHER trigger flushForQuit's
-    // suppressRebuildsForQuit guards against, distinct from the periodic-poll race
+    // MARK: - Test 3: forced Notes rebuild poll (the OTHER trigger the quit's lifecycle
+    // token guards against, distinct from the periodic-poll race
     // tests 1/2 cover)
 
     /// Reproduction + regression test for the fix's OTHER half: `flushForQuit()` ->
@@ -401,7 +408,7 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
     ///
     /// NO GATE/HOOK NEEDED HERE (unlike test 1's `QuitPollGate`): that test has to hold
     /// a poll cycle deterministically parked mid-flight because it races
-    /// `stopPollingAndDrain()` against an *unforced* cycle that would otherwise skip
+    /// the sequence's drain (`raceDrain(bound:)`) against an *unforced* cycle that would otherwise skip
     /// unless caught at exactly the right moment. `force: true` here unconditionally
     /// bypasses those same guards, so once `handleNotesSectionChanged()`'s `Task` is
     /// spawned there is nothing left to synchronize against except that `Task`'s own
@@ -437,8 +444,9 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
 
         // Schedule a debounced Notes update -- simulates a footnote reference typed a
         // moment earlier, still sitting inside FootnoteSyncService's 3s debounce when
-        // quit happens. `flushForQuit()` below forces it to run NOW via
-        // `flushPendingSync()` instead of waiting out that debounce.
+        // quit happens. Arming the quit token below SUSPENDS it (step 0: the debounce is
+        // cancelled and the request recorded) -- since round C6 a quit no longer forces it
+        // to run mid-quit; the test posts the rebuild notification itself instead.
         view.footnoteSyncService.checkAndUpdateFootnotes(
             footnoteRefs: ["1"], projectId: pid, fullContent: "# Alpha\n\n[^1]\n\none two three."
         )
@@ -447,7 +455,7 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         // placeCursorAtEndOfHeading's doc comment: an anchor on the paragraph would be
         // invalidated by flushContentToDatabase's own full reparse before the forced
         // rebuild poll ever ran, silently absorbing the race regardless of whether
-        // suppressRebuildsForQuit works.
+        // the quit token's rebuild deferral works.
         try await placeCursorAtEndOfHeading(helper)
         try await Task.sleep(nanoseconds: 200_000_000)
         try pressEnter(window: window)
@@ -488,14 +496,20 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
-        // The real quit path: arms suppressRebuildsForQuit, drains (a no-op here -- no
-        // poll was ever started in this test), fetches fresh WebView content (includes
-        // the typed marker), then flushAllSync() -> flushAllSyncCore()'s
-        // flushContentToDatabase() writes the marker via a full reparse (1 row) before
-        // flushPendingBibliographyAndFootnoteSync() forces the footnote update scheduled
-        // above to run now -- which posts .notesSectionChanged synchronously from
-        // inside this same call stack, exactly as production's debounce-fire path would.
-        await view.editorState.flushForQuit()
+        // The quit path: the quit token is armed FIRST (as `AppDelegate.runQuitSequence`
+        // does), and the rebuild notification a debounce firing during the quit would
+        // post arrives with the token armed -- the handler must DEFER it (set its pending
+        // flag, spawn no Task, run no forced poll) instead of re-applying the
+        // still-pending insert on top of the row the sequence writes. Then the sequence
+        // runs: it drains and force-sends the editor, fetches fresh WebView content
+        // (includes the typed marker) and writes it once through the ordered queue (1 row).
+        guard let quitToken = QuitFlushTestSupport.armQuit(view.editorState) else { return XCTFail("could not arm the quit token") }
+        NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
+        XCTAssertTrue(
+            view.editorState.pendingNotesRebuild,
+            "the rebuild handler must defer (not run) while the quit token is armed")
+        XCTAssertTrue(view.editorState.runningRebuildTasks.isEmpty, "a deferred handler starts no rebuild task")
+        await QuitFlushTestSupport.flush(view.editorState, token: quitToken, webView: helper.webView)
 
         // Bounded poll (not a fixed sleep-and-hope): gives handleNotesSectionChanged()'s
         // fire-and-forget Task time to actually run its forced
@@ -511,8 +525,8 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
             markerRows, 1,
             "Quit must write the footnote-triggering paragraph exactly once; found \(markerRows) " +
             "rows containing '\(Self.marker)' (2+ means handleNotesSectionChanged()'s forced " +
-            "rebuild poll re-inserted the still-pending edit after suppressRebuildsForQuit should " +
-            "have blocked the handler from ever starting its Task)"
+            "rebuild poll re-inserted the still-pending edit although the armed quit token should " +
+            "have deferred the handler before it ever started its Task)"
         )
     }
 }

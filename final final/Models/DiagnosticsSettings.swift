@@ -33,6 +33,9 @@ final class DiagnosticsSettings {
             // concurrent isEnabled read on another thread could repopulate the cache with the
             // pre-write value. See DiagnosticLogFile.invalidateEnabledCache's doc comment.
             DiagnosticLogFile.invalidateEnabledCache()
+            // Slice 0 measurement (StructuralTrace.swift): lets an open editor follow the toggle (its typing-trace flag).
+            // Posted after the cache invalidation, so `StructuralTrace.isOn` already reads the new value.
+            NotificationCenter.default.post(name: .diagnosticsLoggingChanged, object: nil)
         }
     }
 
@@ -70,4 +73,9 @@ final class DiagnosticsSettings {
         )
         lastReportGeneratedAt = Self.userDefaults.object(forKey: Keys.lastReportGeneratedAt) as? Date
     }
+}
+
+extension Notification.Name {
+    /// Posted by `DiagnosticsSettings.loggingEnabled`'s setter after the logging gate has changed.
+    static let diagnosticsLoggingChanged = Notification.Name("diagnosticsLoggingChanged")
 }

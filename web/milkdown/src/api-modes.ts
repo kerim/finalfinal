@@ -7,7 +7,7 @@ import { getMarkdown } from '@milkdown/kit/utils';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
 import { gfmTable } from 'micromark-extension-gfm-table';
-import { getContent, setContent } from './api-content';
+import { getContent, getRawSerialisedMarkdown, setContent } from './api-content';
 import { getBlockIdAtPos } from './block-id-plugin';
 import { mdToTextOffset, textToMdOffset } from './cursor-mapping';
 import { getEditorInstance } from './editor-state';
@@ -277,7 +277,9 @@ export function getCursorPosition(): {
   try {
     const view = editorInstance.ctx.get(editorViewCtx);
     const { head } = view.state.selection;
-    const markdown = editorInstance.action(getMarkdown());
+    // The switch to Markdown has just read the same document through getContent(); this reuses that
+    // serialisation (raw text, same as before) instead of serialising a second time.
+    const markdown = getRawSerialisedMarkdown(editorInstance);
     const mdLines = markdown.split('\n');
 
     const line = pmPosToMdLine(view, head, mdLines);

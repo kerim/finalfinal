@@ -131,38 +131,45 @@ extension ProjectDatabase {
     /// Notes that already existed for Bibliography.
     func fetchSectionSyncSnapshot(projectId: String) throws -> SectionSyncSnapshot {
         try read { db in
-            let dbSections = try Section
-                .filter(Section.Columns.projectId == projectId)
-                .order(Section.Columns.sortOrder)
-                .fetchAll(db)
-            let bibHeadingTitle = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                .filter(Block.Columns.isBibliography == true)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)?.textContent
-            let notesHeadingTitle = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
-                .filter(Block.Columns.isNotes == true)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)?.textContent
-            let bibliographyExistsInBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isBibliography == true)
-                .fetchCount(db) > 0
-            let notesExistsInBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.isNotes == true)
-                .fetchCount(db) > 0
-            return SectionSyncSnapshot(
-                dbSections: dbSections,
-                existingBibTitle: bibHeadingTitle ?? dbSections.first(where: { $0.isBibliography })?.title,
-                existingNotesTitle: notesHeadingTitle ?? dbSections.first(where: { $0.isNotes })?.title,
-                bibliographyExistsInBlocks: bibliographyExistsInBlocks,
-                notesExistsInBlocks: notesExistsInBlocks
-            )
+            try Self.sectionSyncSnapshot(db: db, projectId: projectId)
         }
+    }
+
+    /// `fetchSectionSyncSnapshot` on an open `Database` handle: the same reads, so a caller already inside a
+    /// transaction (`SnapshotService`'s in-transaction snapshot, t-94369a83 Phase 4b) sees the same
+    /// precedence for the bibliography/Notes heading titles as the section sync does.
+    static func sectionSyncSnapshot(db: Database, projectId: String) throws -> SectionSyncSnapshot {
+        let dbSections = try Section
+            .filter(Section.Columns.projectId == projectId)
+            .order(Section.Columns.sortOrder)
+            .fetchAll(db)
+        let bibHeadingTitle = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+            .filter(Block.Columns.isBibliography == true)
+            .order(Block.Columns.sortOrder)
+            .fetchOne(db)?.textContent
+        let notesHeadingTitle = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+            .filter(Block.Columns.isNotes == true)
+            .order(Block.Columns.sortOrder)
+            .fetchOne(db)?.textContent
+        let bibliographyExistsInBlocks = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.isBibliography == true)
+            .fetchCount(db) > 0
+        let notesExistsInBlocks = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.isNotes == true)
+            .fetchCount(db) > 0
+        return SectionSyncSnapshot(
+            dbSections: dbSections,
+            existingBibTitle: bibHeadingTitle ?? dbSections.first(where: { $0.isBibliography })?.title,
+            existingNotesTitle: notesHeadingTitle ?? dbSections.first(where: { $0.isNotes })?.title,
+            bibliographyExistsInBlocks: bibliographyExistsInBlocks,
+            notesExistsInBlocks: notesExistsInBlocks
+        )
     }
 
     /// Fetch only root sections (no parent) for a project

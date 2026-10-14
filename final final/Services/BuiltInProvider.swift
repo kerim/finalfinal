@@ -33,9 +33,12 @@ final class BuiltInProvider: ProofingProvider {
 
             var orthography: NSOrthography?
             var wordCount: Int = 0
+            // Spelling only: only `.spelling` results are used below, and asking for every
+            // type made the checker run its grammar pass (an XPC round trip on the main thread,
+            // most of a typing pause's cost) just to have those results thrown away.
             let results = checker.check(
                 segment.text, range: range,
-                types: NSTextCheckingAllTypes,
+                types: NSTextCheckingResult.CheckingType.spelling.rawValue,
                 options: [:],
                 inSpellDocumentWithTag: documentTag,
                 orthography: &orthography,

@@ -16,10 +16,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The application's database connection
     var database: AppDatabase?
 
-    /// Reference to editor state for cleanup on quit
-    weak var editorState: EditorViewState?
+    /// Every ContentView's editor state, registered with the window its view is in. `editorState` (declared in
+    /// `AppDelegate+EditorState.swift`) resolves the MAIN window's state from it, so the extra window Finder creates
+    /// for an open-document event can never become the state the close / switch / quit lifecycle acts on
+    /// (`EditorStateRegistry`). A stored property, so it lives here and not in the extension.
+    let editorStateRegistry = EditorStateRegistry()
 
-    /// Reference to auto-backup service for quit-time snapshot
+    /// Reference to the auto-backup service (Save marks it clean: `FileCommands`). Quit does NOT use it: the
+    /// quit's automatic version goes through the service the lifecycle host captured (N4), because the next
+    /// ContentView overwrites this weak reference (Help > Getting Started with a project open).
     weak var autoBackupService: AutoBackupService?
 
     /// Reference to main window for close interception. Read by `FullScreenManager`, which
@@ -65,8 +70,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// file-scoped.
     var escapeEventOrdinal: UInt64 = 0
 
-    /// Whether applicationShouldTerminate already flushed content (prevents redundant flush in applicationWillTerminate)
-    private var didFlushForQuit = false
+    /// Whether the quit sequence already saved and backed up (prevents redundant flush in applicationWillTerminate).
+    /// Not private: set from `AppDelegate+QuitSequence.swift`, and Swift's `private` is file-scoped.
+    var didFlushForQuit = false
+
+    /// The ONE task a quit runs in (own sequence or joined onto a close / project switch), or nil when no quit
+    /// has started. A second Cmd-Q while it is set returns `.terminateLater` without a second task
+    /// (`runQuitSequence`). `applicationWillTerminate` reads it to skip its direct flush (N5). Not private, for
+    /// the same reason as `didFlushForQuit`.
+    var quitTask: Task<Void, Never>?
 
     /// Coalesces window-frame writes across a resize/move gesture's many per-tick notifications
     /// down to a single pending value. See `WindowFrameCoalescer` and `scheduleFrameFlush()`.
@@ -350,6 +362,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // This is necessary because WKWebView captures keyboard events and
         // SwiftUI's .onKeyPress(.escape) is unreliable when WebView has focus
         setupEscapeKeyMonitor()
+
+        // Slice 0 measurement (StructuralTrace.swift): the one key-down monitor behind `[TYPING-TRACE] key`. Logs only while
+        // tracing is on; always passes the event through untouched.
+        StructuralTrace.installKeyMonitor()
     }
 
     /// Re-enters true full screen (not just a maximized window) if that's how the main window
@@ -386,30 +402,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // layer ladder (UX contract §6) -- live in AppDelegate+EscapeKeyMonitor.swift, moved there to
     // keep this class's body under SwiftLint's type_body_length limit.
 
+    /// The whole quit lives in `runQuitSequence(reply:)` (AppDelegate+QuitSequence.swift, item 31): the same save
+    /// sequence close and project switch use, an automatic version, then the reply. The reply is injected there so
+    /// no test ever reaches `NSApp.reply`; this is the one place it is wired to the real one.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let editorState = editorState, !editorState.content.isEmpty else {
-            return .terminateNow
-        }
-
-        Task { @MainActor in
-            // Stop/drain the poll, fetch fresh content from the active WebView, then flush --
-            // mirrors performProjectClose()'s drain-before-flush order (see EditorViewState+Quit.swift).
-            await editorState.flushForQuit()
-
-            // Create final auto-backup with timeout to avoid blocking termination
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await self.autoBackupService?.appWillQuit() }
-                group.addTask { try? await Task.sleep(for: .seconds(3)) }
-                _ = await group.next()
-                group.cancelAll()
-            }
-
-            self.didFlushForQuit = true
-            self.removeEscapeKeyMonitor()
-            NSApp.reply(toApplicationShouldTerminate: true)
-        }
-
-        return .terminateLater
+        runQuitSequence(reply: { NSApp.reply(toApplicationShouldTerminate: $0) })
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -419,13 +416,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // content was already flushed by applicationShouldTerminate, and has no bearing on
         // whether a coalesced window-frame write is pending. It also isn't reliably set --
         // applicationShouldTerminate returns .terminateNow early, without ever setting it, when
-        // there's no editorState or its content is empty (see above). So the frame flush has to
+        // there's no editorState or there is nothing to save (see `runQuitSequence`). So the frame flush has to
         // sit outside and independent of that gate, and run on every termination path, not just
         // the ones that happen to set didFlushForQuit.
         flushWindowFrame(trigger: "terminate")
 
-        // Only flush if applicationShouldTerminate didn't already (safety net for force-quit)
-        if !didFlushForQuit {
+        // Only flush if the quit sequence didn't already (safety net for force-quit). N5: keyed on the QUIT's own
+        // state (`didFlushForQuit`, `quitTask`), never on `editorState?.activeLifecycle`, which after Getting
+        // Started swaps the view describes a different editor. `flushAllSyncCore` writes straight to the
+        // database, around the ordered write queue and the barrier the quit holds to exit.
+        if !didFlushForQuit && quitTask == nil {
             editorState?.flushAllSyncCore()   // guaranteed synchronous — identical to today's behavior
             if let editorState {
                 Task { @MainActor in
@@ -492,18 +492,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        if !DocumentManager.shared.hasOpenProject {
-            // Launch already completed and no project is open (picker showing) —
-            // open directly. There's no editor content to flush.
-            DebugLog.always("[FINDER-OPEN] App running with no project open, opening directly")
-            openProjectFromFinder(at: url)
-            return
+        // Launch already completed. t-94369a83 3a-1b (E5, obligation 18): the open goes through the command layer
+        // (`ProjectCommands.openFromFinder`). With a project open and mounted, the lifecycle saves and backs it up
+        // first -- through the ordered write queue, so this handler no longer flushes the editor itself; with none
+        // open (picker showing) there is nothing to save and the open runs straight through. The same project that
+        // is already open arms nothing.
+        DebugLog.always(
+            "[FINDER-OPEN] App running, hasOpenProject=\(DocumentManager.shared.hasOpenProject): "
+                + "opening through the command layer")
+        Task { @MainActor in
+            await ProjectCommands.openFromFinder(url: url)
         }
-
-        // App already running with a project open — flush pending editor content, then open
-        DebugLog.always("[FINDER-OPEN] App running with project, flushing and opening")
-        editorState?.flushContentToDatabase()
-        openProjectFromFinder(at: url)
     }
 
     // closeSpuriousFinderOpenWindows() lives in AppDelegate+WindowFramePersistence.swift,
@@ -516,31 +515,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DebugLog.always("[FINDER-OPEN] application(_:openFile:) called: \(filename)")
         application(sender, open: [url])
         return true
-    }
-
-    /// Open a .ff project from Finder, with error handling matching FileOperations.handleOpenProject()
-    private func openProjectFromFinder(at url: URL) {
-        let currentURL = DocumentManager.shared.projectURL?.resolvingSymlinksInPath()
-        let incomingURL = url.resolvingSymlinksInPath()
-        DebugLog.always("[FINDER-OPEN] openProjectFromFinder: current=\(currentURL?.path ?? "nil") incoming=\(incomingURL.path)")
-
-        // Skip if this project is already open (duplicate Apple Events)
-        guard currentURL != incomingURL else {
-            DebugLog.always("[FINDER-OPEN] BLOCKED: same project already open")
-            return
-        }
-
-        do {
-            try DocumentManager.shared.openProject(at: url)
-            DebugLog.always("[FINDER-OPEN] openProject succeeded, posting .projectDidOpen")
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-        } catch {
-            // openProject() validates before closing, so current project is preserved.
-            // Record the failure for the always-mounted host to render; no modal runs
-            // here, so this can never race with (or be dropped by) a state change.
-            DebugLog.log(.lifecycle, "[AppDelegate] Failed to open from Finder: \(error)")
-            ProjectOpenErrorState.shared.report(error, url: url)
-        }
     }
 
     // MARK: - NSWindowDelegate

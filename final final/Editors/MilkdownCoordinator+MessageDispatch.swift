@@ -42,17 +42,33 @@ extension MilkdownEditor.Coordinator {
         switch message.name {
         case "structuralUndoRequested":
             guard let body = message.body as? [String: Any], let opId = body["opId"] as? String else { return true }
+            // `held`: the editor sent this request out of its own press queue (fix round 5, "allowance"); absent means a press sent
+            // straight from the key.
+            let held = (body["held"] as? Bool) ?? false
             let requestingWebView = message.webView
             Task { @MainActor in
-                await routeStructuralRequest(opId: opId, direction: .undo, from: requestingWebView, editorLabel: "MilkdownEditor")
+                await routeStructuralRequest(
+                    opId: opId, direction: .undo, held: held, from: requestingWebView, editorLabel: "MilkdownEditor")
             }
             return true
 
         case "structuralRedoRequested":
             guard let body = message.body as? [String: Any], let opId = body["opId"] as? String else { return true }
+            let held = (body["held"] as? Bool) ?? false
             let requestingWebView = message.webView
             Task { @MainActor in
-                await routeStructuralRequest(opId: opId, direction: .redo, from: requestingWebView, editorLabel: "MilkdownEditor")
+                await routeStructuralRequest(
+                    opId: opId, direction: .redo, held: held, from: requestingWebView, editorLabel: "MilkdownEditor")
+            }
+            return true
+
+        case "undoHeldPressSettled":
+            // A press the editor held ended without a request to Swift (a plain text undo took it, or it was dropped): the lifecycle's
+            // wait for presses made before the barrier stops counting it (`StructuralCommandGate.settleHeldPresses`).
+            guard let body = message.body as? [String: Any], let count = body["count"] as? Int else { return true }
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                routeUndoHeldPressSettled(count: count, from: requestingWebView, editorLabel: "MilkdownEditor")
             }
             return true
 
@@ -142,6 +158,31 @@ extension MilkdownEditor.Coordinator {
     }
 
     nonisolated func handleDiagnosticMessage(_ message: WKScriptMessage) -> Bool {
+        // Slice 0 measurement (StructuralTrace.swift): the editor posts these two only while Swift has switched its typing
+        // trace on (`setTraceTyping`), and Swift stamps them on arrival. Handled inline, with no Task hop, so the echo time
+        // is as close to the frame as the message queue allows.
+        switch message.name {
+        case "typingEcho":
+            StructuralTrace.noteEcho(edits: (message.body as? [String: Any])?["n"] as? Int)
+            return true
+        case "typingTrace":
+            if let body = message.body as? [String: Any] { StructuralTrace.noteTypingTraceMessage(body) }
+            return true
+        case "efRemovalPainted":
+            // Slice 0 trace of the editor-first delete: the first frame after the removal was dispatched. Silent unless tracing is on.
+            StructuralTrace.log("removal painted")
+            return true
+        case "undoQueueDropped":
+            // Addendum A4: the JS undo coordinator's 30 s safety net gave up on queued presses. One warning toast, routed to
+            // the controller of the window that posted it (same identity guard as `historyEdited`).
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                routeUndoQueueDropped(from: requestingWebView, editorLabel: "MilkdownEditor")
+            }
+            return true
+        default:
+            break
+        }
         guard message.name == "errorHandler" else { return false }
         guard let body = message.body as? [String: Any] else { return true }
         // errorHandler runs synchronously today — do not wrap this in a Task.
@@ -383,7 +424,8 @@ extension MilkdownEditor.Coordinator {
     func syncContentAfterFootnoteInsert(label: String) {
         guard let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.getContent()") { [weak self] result, _ in
-            guard let self, let content = result as? String else { return }
+            guard let self, let reply = result as? String else { return }
+            let content = reply.contiguousUTF8Copy  // native text once, where it arrives (see `BlockSyncService.fetchContentFromWebView`)
             Task { @MainActor in
                 self.lastPushedContent = content
                 self.lastReceivedFromEditor = Date()

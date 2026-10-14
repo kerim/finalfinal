@@ -248,9 +248,11 @@ extension FootnoteSyncService {
     ///     call) because renames resolve against original identity, not by re-querying by
     ///     label mid-loop.
     ///   - definitionOverrides: new-label -> definition text, for a caller that already
-    ///     knows the text a renamed-into or newly-inserted label should carry. Neither
-    ///     current caller uses this (renames carry forward existing text; inserts default
-    ///     to blank).
+    ///     knows the text a renamed-into or newly-inserted label should carry. Only the
+    ///     undo restore (`restoreFromCheckpoint`, FootnoteSyncService+UndoCheckpoint.swift)
+    ///     passes any: the text of the definitions an earlier write deleted, for exactly the
+    ///     labels that are inserted again. Every other caller leaves it empty (renames carry
+    ///     forward existing text; inserts default to blank).
     /// Adopt rows that sit positionally inside a "# Notes" run but aren't flagged yet.
     /// `Database+BlocksInsert.swift`'s `resolveInsertPlacement`/`buildInsertedBlock`
     /// already flag a live-typed footnote continuation `isNotes = true` at insert time
@@ -317,7 +319,7 @@ extension FootnoteSyncService {
     /// never backward to something already positioned above it. This is the only point
     /// in the whole reconciliation call where such a row's real, pre-relocation position
     /// is still visible.
-    private static func adoptUnflaggedNotesContinuations(db: Database, projectId: String) throws {
+    nonisolated private static func adoptUnflaggedNotesContinuations(db: Database, projectId: String) throws {
         let docOrder = try Block
             .filter(Block.Columns.projectId == projectId)
             .order(Block.Columns.sortOrder)
@@ -486,13 +488,67 @@ extension FootnoteSyncService {
     /// instead of that id being discarded here as it previously was. `@discardableResult`
     /// because the debounced path (`updateNotesBlock`) has no single "the one label the user
     /// just inserted" to report and legitimately ignores the return value.
+    /// Phase 2 (t-94369a83), §2.3 point 4: resolves the tombstone anchor for EVERY row
+    /// in `deletedIds` -- a set of rows all about to be deleted together, in the SAME
+    /// write, none of them deleted yet when this runs. Reuses
+    /// `BibliographySyncService.predecessorAnchor` (identical SQL, no need for a second
+    /// copy) but, unlike a single-call use of it, walks PAST a predecessor that is
+    /// itself one of the rows in `deletedIds` -- e.g. two adjacent continuation
+    /// paragraphs of the same now-deleted definition, where the first's predecessor is
+    /// the second, which is also being deleted in this same pass -- so a late insert
+    /// anchored on any of these rows still lands on a row that will actually survive
+    /// this write (or `.documentStart`, if none does). Bounded by `deletedIds.count`
+    /// iterations per row so a (should-be-impossible) predecessor cycle can never loop
+    /// forever.
+    nonisolated static func resolveTombstoneChain(
+        db: Database, projectId: String, deletedIds: Set<String>
+    ) throws -> [String: DeletedAnchor] {
+        var anchors: [String: DeletedAnchor] = [:]
+        for id in deletedIds {
+            var current = id
+            var hops = 0
+            while hops <= deletedIds.count {
+                hops += 1
+                let anchor = try BibliographySyncService.predecessorAnchor(db: db, blockId: current, projectId: projectId)
+                if case .after(let predecessorId) = anchor, deletedIds.contains(predecessorId) {
+                    current = predecessorId
+                    continue
+                }
+                anchors[id] = anchor
+                break
+            }
+        }
+        return anchors
+    }
+
+    /// Convenience overload for every existing caller that doesn't need tombstone
+    /// anchors -- Swift does not allow a default value on an `inout` parameter, so
+    /// (Phase 2, t-94369a83 §2.3 point 5) this thin wrapper is what "defaulting nil"
+    /// actually means here: it supplies a local, discarded `var` and forwards to the
+    /// real (inout-taking) overload below. No existing call site needs to change.
     @discardableResult
-    static func reconcileNotesBlocks(
+    nonisolated static func reconcileNotesBlocks(
         db: Database,
         projectId: String,
         targetRefs: [String],
         renameMap: [String: String] = [:],
         definitionOverrides: [String: String] = [:]
+    ) throws -> [String: String] {
+        var discardedAnchors: [String: DeletedAnchor]?
+        return try reconcileNotesBlocks(
+            db: db, projectId: projectId, targetRefs: targetRefs, renameMap: renameMap,
+            definitionOverrides: definitionOverrides, deletedAnchors: &discardedAnchors
+        )
+    }
+
+    @discardableResult
+    nonisolated static func reconcileNotesBlocks(
+        db: Database,
+        projectId: String,
+        targetRefs: [String],
+        renameMap: [String: String] = [:],
+        definitionOverrides: [String: String] = [:],
+        deletedAnchors: inout [String: DeletedAnchor]?
     ) throws -> [String: String] {
         DebugLog.log(.footnotes, "[FootnoteSyncService] reconcileNotesBlocks: entry projectId=\(projectId) " +
             "targetRefs=\(targetRefs) renameMap=\(renameMap) definitionOverrides=\(Array(definitionOverrides.keys))")
@@ -576,6 +632,20 @@ extension FootnoteSyncService {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] reconcileNotesBlocks:dedup DELETING loser " +
                     "label=\(label) loserId=\(block.id) winnerId=\(winner.id) reason=blank-or-identical-body " +
                     "loserFragment=\"\(block.markdownFragment)\"")
+                // Phase 2 (t-94369a83), §2.3: a dedup loser's tombstone points `.after`
+                // the surviving winner. Review fix (finding #13): the old comment
+                // claimed the winner "is never itself deleted in this pass" -- true only
+                // WITHIN this dedup loop (a winner is never also processed as a loser in
+                // its own per-label group), but not a guarantee for the rest of THIS
+                // SAME reconciliation call: if the winner's own label later turns out to
+                // be unwanted (step 4's `toDelete`, further down this function) or
+                // superseded by a rename, the winner itself is deleted later in this
+                // same transaction, and this anchor is not re-chained past it -- a
+                // late insert anchored on the loser could then resolve to a row that no
+                // longer exists by commit time. Known caveat, not fixed this round (a
+                // real chain-walk here would need to re-resolve after step 4 runs, not
+                // just at dedup time).
+                deletedAnchors?[block.id] = .after(winner.id)
                 try Block.deleteOne(db, key: block.id)
                 dedupDeletedCount += 1
             }
@@ -601,6 +671,11 @@ extension FootnoteSyncService {
         // 2. Apply renames FIRST, against the snapshot above — never re-queried mid-loop
         //    — so overlapping shifts can't cross-contaminate each other.
         var renamedNewLabels: Set<String> = []
+        // F1: maps a rename's TARGET label back to its pre-rename (snapshot) key, so a
+        // rename whose target the editor no longer wants (see below) can still be
+        // looked up and deleted via `snapshot[oldLabel]` in step 4, the same way an
+        // untouched row is.
+        var oldLabelForRenamedTarget: [String: String] = [:]
         for (oldLabel, newLabel) in renameMap {
             guard oldLabel != newLabel, var block = snapshot[oldLabel] else { continue }
             let existingText = parseNotesLabel(from: block.markdownFragment)?.text ?? ""
@@ -610,20 +685,93 @@ extension FootnoteSyncService {
             block.recalculateWordCount()
             try block.update(db)
             renamedNewLabels.insert(newLabel)
+            oldLabelForRenamedTarget[newLabel] = oldLabel
         }
 
         // 3. Insert-set and delete-set, computed AFTER the rename pass from the
         //    post-rename label set.
-        let untouchedLabels = Set(snapshot.keys).subtracting(renameMap.keys)
-        let presentLabels = untouchedLabels.union(renamedNewLabels)
+        //
+        //    Companion fix found while verifying review finding #2/#3 (t-94369a83
+        //    Phase 2): an UNTOUCHED label that happens to be exactly the label some
+        //    OTHER row was just renamed INTO (`renamedNewLabels`) is stale, not
+        //    "still wanted" -- the rename already claimed that label for a different
+        //    row. Concrete repro: definitions 1/2/3, the user deletes the reference to
+        //    [^2] (renameMap renames 3->2, leaving label "1" completely untouched and
+        //    still in targetSet), then deletes the reference to [^1] itself (the NEXT
+        //    call renames 3->1 via the carried-forward composed map, targetRefs now
+        //    just ["1"]) -- label "1" is untouched-and-in-targetSet by the OLD formula
+        //    below, so the stale original [^1] row would survive ALONGSIDE the row
+        //    freshly renamed to "1", a silent duplicate-label collision (and the
+        //    deleted footnote's old text resurfacing). An untouched label is only
+        //    genuinely "still wanted" when nothing else is also claiming it via this
+        //    same rename pass.
+        //
+        //    Same staleness applies when the rename's SOURCE has no database row at all
+        //    (a brand-new footnote the editor labelled provisionally, renumbered on to
+        //    `newLabel`): the editor's labels are unique, so nothing else can still be
+        //    showing `newLabel`, and an untouched row that carries it is a footnote the
+        //    user deleted while its delete never reached the database. Keeping it would
+        //    hand the deleted footnote's text to the new one (found by
+        //    `FootnoteRenameReconcilePropertyTests`: delete the only footnote, add
+        //    another, the write stalls). So the claim is checked against EVERY rename
+        //    target (`claimedLabels`), not only those whose source row exists
+        //    (`renamedNewLabels`); the stale row is deleted and the label inserted blank.
+        //    An identity entry (`"2": "2"`, which `composeRenameMaps` yields when a carried
+        //    rename and this run's own rename cancel out) renames nothing: its row is
+        //    untouched, so it must not be excluded from `untouchedLabels` along with the
+        //    real rename sources.
+        let realRenames = renameMap.filter { $0.key != $0.value }
+        let claimedLabels = Set(realRenames.values)
+        let untouchedLabels = Set(snapshot.keys).subtracting(realRenames.keys)
+        let presentLabels = untouchedLabels.subtracting(claimedLabels).union(renamedNewLabels)
         let targetSet = Set(targetRefs)
         let toInsert = targetRefs.filter { !presentLabels.contains($0) }
+
+        // F1 fix (round 3): a rename's TARGET label that the editor's CURRENT refs no
+        // longer show at ALL (not renamed on to something else -- just gone) must be
+        // deleted, not kept renamed. Without this, a carried rename surviving from an
+        // earlier stalled write outlives the editor deleting its own target reference:
+        // `renameMap`'s key is not "untouched" (it's a rename source), so the old
+        // formula below never considered it for deletion at all, leaving an orphaned
+        // renamed row with no editor reference behind. `oldLabelForRenamedTarget` maps
+        // the unwanted target back to its pre-rename snapshot key, matching every other
+        // entry `toDelete` (and `preWriteOwnership`'s cascade-delete lookup) already
+        // works in.
+        let unwantedRenameOldLabels = Set(
+            renamedNewLabels.subtracting(targetSet).compactMap { oldLabelForRenamedTarget[$0] })
+
         let toDelete = untouchedLabels.subtracting(targetSet)
+            .union(untouchedLabels.intersection(claimedLabels))
+            .union(unwantedRenameOldLabels)
 
         // 4. Delete labels no longer wanted -- and cascade-delete any continuation rows owned
         //    by that label (per `preWriteOwnership`, computed before this loop). A
         //    continuation has no label of its own; once its owning definition is gone it is
         //    orphaned text with nothing left to attach to on export or re-render.
+        //
+        //    Phase 2 (t-94369a83), §2.3: the WHOLE set this step is about to delete (the
+        //    label row plus every one of its cascaded continuations) is collected and
+        //    anchor-resolved BEFORE any row in it is actually deleted -- `resolveTombstoneChain`
+        //    walks past a predecessor that is ITSELF in this same delete set (e.g. a
+        //    continuation whose immediate predecessor is another continuation of the same,
+        //    also-deleted, definition) rather than tombstoning onto a row that won't exist
+        //    either.
+        if deletedAnchors != nil {
+            var idsToDeleteThisStep: Set<String> = []
+            for label in toDelete {
+                if let block = snapshot[label] { idsToDeleteThisStep.insert(block.id) }
+                for candidate in existingDefBlocks {
+                    if case .continuation(let ownerLabel, _) = preWriteOwnership[candidate.id], ownerLabel == label {
+                        idsToDeleteThisStep.insert(candidate.id)
+                    }
+                }
+            }
+            if !idsToDeleteThisStep.isEmpty {
+                let chainAnchors = try resolveTombstoneChain(
+                    db: db, projectId: projectId, deletedIds: idsToDeleteThisStep)
+                for (id, anchor) in chainAnchors { deletedAnchors?[id] = anchor }
+            }
+        }
         for label in toDelete {
             if let block = snapshot[label] {
                 try Block.deleteOne(db, key: block.id)
@@ -734,7 +882,7 @@ extension FootnoteSyncService {
         }
 
         // Clean up orphaned footnote definitions from before isNotes propagation fix
-        try deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId)
+        try deleteOrphanedFootnoteDefinitions(db: db, projectId: projectId, deletedAnchors: &deletedAnchors)
 
         // 7. Whole-project sortOrder renormalization. Within the Notes group
         //    specifically, order by PARSED NUMERIC LABEL rather than sortOrder — an
@@ -914,7 +1062,7 @@ extension FootnoteSyncService {
         }
     }
 
-    private static func notesSortKey(_ ownership: NotesBlockOwnership?, run: Int) -> NotesSortKey {
+    nonisolated private static func notesSortKey(_ ownership: NotesBlockOwnership?, run: Int) -> NotesSortKey {
         switch ownership {
         case .heading: return NotesSortKey(run: run, group: -1, label: 0, index: 0)
         case .definition(let label): return NotesSortKey(run: run, group: 0, label: Int(label) ?? Int.max, index: 0)
@@ -966,8 +1114,19 @@ extension FootnoteSyncService {
     /// real, now-unreferenced text is PERMANENTLY left in the document as literal
     /// `[^N]: some text` -- nothing auto-deletes it, ever. Occasional manual tidying
     /// replaces silent data loss.
-    static func deleteOrphanedFootnoteDefinitions(
+    /// Convenience overload, same reasoning as `reconcileNotesBlocks`'s own wrapper
+    /// above (Swift disallows a default value on an `inout` parameter).
+    nonisolated static func deleteOrphanedFootnoteDefinitions(
         db: Database, projectId: String, knownPriorTwins: [Block] = []
+    ) throws {
+        var discardedAnchors: [String: DeletedAnchor]?
+        try deleteOrphanedFootnoteDefinitions(
+            db: db, projectId: projectId, knownPriorTwins: knownPriorTwins, deletedAnchors: &discardedAnchors)
+    }
+
+    nonisolated static func deleteOrphanedFootnoteDefinitions(
+        db: Database, projectId: String, knownPriorTwins: [Block] = [],
+        deletedAnchors: inout [String: DeletedAnchor]?
     ) throws {
         let candidates = try Block
             .filter(Block.Columns.projectId == projectId)
@@ -999,7 +1158,18 @@ extension FootnoteSyncService {
             }
         }
 
-        var deletedCount = 0
+        // Phase 2 (t-94369a83), §2.3: first pass decides WHICH candidates will be
+        // deleted, without deleting any of them yet -- `resolveTombstoneChain` (below)
+        // needs the whole set's original, undisturbed positions to walk past a
+        // predecessor that is itself also about to be deleted (e.g. two adjacent
+        // orphaned candidates next to each other).
+        struct PendingOrphanDelete {
+            let block: Block
+            let label: String
+            let reason: String
+            let twin: Block
+        }
+        var toDelete: [PendingOrphanDelete] = []
         for block in candidates {
             let frag = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
             // 1. Label unparseable -- never delete.
@@ -1039,17 +1209,29 @@ extension FootnoteSyncService {
             }
 
             if shouldDelete {
-                // 4. B9: log the full fragment, and the justifying twin, before deleting.
-                DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: DELETING " +
-                    "id=\(block.id) label=\(parsedCandidate.label) reason=\(reason) fragment=\"\(frag)\" " +
-                    "twinId=\(twin.id) twinFragment=\"\(twin.markdownFragment)\"")
-                try Block.deleteOne(db, key: block.id)
-                deletedCount += 1
+                toDelete.append(PendingOrphanDelete(block: block, label: parsedCandidate.label, reason: reason, twin: twin))
             } else {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: skip " +
                     "id=\(block.id) label=\(parsedCandidate.label) reason=\(reason) " +
                     "fragment=\"\(frag.prefix(60))\" twinId=\(twin.id)")
             }
+        }
+
+        if deletedAnchors != nil, !toDelete.isEmpty {
+            let ids = Set(toDelete.map { $0.block.id })
+            let chainAnchors = try resolveTombstoneChain(db: db, projectId: projectId, deletedIds: ids)
+            for (id, anchor) in chainAnchors { deletedAnchors?[id] = anchor }
+        }
+
+        var deletedCount = 0
+        for pending in toDelete {
+            // B9: log the full fragment, and the justifying twin, before deleting.
+            DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: DELETING " +
+                "id=\(pending.block.id) label=\(pending.label) reason=\(pending.reason) " +
+                "fragment=\"\(pending.block.markdownFragment)\" " +
+                "twinId=\(pending.twin.id) twinFragment=\"\(pending.twin.markdownFragment)\"")
+            try Block.deleteOne(db, key: pending.block.id)
+            deletedCount += 1
         }
         DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: done " +
             "deleted=\(deletedCount) of candidates=\(candidates.count)")

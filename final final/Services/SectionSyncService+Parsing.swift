@@ -31,6 +31,36 @@ extension SectionSyncService {
         let boundaryIndex: Int
     }
 
+    /// Turns Character offsets into `String.Index` values for the two post-loop passes below, by CARRYING the position forward
+    /// instead of walking from the start of the text for every offset.
+    ///
+    /// `String.index(_:offsetBy:)` is linear in the distance walked, and `String.count` is linear in the text; calling either from
+    /// `markdown.startIndex` once per section boundary made the passes quadratic (about 11,500 ms at 350,000 characters and 46,000 ms
+    /// at 700,000 on the bridged text a web view hands back; 0.4 s and 1.3 s on native text). Here the total is counted ONCE and each
+    /// request walks only the distance from the previous answer, so a whole pass is one walk over the text. The offsets this serves
+    /// are non-decreasing; a smaller one still gives the right index (the walk goes backwards by the difference).
+    private struct CharacterOffsetCursor {
+        let text: String
+        /// `text.count`, counted once.
+        let total: Int
+        private var cursor: String.Index
+        private var offset = 0
+
+        init(_ text: String) {
+            self.text = text
+            self.total = text.count
+            self.cursor = text.startIndex
+        }
+
+        /// The index `target` Characters from the start of the text, clamped to the end (`target > total` gives `endIndex`).
+        mutating func index(at target: Int) -> String.Index {
+            let clamped = min(target, total)
+            cursor = text.index(cursor, offsetBy: clamped - offset)
+            offset = clamped
+            return cursor
+        }
+    }
+
     /// Parse markdown content into ParsedHeader structs for reconciliation
     /// - Parameters:
     ///   - markdown: The markdown content to parse
@@ -309,14 +339,16 @@ extension SectionSyncService {
         markdown: String
     ) -> Bool {
         var anyConfirmed = false
+        // One count and one forward walk for every candidate (see `CharacterOffsetCursor`), not one walk from the start each.
+        var cursor = CharacterOffsetCursor(markdown)
 
         for candidate in pendingNotesCandidates {
             // Extract the content of this candidate's own section
             let nextBoundaryOffset = candidate.boundaryIndex + 1 < boundaries.count
                 ? boundaries[candidate.boundaryIndex + 1].startOffset
-                : markdown.count
-            let startIdx = markdown.index(markdown.startIndex, offsetBy: min(candidate.offset, markdown.count))
-            let endIdx = markdown.index(markdown.startIndex, offsetBy: min(nextBoundaryOffset, markdown.count))
+                : cursor.total
+            let startIdx = cursor.index(at: candidate.offset)
+            let endIdx = cursor.index(at: nextBoundaryOffset)
             let pendingContent = String(markdown[startIdx..<endIdx])
 
             // C4: evidence check refactored onto the shared `NotesOpeningSelector` as the
@@ -385,14 +417,15 @@ extension SectionSyncService {
         guard !boundaries.isEmpty else { return [] }
 
         var headers: [ParsedHeader] = []
-        let contentLength = markdown.count
+        // One count and one forward walk for every section (see `CharacterOffsetCursor`), not two walks from the start each.
+        var cursor = CharacterOffsetCursor(markdown)
 
         for (index, boundary) in boundaries.enumerated() {
             var endOffset: Int
             if index < boundaries.count - 1 {
                 endOffset = boundaries[index + 1].startOffset
             } else {
-                endOffset = contentLength
+                endOffset = cursor.total
             }
 
             // If this is the last section before bibliography/notes, end it at the managed section
@@ -410,8 +443,8 @@ extension SectionSyncService {
             }
 
             // Extract markdown content for this section
-            let startIdx = markdown.index(markdown.startIndex, offsetBy: min(boundary.startOffset, markdown.count))
-            let endIdx = markdown.index(markdown.startIndex, offsetBy: min(endOffset, markdown.count))
+            let startIdx = cursor.index(at: boundary.startOffset)
+            let endIdx = cursor.index(at: endOffset)
             let sectionMarkdown = String(markdown[startIdx..<endIdx])
 
             let wordCount = MarkdownUtils.wordCount(for: sectionMarkdown)
