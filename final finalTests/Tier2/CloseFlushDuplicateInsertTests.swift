@@ -3,30 +3,25 @@
 //  final finalTests
 //
 //  Tier 2: Visible Breakage — reproduction test for the close-time sibling of TLA+
-//  Finding #8 (Calm_InsertThenQuit, docs/architecture/tla/DocSyncCurrent.tla): a debounced
-//  footnote (Notes) update that fires during a close writes to the database and posts
-//  `.notesSectionChanged`, which `ContentView.handleNotesSectionChanged()` handles by spawning
-//  its own untracked `Task` that calls `blockSyncService.pollBlockChangesNowForDatabaseRebuild()`
-//  -- a forced poll that bypasses the drain the close already performed and re-applies the
-//  still-pending, unconfirmed marker-paragraph insert a SECOND time on top of the row the
-//  close's own whole-document write already wrote moments earlier.
+//  Finding #8 (Calm_InsertThenQuit, docs/architecture/tla/DocSyncCurrent.tla):
+//  `ContentView.performProjectClose(fetchContent:)` calls
+//  `editorState.flushPendingBibliographyAndFootnoteSync(overrideContent:)` directly,
+//  which can force an already-scheduled, debounced Notes update to run immediately.
+//  That forced update writes to the database and posts `.notesSectionChanged`, which
+//  `ContentView.handleNotesSectionChanged()` handles by spawning its own untracked
+//  `Task` that calls `blockSyncService.pollBlockChangesNowForDatabaseRebuild()` --
+//  a forced poll that bypasses the drain `stopPollingAndDrain()` already performed
+//  and re-applies the still-pending, unconfirmed marker-paragraph insert a SECOND
+//  time on top of the row `flushAllPendingContent`'s own full reparse already wrote
+//  moments earlier in the same `performProjectClose` call.
 //
-//  The armed lifecycle token (`EditorViewState.activeLifecycle`) closes this gap by
-//  making both `handleBibliographySectionChanged()` and `handleNotesSectionChanged()`
-//  DEFER (set their pending flag, spawn no Task) for as long as a close / switch / quit
-//  holds the editor (ContentView+NotificationHandlers.swift, t-94369a83 3a-1b round C4).
-//
-//  PORTED (round C7b): this test now runs the close's SAVE SEQUENCE (`SwitchFlushTestSupport.flush`:
-//  `EditorViewState.runLifecycleFlush`, steps 0-8, the part of `LifecycleEntry.run(.close)` before
-//  `perform`) under a CLOSE token armed first, as the real entry arms it. The old entry,
-//  `ContentView.performProjectClose(fetchContent:)`, is the unkeyed Getting Started path only now. As in the
-//  quit sibling (`QuitFlushDuplicateInsertTests` test 3, round C6), the rebuild notification arrives with the
-//  token armed and the test asserts the handler DEFERRED it (pending flag set, no rebuild Task, no forced
-//  poll) before the sequence runs; the sequence suspends the pending footnote debounce at arm, so the
-//  notification is posted by the test rather than by a forced debounce (which no longer exists on this path).
-//  The assertion is unchanged: the footnote-triggering paragraph is written exactly once.
-//  (This file does not go through `LifecycleEntry.run` itself: XCTest cases are not serialized against the
-//  Swift Testing suites that own `LifecycleEntry`'s process-global state; see `SwitchFlushTestSupport`.)
+//  `EditorViewState.suppressRebuildsForClose` (armed at the top of
+//  `performProjectClose`, before `stopObserving()`) closes this gap by guarding both
+//  `handleBibliographySectionChanged()` and `handleNotesSectionChanged()` -- mirroring
+//  `suppressRebuildsForQuit`'s own guard in the same two handlers
+//  (ContentView+NotificationHandlers.swift). See that property's doc comment
+//  (EditorViewState.swift) for the full mechanism and why it is deliberately never
+//  cleared.
 //
 //  This file is a SEPARATE file from QuitFlushDuplicateInsertTests.swift (not an
 //  addition to it) because that file is already at 775 lines against SwiftLint's
@@ -79,9 +74,8 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
 
     // MARK: - Reproduction + regression: forced Notes rebuild poll during close
 
-    /// Reproduction + regression test for the rebuild handlers' deferral under an armed
-    /// lifecycle token (formerly a close-only suppression flag): typing a new,
-    /// footnote-triggering paragraph, then closing the project while a
+    /// Reproduction + regression test for `EditorViewState.suppressRebuildsForClose`:
+    /// typing a new, footnote-triggering paragraph, then closing the project while a
     /// debounced Notes update is still pending, must write that paragraph to the
     /// database exactly once — never twice.
     ///
@@ -97,13 +91,15 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
         let (helper, db, pid, view) = (stack.helper, stack.db, stack.pid, stack.view)
         guard let window = hostWindow else { throw XCTSkip("no host window") }
 
-        // The close's `perform` (`dm.closeProject()`) runs AFTER the save sequence, so DocumentManager's project is
-        // still open while the sequence runs: point it at this fixture (as the switch and quit siblings do).
-        // `fetchBlocksWithIds()`, the rebuild handler's second step, reads the open project from there.
+        // Production order (FileOperations.handleCloseProject(), FileCommands.swift):
+        // dm.closeProject() runs BEFORE .projectDidClose is posted, so
+        // performProjectClose always runs with DocumentManager's own project state
+        // already nil'd out -- mirror that here rather than leaving it pointed at
+        // this test's fixture.
         let priorDb = DocumentManager.shared.projectDatabase
         let priorPid = DocumentManager.shared.projectId
-        DocumentManager.shared.projectDatabase = db
-        DocumentManager.shared.projectId = pid
+        DocumentManager.shared.projectDatabase = nil
+        DocumentManager.shared.projectId = nil
         defer {
             DocumentManager.shared.projectDatabase = priorDb
             DocumentManager.shared.projectId = priorPid
@@ -112,8 +108,8 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
 
         // Schedule a debounced Notes update -- simulates a footnote reference typed a
         // moment earlier, still sitting inside FootnoteSyncService's 3s debounce when
-        // close happens. Arming the close token SUSPENDS it (step 0: the debounce is cancelled and
-        // the request recorded), so it can no longer fire its own `.notesSectionChanged` mid-close.
+        // close happens. performProjectClose()'s flushPendingBibliographyAndFootnoteSync
+        // below forces it to run NOW instead of waiting out that debounce.
         view.footnoteSyncService.checkAndUpdateFootnotes(
             footnoteRefs: ["1"], projectId: pid, fullContent: "# Alpha\n\n[^1]\n\none two three."
         )
@@ -147,12 +143,12 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
         // `view` is never installed in a live view hierarchy here, so nothing delivers
         // this notification unless wired by hand (same reason
         // QuitFlushDuplicateInsertTests.swift's test 3 does the same). `notesPosts`
-        // guards against a vacuous pass: if nothing is ever delivered to the handler,
-        // finding 1 row afterward would prove nothing about the deferral.
+        // guards against a vacuous pass: if the forced flush never actually posts,
+        // finding 1 row afterward would prove nothing about suppression.
         //
         // `handlerGuardsWerePassable` is a second, narrower vacuity check (review round 1,
         // must-fix #2): `notesPosts >= 1` only proves the notification was posted, not that
-        // `handleNotesSectionChanged()` actually reached the lifecycle-token deferral
+        // `handleNotesSectionChanged()` actually reached the new `suppressRebuildsForClose`
         // guard rather than returning earlier on one of its OTHER, unrelated guards (zoomed,
         // `contentState != .idle`, or empty `editorState.content` -- see that function's own
         // early returns, ContentView+NotificationHandlers.swift). Recorded INSIDE the
@@ -177,21 +173,14 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
-        // The close path: the close token is armed FIRST (as `LifecycleEntry.run` does), and the rebuild
-        // notification a Notes update finishing during the close would post arrives with the token armed --
-        // the handler must DEFER it (set its pending flag, spawn no Task, run no forced poll) instead of
-        // re-applying the still-pending insert on top of the row the sequence writes. Then the sequence
-        // runs: it drains and force-sends the editor, fetches fresh WebView content (includes the typed
-        // marker) and writes it once through the ordered queue (1 row).
-        guard let closeToken = SwitchFlushTestSupport.arm(view.editorState, kind: .close) else {
-            return XCTFail("could not arm the close token")
-        }
-        NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
-        XCTAssertTrue(
-            view.editorState.pendingNotesRebuild,
-            "the rebuild handler must defer (not run) while the close token is armed")
-        XCTAssertTrue(view.editorState.runningRebuildTasks.isEmpty, "a deferred handler starts no rebuild task")
-        await SwitchFlushTestSupport.flush(view.editorState, token: closeToken, webView: helper.webView)
+        // The real close path: arms suppressRebuildsForClose, drains (a no-op here --
+        // no poll was ever started in this test), fetches fresh WebView content
+        // (includes the typed marker), then flushAllPendingContent writes the marker
+        // via a full reparse (1 row) before flushPendingBibliographyAndFootnoteSync
+        // forces the footnote update scheduled above to run now -- which posts
+        // .notesSectionChanged synchronously from inside this same call stack, exactly
+        // as production's debounce-fire path would.
+        await view.performProjectClose(fetchContent: { try? await helper.getContent() })
 
         // Bounded poll (not a fixed sleep-and-hope): gives handleNotesSectionChanged()'s
         // fire-and-forget Task time to actually run its forced
@@ -205,20 +194,20 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(
             notesPosts, 1,
-            ".notesSectionChanged never reached the handler -- test would pass vacuously"
+            "forced footnote flush never posted .notesSectionChanged -- test would pass vacuously"
         )
         XCTAssertTrue(
             handlerGuardsWerePassable,
             "handleNotesSectionChanged()'s own earlier guards (contentState == .idle, non-empty " +
             "content, not zoomed) were already false when .notesSectionChanged posted -- this test " +
-            "would then be proving one of those guards, not the lifecycle-token deferral"
+            "would then be proving one of those guards, not suppressRebuildsForClose"
         )
         XCTAssertEqual(
             markerRows, 1,
             "Close must write the footnote-triggering paragraph exactly once; found \(markerRows) " +
             "rows containing '\(Self.marker)' (2+ means handleNotesSectionChanged()'s forced " +
-            "rebuild poll re-inserted the still-pending edit although the armed close token should " +
-            "have deferred the handler before it ever started its Task)"
+            "rebuild poll re-inserted the still-pending edit after suppressRebuildsForClose should " +
+            "have blocked the handler from ever starting its Task)"
         )
     }
 }
@@ -330,8 +319,8 @@ extension CloseFlushDuplicateInsertTests {
 
     /// Harness for a real `ContentView` instance, not just a bare `EditorViewState`/
     /// `BlockSyncService` pair, because the mechanism under test --
-    /// `ContentView.handleNotesSectionChanged()` -- lives on `ContentView` (the close's save
-    /// sequence itself lives on `EditorViewState`). A bare, never-rendered `ContentView()` with its services
+    /// `ContentView.handleNotesSectionChanged()` AND `performProjectClose()` -- both
+    /// live on `ContentView`. A bare, never-rendered `ContentView()` with its services
     /// wired by hand (mirroring the private `configureSyncServices()` this file can't
     /// call directly) is sufficient -- same pattern
     /// QuitFlushDuplicateInsertTests.makeContentViewStack uses.
@@ -369,9 +358,9 @@ extension CloseFlushDuplicateInsertTests {
 
         let view = ContentView()
         // Mirrors ContentView+ProjectLifecycle.swift's private configureSyncServices():
-        // the same BlockSyncService instance must back both the close sequence's
+        // the same BlockSyncService instance must back both performProjectClose()'s
         // drain/fetch calls and handleNotesSectionChanged()'s forced rebuild poll, so
-        // the forced poll sees the pending insert the sequence itself never
+        // the forced poll sees the pending insert performProjectClose() itself never
         // consumed.
         view.blockSyncService.configure(database: db, projectId: pid, webView: helper.webView)
         view.editorState.blockSyncService = view.blockSyncService

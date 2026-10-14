@@ -91,14 +91,6 @@ enum BlockParser {
         // But keep code blocks and other multi-line structures together
         let rawBlocks = splitIntoRawBlocks(markdown)
 
-        // Trim and classify every raw block ONCE. The bibliography pre-scan, the Notes pre-scan and the main loop below each used
-        // to trim every block and run `detectBlockType` on it again (three trims and three classifications of the same text);
-        // all three now read these two arrays. `detectBlockType` trims its input itself, so classifying the already-trimmed
-        // text gives the same answer the old per-scan calls did. (When `strippingBibliographyMarkerFromBlocks` changes a
-        // block's text, the loop classifies that block's stripped text itself, as before.)
-        let trimmedBlocks = rawBlocks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let detectedTypes = trimmedBlocks.map { detectBlockType($0) }
-
         // Read once for the whole parse rather than per-block: `isBibliographyHeading`
         // defaults to loading this itself (via `ExportSettings.load()`, a UserDefaults
         // read plus a full JSONDecoder decode) for its other, single-block call sites,
@@ -154,8 +146,7 @@ enum BlockParser {
         // heading closing an already-open run, dropping isBibliography from the heading and
         // everything after it.
         let bibliographyOpening = selectBibliographyOpeningIndex(
-            trimmedBlocks: trimmedBlocks,
-            detectedTypes: detectedTypes,
+            rawBlocks: rawBlocks,
             bibliographyHeaderName: bibliographyHeaderName,
             graceNames: bibliographyGraceNames
         )
@@ -169,15 +160,15 @@ enum BlockParser {
         // "H1 or H2, with evidence" -- the actual point of Stage C.
         let notesHeaderName = explicitNotesHeaderName ?? "Notes"
         let notesOpeningIndices = selectNotesOpeningIndices(
-            trimmedBlocks: trimmedBlocks,
-            detectedTypes: detectedTypes,
+            rawBlocks: rawBlocks,
             notesHeaderName: notesHeaderName
         )
 
         var inBibliographySection = false
         var inNotesSection = false
 
-        for (index, trimmed) in trimmedBlocks.enumerated() {
+        for (index, rawBlock) in rawBlocks.enumerated() {
+            let trimmed = rawBlock.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
 
             // Explicit terminator: closes the bibliography section deterministically,
@@ -224,10 +215,7 @@ enum BlockParser {
                 ? SectionSyncService.stripBibliographyMarker(from: trimmed)
                 : trimmed
 
-            // Reuse the classification made above unless stripping the marker actually changed this block's text.
-            let (blockType, headingLevel) = strippingBibliographyMarkerFromBlocks && classificationText != trimmed
-                ? detectBlockType(classificationText)
-                : detectedTypes[index]
+            let (blockType, headingLevel) = detectBlockType(classificationText)
             let textContent = extractTextContent(from: classificationText, blockType: blockType)
             // wordCount populated below via Block.recalculateWordCount() so the
             // block-type rules (zero for code/image/HR/section break/bibliography)
@@ -247,7 +235,7 @@ enum BlockParser {
                 opensSection: notesOpeningIndices.contains(index),
                 blockType: blockType
             )
-            let isPseudoSection = isSectionBreakMarker(ofTrimmed: trimmed)
+            let isPseudoSection = isSectionBreakMarker(trimmed)
 
             // Look up existing metadata for this heading/section break if available
             let preserved = preservedMetadata(
@@ -476,23 +464,15 @@ enum BlockParser {
     ///   shape (one raw block already carries both, so there is no separate heading block to
     ///   pair it with) and for tier 2 (the candidate index already IS the heading).
     private static func selectBibliographyOpeningIndex(
-        trimmedBlocks: [String],
-        detectedTypes: [(BlockType, Int?)],
+        rawBlocks: [String],
         bibliographyHeaderName: String,
         graceNames: [String]
     ) -> (openingIndex: Int?, markerHeadingIndex: Int?) {
-        // The lines `isBibliographyHeading` accepts as a bare-title match, built once for the whole scan instead of once per
-        // block: `# T` and `## T` for each of the two built-in names, the configured name and every grace name. A block
-        // is a title match exactly when its text equals one of them (`String` equality and `Set` lookup are both canonical
-        // equivalence), and every one of them starts with "#".
-        let titleLines = Set(
-            (["References", "Bibliography", bibliographyHeaderName] + graceNames).flatMap { ["# \($0)", "## \($0)"] }
-        )
+        let trimmedBlocks = rawBlocks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-        let units = trimmedBlocks.enumerated().map { index, trimmed -> BibliographyOpeningSelector.Unit in
-            let hasMarker = hasBibliographyMarker(trimmed)
-            return BibliographyOpeningSelector.Unit(
-                isMarker: hasMarker,
+        let units = trimmedBlocks.map { trimmed in
+            BibliographyOpeningSelector.Unit(
+                isMarker: hasBibliographyMarker(trimmed),
                 isTerminator: trimmed == bibliographyEndMarker,
                 // Excludes the bare marker literal specifically: `isBibliographyHeading` returns
                 // true for anything CONTAINING the marker (it checks `hasBibliographyMarker`
@@ -507,8 +487,10 @@ enum BlockParser {
                 // its trimmed content is never equal to the bare marker literal, so it keeps
                 // matching via `isBibliographyHeading`'s marker check exactly as before.
                 isCandidate: trimmed != bibliographyStartMarker
-                    && (hasMarker || (trimmed.hasPrefix("#") && titleLines.contains(trimmed))),
-                isHeading: detectedTypes[index].0 == .heading,
+                    && isBibliographyHeading(
+                        trimmed, bibliographyHeaderName: bibliographyHeaderName, graceNames: graceNames
+                    ),
+                isHeading: detectBlockType(trimmed).0 == .heading,
                 isEmpty: trimmed.isEmpty,
                 isStandaloneMarker: trimmed == bibliographyStartMarker
             )
@@ -520,7 +502,6 @@ enum BlockParser {
                 index,
                 standaloneMarkerHeadingIndex(
                     trimmedBlocks: trimmedBlocks,
-                    detectedTypes: detectedTypes,
                     markerIndex: index,
                     bibliographyHeaderName: bibliographyHeaderName,
                     graceNames: graceNames
@@ -566,7 +547,6 @@ enum BlockParser {
     ///   recognized bibliography title — see the candidacy note above.
     private static func standaloneMarkerHeadingIndex(
         trimmedBlocks: [String],
-        detectedTypes: [(BlockType, Int?)],
         markerIndex: Int,
         bibliographyHeaderName: String,
         graceNames: [String]
@@ -575,7 +555,7 @@ enum BlockParser {
         let nextIndex = markerIndex + 1
         guard trimmedBlocks.indices.contains(nextIndex) else { return nil }
         let nextBlock = trimmedBlocks[nextIndex]
-        guard detectedTypes[nextIndex].0 == .heading else { return nil }
+        guard detectBlockType(nextBlock).0 == .heading else { return nil }
         guard isBibliographyHeading(
             nextBlock, bibliographyHeaderName: bibliographyHeaderName, graceNames: graceNames
         ) else { return nil }
@@ -590,9 +570,6 @@ enum BlockParser {
     /// candidate predicate for `BibliographyOpeningSelector`. Not `private`: this file's own
     /// Tier1 test suite exercises it directly.
     static func isNotesHeading(_ trimmed: String, notesHeaderName: String = "Notes") -> Bool {
-        // `# name` / `## name` can only be equal to the lowercased text if the text itself starts with "#" (lowercasing never
-        // turns another character into "#"), so most blocks skip the lowercased copy.
-        guard trimmed.hasPrefix("#") else { return false }
         let lowered = trimmed.lowercased()
         let name = notesHeaderName.lowercased()
         return lowered == "# \(name)" || lowered == "## \(name)"
@@ -611,14 +588,14 @@ enum BlockParser {
     ///   Notes-evidence check in the codebase already shares (`confirmNotesCandidates`,
     ///   `notesOwnershipMap`, `reconcileNotesBlocks`).
     private static func selectNotesOpeningIndices(
-        trimmedBlocks: [String],
-        detectedTypes: [(BlockType, Int?)],
+        rawBlocks: [String],
         notesHeaderName: String
     ) -> Set<Int> {
-        let units = trimmedBlocks.enumerated().map { index, trimmed in
+        let trimmedBlocks = rawBlocks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let units = trimmedBlocks.map { trimmed in
             NotesOpeningSelector.Unit(
                 isCandidateHeading: isNotesHeading(trimmed, notesHeaderName: notesHeaderName),
-                isAnyHeading: detectedTypes[index].0 == .heading,
+                isAnyHeading: detectBlockType(trimmed).0 == .heading,
                 isEvidence: FootnoteSyncService.parseNotesLabel(from: trimmed) != nil
             )
         }

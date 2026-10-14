@@ -28,16 +28,6 @@ enum ToastStyle: Equatable {
     case info
 }
 
-/// Why a toast left the slot, as the `[toast] dismiss` log line says it. `replaced` is decided inside `ToastCenter` (another toast took
-/// the slot); the others are passed by whoever removes the toast: `faded` by `ToastView`'s own timer, `ended` by the owner of a
-/// toast that takes it down itself (`ExportActivity`, `DelayedProgressToast`, `AutoBackupService`), `dismissed` by the ✕ button.
-enum ToastDismissReason: String {
-    case faded
-    case replaced
-    case dismissed
-    case ended
-}
-
 /// A toast's single optional action button (§4.1.2: "carries exactly one action").
 struct ToastAction {
     let title: String
@@ -91,42 +81,11 @@ final class ToastCenter {
 
     private(set) var current: Toast?
     private(set) var pending: (toast: Toast, stampedAt: Date)?
-    /// A `.warning` that a `.progress` toast took the slot from (rule 2 below). Kept so the warning
-    /// comes back when that progress toast is dismissed instead of being evicted for good (UX contract
-    /// §4.1: a standing warning must not be lost to a progress toast; t-94369a83 Phase 4b, addendum A5,
-    /// because the section-delete waits show "Finishing the last change..." as a progress toast).
-    /// Cleared by any newer warning, which replaces it.
-    private(set) var displacedWarning: Toast?
-
-    /// Test seam: also receives every `[toast] show` / `[toast] dismiss` line (the same text `DebugLog` gets), per instance, so a test
-    /// can read them without the process-global diagnostic log.
-    @ObservationIgnored var logSink: ((String) -> Void)?
 
     /// Not `private` — `.shared` is the one production entry point, but tests construct their
     /// own isolated instances (see `ToastCenterTests`) rather than mutating the shared singleton
     /// and racing other parallel tests.
     init() {}
-
-    /// Puts `toast` in the slot (nil empties it) and writes one app-log line for each toast that stops showing and each that starts.
-    /// `.lifecycle` is on by default and is forwarded to the persistent diagnostic log in UI tests, which confirm a toast from
-    /// these lines: the prefix `[toast] show ` is a contract with them (a toast can be gone before the accessibility tree is read,
-    /// as the 3 s "Version saved." was on the book-length document). The message is logged whole, newlines made spaces.
-    private func place(_ toast: Toast?, removing reason: ToastDismissReason) {
-        let old = current
-        current = toast
-        if let old { log("[toast] dismiss message=\(Self.logText(old.message)) reason=\(reason.rawValue)") }
-        if let toast { log("[toast] show style=\(toast.style) message=\(Self.logText(toast.message))") }
-    }
-
-    private func log(_ line: @autoclosure () -> String) {
-        DebugLog.log(.lifecycle, line())
-        logSink?(line())
-    }
-
-    private static func logText(_ message: String) -> String {
-        message.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-    }
 
     /// Shows `toast`, applying the queue-with-cutoff rules (§0 above):
     /// 1. One toast at a time. A new **warning** always takes the slot, replacing whatever is
@@ -135,38 +94,24 @@ final class ToastCenter {
     ///    -- a live export/print operation's progress is at least as important as a standing
     ///    warning, and `ExportActivity.begin(message:)` must never grey out the export/print
     ///    menu items with zero visible explanation for why (review fix: a progress toast used
-    ///    to queue behind a warning in `pending` and simply never show). The warning it displaces
-    ///    is kept in `displacedWarning` and shown again when the progress toast is dismissed (A5:
-    ///    a progress toast never permanently replaces a standing warning); `pending` is untouched
-    ///    by this branch, as before.
+    ///    to queue behind a warning in `pending` and simply never show). Like a new warning
+    ///    replacing an old one, the toast being replaced here is not preserved for later
+    ///    restoration -- only `pending` (untouched by this branch) survives past this call.
     /// 3. A new **success/info** replaces a showing success/progress, but never evicts an
-    ///    undismissed warning (showing, or displaced by a progress toast, in which case the
-    ///    warning comes back and the success waits behind it) — stored in a single **pending
-    ///    slot**, stamped with `now`. A newer pending replaces an older one.
+    ///    undismissed warning — stored in a single **pending slot**, stamped with `now`. A newer
+    ///    pending replaces an older one.
     /// `now` is injected (defaulting to `Date()`) so tests can drive the cutoff deterministically
     /// without sleeping real time.
     func show(_ toast: Toast, now: Date = Date()) {
         switch toast.style {
-        case .warning:
-            place(toast, removing: .replaced)
-            displacedWarning = nil   // the newest warning is the one standing warning
-            announceAccessibility(for: toast)
-        case .progress:
-            if let current, current.style == .warning { displacedWarning = current }
-            place(toast, removing: .replaced)
+        case .warning, .progress:
+            current = toast
             announceAccessibility(for: toast)
         case .success, .info:
             if let current, current.style == .warning {
                 pending = (toast, now)
-            } else if let warning = displacedWarning {
-                // A progress toast is showing over a standing warning: the success may not evict that
-                // warning either, so the warning takes the slot back and the success waits behind it.
-                displacedWarning = nil
-                place(warning, removing: .replaced)
-                pending = (toast, now)
-                announceAccessibility(for: warning)
             } else {
-                place(toast, removing: .replaced)
+                current = toast
                 pending = nil
                 announceAccessibility(for: toast)
             }
@@ -179,23 +124,12 @@ final class ToastCenter {
     /// 4. Promoted immediately if it was stamped within `pendingSuccessCutoff` seconds of `now`.
     /// 5. Otherwise discarded and logged via `DebugLog` — diagnostics only, never a user-facing
     ///    channel (a silently-vanished toast is the correct behavior here, not a bug to surface).
-    ///
-    /// `reason` is only what the `[toast] dismiss` log line says (see `ToastDismissReason`); it changes no behaviour.
-    func dismissCurrent(now: Date = Date(), reason: ToastDismissReason = .dismissed) {
-        let dismissed = current
-        place(nil, removing: reason)
-        // A dismissed progress toast hands the slot back to the warning it displaced (A5); whatever was
-        // queued in `pending` stays queued behind that warning, as it was before the progress toast.
-        if dismissed?.style == .progress, let warning = displacedWarning {
-            displacedWarning = nil
-            place(warning, removing: reason)
-            announceAccessibility(for: warning)
-            return
-        }
+    func dismissCurrent(now: Date = Date()) {
+        current = nil
         guard let pendingEntry = pending else { return }
         pending = nil
         if now.timeIntervalSince(pendingEntry.stampedAt) <= Self.pendingSuccessCutoff {
-            place(pendingEntry.toast, removing: reason)
+            current = pendingEntry.toast
             announceAccessibility(for: pendingEntry.toast)
         } else {
             DebugLog.log(
@@ -212,7 +146,7 @@ final class ToastCenter {
     /// has since taken the slot.
     func dismissIfCurrent(id: UUID, now: Date = Date()) {
         guard current?.id == id else { return }
-        dismissCurrent(now: now, reason: .ended)
+        dismissCurrent(now: now)
     }
 
     /// Dismisses one specific toast wherever it currently sits — used by `ExportActivity.end()`
@@ -226,7 +160,7 @@ final class ToastCenter {
     /// no-op.
     func dismiss(id: UUID, now: Date = Date()) {
         if current?.id == id {
-            dismissCurrent(now: now, reason: .ended)
+            dismissCurrent(now: now)
         } else if pending?.toast.id == id {
             pending = nil
         }
@@ -441,46 +375,6 @@ enum ToastFactory {
         Toast(
             style: .warning,
             message: "Couldn't move the section. Nothing was changed.",
-            fadeDelayOverride: .seconds(9)
-        )
-    }
-
-    // MARK: Close / Open Cancelled or Refused (t-94369a83 Phase 3a-1b, slice-3a-1b-everyday.md section 8)
-
-    // Three warnings for a project close or open that did not go ahead. All fade after 9s, the same
-    // reasoning as `gettingStartedNotSaved()`: a notice like this must not camp in the app's one
-    // persistent-warning slot (a queued Save Version / export confirmation would age past
-    // `ToastCenter.pendingSuccessCutoff` and be discarded behind it). They make no claim about keys typed
-    // during the wait. A repeated request of the SAME kind (Cmd-W during a close) shows nothing at all, so
-    // it has no factory method.
-
-    /// A close (Cmd-W, the red button, File > Close Project) gave up waiting for a section operation
-    /// that was still running. The project stays open and unchanged.
-    static func lifecycleCloseCancelled() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't close the project while an earlier change was still finishing. " +
-                "Try again in a moment.",
-            fadeDelayOverride: .seconds(9)
-        )
-    }
-
-    /// Any other open or switch (Open Project, Open Recent, Getting Started, New Project, Import, Save As,
-    /// Finder open, Repair) gave up for the same reason.
-    static func lifecycleCancelled() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't do that while an earlier change was still finishing. " +
-                "Try again in a moment.",
-            fadeDelayOverride: .seconds(9)
-        )
-    }
-
-    /// A different close or open request arrived while one was already saving.
-    static func lifecycleBusy() -> Toast {
-        Toast(
-            style: .warning,
-            message: "Couldn't do that while the project was being saved. Try again in a moment.",
             fadeDelayOverride: .seconds(9)
         )
     }

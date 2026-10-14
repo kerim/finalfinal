@@ -318,13 +318,13 @@ extension MilkdownEditor.Coordinator {
     }
 
     /// Mount-flash fix (doc-open-blank-regression follow-up): observes
-    /// `.willResetEditorForProjectSwitch`, posted by `ContentView+LifecycleTails.swift`'s
-    /// `resetEditorJavaScriptStateForProjectSwitch()` (the open tail) right before it would otherwise call
+    /// `.willResetEditorForProjectSwitch`, posted by `ContentView+ProjectLifecycle.swift`'s
+    /// `handleProjectOpened()` right before it would otherwise call
     /// `window.FinalFinal.resetForProjectSwitch()` directly.
     ///
     /// `queue: nil` (synchronous delivery, same reasoning as `subscribeToBlockSyncNotifications`'s
     /// `blockSyncPushObserver` above): `beginCloak()` must run, and mint its token, before
-    /// `resetEditorJavaScriptStateForProjectSwitch()` proceeds past the `post()` call -- a `.main`-queue observer
+    /// `handleProjectOpened()` proceeds past the `post()` call -- a `.main`-queue observer
     /// would defer this to a later runloop tick, breaking that ordering guarantee.
     ///
     /// `object`-filtered against `self.webView`, NOT a bare `object: nil` match: this is a
@@ -346,18 +346,6 @@ extension MilkdownEditor.Coordinator {
             // comment) -- see NotificationHandledMarker's doc comment (EditorViewState+Types.swift).
             (notification.userInfo?["handledMarker"] as? NotificationHandledMarker)?.handled = true
             self.beginProjectResetCloak()
-        }
-    }
-
-    /// Slice 0 measurement (StructuralTrace.swift): observes `.diagnosticsLoggingChanged` so an editor that is already open
-    /// follows the Diagnostics toggle (its typing-trace flag), not only an editor that loads after it.
-    func subscribeToTraceNotifications() {
-        diagnosticsLoggingObserver = NotificationCenter.default.addObserver(
-            forName: .diagnosticsLoggingChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.pushTraceTypingFlag()
         }
     }
 

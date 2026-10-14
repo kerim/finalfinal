@@ -86,18 +86,10 @@ extension ZoteroService {
     func loadItem(_ item: CSLItem) {
         let key = item.id.isEmpty ? item.citekey : item.id
         itemsByKey[key] = item
-        noteLibraryChanged()
     }
 
     /// Clear cached data
     func clearCache() {
         itemsByKey = [:]
-        noteLibraryChanged()
-    }
-
-    /// Every write to `itemsByKey` ends here: bumps `itemsRevision` and tells the citation-prefill scheduler (if the app created one).
-    func noteLibraryChanged() {
-        itemsRevision &+= 1
-        onLibraryChanged?()
     }
 }

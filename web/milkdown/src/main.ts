@@ -107,9 +107,7 @@ import { blockIdPlugin, getAllBlockIds } from './block-id-plugin';
 import { blockSyncPlugin } from './block-sync-plugin';
 import { caywRemapPlugin, insertCitationAtCursor } from './cayw';
 import { citationPlugin } from './citation-plugin';
-import { prefillCitationsBegin, prefillCitationsStep } from './citation-prefill';
 import { restoreCitationLibrary } from './citation-search';
-import { getCitationMemoStats, setCitationMemoEnabled } from './citeproc-engine';
 import { dropCursorPlugin } from './drop-cursor-plugin';
 import {
   clearContentPushTimer,
@@ -144,7 +142,6 @@ import { inlineCodeCursorPlugin } from './inline-code-cursor';
 import { linkCursorPlugin } from './link-cursor';
 import { markdownLinkPlugin } from './markdown-link-input-rule';
 import { typewriterPlugin } from './typewriter-plugin';
-import { setTraceTyping } from './typing-trace';
 import {
   beginStructuralOp,
   cancelPendingInsertions,
@@ -154,13 +151,14 @@ import {
   closeEditingPopupsAndClearBoundaryState,
   finalizeStructuralOpPostOpDoc,
   finishStructuralSwapSettle,
-  heldUndoPressCount,
+  maybeAdvanceRegistryOnSyncOriginTx,
+  maybeNotifyHistoryEdited,
+  noteUserTransaction,
   performStructuralSwap,
   receiveRedoOutcome,
   receiveUndoOutcome,
   requestUnifiedRedo,
   requestUnifiedUndo,
-  runUndoTrackedDispatch,
   setUndoDescriptor,
 } from './undo-coordinator';
 import './heading-zoom-click-handler';
@@ -173,7 +171,6 @@ import {
 } from '../../shared/spellcheck-popover';
 import { cancelAnnotationEditFromLadder, isAnnotationEditPopupOpen } from './annotation-edit-popup';
 import { insertEquation, insertEquationDialog } from './api-math';
-import { deleteSectionEditorFirst } from './api-section-delete';
 import { cancelCitationEdit, isCitationEditPopupOpen } from './citation-edit-popup';
 import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { cancelMathEdit, isMathEditPopupOpen } from './math-edit-popup';
@@ -395,21 +392,29 @@ async function initEditor() {
   let pendingWasUndo = false;
 
   view.dispatch = (tr) => {
-    // The real dispatch plus the unified-undo per-transaction hooks (undo-coordinator.ts,
-    // `runUndoTrackedDispatch`): the historyEdited predicate (§4.2), the §4.6 registry
-    // advancement rule, and the real user-transaction counter for the permanent `[UnifiedUndo]`
-    // fallthrough log. They run on EVERY transaction (each one's own cheap first check
-    // short-circuits whenever there's nothing in the registry/descriptor to act on).
+    originalDispatch(tr);
+
+    // Unified-undo §4.2/§4.6 predicates -- deliberately run on EVERY transaction (each one's
+    // own cheap first check short-circuits whenever there's nothing in the registry/descriptor
+    // to act on -- see undo-coordinator.ts). The two are mutually exclusive by construction
+    // (one requires addToHistory !== false, the other requires === false), so call order
+    // between them doesn't matter.
     //
-    // DEFERRED (Phase 3, do not fix now): maybeNotifyHistoryEdited (inside the call above) runs
-    // BEFORE the getIsSettingContent() early return below. `descriptor.redoTopOpId` DOES exist
-    // now (Swift pushes it after every structural undo), so the first check inside
-    // maybeNotifyHistoryEdited no longer short-circuits while a redo is available: a programmatic
-    // content-set transaction that doesn't carry addToHistory:false would fire historyEdited here
-    // and wrongly invalidate the redo entry. The main content pushes in api-content.ts do set that
-    // meta (not re-audited exhaustively when this note was corrected); any programmatic path must
-    // set it too, or this check should move below the getIsSettingContent() guard.
-    runUndoTrackedDispatch(view, tr, originalDispatch);
+    // DEFERRED (Phase 3, do not fix now): maybeNotifyHistoryEdited sits ABOVE the
+    // getIsSettingContent() early return below. Harmless today (descriptor.redoTopOpId never
+    // exists, so maybeNotifyHistoryEdited always no-ops at its own first check regardless of
+    // ordering), but once Phase 3 populates descriptor.redoTopOpId, a programmatic
+    // content-set transaction that doesn't carry addToHistory:false would still fire
+    // historyEdited here and wrongly invalidate the redo entry -- setContent()/
+    // setContentWithBlockIds() should be audited to confirm every such transaction sets that
+    // meta, or this check should move below the getIsSettingContent() guard.
+    maybeNotifyHistoryEdited(tr);
+    // §4.6 advancement rule: absorbs sync-origin transactions (addToHistory:false) that land
+    // after a structural op's postOpDoc/preOpDoc was captured -- see undo-coordinator.ts.
+    maybeAdvanceRegistryOnSyncOriginTx(tr);
+    // Real user-transaction counter for undo-coordinator.ts's permanent `[UnifiedUndo]`
+    // fallthrough log (undo-mode-switch-focus investigation legacy).
+    noteUserTransaction(tr);
     // P3 WYSIWYG (4a mirror, undo-mode-switch-focus second timing gap): tracks the span
     // the user last actually typed in, so updateHeadingLevels (api-content.ts) can tell
     // whether an incoming derived correction overlaps it.
@@ -657,13 +662,6 @@ window.FinalFinal = {
   getAllCitekeys,
   requestCitationResolution,
   addCitationItems,
-  // Citations worked out ahead of time (citation-prefill.ts): the app's spare Rich Text page fills the citation memo for the open
-  // document while the user is still in Markdown. Begin parses without touching the editor; step formats for about `budgetMs`.
-  prefillCitationsBegin,
-  prefillCitationsStep,
-  // Memo switch and counters for the UI-test comparison runs (citeproc-engine.ts). Production never calls the switch.
-  setCitationMemoEnabled,
-  getCitationMemoStats,
   citationPickerCallback,
   citationPickerCancelled,
   citationPickerError,
@@ -679,8 +677,6 @@ window.FinalFinal = {
   getBlockAtCursor,
   hasBlockChanges,
   flushPendingBlockChanges,
-  // Typing-latency trace switch (slice 0 measurement, typing-trace.ts) -- default off.
-  setTraceTyping,
   // Image API
   insertImage,
   // Surgical heading update API
@@ -758,16 +754,12 @@ window.FinalFinal = {
   setUndoDescriptor,
   receiveUndoOutcome,
   receiveRedoOutcome,
-  // Slice 2a: how many Cmd-Z / Cmd-Shift-Z presses are held behind an in-flight undo (Swift reads it when a close starts).
-  heldUndoPressCount,
   // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift at the
   // audited op-sequence/undo-sequence boundaries (plan §4.4).
   beginStructuralOp,
   finalizeStructuralOpPostOpDoc,
   performStructuralSwap,
   finishStructuralSwapSettle,
-  // Slice 2a (api-section-delete.ts): editor-first section delete, one synchronous JavaScript turn.
-  deleteSectionEditorFirst,
   cancelPendingInsertions,
   // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state.
   closeEditingPopupsAndClearBoundaryState,

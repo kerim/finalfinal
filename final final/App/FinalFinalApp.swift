@@ -35,7 +35,7 @@ struct FinalFinalApp: App {
                     appViewState = .editor
                 },
                 onGettingStartedRequested: {
-                    Task { @MainActor in await openGettingStarted() }
+                    openGettingStarted()
                 }
             )
         case .editor:
@@ -83,7 +83,7 @@ struct FinalFinalApp: App {
                 handleProjectClosed()
             }
             .onReceive(NotificationCenter.default.publisher(for: .openGettingStarted)) { _ in
-                Task { @MainActor in await openGettingStarted() }
+                openGettingStarted()
             }
             // Listen for command notifications (from menu)
             // Note: .newProject and .openProject are handled by AppDelegate only
@@ -261,7 +261,7 @@ struct FinalFinalApp: App {
         // Check if Getting Started should be shown (first launch or version update)
         if documentManager.shouldShowGettingStarted {
             documentManager.markGettingStartedSeen()
-            await openGettingStarted()
+            openGettingStarted()
             return
         }
 
@@ -346,18 +346,22 @@ struct FinalFinalApp: App {
         appViewState = .picker
     }
 
-    /// Open the Getting Started project (Help > Getting Started, the picker's button, first launch).
-    ///
-    /// t-94369a83 3a-1b round C8b (E9): with a regular project open this goes through the lifecycle
-    /// (`ProjectCommands.openGettingStarted`), so that project is saved and backed up first; it used to be closed
-    /// without either. The command opens Getting Started and swaps the root view; on a failure it falls back to the
-    /// picker, as this function always did. Getting Started to Getting Started and "nothing open" pass through.
+    /// Open the Getting Started project
     @MainActor
-    private func openGettingStarted() async {
-        await ProjectCommands.openGettingStarted(
-            showGettingStarted: { appViewState = .gettingStarted },
-            showPicker: { appViewState = .picker }
-        )
+    private func openGettingStarted() {
+        // Close any existing project first
+        if documentManager.hasOpenProject {
+            documentManager.closeProject()
+        }
+
+        do {
+            try documentManager.openGettingStarted()
+            appViewState = .gettingStarted
+        } catch {
+            DebugLog.log(.lifecycle, "[FinalFinalApp] Failed to open Getting Started: \(error)")
+            // Fall back to picker on error
+            appViewState = .picker
+        }
     }
 }
 

@@ -179,28 +179,6 @@ export function getAllBlockIds(): Map<number, string> {
   return new Map(currentBlockIds);
 }
 
-/**
- * Copy of the top-level offset → block type map (the type gate assignBlockIds itself uses).
- * Captured beside `getAllBlockIds()` by `deleteSectionEditorFirst` so a failure after its
- * removal can put both maps back exactly as they were (see `restoreBlockIdMaps`).
- */
-export function getAllBlockTypes(): Map<number, string> {
-  return new Map(currentBlockTypes);
-}
-
-/**
- * Put the offset → id and offset → type maps back to previously captured copies (the two
- * `get…` exports above). Wholesale and IN PLACE, like `replaceTopLevelIds` (same Map objects,
- * see `setBlockIdsForTopLevel`'s comment on why). Only valid while the document is the one the
- * copies were captured from, i.e. right after a checkpoint swap back to that document.
- */
-export function restoreBlockIdMaps(ids: ReadonlyMap<number, string>, types: ReadonlyMap<number, string>): void {
-  currentBlockIds.clear();
-  for (const [offset, id] of ids) currentBlockIds.set(offset, id);
-  currentBlockTypes.clear();
-  for (const [offset, type] of types) currentBlockTypes.set(offset, type);
-}
-
 /** Exported for tests — introspects the recently-split-empty marker set. No production code outside this file should depend on this. */
 export function getRecentlySplitEmptyIds(): Set<string> {
   return new Set(recentlySplitEmptyIds);

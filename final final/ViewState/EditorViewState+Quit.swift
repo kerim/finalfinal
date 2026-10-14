@@ -2,55 +2,47 @@
 //  EditorViewState+Quit.swift
 //  final final
 //
-//  t-94369a83 Phase 3a-1b, round C6 (slice-3a-1b-everyday.md section 4.5): the quit-time flush, re-implemented
-//  on the lifecycle save sequence. It used to be its own recipe: stop and drain the 2s block-sync poll (so a
-//  poll cycle cannot re-insert a paragraph the flush just wrote, TLA+ Finding #8 / Calm_InsertThenQuit), fetch
-//  fresh content, then `flushAllSync()` (a direct database write, plus a bounded wait on the bibliography and
-//  footnote services), with a quit-only suppression flag armed first so a rebuild notification could not start a
-//  forced poll underneath it. All of that is now the one sequence close and project switch use
-//  (`runLifecycleFlush`, EditorViewState+Lifecycle.swift): the poll is stopped and drained, one forced poll sends
-//  the last keystrokes (F), the editor's live document is written through the ordered write queue (FB), the
-//  bibliography and footnotes are re-derived from it, and a writer barrier waits for everything queued. The quit
-//  token (`armLifecycle(.quit)`) replaces that flag: the three rebuild handlers defer while it is armed, so no
-//  forced poll can start.
-//
 
 import Foundation
 
 extension EditorViewState {
-    /// Quit's save sequence: `runLifecycleFlush` under the already-armed QUIT `token`, against `deadline` (18s
-    /// when quit runs alone, the shared tightened deadline when it joined a close or project switch whose own
-    /// save never completed).
+    /// Quit-time flush. Stops and drains the 2s block-sync poll BEFORE flushAllSync(),
+    /// mirroring performProjectClose(), so a poll cycle can't re-insert a paragraph the
+    /// flush just wrote during the up-to-3s backup wait (TLA+ Finding #8,
+    /// Calm_InsertThenQuit).
     ///
-    /// What is quit-specific lives in `runLifecycleFlush` itself, keyed on `token.kind`: the section-operation
-    /// wait is 10s and a still-running operation means F is applied and FB is skipped (the typing is saved,
-    /// the operation is not undone); the floors keep 6 seconds before FB and 4 after it for the barrier and the
-    /// automatic version; a barrier the writer refuses does not stop a quit; a barrier wait that runs out with
-    /// FB still unapplied is counted as a lost whole-document write (item 15).
+    /// Best-effort, with the same residual as close: stopPollingAndDrain() cannot
+    /// force a cycle wedged inside evaluateJavaScript to finish, and a cycle that had
+    /// already fetched when polling stopped still applies its batch when the reply
+    /// arrives (see BlockSyncService.stopPollingAndDrain and the watchdog notes around
+    /// raceWithTimeout). Such a wedged or post-fetch-orphan cycle can still land after
+    /// this flush. The TLA+ model's QuitDrain, like CloseDrain, waits for
+    /// poll.st = "none" and so abstracts that window away. This drain wait is itself
+    /// this method's dominant cost when a cycle is wedged: `stopPollingAndDrain()` can
+    /// add up to one full poll watchdog period (`BlockSyncService.defaultPollWatchdogSeconds`,
+    /// 8s by default) to quit's worst-case time, on top of the WebView fetch timeout
+    /// and the bibliography/footnote flush bound below.
     ///
-    /// The writer barrier the sequence leaves held stays held: quit exits holding it, so nothing queued behind
-    /// it (a bibliography or Notes update the sequence orphaned) can write after the automatic version. The
-    /// caller (`AppDelegate.runQuitSequence`) makes the automatic version and replies.
-    func flushForQuit(
-        token: LifecycleToken,
-        host: LifecycleHost,
-        structuralUndoController: StructuralUndoController?,
-        deadline: LifecycleDeadline,
-        bounds: LifecycleBounds
-    ) async -> LifecycleFlushResult {
-        assert(token.kind == .quit, "flushForQuit runs under a quit token")
-        let started = Date()
-        let result = await runLifecycleFlush(
-            token: token,
-            host: host,
-            structuralUndoController: structuralUndoController,
-            deadline: deadline,
-            bounds: bounds
-        )
-        DebugLog.log(
-            .lifecycle,
-            "[EditorViewState] flushForQuit: sequence took \(Date().timeIntervalSince(started))s, "
-                + "fb=\(result.fbStatus), barrier=\(result.barrier), \(deadline.remaining)s left")
-        return result
+    /// `suppressRebuildsForQuit` is armed FIRST, before the drain even starts: below,
+    /// `flushAllSync()` -> `flushPendingBibliographyAndFootnoteSync()` can force an
+    /// already-scheduled bibliography or Notes update to run now, and that update's own
+    /// database write posts `.bibliographySectionChanged` / `.notesSectionChanged`.
+    /// `stopPollingAndDrain()` only knows about the periodic poll Timer and whatever
+    /// unforced cycle is already in flight -- it has no way to stop either handler's own
+    /// forced poll (`pollBlockChangesNowForDatabaseRebuild()`), which bypasses the drain
+    /// entirely and could re-apply a still-unconfirmed insert on top of the row this
+    /// same flush just wrote. Suppressing the rebuild instead means no such poll ever
+    /// starts. See `EditorViewState.suppressRebuildsForQuit`'s doc comment for the full
+    /// mechanism.
+    func flushForQuit() async {
+        suppressRebuildsForQuit = true
+        let drainStart = Date()
+        await blockSyncService?.stopPollingAndDrain()
+        DebugLog.log(.lifecycle, "[EditorViewState] flushForQuit: drain took \(Date().timeIntervalSince(drainStart))s")
+        if let freshContent = await blockSyncService?.fetchContentFromWebView(),
+           !freshContent.isEmpty {
+            content = freshContent
+        }
+        await flushAllSync()
     }
 }

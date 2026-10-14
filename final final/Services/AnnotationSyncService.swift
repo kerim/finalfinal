@@ -24,11 +24,6 @@ class AnnotationSyncService {
     /// Content we last synced - prevents feedback loop from ValueObservation
     private var lastSyncedContent: String = ""
 
-    /// The newest sync in line (see `syncContent(_:)`). Every sync (debounced or forced) waits for this one to finish,
-    /// write included, before it starts, so two syncs never overlap even though the database write suspends the main
-    /// actor instead of blocking it. Never cancelled: a sync that has been queued or started runs to the end.
-    private var syncChain: Task<Void, Never>?
-
     // MARK: - Regex Patterns
 
     /// Pattern to match annotation comments: <!-- ::type:: content -->
@@ -77,8 +72,7 @@ class AnnotationSyncService {
         self.contentId = contentId
     }
 
-    /// Cancel any pending debounced sync operation (the debounce timer only). A sync that has already started, or is
-    /// queued behind one that has, is not cancelled: a database write that has begun must finish.
+    /// Cancel any pending debounced sync operation
     func cancelPendingSync() {
         debounceTask?.cancel()
         debounceTask = nil
@@ -111,11 +105,8 @@ class AnnotationSyncService {
         lastSyncedContent = ""
     }
 
-    /// Force immediate sync (e.g., before app quit). Returns only after every sync already started or queued has
-    /// finished and this one has too (they run in order, see `syncContent(_:)`).
+    /// Force immediate sync (e.g., before app quit)
     func syncNow(_ markdown: String) async {
-        let traceSpan = StructuralTrace.span("annotationSync.syncNow") // slice 0 measurement; silent unless tracing is on
-        defer { traceSpan.end() }
         debounceTask?.cancel()
         await syncContent(markdown)
     }
@@ -165,35 +156,13 @@ class AnnotationSyncService {
 
     // MARK: - Private Methods
 
-    /// Core sync method: queues one sync behind the one before it, and returns when this one has finished.
-    ///
-    /// The database write inside a sync runs off the main thread and is awaited (see `performSync`), so the main actor
-    /// is free while a long write elsewhere (a section delete's version snapshot, a restore) holds the database's one
-    /// writer. That makes a suspension point inside a sync, so two syncs could interleave: a second one would read the
-    /// annotation rows before the first one's write landed and insert or delete the wrong rows. Each sync therefore
-    /// waits for the previous one (including its write) first, in call order; none is dropped and none runs twice.
-    ///
-    /// `db` and `cid` are captured when the sync is queued, so a sync queued for one project never writes to the
-    /// database a later `configure(database:contentId:)` sets.
+    /// Core sync method using position-based reconciliation
     private func syncContent(_ markdown: String) async {
         guard let db = projectDatabase, let cid = contentId else {
             DebugLog.log(.editor, "[AnnotationSyncService] syncContent skipped - database not configured")
             return
         }
 
-        let previous = syncChain
-        // Unstructured on purpose: the caller (the debounce task) may be cancelled while this runs, and a started
-        // write must not be. Strong `self`: the chain is finite, and a queued sync must run even if the owner lets go.
-        let sync = Task { [self] in
-            await previous?.value
-            await performSync(markdown, database: db, contentId: cid)
-        }
-        syncChain = sync
-        await sync.value
-    }
-
-    /// One sync, run only when the previous one has finished (`syncContent(_:)`): position-based reconciliation.
-    private func performSync(_ markdown: String, database db: ProjectDatabase, contentId cid: String) async {
         // 1. Parse annotations from markdown
         let parsed = parseAnnotationsFromMarkdown(markdown)
 
@@ -210,16 +179,10 @@ class AnnotationSyncService {
         // 3. Reconcile to find minimal changes
         let changes = reconcile(parsed: parsed, dbAnnotations: dbAnnotations, contentId: cid)
 
-        // 4. Apply changes to database (if any). Off the main thread and awaited: the database has one writer, and a long
-        // write elsewhere (a section delete's version snapshot and row deletes on a book) holds it for seconds. A
-        // synchronous write here parked the main thread behind it, so the window froze (the removal was not painted and
-        // typing was not echoed). Detached so the write also finishes if the awaiting task is cancelled. The reads above
-        // stay on the main actor: a read does not wait for the writer.
+        // 4. Apply changes to database (if any)
         if !changes.isEmpty {
             do {
-                try await Task.detached(priority: .userInitiated) {
-                    try db.applyAnnotationChanges(changes, for: cid)
-                }.value
+                try db.applyAnnotationChanges(changes, for: cid)
             } catch {
                 DebugLog.log(.editor, "[AnnotationSyncService] Error applying changes: \(error.localizedDescription)")
             }
@@ -368,7 +331,22 @@ class AnnotationSyncService {
                 continue
             }
 
-            let existing = bestCandidate(among: candidates, for: parsed)
+            // Pick the best candidate using tie-breakers (in order):
+            // 1. Exact charOffset match (steady state — nothing moved).
+            // 2. Exact text match (prevents UUID swaps when offsets shift asymmetrically
+            //    within a bucket but the text uniquely identifies each annotation).
+            // 3. Smallest absolute offset distance (closest in position).
+            // 4. First in array order (deterministic fallback; ORDER BY charOffset from GRDB).
+            let existing: Annotation
+            if let exactOffset = candidates.first(where: { $0.charOffset == parsed.charOffset }) {
+                existing = exactOffset
+            } else if let exactText = candidates.first(where: { $0.text == parsed.text }) {
+                existing = exactText
+            } else {
+                existing = candidates.min(by: {
+                    abs($0.charOffset - parsed.charOffset) < abs($1.charOffset - parsed.charOffset)
+                }) ?? candidates[0]
+            }
 
             // Consume the chosen candidate so the next parsed annotation cannot also match it
             candidates.removeAll { $0.id == existing.id }
@@ -381,7 +359,31 @@ class AnnotationSyncService {
             // Found potential match - check if it needs updating
             matchedDbIds.insert(existing.id)
 
-            if let updates = changedFields(from: existing, to: parsed) {
+            var needsUpdate = false
+            var updates = AnnotationUpdates()
+
+            if existing.text != parsed.text {
+                updates.text = parsed.text
+                needsUpdate = true
+            }
+            if existing.isCompleted != parsed.isCompleted {
+                updates.isCompleted = parsed.isCompleted
+                needsUpdate = true
+            }
+            if existing.charOffset != parsed.charOffset {
+                updates.charOffset = parsed.charOffset
+                needsUpdate = true
+            }
+            if existing.highlightStart != parsed.highlightStart {
+                updates.highlightStart = parsed.highlightStart
+                needsUpdate = true
+            }
+            if existing.highlightEnd != parsed.highlightEnd {
+                updates.highlightEnd = parsed.highlightEnd
+                needsUpdate = true
+            }
+
+            if needsUpdate {
                 changes.append(.update(id: existing.id, updates: updates))
             }
         }
@@ -392,52 +394,6 @@ class AnnotationSyncService {
         }
 
         return changes
-    }
-
-    /// Pick the best DB candidate for `parsed` using tie-breakers (in order):
-    /// 1. Exact charOffset match (steady state — nothing moved).
-    /// 2. Exact text match (prevents UUID swaps when offsets shift asymmetrically
-    ///    within a bucket but the text uniquely identifies each annotation).
-    /// 3. Smallest absolute offset distance (closest in position).
-    /// 4. First in array order (deterministic fallback; ORDER BY charOffset from GRDB).
-    private func bestCandidate(among candidates: [Annotation], for parsed: ParsedAnnotation) -> Annotation {
-        if let exactOffset = candidates.first(where: { $0.charOffset == parsed.charOffset }) {
-            return exactOffset
-        } else if let exactText = candidates.first(where: { $0.text == parsed.text }) {
-            return exactText
-        }
-        return candidates.min(by: {
-            abs($0.charOffset - parsed.charOffset) < abs($1.charOffset - parsed.charOffset)
-        }) ?? candidates[0]
-    }
-
-    /// The fields of `existing` that differ from `parsed`, or nil if none do (nothing to update).
-    private func changedFields(from existing: Annotation, to parsed: ParsedAnnotation) -> AnnotationUpdates? {
-        var needsUpdate = false
-        var updates = AnnotationUpdates()
-
-        if existing.text != parsed.text {
-            updates.text = parsed.text
-            needsUpdate = true
-        }
-        if existing.isCompleted != parsed.isCompleted {
-            updates.isCompleted = parsed.isCompleted
-            needsUpdate = true
-        }
-        if existing.charOffset != parsed.charOffset {
-            updates.charOffset = parsed.charOffset
-            needsUpdate = true
-        }
-        if existing.highlightStart != parsed.highlightStart {
-            updates.highlightStart = parsed.highlightStart
-            needsUpdate = true
-        }
-        if existing.highlightEnd != parsed.highlightEnd {
-            updates.highlightEnd = parsed.highlightEnd
-            needsUpdate = true
-        }
-
-        return needsUpdate ? updates : nil
     }
 
 }

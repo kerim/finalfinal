@@ -329,12 +329,11 @@ count_pure_deletions() {
 }
 
 delete_branch_or_report() {
-    # Attempts `git branch -d "$BR"`, which independently re-checks merge
-    # status against $repo's actual checked-out HEAD/upstream — NOT against
-    # "$base" the way our own `branch --merged "$base"` check above does.
-    # Normally these agree (the caller merges into $base while it's checked
-    # out in $repo, then runs this script right after), but nothing enforces
-    # that, so git can refuse here even though our own check said "merged".
+    # Deletes "$BR" only if it is contained in "$base" -- the same branch the
+    # caller's own merged check used -- then force-deletes it. `git branch -d`
+    # is not used: it checks against $repo's checked-out branch instead, which
+    # differs from "$base" whenever another session has $repo on its own
+    # branch, and then refuses a branch that is fully merged into "$base".
     # On success: returns 0, branch_del_err is empty.
     # On failure: returns 1, branch_del_err holds git's one-line message.
     #   Callers MUST treat this as non-fatal — do not let it crash the
@@ -347,7 +346,11 @@ delete_branch_or_report() {
     if [ "$dry_run" -eq 1 ]; then
         return 0
     fi
-    if branch_del_err="$(git -C "$repo" branch -d "$BR" 2>&1 >/dev/null)"; then
+    if ! git -C "$repo" merge-base --is-ancestor "$BR" "$base" 2>/dev/null; then
+        branch_del_err="branch '$BR' is not merged into '$base'"
+        return 1
+    fi
+    if branch_del_err="$(git -C "$repo" branch -D "$BR" 2>&1 >/dev/null)"; then
         return 0
     fi
     return 1
@@ -372,7 +375,7 @@ case "$state" in
             fi
         fi
         if [ "$branch_del_failed" -eq 1 ]; then
-            echo -e "${RED}worktree-cleanup: REMOVED — worktree '$slug' removed, but branch '$BR' could NOT be auto-deleted (git says it isn't fully merged into the currently checked-out branch, which may differ from '$base'): $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
+            echo -e "${RED}worktree-cleanup: REMOVED — worktree '$slug' removed, but branch '$BR' could NOT be auto-deleted: $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
         else
             run rm -rf "$NOTES"
             echo "worktree-cleanup: REMOVED — '$slug' worktree removed, branch '$BR' deleted (was merged into '$base'), run notes deleted."
@@ -410,7 +413,7 @@ case "$state" in
             branch_msg="was already absent"
         fi
         if [ "$branch_del_failed" -eq 1 ]; then
-            echo -e "${RED}worktree-cleanup: RECOVERED — '$slug' had an interrupted prior removal: $n tracked path(s) were deleted from disk without being committed (pure worktree-side deletions, fully recoverable from git history — not genuine new work). Finished the removal, but branch '$BR' could NOT be auto-deleted (git says it isn't fully merged into the currently checked-out branch, which may differ from '$base'): $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
+            echo -e "${RED}worktree-cleanup: RECOVERED — '$slug' had an interrupted prior removal: $n tracked path(s) were deleted from disk without being committed (pure worktree-side deletions, fully recoverable from git history — not genuine new work). Finished the removal, but branch '$BR' could NOT be auto-deleted: $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
         else
             run rm -rf "$NOTES"
             echo "worktree-cleanup: RECOVERED — '$slug' had an interrupted prior removal: $n tracked path(s) were deleted from disk without being committed (pure worktree-side deletions, fully recoverable from git history — not genuine new work). Finished the removal. Branch '$BR': $branch_msg. Run notes: deleted."
@@ -432,7 +435,7 @@ case "$state" in
                     run rm -rf "$NOTES"
                     echo "worktree-cleanup: PRUNED — worktree directory for '$slug' was already missing; git metadata pruned. Branch '$BR': deleted (was merged into '$base'). Run notes: deleted."
                 else
-                    echo -e "${RED}worktree-cleanup: PRUNED — worktree directory for '$slug' was already missing; git metadata pruned, but branch '$BR' could NOT be auto-deleted (git says it isn't fully merged into the currently checked-out branch, which may differ from '$base'): $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
+                    echo -e "${RED}worktree-cleanup: PRUNED — worktree directory for '$slug' was already missing; git metadata pruned, but branch '$BR' could NOT be auto-deleted: $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
                 fi
             else
                 echo "worktree-cleanup: PRUNED — worktree directory for '$slug' was already missing; git metadata pruned. Branch '$BR': RETAINED — not merged into '$base'; verify no work was lost, then 'git branch -D $BR' manually if appropriate. Run notes: retained."
@@ -484,7 +487,7 @@ case "$state" in
             run rm -rf "$NOTES"
             echo "worktree-cleanup: PRUNED — no worktree directory or git registration exists for '$slug' (already removed by an earlier attempt). Branch '$BR': deleted (was merged into '$base'). Run notes: deleted."
         else
-            echo -e "${RED}worktree-cleanup: PRUNED — no worktree directory or git registration exists for '$slug' (already removed by an earlier attempt), but branch '$BR' could NOT be auto-deleted (git says it isn't fully merged into the currently checked-out branch, which may differ from '$base'): $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
+            echo -e "${RED}worktree-cleanup: PRUNED — no worktree directory or git registration exists for '$slug' (already removed by an earlier attempt), but branch '$BR' could NOT be auto-deleted: $branch_del_err. Run notes retained alongside it. If you're confident the branch's work is safe, finish manually: git -C '$repo' branch -D '$BR' && rm -rf '$NOTES'${NC}" >&2
         fi
         exit 0
         ;;

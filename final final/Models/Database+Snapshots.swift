@@ -128,45 +128,25 @@ extension ProjectDatabase {
         contentHash: String = ""
     ) throws -> Snapshot {
         try write { db in
-            try Self.createSnapshot(
-                db: db, projectId: projectId, name: name, isAutomatic: isAutomatic,
-                content: content, sections: sections, contentHash: contentHash)
+            // Create the snapshot
+            var snapshot = Snapshot(
+                projectId: projectId,
+                name: name,
+                isAutomatic: isAutomatic,
+                previewMarkdown: content.markdown,
+                contentHash: contentHash
+            )
+            try snapshot.insert(db)
+
+            // Create snapshot sections from current sections
+            for section in sections {
+                var snapshotSection = SnapshotSection(from: section, snapshotId: snapshot.id)
+                try snapshotSection.insert(db)
+            }
+
+            return snapshot
         }
     }
-
-    // swiftlint:disable function_parameter_count
-    /// `createSnapshot` on an open `Database` handle, for use INSIDE one write transaction (t-94369a83 Phase 4b,
-    /// slice 2a: `SectionDeleteJob` writes the Version History snapshot and deletes the section's rows in
-    /// the same transaction, so it cannot call the form above, which opens its own `write`). Takes the instance
-    /// form's six parameters plus the open `Database`.
-    static func createSnapshot(
-        db: Database,
-        projectId: String,
-        name: String?,
-        isAutomatic: Bool,
-        content: Content,
-        sections: [Section],
-        contentHash: String = ""
-    ) throws -> Snapshot {
-        // Create the snapshot
-        var snapshot = Snapshot(
-            projectId: projectId,
-            name: name,
-            isAutomatic: isAutomatic,
-            previewMarkdown: content.markdown,
-            contentHash: contentHash
-        )
-        try snapshot.insert(db)
-
-        // Create snapshot sections from current sections
-        for section in sections {
-            var snapshotSection = SnapshotSection(from: section, snapshotId: snapshot.id)
-            try snapshotSection.insert(db)
-        }
-
-        return snapshot
-    }
-    // swiftlint:enable function_parameter_count
 
     // MARK: - Delete Operations
 

@@ -96,16 +96,16 @@ let editingView: EditorView | null = null;
 // resolveLiveCitation() below).
 //
 // IMPORTANT: this is a clone (`liveNode.type.create({ ...liveNode.attrs },
-// undefined, liveNode.marks)`), not a raw reference to the live doc node. The
-// clone is belt and braces: citation-plugin.ts's NodeView.update() used to
-// mutate its tracked node's attrs object IN PLACE (`Object.assign(attrs,
-// newAttrs)`), which silently rewrote the citation of every other reference
-// to that node -- this popup's captured node, and also any saved undo
-// checkpoint. It no longer does (it swaps a `currentNode` reference instead and
-// never writes into `node.attrs`), and nothing may write into a node's attrs
-// again (see __tests__/citation-nodeview-immutability.test.ts). Keeping a
-// clone here costs nothing and keeps "hold a stable snapshot" true even if
-// such a write is ever reintroduced.
+// undefined, liveNode.marks)`), not a raw reference to the live doc node.
+// ProseMirror nodes are immutable in the framework's own transaction
+// plumbing, but citation-plugin.ts's NodeView.update() mutates its tracked
+// node's attrs object IN PLACE via Object.assign() as a rendering shortcut
+// (`const attrs = node.attrs; ...; Object.assign(attrs, newAttrs)`). Since
+// `attrs` and `node.attrs` are the same object by reference, that mutation is
+// visible through any other reference to that same node — including a raw
+// `view.state.doc.nodeAt(pos)` captured here before the mutating update runs.
+// Holding a clone sidesteps that entirely, which is what actually makes "hold
+// a stable snapshot" true for this codebase.
 let editingNode: Node | null = null;
 let editPopupBlurTimeout: ReturnType<typeof setTimeout> | null = null;
 

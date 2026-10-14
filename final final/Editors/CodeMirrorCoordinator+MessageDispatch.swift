@@ -381,8 +381,7 @@ extension CodeMirrorEditor.Coordinator {
     func syncContentAfterFootnoteInsert(label: String) {
         guard let webView else { return }
         webView.evaluateJavaScript("window.FinalFinal.getContentRaw()") { [weak self] result, _ in
-            guard let self, let reply = result as? String else { return }
-            let rawContent = reply.contiguousUTF8Copy  // native text once, where it arrives (see `BlockSyncService.fetchContentFromWebView`)
+            guard let self, let rawContent = result as? String else { return }
             Task { @MainActor in
                 self.lastPushedContent = rawContent
                 self.lastReceivedFromEditor = Date()

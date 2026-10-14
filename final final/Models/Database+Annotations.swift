@@ -9,14 +9,14 @@ import GRDB
 // MARK: - Annotation Change Types
 
 /// Represents a surgical change to apply to the annotations table
-enum AnnotationChange: Sendable {
+enum AnnotationChange {
     case insert(Annotation)
     case update(id: String, updates: AnnotationUpdates)
     case delete(id: String)
 }
 
 /// Updates to apply to an existing annotation (all fields optional)
-struct AnnotationUpdates: Sendable {
+struct AnnotationUpdates {
     var text: String?
     var isCompleted: Bool?
     var charOffset: Int?
@@ -38,30 +38,6 @@ struct AnnotationUpdates: Sendable {
         self.highlightStart = highlightStart
         self.highlightEnd = highlightEnd
         self.sectionId = sectionId
-    }
-}
-
-private extension AnnotationUpdates {
-    /// Apply only the fields that are set onto `annotation` (the double-optional ones: `.some(nil)` sets the field to nil).
-    func applyChanges(to annotation: inout Annotation) {
-        if let text = text {
-            annotation.text = text
-        }
-        if let isCompleted = isCompleted {
-            annotation.isCompleted = isCompleted
-        }
-        if let charOffset = charOffset {
-            annotation.charOffset = charOffset
-        }
-        if let highlightStartUpdate = highlightStart {
-            annotation.highlightStart = highlightStartUpdate
-        }
-        if let highlightEndUpdate = highlightEnd {
-            annotation.highlightEnd = highlightEndUpdate
-        }
-        if let sectionIdUpdate = sectionId {
-            annotation.sectionId = sectionIdUpdate
-        }
     }
 }
 
@@ -251,7 +227,25 @@ extension ProjectDatabase {
                     guard var annotation = try Annotation.fetchOne(db, key: id) else { continue }
 
                     // Apply only the fields that are set
-                    updates.applyChanges(to: &annotation)
+                    if let text = updates.text {
+                        annotation.text = text
+                    }
+                    if let isCompleted = updates.isCompleted {
+                        annotation.isCompleted = isCompleted
+                    }
+                    if let charOffset = updates.charOffset {
+                        annotation.charOffset = charOffset
+                    }
+                    // Double-optional handling
+                    if let highlightStartUpdate = updates.highlightStart {
+                        annotation.highlightStart = highlightStartUpdate
+                    }
+                    if let highlightEndUpdate = updates.highlightEnd {
+                        annotation.highlightEnd = highlightEndUpdate
+                    }
+                    if let sectionIdUpdate = updates.sectionId {
+                        annotation.sectionId = sectionIdUpdate
+                    }
 
                     annotation.updatedAt = Date()
                     try annotation.update(db)

@@ -23,22 +23,6 @@ import Testing
 import WebKit
 @testable import final_final
 
-/// Thread-safe counter for `DocumentWriter.testEventHandler`, whose closure type is
-/// `@Sendable` because the writer's `perform(_:)` calls it from a nonisolated context
-/// (any actor call site, not necessarily MainActor) -- so it cannot capture/mutate a
-/// MainActor-isolated `var` directly, the same reason `AlwaysLogCapture` above uses a
-/// lock for the process-global `DebugLog.alwaysSink`.
-final class WriterEventCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-    func note() {
-        lock.withLock { count += 1 }
-    }
-    var value: Int {
-        lock.withLock { count }
-    }
-}
-
 @MainActor
 extension BlockSyncPollWatchdogTests {
 
@@ -135,8 +119,8 @@ extension BlockSyncPollWatchdogTests {
                 "no watchdog timeout may be involved in this test - got \(sync.testPollTimeoutForceFlags)")
         #expect(sync.testGenerationAbandonCount == 0,
                 "the generation guard must NOT be what stopped this batch - got \(sync.testGenerationAbandonCount)")
-        #expect(sync.testWriterLedger.lateApplies == 0,
-                "no late-apply/merge path is involved: there is exactly one cycle - got \(sync.testWriterLedger)")
+        #expect(sync.testOwnBatchAbandonCount == 0,
+                "no apply-chain merge path is involved: there is exactly one cycle - got \(sync.testOwnBatchAbandonCount)")
 
         let rejections = capture.captured.filter { $0.contains("REJECTED WHOLE BATCH") }
         #expect(rejections.count == 1,
@@ -307,133 +291,6 @@ extension BlockSyncPollWatchdogTests {
         let afterThird = try TestFixtureFactory.fetchBlocks(from: db).first { $0.id == target.id }
         #expect(afterThird?.textContent == "later text",
                 "the following poll's edit must land — got \(String(describing: afterThird?.textContent))")
-        _ = (webView, editorState)
-    }
-
-    /// B5 (t-94369a83 Phase 1, "Sequence continuity"). The writer-REPLACED case of T8's
-    /// failed-epoch-bump retry: `reconfigure` to a new project creates a NEW writer,
-    /// continuing the OLD writer's sequence (so a service running for a while and then
-    /// switching projects still has monotonic stamps) -- but that has no bearing on
-    /// whether the NEW project's epoch bump succeeds. `needsEpochBump` defers the new
-    /// writer's very first poll until the retry succeeds, exactly as it does for
-    /// `configure`'s failure in T8. Asserts on behaviour and the writer's own event
-    /// hook (a `WriterEvent` fires only once `reserve()` actually runs), not
-    /// `DebugLog.alwaysSink`: zero writer events during the deferred poll is itself
-    /// proof that `reserveWriterTurn` returned before ever reaching the writer.
-    @Test("A failed reconfigure-time epoch bump defers the new writer's first poll until the retry succeeds")
-    func failedReconfigureBump_newWriterDefersUntilRetrySucceeds() async throws {
-        let dbA = try TestFixtureFactory.createTemporary(content: "# Alpha\n\none two three.\n")
-        let pidA = try TestFixtureFactory.getProjectId(from: dbA)
-        let targetA = try #require(
-            try TestFixtureFactory.fetchBlocks(from: dbA).first { $0.textContent.contains("one two three") },
-            "expected the Alpha paragraph in the fixture"
-        )
-        let webView = WKWebView()                                           // never loaded; retained here
-        let sync = BlockSyncService()
-        sync.configure(database: dbA, projectId: pidA, webView: webView)
-        let editorState = EditorViewState()                                 // held: `editorState` is weak
-        sync.editorState = editorState
-        sync.testPollWatchdogSeconds = 30
-
-        // Two cycles on DB A so the writer's sequence space advances past 1 before the switch.
-        let firstJSON = try blockChangesJSON(updates: [
-            BlockUpdate(id: targetA.id, textContent: "A edit one", markdownFragment: nil, headingLevel: nil)
-        ])
-        let secondJSON = try blockChangesJSON(updates: [
-            BlockUpdate(id: targetA.id, textContent: "A edit two", markdownFragment: nil, headingLevel: nil)
-        ])
-        let jsA = ScriptedJSEvaluator()
-        jsA.answer("hasBlockChanges", true, true)
-        jsA.answer("getBlockChanges", firstJSON, secondJSON)
-        sync.testJSEvaluator = { try await jsA.evaluate($0) }
-        let appliesA = CountGate()
-        sync.testAfterApplyHook = { await appliesA.note() }
-        await sync.pollBlockChangesForTest(force: false)
-        await sync.pollBlockChangesForTest(force: false)
-        await appliesA.waitFor(2)
-        let sequenceBeforeSwitch = sync.testWriterLedger   // sanity: no losses yet
-        #expect(sequenceBeforeSwitch.failedWrites == 0 && sequenceBeforeSwitch.discardedAfterFetch == 0,
-                "precondition: DB A's two cycles must both have landed cleanly — got \(sequenceBeforeSwitch)")
-
-        // DB B: a row stamped (E, 300) ("last session"), then the epoch column dropped —
-        // T8's technique, reused here for the writer-REPLACED path.
-        let dbB = try TestFixtureFactory.createTemporary(content: "# Beta\n\nfour five six.\n")
-        let pidB = try TestFixtureFactory.getProjectId(from: dbB)
-        let targetB = try #require(
-            try TestFixtureFactory.fetchBlocks(from: dbB).first { $0.textContent.contains("four five six") },
-            "expected the Beta paragraph in the fixture"
-        )
-        let sessionEpochB = try dbB.currentBlockWriteEpoch(projectId: pidB)
-        let lastSessionB = try dbB.applyBlockChangesFromEditor(
-            BlockChanges(updates: [
-                BlockUpdate(id: targetB.id, textContent: "B last session text", markdownFragment: nil, headingLevel: nil)
-            ]),
-            for: pidB, stamp: BlockWriteStamp(epoch: sessionEpochB, sequence: 300)
-        )
-        #expect(!lastSessionB.rejectedWholeBatchForStaleEpoch,
-                "precondition: DB B's last-session batch carries the current epoch and must not be rejected")
-
-        try await dbB.dbWriter.write { database in
-            try database.execute(sql: "ALTER TABLE project DROP COLUMN blockWriteEpoch")
-        }
-
-        let counter = WriterEventCounter()
-        sync.testWriterEventHandler = { _ in counter.note() }
-        await sync.reconfigure(database: dbB, projectId: pidB)
-
-        let thisSessionJSON = try blockChangesJSON(updates: [
-            BlockUpdate(id: targetB.id, textContent: "B this session text", markdownFragment: nil, headingLevel: nil)
-        ])
-        let jsB = ScriptedJSEvaluator()
-        jsB.answer("hasBlockChanges", true)
-        jsB.answer("getBlockChanges", thisSessionJSON)
-        sync.testJSEvaluator = { try await jsB.evaluate($0) }
-        let appliesB = CountGate()
-        sync.testAfterApplyHook = { await appliesB.note() }
-
-        // Poll 1: the retry fails too (column still gone), so the poll is deferred BEFORE
-        // it ever reaches the new writer.
-        await sync.pollBlockChangesForTest(force: false)
-        #expect(jsB.callCount("getBlockChanges") == 0,
-                "a poll deferred on a failing reconfigure-time bump retry must not fetch — got \(jsB.callCount("getBlockChanges"))")
-        #expect(appliesB.value == 0, "a deferred poll must not apply anything — got \(appliesB.value) applies")
-        #expect(counter.value == 0,
-                "the new writer must not have been touched at all while the bump keeps failing — got \(counter.value) events")
-        let afterDeferred = try TestFixtureFactory.fetchBlocks(from: dbB).first { $0.id == targetB.id }
-        #expect(afterDeferred?.textContent == "B last session text",
-                "the deferred poll must not have written anything — got \(String(describing: afterDeferred?.textContent))")
-
-        // Restore the column at the SAME epoch DB B's row was stamped in.
-        try await dbB.dbWriter.write { database in
-            try database.execute(sql: "ALTER TABLE project ADD COLUMN blockWriteEpoch INTEGER NOT NULL DEFAULT 0")
-            try database.execute(sql: "UPDATE project SET blockWriteEpoch = ? WHERE id = ?",
-                                 arguments: [sessionEpochB, pidB])
-        }
-
-        // Poll 2: the retry succeeds (epoch E -> E+1, rows restamped), then the poll
-        // reaches the writer, fetches and applies.
-        await sync.pollBlockChangesForTest(force: false)
-        let epochAfterRetry = try dbB.currentBlockWriteEpoch(projectId: pidB)
-        #expect(epochAfterRetry == sessionEpochB + 1,
-                "the retry must have bumped DB B's epoch exactly once — got \(epochAfterRetry), expected \(sessionEpochB + 1)")
-        #expect(jsB.callCount("getBlockChanges") == 1,
-                "once the retry succeeds the poll must fetch — got \(jsB.callCount("getBlockChanges"))")
-        // `counter`/`testWriterEventHandler` cannot prove this: `WriterEvent` (see its
-        // own doc comment, "DEBUG/telemetry seam") is emitted only for exceptional
-        // transitions (parked/expired/held/skipped/lateApply/orphansReleased/etc) --
-        // every emission site in DocumentWriter.swift is gated on one of those, and an
-        // ordinary, on-time, nothing-held apply like this one legitimately fires none of
-        // them. `counter.value > 0` was asserting something the design never produces,
-        // so it always failed here regardless of whether the new writer was reached.
-        // `appliesB` (the same `testAfterApplyHook`-backed `CountGate` poll 1 already
-        // uses above to prove a poll did NOT apply) is the real signal: its hook fires
-        // unconditionally once `applyAndConfirm` returns, regardless of outcome, so
-        // `== 1` here is exactly "the new writer was reserved into and applied through".
-        #expect(appliesB.value == 1,
-                "once the bump succeeds the new writer must actually be reached (reserve/apply) — got \(appliesB.value) applies")
-        let afterRetry = try TestFixtureFactory.fetchBlocks(from: dbB).first { $0.id == targetB.id }
-        #expect(afterRetry?.textContent == "B this session text",
-                "the edit must land, not be dropped against last session's (E, 300) stamp — got \(String(describing: afterRetry?.textContent))")
         _ = (webView, editorState)
     }
 }

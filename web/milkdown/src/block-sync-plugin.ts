@@ -11,7 +11,6 @@ import { getAllBlockIds, getBlockIdZoomMode, SYNC_DIAG_DETAIL } from './block-id
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
 import { syncLog } from './sync-debug';
-import { isTraceTypingOn, noteRebuildReplacedPending } from './typing-trace';
 
 export const blockSyncPluginKey = new PluginKey<BlockSyncPluginState>('block-sync');
 
@@ -36,9 +35,6 @@ export interface BlockUpdate {
   textContent?: string;
   markdownFragment?: string;
   headingLevel?: number;
-  /** The editor node's own type (same strings as BlockInsert.blockType), so Swift can store a paragraph turned into
-   * a list (or back) as one. Swift applies it only within paragraph/lists/blockquote/code/table. */
-  blockType?: string;
 }
 
 export interface BlockInsert {
@@ -833,7 +829,6 @@ export function detectChanges(
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||
       oldBlock.headingLevel !== newBlock.headingLevel ||
-      oldBlock.blockType !== newBlock.blockType ||
       getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock)
     ) {
       // If this block is already pending as an insert, update the insert's content
@@ -858,7 +853,6 @@ export function detectChanges(
           textContent: newBlock.textContent,
           markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
-          blockType: newBlock.blockType,
         });
         if (SYNC_DIAG_DETAIL) {
           const changes: string[] = [];
@@ -1220,28 +1214,13 @@ export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, Bl
 
 /**
  * Like `detectPausedEditsAndSnapshot`, but deliberately does NOT clear
- * `pendingUpdates`/`pendingInserts`/`pendingDeletes` before diffing. Two callers, two
- * different reasons to keep the existing queue intact:
- *
- * 1. `setContentWithBlockIds`'s `preserveUserBlocks` push (api-content.ts, t-6a0d195d):
- *    that push already reconciled the EXISTING pending queue itself, surgically, via
- *    `reconcilePendingQueueAfterManagedRebuild` below (stripping only entries keyed by
- *    a managed id, and re-pointing any pending insert's stale `afterBlockId`) — a plain
- *    user edit queued before the rebuild landed, on a block that isn't part of the
- *    managed run, must survive this call untouched, not be wiped the way a wholesale
- *    `.clear()` would.
- * 2. `updateHeadingLevels` (api-content.ts, t-94369a83 Phase 2 §3): a SECOND caller
- *    that, unlike the first, does NOT pre-reconcile the pending queue at all — there is
- *    no managed-id rebuild here to reconcile against, just a surgical heading-level
- *    edit. It deliberately relies on the RAW diff against `baseline` to pick up the
- *    heading-level change itself as an ordinary pending update: this is exactly what
- *    lets the corrected level survive and later persist through the normal poll-cycle
- *    write path even when the Swift-side system write that's supposed to persist it
- *    directly fails (see `ContentView+HierarchyEnforcement.swift`'s
- *    `persistEnforcedSections`, review findings #5/#6) — and it's also the reason a
- *    successful direct persist is followed by a second, ordinary edit-serialization
- *    write of the same row (finding #6, ruled a deliberate and safe consequence, not a
- *    defect, in `docs/architecture/document-writer.md`).
+ * `pendingUpdates`/`pendingInserts`/`pendingDeletes` before diffing. Used by
+ * `setContentWithBlockIds`'s `preserveUserBlocks` push (api-content.ts, t-6a0d195d): that push
+ * already reconciled the EXISTING pending queue itself, surgically, via
+ * `reconcilePendingQueueAfterManagedRebuild` below (stripping only entries keyed by a managed
+ * id, and re-pointing any pending insert's stale `afterBlockId`) — a plain user edit queued
+ * before the rebuild landed, on a block that isn't part of the managed run, must survive this
+ * call untouched, not be wiped the way a wholesale `.clear()` would.
  *
  * `baseline` has the same contract as `detectPausedEditsAndSnapshot`'s: a snapshot the caller
  * captured at the moment its own paused push settled.
@@ -1281,16 +1260,10 @@ export function detectPausedEditsKeepingPending(doc: Node, baseline: Map<string,
  */
 export function reconcilePendingQueueAfterManagedRebuild(
   managedIdsThisPush: ReadonlySet<string>,
-  mergedIds: readonly string[],
-  // Slice 0 measurement only: what Swift said this rebuild was ('notes' | 'bibliography' | 'footnote'), for the typing trace.
-  traceKind?: string
+  mergedIds: readonly string[]
 ): void {
   if (!currentState) return;
-  const tracing = isTraceTypingOn();
   for (const id of managedIdsThisPush) {
-    // Typing trace (typing-trace.ts): a queued, unsaved edit to this block is dropped here because the rebuild replaced the
-    // block. Reports only; the drop below is unchanged.
-    if (tracing && currentState.pendingUpdates.has(id)) noteRebuildReplacedPending(traceKind, id);
     currentState.pendingUpdates.delete(id);
     currentState.pendingDeletes.delete(id);
   }

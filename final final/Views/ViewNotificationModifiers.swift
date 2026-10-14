@@ -65,11 +65,6 @@ struct ContentSyncObserverHost<Content: View>: View {
             .onChange(of: editorState.editorMode) { _, _ in
                 editorState.blockReparseTask?.cancel()
                 editorState.blockReparseTask = nil
-                // Phase 4a: the Markdown per-block writer's baseline belongs to the editor that just went away. A write in
-                // flight is not cancelled (its reserved sequence must settle): it lands before the switch's own whole-document
-                // flush, or Milkdown's `configure` skips it (`skippedConsumed`); either way its completion sees the new
-                // version and leaves the baseline alone.
-                editorState.markdownWriter.reset()
             }
             .onChange(of: editorState.zoomedSectionId) { _, newValue in
                 services.sectionSync.isContentZoomed = (newValue != nil)
@@ -92,21 +87,7 @@ struct ContentSyncObserverHost<Content: View>: View {
         #if DEBUG
         DebugLog.log(.viewUpdates, "[ContentSyncObserved]")
         #endif
-        // Slice 0 measurement (StructuralTrace.swift): `start contentChange.handle` / `end contentChange.handle took=<n>ms`, only
-        // while tracing is on and an op's window is open.
-        let traceSpan = StructuralTrace.span("contentChange.handle")
-        defer { traceSpan.end() }
-        // Tells the citation-prefill scheduler the document changed -- all it does here is store the text and move a due time; the
-        // scan for changed citations and the page work happen later, off this path. Before the idle guard below, so text assigned
-        // during a transition (zoom in or out, project open or close) reaches the scheduler too and its next background fill never
-        // works from an older text; and so a zoomed editor's text (the zoomed section, which is what a switch to Rich Text would
-        // load) counts as well.
-        EditorPreloader.shared.noteDocumentChanged(newValue)
-
-        guard editorState.contentState == .idle else {
-            FootnoteDiag.log("content change IGNORED by handleContentChange: contentState=\(editorState.contentState) length=\(newValue.utf8.count)")
-            return
-        }
+        guard editorState.contentState == .idle else { return }
 
         // P3 §4d (undo-mode-switch-focus second timing gap, M1 fix): this is the
         // content-sync consumer -- consumes its OWN one-shot flag on the shared token
@@ -133,10 +114,7 @@ struct ContentSyncObserverHost<Content: View>: View {
 
         // Skip bibliography sync when zoomed - we don't have full document context
         // Bibliography will be synced when user zooms out and full content is rebuilt
-        guard editorState.zoomedSectionId == nil else {
-            FootnoteDiag.log("content change: footnote and bibliography sync skipped while zoomed length=\(newValue.utf8.count)")
-            return
-        }
+        guard editorState.zoomedSectionId == nil else { return }
 
         // Check for citation changes and update bibliography if needed
         // Always call even when citekeys is empty - this triggers bibliography removal
@@ -148,10 +126,9 @@ struct ContentSyncObserverHost<Content: View>: View {
 
     /// Dispatches the source-mode block re-parse to the zoomed or non-zoomed path.
     /// Extracted from `handleContentChange` to keep type-checking fast and its
-    /// cyclomatic complexity down. Internal rather than private: a cancelled lifecycle schedules its one
-    /// catch-up re-parse through `LifecycleHost.scheduleSourceModeReparse` (ContentView+LifecycleHost.swift).
+    /// cyclomatic complexity down.
     @MainActor
-    static func scheduleSourceModeReparse(
+    private static func scheduleSourceModeReparse(
         newValue: String,
         editorState: EditorViewState,
         services: ContentSyncServices
@@ -166,92 +143,60 @@ struct ContentSyncObserverHost<Content: View>: View {
         }
     }
 
-    /// Non-zoomed source-mode re-parse. Since Phase 4a (t-94369a83) it saves Markdown typing BLOCK BY BLOCK through the
-    /// ordered write queue (`MarkdownBlockWriter`): the fire parses the editor's text, compares it with what is stored
-    /// (the stored rows right after a load, the last written parse after a write) and sends only the changed blocks.
-    /// Today's whole-document `replaceBlocks`, preserving heading metadata, is kept as `legacyWholeDocumentReparse`
-    /// (the `FF_UI_TESTING_MD_LEGACY_REPARSE` arm, and the fallback when there is no writer).
-    ///
-    /// t-94369a83 3a-1b round C4, P5 (obligation 24): `db`/`pid` are read at SCHEDULE time. While a close / project
-    /// switch / quit holds the editor (`activeLifecycle != nil`) it is therefore not scheduled at all, and one scheduled
-    /// BEFORE the lifecycle armed does not write when it fires inside the window (the lifecycle's own whole-document
-    /// save, FB, already carries the same text, and a write landing after FB or after the barrier is exactly what the
-    /// queue exists to prevent). At fire time it also re-checks that the editor is still on the project it was
-    /// scheduled for: a keystroke typed after `openProject` swapped `documentManager` to project B but before the tail
-    /// reset the editor state would otherwise write A's text into B. Every one of those gates is unchanged, in both
-    /// branches.
-    ///
-    /// Phase 4a (plan v2 section 1(d)): after the sleep the fire first waits for the write already in flight (a
-    /// `while let` loop, because a `writeNow` can publish another while this one waits), then re-checks cancellation and
-    /// the generation, then runs the gates above, then does ONE synchronous step (`runMarkdownReparseFire`): read the
-    /// CURRENT text, parse, compare, reserve the turn and start the write (judge C1 and model ruling M1). The text is
-    /// `editorState.content` read at fire time, never `newValue`: a push made while `contentState` is not `.idle` (a
-    /// bibliography or Notes rebuild, a structural op, a zoom) does not restart a scheduled re-parse, so `newValue` can
-    /// be older than the database. `newValue` is used only by the legacy branch.
+    /// Non-zoomed source-mode re-parse: rebuilds the full block table from `newValue`,
+    /// preserving existing heading metadata (status/tags/word goal).
     @MainActor
     private static func scheduleFullDocumentReparse(
         newValue: String,
         editorState: EditorViewState,
         services: ContentSyncServices
     ) {
-        guard editorState.activeLifecycle == nil else {
-            DebugLog.log(.lifecycle, "[SourceReparse] full re-parse not scheduled: a close/switch/quit holds the editor")
-            return
-        }
         guard let db = services.documentManager.projectDatabase,
               let pid = services.documentManager.projectId else { return }
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseGeneration += 1
         let myGeneration = editorState.blockReparseGeneration
-        let debounce = editorState.sourceReparseDebounce
         editorState.blockReparseTask = Task {
-            try? await Task.sleep(for: debounce)
+            try? await Task.sleep(for: .milliseconds(1000))
             guard !Task.isCancelled else { return }
             guard editorState.blockReparseGeneration == myGeneration else { return }
-            if editorState.markdownWriter.isEnabled {
-                while let inFlight = editorState.markdownWriter.inFlight {
-                    await inFlight.value
-                }
-                guard !Task.isCancelled, editorState.blockReparseGeneration == myGeneration else { return }
-            }
-            guard editorState.activeLifecycle == nil, editorState.currentProjectId == pid else {
-                DebugLog.log(.lifecycle, "[SourceReparse] full re-parse dropped at fire time: lifecycle armed or project changed")
-                return
-            }
             guard editorState.contentState == .idle,
                   editorState.editorMode == .source,
                   editorState.zoomedSectionId == nil else { return }
-            runMarkdownReparseFire(newValue: newValue, db: db, pid: pid, editorState: editorState, services: services)
+            let existing = try? db.fetchBlocks(projectId: pid)
+            var metadata: [String: SectionMetadata] = [:]
+            for block in existing ?? [] where block.blockType == .heading {
+                metadata[block.textContent] = SectionMetadata(
+                    status: block.status,
+                    tags: block.tags?.isEmpty == false ? block.tags : nil,
+                    wordGoal: block.wordGoal
+                )
+            }
+            // C5: highest-stakes site -- this IS the live, debounced Source Mode re-parse a
+            // hand-typed "## Notes" heading goes through, so the DB-resolved title is threaded
+            // explicitly rather than left to default.
+            let blocks = BlockParser.parse(
+                markdown: newValue,
+                projectId: pid,
+                existingSectionMetadata: metadata.isEmpty ? nil : metadata,
+                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
+            )
+            try? db.replaceBlocks(blocks, for: pid)
         }
     }
 
-    /// Zoomed source-mode re-parse: flushes the scoped CodeMirror content to the database. Gated like
-    /// `scheduleFullDocumentReparse` (P5, obligation 24): not scheduled while a lifecycle holds the editor, and
-    /// dropped at fire time if one armed since or the editor moved to another project (`pid` captured at
-    /// schedule).
+    /// Zoomed source-mode re-parse: flushes the scoped CodeMirror content to the database.
     @MainActor
     private static func scheduleZoomedReparse(editorState: EditorViewState) {
-        guard editorState.activeLifecycle == nil else {
-            DebugLog.log(.lifecycle, "[SourceReparse] zoomed re-parse not scheduled: a close/switch/quit holds the editor")
-            return
-        }
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseGeneration += 1
         let myGeneration = editorState.blockReparseGeneration
-        let pid = editorState.currentProjectId
-        let debounce = editorState.sourceReparseDebounce
         editorState.blockReparseTask = Task {
-            try? await Task.sleep(for: debounce)
+            try? await Task.sleep(for: .milliseconds(1000))
             guard !Task.isCancelled else { return }
             guard editorState.blockReparseGeneration == myGeneration else { return }
-            guard editorState.activeLifecycle == nil, editorState.currentProjectId == pid else {
-                DebugLog.log(.lifecycle, "[SourceReparse] zoomed re-parse dropped at fire time: lifecycle armed or project changed")
-                return
-            }
             guard editorState.contentState == .idle,
                   editorState.editorMode == .source else { return }
-            // Does not wait for a pending section-delete job (plan D7): Markdown mode only, and the switch into Markdown already
-            // waited for every delete job (an editor-first delete cannot start in Markdown mode).
             editorState.flushContentToDatabase()
         }
     }
@@ -314,7 +259,28 @@ extension View {
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
-                handleDidSaveCursorPosition(notification, editorState: editorState, cursorRestore: cursorRestore)
+                // Block toggle only during states that would cause data corruption.
+                // .structuralUndo added in the Phase 3 review round: a mode toggle mid-
+                // sequence would reassign the WebView StructuralUndoController is still
+                // operating on (see docs/architecture/unified-undo.md's audited-sequences
+                // section).
+                switch editorState.contentState {
+                case .projectSwitch, .zoomTransition, .structuralUndo:
+                    return  // Content is being replaced — toggle could flush stale data
+                default:
+                    break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .dragReorder, .hierarchyEnforcement
+                }
+                // Handle cursor position restoration during mode switch
+                if let position = notification.userInfo?["position"] as? CursorPosition {
+                    let line = position.line
+                    let column = position.column
+                    let visible = position.cursorIsVisible
+                    let topLine = position.topLine
+                    DebugLog.log(.editor, "[CURSOR-SYNC] Relay: line=\(line) col=\(column) visible=\(visible) topLine=\(topLine)")
+                    cursorRestore.wrappedValue = position
+                }
+                // Complete the two-phase toggle: cursor is saved, now do the actual switch
+                NotificationCenter.default.post(name: .toggleEditorMode, object: nil)
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleOutlineSidebar)) { _ in
                 editorState.toggleOutlineSidebar()
@@ -411,6 +377,9 @@ extension View {
     /// Adds file menu notification handlers
     @MainActor
     func withFileNotifications(
+        editorState: EditorViewState,
+        syncService: SectionSyncService,
+        onOpened: @escaping (_ isRestore: Bool) async -> Void,
         onClosed: @escaping () -> Void
     ) -> some View {
         self
@@ -431,18 +400,36 @@ extension View {
             .onReceive(NotificationCenter.default.publisher(for: .exportTextBundle)) { _ in
                 Task { await FileOperations.handleExportTextBundle() }
             }
-            // t-94369a83 3a-1b C5b/C8b: the three project lifecycle posts go through `LegacyProjectNotifications`.
-            // A keyed post (a managed lifecycle's) is ignored because its tail does the work (the create seed is
-            // `ContentView.seedCreatedProjectContent`, run by the create tail); the Getting Started close runs
-            // `onClosed`; anything else is an unkeyed post (a missed call site), which is logged and counted.
             .onReceive(NotificationCenter.default.publisher(for: .projectDidOpen)) { notification in
-                LegacyProjectNotifications.opened(notification)
+                let isRestore = notification.userInfo?["isRestore"] as? Bool ?? false
+                Task { await onOpened(isRestore) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .projectDidCreate)) { notification in
-                LegacyProjectNotifications.created(notification)
+                Task {
+                    await onOpened(false)
+                    if let content = notification.userInfo?["content"] as? String {
+                        editorState.content = content
+                        // Parse initial content into blocks
+                        if let db = DocumentManager.shared.projectDatabase,
+                           let pid = DocumentManager.shared.projectId {
+                            // C5: a brand-new project has no pre-existing Notes heading yet, so
+                            // this resolves to nil -> the "Notes" default either way -- wired
+                            // for consistency with every other production `BlockParser.parse`
+                            // site rather than as a behavior-affecting change here.
+                            let blocks = BlockParser.parse(
+                                markdown: content,
+                                projectId: pid,
+                                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)
+                            )
+                            try? db.replaceBlocks(blocks, for: pid)
+                        }
+                        // Also sync to legacy sections (until fully retired)
+                        await syncService.syncNow(content)
+                    }
+                }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { notification in
-                LegacyProjectNotifications.closed(notification, onClosed: onClosed)
+            .onReceive(NotificationCenter.default.publisher(for: .projectDidClose)) { _ in
+                onClosed()
             }
             .onReceive(NotificationCenter.default.publisher(for: .gettingStartedEdited)) { _ in
                 withAnimation {
@@ -547,70 +534,10 @@ extension View {
         )
     }
 
-    /// Phase two of the two-phase editor-mode toggle: the editor has saved the cursor (`.didSaveCursorPosition`), so relay the position
-    /// and ask for the switch itself (`.toggleEditorMode`). Extracted from the `.didSaveCursorPosition` onReceive closure so a unit
-    /// test can drive it on a bare view (fix round 2a, the third round).
-    ///
-    /// Block the toggle only during states that would cause data corruption. `.structuralUndo` was added in the Phase 3 review round:
-    /// a mode toggle mid-sequence would reassign the WebView StructuralUndoController is still operating on (see
-    /// docs/architecture/unified-undo.md's audited-sequences section).
-    ///   - `.structuralUndo` HOLDS the switch (the press already passed phase one, so the command must have started during the
-    ///     cursor save, which is two web calls long): `holdModeToggleUntilStructuralWorkEnds` makes the request again from the top
-    ///     when the command and everything queued behind it have finished. Dropping it here, as this receiver used to, left the
-    ///     mode button on the old mode without a word (judge item 4: a switch pressed during a slow Cmd-Z is held, never dropped).
-    ///   - `.projectSwitch` and `.zoomTransition` still drop it: the content is being replaced and the toggle could flush stale data.
-    @MainActor
-    func handleDidSaveCursorPosition(
-        _ notification: Notification, editorState: EditorViewState, cursorRestore: Binding<CursorPosition?>
-    ) {
-        switch editorState.contentState {
-        case .projectSwitch, .zoomTransition:
-            return  // Content is being replaced — toggle could flush stale data
-        case .structuralUndo:
-            editorState.holdModeToggleUntilStructuralWorkEnds()
-            return
-        default:
-            break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .dragReorder, .hierarchyEnforcement
-        }
-        // Handle cursor position restoration during mode switch
-        if let position = notification.userInfo?["position"] as? CursorPosition {
-            let line = position.line
-            let column = position.column
-            let visible = position.cursorIsVisible
-            let topLine = position.topLine
-            DebugLog.log(.editor, "[CURSOR-SYNC] Relay: line=\(line) col=\(column) visible=\(visible) topLine=\(topLine)")
-            cursorRestore.wrappedValue = position
-        }
-        // Complete the two-phase toggle: cursor is saved, now do the actual switch
-        NotificationCenter.default.post(name: .toggleEditorMode, object: nil)
-    }
-
     /// Toggle between WYSIWYG and Source mode with anchor injection/extraction.
     /// Extracted from the .toggleEditorMode onReceive closure to keep type-checking fast.
-    /// Internal (not private) so a unit test can drive the real handler on a bare view, with no view graph (fix round 2a, item 17).
     @MainActor
-    func handleEditorModeToggle(
-        editorState: EditorViewState,
-        sectionSyncService: SectionSyncService,
-        findBarState: FindBarState,
-        unifiedUndoService: UnifiedUndoService
-    ) {
-        // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): the switch waits for pending editor-first delete jobs BEFORE it
-        // changes anything (before the timeline barrier and before `contentState` leaves `.idle`), so the Rich Text editor stays
-        // live during the wait and typing is saved normally. It enters through the structural gate, so a second toggle pressed
-        // during the wait (or behind a held structural command) is held and runs afterwards: never in parallel, never dropped.
-        // Nothing queued and no job pending (the normal case) runs the unchanged body right here, with no hop. The wait is the
-        // only change: the switch itself stays off the writer's queue (that is Phase 5).
-        editorState.runAfterPendingStructuralWork(label: "editor mode toggle") {
-            performEditorModeToggle(
-                editorState: editorState, sectionSyncService: sectionSyncService,
-                findBarState: findBarState, unifiedUndoService: unifiedUndoService)
-        }
-    }
-
-    /// The switch itself (everything `handleEditorModeToggle` did before the wait was added). Synchronous.
-    @MainActor
-    func performEditorModeToggle(
+    private func handleEditorModeToggle(
         editorState: EditorViewState,
         sectionSyncService: SectionSyncService,
         findBarState: FindBarState,
@@ -647,9 +574,7 @@ extension View {
             // Without this, recently-inserted nodes (e.g. images via editor-first
             // approach) may not be in the blocks table yet, causing wrong offsets
             // and anchor injection corruption.
-            // `skipUnchangedWrite`: when the stored rows already are what this flush would store (no edit since
-            // the last save), nothing is written, so every row keeps its id. A zoomed flush ignores the flag.
-            editorState.flushContentToDatabase(overrideContent: editorState.content, skipUnchangedWrite: true)
+            editorState.flushContentToDatabase(overrideContent: editorState.content)
             DebugLog.log(.editor, "[SWITCH→CM] After flush")
 
             // Compute offsets from blocks (same data that produced editorState.content)
@@ -711,26 +636,31 @@ extension View {
             // `forcedPushGeneration` bump needed here.
             editorState.sourceContent = withBibMarker
             editorState.toggleEditorMode()
-            // Phase 4a: Swift just handed the Markdown editor its text, assembled from the stored rows (the flush above wrote
-            // them, or found them unchanged): the per-block writer compares with the stored rows from here. The editorMode
-            // `onChange` resets it too at the next render; both leave the baseline on the rows, so their order does not matter.
-            editorState.markdownWriter.noteLoaded(text: withBibMarker, pid: editorState.currentProjectId)
             editorState.contentState = .idle
         } else {
             // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
             editorState.contentState = .editorTransition
             DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
-            // Extract the anchors and the bibliography marker from the text the Markdown editor holds NOW, save that text and hand it
-            // to Rich Text. (It used to save `editorState.content`, which lags the page by its 50 ms push timer, so keys typed just
-            // before the switch were not saved.)
-            editorState.commitMarkdownTextForRichTextSwitch(sectionSyncService: sectionSyncService)
+            editorState.flushContentToDatabase(overrideContent: editorState.content)
+
+            // Extract anchors and strip bibliography marker
+            let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(
+                markdown: editorState.sourceContent
+            )
+            DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
+            editorState.sourceAnchors = anchors
+            // Also strip bibliography marker since Milkdown shouldn't see it
+            editorState.content = SectionSyncService.stripBibliographyMarker(from: cleaned)
             editorState.toggleEditorMode()
 
-            // No fixed wait here. contentState stays .editorTransition until the new Rich Text editor has been handed its
-            // content: onWebViewReady (ContentView+EditorPresentation.swift) sets .idle right after setContentWithBlockIds
-            // returns and before block polling starts. Backstop: the 5 s contentState watchdog (EditorViewState).
-            // History: a 1.5 s Task.sleep stood here (added 2026-02-04 for a "missing # from headers" claim, no
-            // reproduction on file); removed in the faster-switch work after VM runs showed headings survive without it.
+            // CRITICAL: Delay returning to .idle to give Milkdown time to initialize
+            // Milkdown's first few polls can return corrupted content (missing # from headers)
+            // Keep .editorTransition active to suppress polling during this initialization window
+            // The 1.5s delay covers: WebView load + FinalFinal init + first stable poll cycle
+            Task {
+                try? await Task.sleep(for: .milliseconds(1500))
+                editorState.contentState = .idle
+            }
         }
     }
 

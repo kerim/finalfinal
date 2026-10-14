@@ -205,8 +205,6 @@ class SectionSyncService {
     ///   comment. Exposed here too (not just the debounced `contentChanged` path) so any
     ///   caller can request suppression, and so this entry point is directly testable.
     func syncNow(_ markdown: String, fromEditorChange: Bool = false, suppressReconcile: Bool = false) async {
-        let traceSpan = StructuralTrace.span("sectionSync.syncNow") // slice 0 measurement; silent unless tracing is on
-        defer { traceSpan.end() }
         // M2: this cancels any pending debounce task directly (cancellation still runs
         // THAT task's own `defer`, releasing only ITS OWN token -- see isSyncPending's
         // doc comment), then acquires its OWN token for its own work scope, wrapped in

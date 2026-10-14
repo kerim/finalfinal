@@ -150,8 +150,6 @@ extension MilkdownEditor {
         var insertImageObserver: NSObjectProtocol?
         var insertTableObserver: NSObjectProtocol?
         var insertEquationObserver: NSObjectProtocol?
-        /// Slice 0 measurement (StructuralTrace.swift): follows the Diagnostics toggle, to switch the editor's typing trace.
-        var diagnosticsLoggingObserver: NSObjectProtocol?
 
         // Formatting command observers
         var toggleBoldObserver: NSObjectProtocol?
@@ -217,8 +215,8 @@ extension MilkdownEditor {
         /// MessageHandlers.swift).
         var latestCloakTokenForReason: [CloakReason: Int] = [:]
 
-        /// Observes `.willResetEditorForProjectSwitch` (posted by ContentView+LifecycleTails.swift's
-        /// resetEditorJavaScriptStateForProjectSwitch(), called from the open tail, filtered to THIS Coordinator's own
+        /// Observes `.willResetEditorForProjectSwitch` (posted by ContentView+
+        /// ProjectLifecycle.swift's handleProjectOpened(), filtered to THIS Coordinator's own
         /// webView -- see subscribeToProjectResetNotifications' doc comment for why a global
         /// notification needs that filter in a multi-window app).
         var projectResetObserver: NSObjectProtocol?
@@ -264,7 +262,6 @@ extension MilkdownEditor {
             subscribeToFormattingCommandNotifications()
             subscribeToMediaNotifications()
             subscribeToProjectResetNotifications()
-            subscribeToTraceNotifications()
         }
 
         deinit {
@@ -306,7 +303,6 @@ extension MilkdownEditor {
             removeObserverIfPresent(insertImageObserver)
             removeObserverIfPresent(insertTableObserver)
             removeObserverIfPresent(insertEquationObserver)
-            removeObserverIfPresent(diagnosticsLoggingObserver)
 
             // Formatting command observers cleanup
             for observer in [toggleBoldObserver, toggleItalicObserver, toggleStrikethroughObserver,

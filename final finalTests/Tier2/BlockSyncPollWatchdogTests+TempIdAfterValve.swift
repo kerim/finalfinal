@@ -22,37 +22,36 @@ import WebKit
 extension BlockSyncPollWatchdogTests {
 
     // swiftlint:disable line_length
-    /// T9 (t-94369a83 Phase 1: DocumentWriter is now the only id authority, resolving
-    /// temp ids through its own `tempIdMap` -- see "Temp-id resolution" in the plan).
-    /// The original bug: a resolver used to read the confirmation map BEFORE a
-    /// predecessor's apply had actually landed and filled it, so a successor's edit
-    /// to a block the predecessor is still in the middle of inserting carried the
-    /// row's temp id straight into the write path, found no row for it, and was
-    /// dropped as a stale temp update — even though JS had already cleared its
-    /// queue, so the edit was gone for good. The writer closes this differently now:
-    /// the successor's turn does not even begin until it is EITHER the frontier OR
-    /// late, so it can never observe cycle 1's write mid-flight.
+    /// T9. `resolvingStaleTempIds` used to read `confirmedTempIds` BEFORE
+    /// `awaitPredecessorOrAbandon`'s valve — but a predecessor's `applyAndConfirm` merges
+    /// its `pendingConfirmations` into `confirmedTempIds` BEFORE its chain node finishes
+    /// (the node is released by `doPollBlockChanges`'s `defer`), and `awaitPredecessorOrAbandon`
+    /// is exactly what parks a successor until then. So a successor's
+    /// edit to a block the predecessor is still in the middle of inserting resolved
+    /// against a mapping that did not exist yet, carried the row's temp id straight into
+    /// `applyUpdateToTempIdBlock`, found no row for it, and was dropped as a stale temp
+    /// update — even though JS had already cleared its queue, so the edit was gone for
+    /// good.
     ///
     /// Shape, driven through the REAL service like T3/T4: cycle 1 fetches an INSERT batch
     /// X (a new block, tempId "temp-valve-1") and parks inside `getBlockChanges` — so it
     /// has consumed X but not yet applied it. Cycle 1 returns at the (short, 0.2s) watchdog,
-    /// freeing the in-flight slot while its orphan is still parked on the wedge, its
-    /// sequence still `.reserved`. Cycle 2 then fetches batch Y — an UPDATE to
-    /// "temp-valve-1", the very block cycle 1 is still inserting — and parks on its own
-    /// turn waiting for cycle 1's to finish; `testWriterLateAfterSeconds` is pinned long
-    /// (30s) so cycle 2 waits in order rather than going late (T4's scenario, not this
-    /// one), and cycle 2 itself then returns at its own 0.2s watchdog while its orphan
-    /// stays parked waiting for its turn. Releasing the wedge lets cycle 1's apply run to
-    /// completion, filling the writer's `tempIdMap["temp-valve-1"]` and settling cycle 1's
-    /// sequence, and only once that settles does cycle 2's orphan get its turn and resolve
-    /// Y's temp id.
+    /// freeing the in-flight slot while its orphan is still parked on the wedge and holding
+    /// chain node 1. Cycle 2 then fetches batch Y — an UPDATE to "temp-valve-1", the very
+    /// block cycle 1 is still inserting — and parks on the valve waiting for cycle 1's node
+    /// to finish; `testApplyChainWaitSeconds` is pinned long (30s) so cycle 2 waits rather
+    /// than abandons (T4's scenario, not this one), and cycle 2 itself then returns at its
+    /// own 0.2s watchdog while its orphan stays parked on the valve. Releasing the wedge
+    /// lets cycle 1's apply run to completion, filling `confirmedTempIds["temp-valve-1"]`
+    /// BEFORE its chain node finishes, and only once that node has finished does cycle 2's
+    /// orphan resume past the valve and resolve Y's temp id.
     ///
     /// Before the fix, assertions (a), (b) and (c) all failed: Y's temp id was resolved
     /// before X's mapping existed, so the update was dropped and the inserted row kept
     /// "created text".
-    @Test("Writer turn order: an edit to a just-inserted block, fetched while the insert's cycle is still applying, lands on the permanent row instead of being dropped as a stale temp update")
+    @Test("Apply chain: an edit to a just-inserted block, fetched while the insert's cycle is still applying, lands on the permanent row instead of being dropped as a stale temp update")
     // swiftlint:enable line_length
-    func writerTurnOrder_updateToTempIdFetchedDuringPredecessorApply_resolvesAfterTurn() async throws {
+    func applyChain_updateToTempIdFetchedDuringPredecessorApply_resolvesAfterValve() async throws {
         let stack = try makeStack()
         let (db, pid, sync, editorState) = (stack.db, stack.pid, stack.sync, stack.editorState)
 
@@ -78,14 +77,14 @@ extension BlockSyncPollWatchdogTests {
         js.wedgeOn("getBlockChanges")
         sync.testJSEvaluator = { try await js.evaluate($0) }
 
-        // T3/T4 precedent: keep cycle 2 waiting in turn order for cycle 1 rather than
-        // going late — the late-apply/merge path is T4's scenario, not this one.
-        sync.testWriterLateAfterSeconds = 30
+        // M4/A11 precedent (T3/T4): keep cycle 2 waiting on the valve for cycle 1 rather
+        // than abandoning it — the abandon/merge path is T4's scenario, not this one.
+        sync.testApplyChainWaitSeconds = 30
 
         let applies = CountGate()
         sync.testAfterApplyHook = { await applies.note() }
 
-        // Cycle 1 fetches X and parks inside the fetch; its sequence stays `.reserved`.
+        // Cycle 1 fetches X and parks inside the fetch, holding chain node 1.
         let cycle1 = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
         await js.waitUntilEnteredWedge()
         await cycle1.value
@@ -94,21 +93,21 @@ extension BlockSyncPollWatchdogTests {
 
         // Cycle 2 fetches Y (the edit to the block cycle 1 is still inserting). Its own
         // fetch does not wedge (the scripted evaluator's wedge is one-shot and cycle 1
-        // already consumed it), so it proceeds to `waitForTurn()` and parks there waiting
-        // for cycle 1's turn to settle — then returns at its own 0.2s watchdog while that
-        // wait continues in the background.
+        // already consumed it), so it proceeds to the valve and parks there waiting for
+        // cycle 1's chain node — then returns at its own 0.2s watchdog while that wait
+        // continues in the background.
         //
         // force: true — holding cycle 1 inside getBlockChanges makes it a pre-fetch orphan,
         // which pauses unforced polling until it clears, so cycle 2 must be forced to run at
-        // all here; the production stall this turn-order wait exists for is inside the
-        // APPLY, not the fetch.
+        // all here; the production stall this valve exists for is inside the APPLY, not the
+        // fetch.
         let cycle2 = Task { @MainActor in await sync.pollBlockChangesForTest(force: true) }
         await js.waitUntilCallEntry("getBlockChanges", 2)
         await cycle2.value
 
         // Release cycle 1's fetch: it applies X (inserting the permanent row and filling
-        // the writer's tempIdMap), its turn settles, and cycle 2's parked orphan then gets
-        // its own turn and applies Y against the now-current mapping.
+        // confirmedTempIds), its chain node finishes, and cycle 2's parked orphan then
+        // resumes past the valve and applies Y against the now-current mapping.
         js.releaseWedge()
         await applies.waitFor(2)
 
@@ -138,8 +137,8 @@ extension BlockSyncPollWatchdogTests {
     /// Shape: identical harness to T9 — cycle 1 fetches an INSERT batch X (tempId
     /// "temp-valve-1", anchored on the fixture's "one two three" paragraph) and parks inside
     /// `getBlockChanges`; cycle 2 fetches a SECOND insert, Y (tempId "temp-valve-2"), anchored
-    /// on X's still-unresolved temp id, and parks waiting for its own turn until cycle 1's
-    /// settles and fills the writer's `tempIdMap["temp-valve-1"]`.
+    /// on X's still-unconfirmed temp id, and parks on the valve until cycle 1's chain node
+    /// finishes and fills `confirmedTempIds["temp-valve-1"]`.
     ///
     /// This only discriminates the fix because the fixture's anchor is NOT the document's last
     /// block: "# Beta" / "four five six." still follow "one two three.", so the unresolved-
@@ -149,9 +148,9 @@ extension BlockSyncPollWatchdogTests {
     /// Had X been anchored on the document's LAST block instead, the fallback's counter would
     /// coincidentally land Y in the same place a correct resolution would, and this shape would
     /// not have caught the bug.
-    @Test("Writer turn order: a second insert anchored on a just-inserted block's temp id, fetched while the first insert's cycle is still applying, lands directly after it instead of at the document's end")
+    @Test("Apply chain: a second insert anchored on a just-inserted block's temp id, fetched while the first insert's cycle is still applying, lands directly after it instead of at the document's end")
     // swiftlint:enable line_length
-    func writerTurnOrder_insertAfterJustInsertedTempId_resolvesAfterTurn() async throws {
+    func applyChain_insertAfterJustInsertedTempId_resolvesAfterValve() async throws {
         let stack = try makeStack()
         let (db, pid, sync, editorState) = (stack.db, stack.pid, stack.sync, stack.editorState)
 
@@ -178,14 +177,14 @@ extension BlockSyncPollWatchdogTests {
         js.wedgeOn("getBlockChanges")
         sync.testJSEvaluator = { try await js.evaluate($0) }
 
-        // T3/T4 precedent: keep cycle 2 waiting in turn order for cycle 1 rather than
-        // going late — the late-apply/merge path is T4's scenario, not this one.
-        sync.testWriterLateAfterSeconds = 30
+        // M4/A11 precedent (T3/T4): keep cycle 2 waiting on the valve for cycle 1 rather
+        // than abandoning it — the abandon/merge path is T4's scenario, not this one.
+        sync.testApplyChainWaitSeconds = 30
 
         let applies = CountGate()
         sync.testAfterApplyHook = { await applies.note() }
 
-        // Cycle 1 fetches X and parks inside the fetch; its sequence stays `.reserved`.
+        // Cycle 1 fetches X and parks inside the fetch, holding chain node 1.
         let cycle1 = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
         await js.waitUntilEnteredWedge()
         await cycle1.value
@@ -195,15 +194,15 @@ extension BlockSyncPollWatchdogTests {
         // Cycle 2 fetches Y (a second insert anchored on the block cycle 1 is still
         // inserting). Same reason as T9's cycle 2: force: true — holding cycle 1 inside
         // getBlockChanges makes it a pre-fetch orphan, which pauses unforced polling until
-        // it clears, so cycle 2 must be forced to run at all here; the production stall
-        // this turn-order wait exists for is inside the APPLY, not the fetch.
+        // it clears, so cycle 2 must be forced to run at all here; the production stall this
+        // valve exists for is inside the APPLY, not the fetch.
         let cycle2 = Task { @MainActor in await sync.pollBlockChangesForTest(force: true) }
         await js.waitUntilCallEntry("getBlockChanges", 2)
         await cycle2.value
 
         // Release cycle 1's fetch: it applies X (inserting the permanent row and filling
-        // the writer's tempIdMap), its turn settles, and cycle 2's parked orphan then gets
-        // its own turn and applies Y against the now-current mapping.
+        // confirmedTempIds), its chain node finishes, and cycle 2's parked orphan then
+        // resumes past the valve and applies Y against the now-current mapping.
         js.releaseWedge()
         await applies.waitFor(2)
 

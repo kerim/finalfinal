@@ -7,7 +7,6 @@
 
 import Foundation
 import CryptoKit
-import os
 
 /// Service for managing version snapshots (create, restore, prune)
 @MainActor
@@ -116,39 +115,29 @@ final class SnapshotService {
     ///   `createAutoSnapshot()` can).
     @discardableResult
     func createUndoPointSnapshot() throws -> String {
-        // Slice 0 measurement: each step is timed as a `[STRUCT-TRACE]` span (`StructuralTrace.timed`), which writes
-        // nothing and reads no clock unless tracing is on and a structural op is in progress.
-        //
         // Assemble fresh markdown from blocks (source of truth) -- same pattern as
         // createManualSnapshot/createAutoSnapshot above.
-        let blocks = try StructuralTrace.timed("snapshot.fetchBlocks") { try database.fetchBlocks(projectId: projectId) }
-        let assembledMarkdown = StructuralTrace.timed("snapshot.assembleMarkdown") {
-            BlockParser.assembleMarkdownForEditor(from: blocks)
-        }
+        let blocks = try database.fetchBlocks(projectId: projectId)
+        let assembledMarkdown = BlockParser.assembleMarkdownForEditor(from: blocks)
 
-        try StructuralTrace.timed("snapshot.saveContent") {
-            try database.saveContent(markdown: assembledMarkdown, for: projectId)
-        }
+        try database.saveContent(markdown: assembledMarkdown, for: projectId)
 
-        let fetchedContent = try StructuralTrace.timed("snapshot.fetchContent") { try database.fetchContent(for: projectId) }
-        guard let content = fetchedContent else {
+        guard let content = try database.fetchContent(for: projectId) else {
             throw SnapshotError.noContent
         }
 
         let hash = Self.computeHash(assembledMarkdown)
-        let sections = try StructuralTrace.timed("snapshot.fetchSections") { try database.fetchSections(projectId: projectId) }
+        let sections = try database.fetchSections(projectId: projectId)
         DebugLog.log(.undo, "[SnapshotService] createUndoPointSnapshot: \(sections.count) sections, \(blocks.count) blocks (no dedup skip)")
 
-        let snapshot = try StructuralTrace.timed("snapshot.createSnapshot") {
-            try database.createSnapshot(
-                projectId: projectId,
-                name: nil,
-                isAutomatic: true,
-                content: content,
-                sections: sections,
-                contentHash: hash
-            )
-        }
+        let snapshot = try database.createSnapshot(
+            projectId: projectId,
+            name: nil,
+            isAutomatic: true,
+            content: content,
+            sections: sections,
+            contentHash: hash
+        )
         // Pin immediately (plan §4.4/§9): every undo-point snapshot is referenced by a live
         // `StructuralEntry` on `UnifiedUndoService`'s stacks the instant this returns, so it
         // must never be silently pruned by `pruneAutoBackups()`'s Time-Machine-style retention
@@ -169,45 +158,33 @@ final class SnapshotService {
     /// Deliberately in-memory, never persisted: pins die with the session exactly like the
     /// undo timeline itself does (plan §4.8, no cross-relaunch persistence). This is why no
     /// separate "startup sweep" needs to delete anything at launch -- a relaunch starts with
-    /// an EMPTY pin set (this is a process-lifetime `static`, reset by process restart), so every row a
+    /// an EMPTY pin set (this is a `static var`, reset by process restart), so every row a
     /// prior session pinned simply rejoins the normal auto-backup population the next time
     /// `pruneAutoBackups()` runs and prunes on its usual schedule. `AutoBackupService.configure()`
     /// now also runs one prune pass on project open (in addition to the existing idle-timeout
     /// path) specifically so that "the next time it runs" isn't gated on 60s of user idle time
     /// after a relaunch.
-    ///
-    /// Lock-protected and `nonisolated` (t-94369a83 Phase 4b, plan D2.2(f)): the set used to be
-    /// touched from the MainActor only, but `SectionDeleteJob` pins its snapshot from inside a system-write body,
-    /// which runs on the writer's executor (not the MainActor), while the MainActor's `pruneAutoBackups()` and the
-    /// controller's unpin calls read and write it.
-    private nonisolated static let pinnedUndoPointSnapshotIds = OSAllocatedUnfairLock(initialState: Set<String>())
+    private static var pinnedUndoPointSnapshotIds: Set<String> = []
 
-    nonisolated static func pinUndoPointSnapshot(_ id: String) {
-        pinnedUndoPointSnapshotIds.withLock { _ = $0.insert(id) }
+    static func pinUndoPointSnapshot(_ id: String) {
+        pinnedUndoPointSnapshotIds.insert(id)
     }
 
     /// No-op if `id` isn't pinned (e.g. a snapshot that failed to create, or an id already
     /// unpinned by an earlier barrier) -- every call site treats this as idempotent cleanup.
-    nonisolated static func unpinUndoPointSnapshot(_ id: String) {
-        pinnedUndoPointSnapshotIds.withLock { _ = $0.remove(id) }
-    }
-
-    /// Whether `id` is currently pinned (`pruneAutoBackups()` must not delete it).
-    nonisolated static func isUndoPointSnapshotPinned(_ id: String) -> Bool {
-        pinnedUndoPointSnapshotIds.withLock { $0.contains(id) }
+    static func unpinUndoPointSnapshot(_ id: String) {
+        pinnedUndoPointSnapshotIds.remove(id)
     }
 
     #if DEBUG
     /// Test-only accessor, mirroring `UnifiedUndoService`'s own `#if DEBUG` test hooks.
-    nonisolated static var pinnedUndoPointSnapshotIdsForTesting: Set<String> {
-        pinnedUndoPointSnapshotIds.withLock { $0 }
-    }
+    static var pinnedUndoPointSnapshotIdsForTesting: Set<String> { pinnedUndoPointSnapshotIds }
     #endif
 
     // MARK: - Hash Computation
 
     /// Compute SHA256 hash of content for deduplication
-    nonisolated static func computeHash(_ content: String) -> String {
+    static func computeHash(_ content: String) -> String {
         let data = Data(content.utf8)
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
@@ -491,7 +468,7 @@ final class SnapshotService {
         // automatic ones, even when the Time-Machine-style retention above would otherwise have
         // dropped them).
         for snapshot in autoSnapshots
-        where !snapshotsToKeep.contains(snapshot.id) && !Self.isUndoPointSnapshotPinned(snapshot.id) {
+        where !snapshotsToKeep.contains(snapshot.id) && !Self.pinnedUndoPointSnapshotIds.contains(snapshot.id) {
             snapshotsToDelete.append(snapshot.id)
         }
 

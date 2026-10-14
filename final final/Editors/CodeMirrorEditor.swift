@@ -80,10 +80,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
     /// switch-focus fix) -- see `CodeMirrorEditor.Coordinator.scheduleDeferredRecompute()`.
     var onContentRecompute: (() -> Void)?
 
-    /// Phase 4a (t-94369a83): told, with the text, whenever Swift pushes text into the editor
-    /// (`CodeMirrorCoordinator.setContent`). See the Coordinator property of the same name.
-    var onSwiftContentPushed: ((String) -> Void)?
-
     /// P2 (undo-mode-switch-focus second timing gap): returns whether a content-triggered
     /// reconciliation (SectionSyncService's debounce+syncContent, or ContentView's
     /// `enforceHierarchyAsync`) is currently in flight. `shouldPushContent` extends its
@@ -171,7 +167,6 @@ struct CodeMirrorEditor: NSViewRepresentable {
         context.coordinator.forcedPushGeneration = forcedPushGeneration
         context.coordinator.onContentAcknowledged = onContentAcknowledged
         context.coordinator.onContentRecompute = onContentRecompute
-        context.coordinator.onSwiftContentPushed = onSwiftContentPushed
         context.coordinator.isReconciliationPending = isReconciliationPending
         context.coordinator.onSectionIdChange = onSectionIdChange
         context.coordinator.onSelectionChange = onSelectionChange

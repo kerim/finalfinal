@@ -55,7 +55,6 @@ extension MilkdownEditor.Coordinator {
         clearObserver(&insertImageObserver)
         clearObserver(&insertTableObserver)
         clearObserver(&insertEquationObserver)
-        clearObserver(&diagnosticsLoggingObserver)
 
         // Formatting command observers cleanup
         clearObserver(&toggleBoldObserver)
@@ -157,14 +156,8 @@ extension MilkdownEditor.Coordinator {
     /// Push citation library to the editor for search and formatting
     func setCitationLibrary(_ itemsJSON: String) {
         guard isEditorReady, let webView else { return }
-        webView.evaluateJavaScript(Self.setCitationLibraryScript(itemsJSON)) { _, _ in }
-    }
-
-    /// The JavaScript call that gives a Rich Text page its citation library. One builder for both callers: this coordinator's
-    /// push into the live view (`setCitationLibrary` above) and `EditorPreloader.prefillCitations`' push into the standby page,
-    /// so the standby page receives exactly the call the mount later makes.
-    static func setCitationLibraryScript(_ itemsJSON: String) -> String {
-        "window.FinalFinal.setCitationLibrary(JSON.parse(`\(itemsJSON.escapedForJSTemplateLiteral)`))"
+        let escaped = itemsJSON.escapedForJSTemplateLiteral
+        webView.evaluateJavaScript("window.FinalFinal.setCitationLibrary(JSON.parse(`\(escaped)`))") { _, _ in }
     }
 
     /// Insert a footnote reference at the current cursor position.
@@ -249,19 +242,12 @@ extension MilkdownEditor.Coordinator {
     /// Set CSL style for citation formatting
     func setCitationStyle(_ styleXML: String) {
         guard isEditorReady, let webView else { return }
-        webView.evaluateJavaScript(Self.setCitationStyleScript(styleXML)) { _, _ in }
-    }
-
-    /// The JavaScript call that gives a Rich Text page its CSL style. One builder for both callers: this
-    /// coordinator's push into the live view (`setCitationStyle` above) and `EditorPreloader`'s push into the
-    /// standby page, so the two can never escape the style differently.
-    ///
-    /// A hand-rolled backtick-only replace here used to let a `${...}` sequence inside the
-    /// style XML (or a stray backslash) break out of the JS template literal -- every
-    /// other bridge call in this file uses the shared escapedForJSTemplateLiteral helper
-    /// (see setCitationLibrary, setFootnoteDefinitions above) for exactly this reason.
-    static func setCitationStyleScript(_ styleXML: String) -> String {
-        "window.FinalFinal.setCitationStyle(`\(styleXML.escapedForJSTemplateLiteral)`)"
+        // A hand-rolled backtick-only replace here used to let a `${...}` sequence inside the
+        // style XML (or a stray backslash) break out of the JS template literal -- every
+        // other bridge call in this file uses the shared escapedForJSTemplateLiteral helper
+        // (see setCitationLibrary, setFootnoteDefinitions above) for exactly this reason.
+        let escaped = styleXML.escapedForJSTemplateLiteral
+        webView.evaluateJavaScript("window.FinalFinal.setCitationStyle(`\(escaped)`)") { _, _ in }
     }
 
     /// Get all citekeys used in the document (for bibliography generation)
@@ -332,11 +318,8 @@ extension MilkdownEditor.Coordinator {
             return
         }
 
-        // Skip content capture while a switch to Rich Text is still handing the new editor its content (.editorTransition ends in
-        // onWebViewReady, right after setContentWithBlockIds returns): until then this editor's document is not yet the project's,
-        // so reading it back would save the wrong text. (An older version of this comment blamed Milkdown returning "missing # from
-        // headers"; it was written 2026-03-15, before 2026-06-09, with no reproduction on file, and the heading-survival VM test finds
-        // headings intact.)
+        // Skip content capture during Milkdown initialization (source→WYSIWYG transition).
+        // Milkdown may return corrupted content (missing # from headers) during this window.
         // Still save cursor and fire the toggle notification so the toggle proceeds.
         if contentState == .editorTransition {
             DebugLog.log(.editor, "[CURSOR-SYNC] MW.saveAndNotify: SKIPPING content capture (editorTransition)")
@@ -351,8 +334,7 @@ extension MilkdownEditor.Coordinator {
                 return
             }
 
-            if let reply = contentResult as? String {
-                let content = reply.contiguousUTF8Copy  // native text once, where it arrives (see `BlockSyncService.fetchContentFromWebView`)
+            if let content = contentResult as? String {
                 DebugLog.log(.editor, "[SAVE+NOTIFY] getContent returned length=\(content.count)")
                 self.lastPushedContent = content
                 self.contentBinding.wrappedValue = content
@@ -561,18 +543,6 @@ extension MilkdownEditor.Coordinator {
         // the ready-flip hook, so a persisted enabled state that arrived before readiness is
         // delivered here rather than being lost for the session.
         pushTypewriterConfigIfNeeded()
-        // Slice 0 measurement (StructuralTrace.swift): switch the editor's typing trace on when tracing is on. `nil` while it
-        // is off, so nothing is sent and the editor posts no trace messages.
-        if let script = StructuralTrace.editorLoadTraceFlagScript, isEditorReady, let webView {
-            webView.evaluateJavaScript(script) { _, _ in }
-        }
-    }
-
-    /// Slice 0 measurement (StructuralTrace.swift): the Diagnostics toggle changed with this editor already loaded, so tell the
-    /// editor to start (or stop) its typing trace. Sends the current state, on or off.
-    func pushTraceTypingFlag() {
-        guard isEditorReady, let webView else { return }
-        webView.evaluateJavaScript(StructuralTrace.editorTraceFlagScript(on: StructuralTrace.isOn)) { _, _ in }
     }
 
     func setTheme(_ cssVariables: String) {
