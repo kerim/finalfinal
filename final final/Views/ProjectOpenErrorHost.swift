@@ -91,7 +91,7 @@ private struct ProjectOpenErrorSheetContent: View {
                     Task { await handleRepair(report: report, url: url, blockedOpen: blockedOpen) }
                 },
                 onOpenAnyway: {
-                    handleOpenAnyway(url: url)
+                    Task { await handleOpenAnyway(report: report, url: url, blockedOpen: blockedOpen) }
                 },
                 onCancel: {
                     ProjectOpenErrorState.shared.clear()
@@ -109,46 +109,27 @@ private struct ProjectOpenErrorSheetContent: View {
     /// `onRepair` runs an unstructured Task (IntegrityAlertView's onRepair is
     /// synchronous, so the await has to be wrapped somewhere), which means the user
     /// could Cancel -- or an unrelated new failure could arrive -- while this is in
-    /// flight. `expectedId` is captured before the await so any write-back below
-    /// only applies if the sheet is still showing the same failure this repair was
-    /// launched against; a real side effect (the project actually opening) still
-    /// gets reported regardless, since that already happened and is not undoable.
+    /// flight. `expectedId` is captured before the await so the write-back
+    /// (`ProjectOpenErrorState.apply`) only applies if the sheet is still showing the
+    /// same failure this repair was launched against.
+    ///
+    /// t-94369a83 3a-1b round C8b (E6): the repair runs through the lifecycle
+    /// (`ProjectCommands.repair`), so a project that is open is saved and backed up
+    /// first, and the project's `.projectDidOpen` is posted (keyed) by the command,
+    /// not here. The sheet is dismissed only once the project has opened; a repair
+    /// that is still broken or failed keeps it up and says so.
     private func handleRepair(report: IntegrityReport, url: URL, blockedOpen: Bool) async {
         let expectedId = ProjectOpenFailure.integrity(report: report, url: url, blockedOpen: blockedOpen).id
-        switch await IntegrityResolution.repair(report: report, url: url) {
-        case .opened:
-            if ProjectOpenErrorState.shared.pending?.id == expectedId {
-                ProjectOpenErrorState.shared.clear()
-            }
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-        case .stillBroken(let newReport):
-            if ProjectOpenErrorState.shared.pending?.id == expectedId {
-                ProjectOpenErrorState.shared.pending = .integrity(report: newReport, url: url, blockedOpen: blockedOpen)
-            }
-        case .failed(let error):
-            // Surface the failure instead of discarding it silently (the old
-            // behavior left the button looking like it did nothing). Reuses the
-            // .other view rather than adding an error slot to IntegrityAlertView;
-            // the trade-off is the user can no longer retry Repair from here --
-            // they can still Cancel/OK and reopen the file to try again.
-            if ProjectOpenErrorState.shared.pending?.id == expectedId {
-                ProjectOpenErrorState.shared.pending = .other(message: error.localizedDescription, url: url)
-            }
-        }
+        let outcome = await ProjectCommands.repair(report: report, url: url)
+        ProjectOpenErrorState.shared.apply(outcome, expectedId: expectedId, url: url, blockedOpen: blockedOpen)
     }
 
-    /// Synchronous end-to-end (no await), so unlike handleRepair there's no window
-    /// for a concurrent Cancel/new-failure to race this -- no staleness guard needed.
-    private func handleOpenAnyway(url: URL) {
-        switch IntegrityResolution.openAnyway(url: url) {
-        case .opened:
-            ProjectOpenErrorState.shared.clear()
-            NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-        case .failed(let error):
-            ProjectOpenErrorState.shared.pending = .other(message: error.localizedDescription, url: url)
-        case .stillBroken:
-            break  // openAnyway() never actually returns this -- force-open either succeeds or throws
-        }
+    /// Open Anyway goes through the lifecycle as well (E6), so it is async now and needs the
+    /// same staleness guard as `handleRepair`.
+    private func handleOpenAnyway(report: IntegrityReport, url: URL, blockedOpen: Bool) async {
+        let expectedId = ProjectOpenFailure.integrity(report: report, url: url, blockedOpen: blockedOpen).id
+        let outcome = await ProjectCommands.openAnyway(url: url)
+        ProjectOpenErrorState.shared.apply(outcome, expectedId: expectedId, url: url, blockedOpen: blockedOpen)
     }
 }
 

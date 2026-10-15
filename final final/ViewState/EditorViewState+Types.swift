@@ -53,8 +53,8 @@ final class NotificationHandledMarker {
 extension Notification.Name {
     /// Posted when editor mode toggle is requested - current editor should save cursor
     static let willToggleEditorMode = Notification.Name("willToggleEditorMode")
-    /// Posted immediately before `handleProjectOpened()` (ContentView+ProjectLifecycle.swift)
-    /// calls `window.FinalFinal.resetForProjectSwitch()` on the active WebView -- mount-flash
+    /// Posted immediately before `resetEditorJavaScriptStateForProjectSwitch()` (ContentView+LifecycleTails.swift,
+    /// run by the open tail) calls `window.FinalFinal.resetForProjectSwitch()` on the active WebView -- mount-flash
     /// fix (doc-open-blank-regression follow-up). `object` is the specific `WKWebView` being
     /// reset (NOT nil): a multi-window app must not let one window's project switch cloak
     /// (hide) another window's unrelated, unaffected editor -- see

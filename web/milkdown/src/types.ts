@@ -1,7 +1,10 @@
 // Type definitions and interfaces for the Milkdown editor
 
+import type { DeleteSectionResult } from './api-section-delete';
 import type { BlockChanges } from './block-sync-plugin';
 import type { CSLItem } from './citation-plugin';
+import type { PrefillBeginResult, PrefillStepResult } from './citation-prefill';
+import type { CitationMemoStats } from './citeproc-engine';
 
 // Find/replace options and result types
 export interface FindOptions {
@@ -146,6 +149,18 @@ declare global {
       // Lazy resolution API
       requestCitationResolution: (keys: string[]) => void;
       addCitationItems: (items: CSLItem[]) => void;
+      /** Ahead-of-time citation fill (citation-prefill.ts). Parses `markdown` with the page's own parser WITHOUT touching the editor
+       * (no dispatch, no content-set flag, no key resolution request) and queues the document's distinct citation groups that the
+       * citation memo does not hold yet. `status` is `notReady` before the editor exists and `parseFailed` if the parser threw; nothing
+       * is queued then. A later call replaces the queue. */
+      prefillCitationsBegin: (markdown: string) => PrefillBeginResult;
+      /** Formats queued groups into the citation memo for about `budgetMs` (at least one per call) and reports progress. Safe to call
+       * repeatedly, with nothing queued, and safe to stop calling at any point. */
+      prefillCitationsStep: (budgetMs: number) => PrefillStepResult;
+      /** Citation-memo switch for the UI-test comparison runs; production never calls it. Applies to the running engine and to one built later. */
+      setCitationMemoEnabled: (on: boolean) => void;
+      /** Citation-memo size and hit/miss counts (`misses` = calls that ran the citation processor). Never builds the engine. */
+      getCitationMemoStats: () => CitationMemoStats;
       // CAYW picker callbacks
       citationPickerCallback: (data: CAYWCallbackData, items: CSLItem[]) => void;
       citationPickerCancelled: (requestId: number) => void;
@@ -198,12 +213,18 @@ declare global {
           // coordinate-space mismatch that lands at the document's actual top). Ignored when
           // scrollToStart is true. See api-content.ts's setContentWithBlockIds.
           scrollToBlockId?: string;
+          // Slice 0 measurement only (typing-trace.ts): which rebuild this push is ('notes' | 'bibliography' |
+          // 'footnote'). Swift sends it only while tracing is on; it changes nothing about the push.
+          traceKind?: string;
         }
       ) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
       hasBlockChanges: () => boolean;
       flushPendingBlockChanges: () => void;
+      // Typing-latency trace switch (slice 0 measurement, typing-trace.ts). Swift turns it on at editor load when Diagnostics
+      // logging is on. Default off: while off, the editor posts no `typingEcho` / `typingTrace` messages at all.
+      setTraceTyping: (on: boolean) => void;
       // Dual-appearance mode API (Phase C)
       setEditorMode: (mode: 'wysiwyg' | 'source') => void;
       getEditorMode: () => 'wysiwyg' | 'source';
@@ -278,12 +299,18 @@ declare global {
       requestUnifiedUndo: () => void;
       requestUnifiedRedo: () => void;
       setUndoDescriptor: (descriptor: { undoTopOpId?: string; redoTopOpId?: string }) => void;
-      receiveUndoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed') => void;
-      receiveRedoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed') => void;
+      receiveUndoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed' | 'cancelled') => void;
+      receiveRedoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed' | 'cancelled') => void;
+      // Slice 2a: number of Cmd-Z / Cmd-Shift-Z presses held behind an in-flight undo right now (0 when none). No side effects.
+      heldUndoPressCount: () => number;
       // Structural op lifecycle (Phase 3, plan §4.4) -- called by StructuralUndoController.swift.
       beginStructuralOp: (opId: string) => boolean;
       finalizeStructuralOpPostOpDoc: (opId: string) => boolean;
       performStructuralSwap: (opId: string, direction: 'undo' | 'redo') => boolean;
+      // Phase 4b part 2, slice 2a (api-section-delete.ts): the editor removes the section first, in one synchronous turn, and
+      // returns the pending-edit batch it consumed on every path. Swift reads it as JSON.stringify(...) like getBlockChanges.
+      // `managedIds` is the database's list of Notes/Bibliography block ids at the click.
+      deleteSectionEditorFirst: (opId: string, rootBlockId: string, managedIds: string[]) => DeleteSectionResult;
       finishStructuralSwapSettle: () => boolean;
       cancelPendingInsertions: () => void;
       // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state.

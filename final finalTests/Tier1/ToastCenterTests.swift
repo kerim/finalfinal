@@ -210,6 +210,147 @@ struct ToastCenterTests {
         #expect(center.current?.id == secondWarning.id, "a stale id must not touch a newer, unrelated toast")
     }
 
+    // MARK: - A progress toast never permanently replaces a standing warning (addendum A5, t-94369a83)
+
+    private func progress(_ message: String = "progress") -> Toast {
+        Toast(style: .progress, message: message)
+    }
+
+    @Test("A warning a progress toast displaced is shown again when that progress toast is dismissed by id")
+    @MainActor
+    func testWarningReturnsAfterProgressDismissed() {
+        let center = ToastCenter()
+        let theWarning = warning()
+        center.show(theWarning, now: epoch)
+        let working = progress("Finishing the last change…")
+        center.show(working, now: epoch)
+        #expect(center.current?.id == working.id, "a progress toast still takes the slot over a warning")
+
+        center.dismiss(id: working.id, now: epoch)
+
+        #expect(center.current?.id == theWarning.id, "the displaced warning comes back; it was not evicted for good")
+        #expect(center.displacedWarning == nil)
+    }
+
+    @Test("A newer warning replaces the displaced one: dismissing the progress toast then restores nothing")
+    @MainActor
+    func testNewerWarningReplacesDisplacedWarning() {
+        let center = ToastCenter()
+        center.show(warning("old"), now: epoch)
+        let working = progress()
+        center.show(working, now: epoch)
+        let newer = warning("newer")
+        center.show(newer, now: epoch)
+        #expect(center.current?.id == newer.id)
+
+        center.dismiss(id: working.id, now: epoch)   // already replaced: a no-op
+
+        #expect(center.current?.id == newer.id)
+        center.dismissCurrent(now: epoch)
+        #expect(center.current == nil, "the older warning was replaced by the newer one and does not come back")
+    }
+
+    @Test("A success shown while a progress toast covers a warning waits behind that warning")
+    @MainActor
+    func testSuccessDuringProgressWaitsBehindDisplacedWarning() {
+        let center = ToastCenter()
+        let theWarning = warning()
+        center.show(theWarning, now: epoch)
+        center.show(progress(), now: epoch)
+        let done = success("done")
+
+        center.show(done, now: epoch)
+
+        #expect(center.current?.id == theWarning.id, "a success never evicts an undismissed warning, even a displaced one")
+        #expect(center.pending?.toast.id == done.id)
+    }
+
+    @Test("A progress toast over a success or an empty slot restores nothing when dismissed")
+    @MainActor
+    func testProgressWithoutWarningRestoresNothing() {
+        let center = ToastCenter()
+        center.show(success(), now: epoch)
+        let working = progress()
+        center.show(working, now: epoch)
+
+        center.dismiss(id: working.id, now: epoch)
+
+        #expect(center.current == nil)
+        #expect(center.displacedWarning == nil)
+    }
+
+    // MARK: - The app-log lines (`[toast] show` / `[toast] dismiss`)
+
+    /// A UI test confirms a toast from these lines (a 3 s toast can be gone before the accessibility tree is read on a book-length
+    /// document), so the prefix `[toast] show ` and the field order are a contract. Read through the instance's own `logSink`, which
+    /// receives exactly the text `DebugLog` gets, so no process-global log is involved.
+    @MainActor
+    private func centerLoggingTo(_ lines: ToastLogLines) -> ToastCenter {
+        let center = ToastCenter()
+        center.logSink = { lines.items.append($0) }
+        return center
+    }
+
+    @Test("A result toast writes a show line, and a dismiss line with the reason it left")
+    @MainActor
+    func resultToastWritesShowThenDismissLine() {
+        let lines = ToastLogLines()
+        let center = centerLoggingTo(lines)
+
+        center.show(Toast(style: .success, message: "Version saved."), now: epoch)
+        #expect(lines.items == ["[toast] show style=success message=Version saved."])
+
+        center.dismissCurrent(now: epoch, reason: .faded)
+        #expect(lines.items == [
+            "[toast] show style=success message=Version saved.",
+            "[toast] dismiss message=Version saved. reason=faded"
+        ])
+
+        // Another way out: the ✕ button (the default reason), with a message that has a line break in it.
+        center.show(Toast(style: .warning, message: "Two\nlines\r\nhere."), now: epoch)
+        center.dismissCurrent(now: epoch)
+        #expect(Array(lines.items.suffix(2)) == [
+            "[toast] show style=warning message=Two lines here.",
+            "[toast] dismiss message=Two lines here. reason=dismissed"
+        ], "the message is logged whole, with line breaks made spaces: \(lines.items)")
+    }
+
+    @Test("A progress toast replaced by its result writes a dismiss line (replaced) for the progress and a show line for the result")
+    @MainActor
+    func progressReplacedByResultWritesDismissThenShowLine() {
+        let lines = ToastLogLines()
+        let center = centerLoggingTo(lines)
+
+        center.show(progress("Exporting to Word…"), now: epoch)
+        center.show(Toast(style: .success, message: "Exported."), now: epoch)
+
+        #expect(lines.items == [
+            "[toast] show style=progress message=Exporting to Word…",
+            "[toast] dismiss message=Exporting to Word… reason=replaced",
+            "[toast] show style=success message=Exported."
+        ])
+    }
+
+    @Test("A progress toast its owner takes down (ended) and a warning it covered: dismiss, replaced, then the warning shows again")
+    @MainActor
+    func progressOverWarningWritesReplacedThenEndedThenShowLines() {
+        let lines = ToastLogLines()
+        let center = centerLoggingTo(lines)
+        let working = progress("Finishing the last change…")
+
+        center.show(warning("Couldn't save version."), now: epoch)
+        center.show(working, now: epoch)
+        center.dismiss(id: working.id, now: epoch)
+
+        #expect(lines.items == [
+            "[toast] show style=warning message=Couldn't save version.",
+            "[toast] dismiss message=Couldn't save version. reason=replaced",
+            "[toast] show style=progress message=Finishing the last change…",
+            "[toast] dismiss message=Finishing the last change… reason=ended",
+            "[toast] show style=warning message=Couldn't save version."
+        ])
+    }
+
     // MARK: - ToastFactory shape guarantees
 
     @Test("Every warning ToastFactory produces is style .warning, carries at most one action, and is actually dismissible")
@@ -275,4 +416,10 @@ struct ToastCenterTests {
             zoteroStatusWasProbed: false
         )
     }
+}
+
+/// The lines a `ToastCenter` wrote to its `logSink`, in order.
+@MainActor
+private final class ToastLogLines {
+    var items: [String] = []
 }

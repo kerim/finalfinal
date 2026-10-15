@@ -75,7 +75,7 @@ struct ToastView: View {
             try? await Task.sleep(for: toast.fadeDelayOverride ?? Self.fadeDelay)
             guard !Task.isCancelled, ToastCenter.shared.current?.id == toast.id else { return }
             withAnimation {
-                ToastCenter.shared.dismissCurrent()
+                ToastCenter.shared.dismissCurrent(reason: .faded)
             }
         }
     }

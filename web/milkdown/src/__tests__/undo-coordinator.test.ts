@@ -11,10 +11,17 @@ import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from '@milkdown/kit/c
 import { history as historyPlugin } from '@milkdown/kit/plugin/history';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
-import { redoDepth, undo, undoDepth } from '@milkdown/kit/prose/history';
+import { closeHistory, redoDepth, undo, undoDepth } from '@milkdown/kit/prose/history';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { blockIdPlugin, resetBlockIdState } from '../block-id-plugin';
-import { blockSyncPlugin, hasPendingChanges, resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
+import {
+  blockSyncPlugin,
+  hasPendingChanges,
+  hasUnsettledLocalEdit,
+  resetBlockSyncState,
+  setSyncPaused,
+} from '../block-sync-plugin';
 import {
   getPendingSlashUndo,
   PENDING_SLASH_UNDO_FRESHNESS_MS,
@@ -31,14 +38,18 @@ import {
   decideUndoRouting,
   finalizeStructuralOpPostOpDoc,
   getInFlightOpId,
+  getQueuedPressDirections,
   getRegistry,
   getUndoDescriptor,
   handleGlobalUndoRedoKeydown,
   handleUndoReplyFromSwift,
   handleUnifiedUndoKeydown,
+  heldUndoPressCount,
   isLatched,
   maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
+  receiveRedoOutcome,
+  receiveUndoOutcome,
   requestUnifiedRedo,
   requestUnifiedUndo,
   resetUndoCoordinatorState,
@@ -1081,37 +1092,76 @@ describe('undo-coordinator live wiring — stale pendingMapsEmpty redo/undo race
     expect(postMessage).toHaveBeenCalledWith({ opId: 'op-1' });
   });
 
-  it("still falls through while block-sync's local debounce is actively in flight (the fix is not a blanket bypass)", async () => {
+  it("a press during block-sync's local debounce flushes it first, then routes on the document (sibling cause of t-dfc4fb02)", async () => {
     const e = await makeEditorWithBlockSync('Paragraph one.');
     const view = e.ctx.get(editorViewCtx);
-    const originalDoc = view.state.doc;
 
     vi.useFakeTimers();
 
+    // An edit made within the last 100ms: block-sync's debounce timer is pending and has not diffed it into its pending
+    // maps yet. The entry's pre-op document IS the edited document, so once the press has looked at the edit the redo
+    // must route structurally.
+    view.dispatch(view.state.tr.insertText('X'));
     setRegistryEntry('op-1', {
       checkpoint: view.state as any,
       postOpDoc: view.state.tr.insertText('POST').doc,
-      preOpDoc: originalDoc,
+      preOpDoc: view.state.doc,
     });
     setUndoDescriptor({ redoTopOpId: 'op-1' });
     const postMessage = vi.fn();
     (window as any).webkit = { messageHandlers: { structuralRedoRequested: { postMessage } } };
-
-    // Diverge then revert the doc WITHOUT letting either debounce settle -- a transaction
-    // landed within the last 100ms and block-sync hasn't diffed it yet.
-    view.dispatch(view.state.tr.insertText('X'));
-    undo(view.state, view.dispatch);
-    expect(view.state.doc.eq(originalDoc)).toBe(true);
+    expect(hasUnsettledLocalEdit(), "premise: block-sync's debounce is still in flight").toBe(true);
+    expect(hasPendingChanges(), 'premise: block-sync has not diffed the edit into its pending maps yet').toBe(false);
 
     const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, cancelable: true });
     const consumed = handleUnifiedUndoKeydown(event, view, 'redo');
 
-    expect(consumed).toBe(false); // fallthrough: let Milkdown's own keymap handle it
-    expect(postMessage).not.toHaveBeenCalled();
+    // The press flushed the debounce itself (so the edit is diffed before any swap, the guard's purpose), then
+    // routed on the document: it equals the entry's pre-op document, so the redo is structural.
+    expect(consumed).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith({ opId: 'op-1' });
+    expect(hasUnsettledLocalEdit()).toBe(false);
+    expect(hasPendingChanges(), "the edit is in block-sync's pending maps: it was diffed before the press routed").toBe(
+      true
+    );
+  });
+
+  it('a drained queue: the first press falls through to a text undo (which starts the debounce), the next press in the same drain flushes it and routes structurally (t-dfc4fb02)', async () => {
+    const e = await makeEditorWithBlockSync('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    const sectionDoc = view.state.doc;
+
+    vi.useFakeTimers();
+
+    // The saved post-operation document is the document as it stands now; the user then types a word.
+    setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: sectionDoc, preOpDoc: sectionDoc });
+    setUndoDescriptor({ undoTopOpId: 'op-1' });
+    view.dispatch(view.state.tr.insertText('X'));
+    await vi.advanceTimersByTimeAsync(150); // the typing has settled: no debounce pending
+
+    // A structural request for another operation is in flight; two Cmd-Z presses arrive behind its latch.
+    const postMessage = vi.fn();
+    (window as any).webkit = { messageHandlers: { structuralUndoRequested: { postMessage } } };
+    setLatched(true);
+    setInFlightOpId('op-0');
+    const press = () => new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
+    expect(handleUnifiedUndoKeydown(press(), view, 'undo')).toBe(true);
+    expect(handleUnifiedUndoKeydown(press(), view, 'undo')).toBe(true);
+    expect(getQueuedPressDirections()).toEqual(['undo', 'undo']);
+
+    // Swift's reply for the in-flight request arrives: the queue drains. Press 1 sees the typed word, so it is a text
+    // undo (and that undo starts block-sync's debounce); press 2 must flush the debounce, see the saved document, and
+    // ask Swift for the structural undo instead of falling through to a second text undo.
+    handleUndoReplyFromSwift({ opId: 'op-0', outcome: 'performed' }, 'undo');
+
+    expect(view.state.doc.textContent, 'press 1 was a text undo of the typed word').not.toContain('X');
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ opId: 'op-1', held: true });
+    expect(getQueuedPressDirections()).toEqual([]);
   });
 });
 
-// === N8 (Phase B remediation plan): the 3s latch self-clear timeout ===
+// === N8 (Phase B remediation plan): the latch self-clear timeout (3s then; 30s since Phase 4b part 2, plan D9) ===
 // Zero test coverage previously existed for this belt-and-braces mechanism (a lost Swift
 // reply -- multi-window mismatch bailing without one, a torn-down WebView, a crash
 // mid-sequence -- must not swallow every future Cmd-Z/Cmd-Shift-Z for the rest of the
@@ -1149,7 +1199,7 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     return e;
   }
 
-  it('self-clears the latch after 3s with no reply from Swift, so a later Cmd-Z is not swallowed forever', async () => {
+  it('self-clears the latch after 30s with no reply from Swift, so a later Cmd-Z is not held forever', async () => {
     const e = await makeEditor('Paragraph one.');
     const view = e.ctx.get(editorViewCtx);
     setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
@@ -1161,13 +1211,13 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     handleUnifiedUndoKeydown(event, view, 'undo');
     expect(isLatched()).toBe(true); // request sent, latch held, no reply has arrived yet
 
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(30000);
 
     expect(isLatched()).toBe(false); // self-cleared, not stuck forever
     expect(getInFlightOpId()).toBe(null);
   });
 
-  it('does NOT self-clear before 3s -- a reply that genuinely takes a while is not preempted', async () => {
+  it('does NOT self-clear before 30s -- a reply that genuinely takes a while is not preempted', async () => {
     const e = await makeEditor('Paragraph one.');
     const view = e.ctx.get(editorViewCtx);
     setRegistryEntry('op-1', { checkpoint: view.state as any, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
@@ -1178,7 +1228,7 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
     handleUnifiedUndoKeydown(event, view, 'undo');
 
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(29999);
 
     expect(isLatched()).toBe(true);
   });
@@ -1197,8 +1247,8 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     expect(isLatched()).toBe(false);
 
     // Let 1s elapse before the second request, so the (already-cleared) first timer's
-    // ORIGINAL fire time (t=3000ms from its own scheduling) and the second timer's fire time
-    // (t=1000ms + 3000ms = t=4000ms overall) are distinguishable -- without this gap, both
+    // ORIGINAL fire time (t=30000ms from its own scheduling) and the second timer's fire time
+    // (t=1000ms + 30000ms = t=31000ms overall) are distinguishable -- without this gap, both
     // timers would be scheduled at the same virtual instant and this test couldn't tell
     // "cancelled" apart from "coincidentally fires at the same time as the new one".
     await vi.advanceTimersByTimeAsync(1000);
@@ -1210,14 +1260,621 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     handleUnifiedUndoKeydown(event2, view, 'undo');
     expect(getInFlightOpId()).toBe('op-2');
 
-    // Advance to t=3000ms overall -- exactly when the FIRST request's original timer would
-    // have fired had it not been cancelled, but 1s BEFORE the second request's own fresh 3s
-    // window elapses (t=4000ms). If the first (already-cleared) timer were still live, it
+    // Advance to t=30000ms overall -- exactly when the FIRST request's original timer would
+    // have fired had it not been cancelled, but 1s BEFORE the second request's own fresh 30s
+    // window elapses (t=31000ms). If the first (already-cleared) timer were still live, it
     // would fire here and could clear the second request's latch prematurely --
     // clearLatchTimeout() on the first reply must have prevented that.
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(29000);
 
     expect(isLatched()).toBe(true);
     expect(getInFlightOpId()).toBe('op-2');
+  });
+});
+
+// === Phase 4b part 2, plan D9 + A3 + A4: presses made while the latch is held are queued, not dropped ===
+// Before: a Cmd-Z / Cmd-Shift-Z pressed while a structural undo was in flight was swallowed (and the latch timed out after 3s).
+// Now the press is held in a FIFO and routed, deciding afresh against the live document, when Swift's reply for the in-flight
+// request arrives. Text presses made while the latch is held queue too, so the order the user pressed them in is kept.
+describe('undo-coordinator press queue behind the in-flight latch (D9, A3, A4)', () => {
+  let editor: Editor | null = null;
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    if (editor) {
+      await editor.destroy();
+      editor = null;
+    }
+    setEditorInstance(null);
+    resetUndoCoordinatorState();
+    delete (window as any).webkit;
+  });
+
+  async function makeEditor(markdown: string): Promise<Editor> {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const e = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, div);
+        ctx.set(defaultValueCtx, markdown);
+      })
+      .use(blockIdPlugin)
+      .use(commonmark)
+      .use(gfm)
+      .use(historyPlugin)
+      .create();
+    editor = e;
+    setEditorInstance(e);
+    return e;
+  }
+
+  /** One keydown. `repeat` is true for the auto-repeat events a held-down key keeps sending. */
+  const press = (view: EditorView, direction: 'undo' | 'redo' = 'undo', repeat = false) => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      shiftKey: direction === 'redo',
+      repeat,
+      cancelable: true,
+    });
+    const consumed = handleUnifiedUndoKeydown(event, view, direction);
+    return { consumed, event };
+  };
+
+  function messages() {
+    const undoRequested = vi.fn();
+    const redoRequested = vi.fn();
+    const queueDropped = vi.fn();
+    const heldSettled = vi.fn();
+    (window as any).webkit = {
+      messageHandlers: {
+        structuralUndoRequested: { postMessage: undoRequested },
+        structuralRedoRequested: { postMessage: redoRequested },
+        undoQueueDropped: { postMessage: queueDropped },
+        undoHeldPressSettled: { postMessage: heldSettled },
+      },
+    };
+    return { undoRequested, redoRequested, queueDropped, heldSettled };
+  }
+
+  function registerOps(view: EditorView, ...opIds: string[]): void {
+    for (const opId of opIds) {
+      setRegistryEntry(opId, { checkpoint: view.state, postOpDoc: view.state.doc, preOpDoc: view.state.doc });
+    }
+  }
+
+  it('W7: with the latch held, two structural presses become two queued routes, run in order after each reply, none dropped', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A', 'op-B', 'op-C');
+    const { undoRequested, queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+
+    const first = press(view);
+    expect(first.consumed).toBe(true);
+    expect(undoRequested).toHaveBeenCalledTimes(1);
+    expect(undoRequested).toHaveBeenLastCalledWith({ opId: 'op-A' });
+    expect(getInFlightOpId()).toBe('op-A');
+
+    // Two more presses while op-A is still in flight: both consumed (no default action, no editor undo) and held.
+    const second = press(view);
+    const third = press(view);
+    expect(second.consumed).toBe(true);
+    expect(second.event.defaultPrevented).toBe(true);
+    expect(third.consumed).toBe(true);
+    expect(third.event.defaultPrevented).toBe(true);
+    expect(getQueuedPressDirections()).toEqual(['undo', 'undo']);
+    expect(undoRequested).toHaveBeenCalledTimes(1); // nothing sent yet
+
+    // Swift performs op-A (its descriptor now points at op-B) and replies: the next held press is routed, fresh.
+    setUndoDescriptor({ undoTopOpId: 'op-B' });
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'performed' }, 'undo');
+    expect(undoRequested).toHaveBeenCalledTimes(2);
+    expect(undoRequested).toHaveBeenLastCalledWith({ opId: 'op-B', held: true });
+    expect(isLatched()).toBe(true);
+    expect(getQueuedPressDirections()).toEqual(['undo']);
+
+    setUndoDescriptor({ undoTopOpId: 'op-C' });
+    handleUndoReplyFromSwift({ opId: 'op-B', outcome: 'performed' }, 'undo');
+    expect(undoRequested).toHaveBeenCalledTimes(3);
+    expect(undoRequested).toHaveBeenLastCalledWith({ opId: 'op-C', held: true });
+    expect(getQueuedPressDirections()).toEqual([]);
+
+    handleUndoReplyFromSwift({ opId: 'op-C', outcome: 'performed' }, 'undo');
+    expect(isLatched()).toBe(false);
+    expect(undoRequested.mock.calls.map((c) => c[0])).toEqual([
+      { opId: 'op-A' },
+      { opId: 'op-B', held: true },
+      { opId: 'op-C', held: true },
+    ]);
+    expect(queueDropped).not.toHaveBeenCalled();
+  });
+
+  it("a held press is routed afresh: if the top of the timeline is no longer structural it runs the editor's own undo", async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    const depthBefore = undoDepth(view.state);
+    expect(depthBefore).toBeGreaterThan(0);
+    registerOps(view, 'op-A');
+    const { undoRequested } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    // The registered entry's postOpDoc is the document as it stands (typed X included), so the first press routes structurally.
+    expect(press(view).consumed).toBe(true);
+    expect(getInFlightOpId()).toBe('op-A');
+
+    // A press made while the latch is held: held, and the editor's own undo has NOT run.
+    const held = press(view);
+    expect(held.consumed).toBe(true);
+    expect(held.event.defaultPrevented).toBe(true);
+    expect(undoDepth(view.state)).toBe(depthBefore);
+    expect(getQueuedPressDirections()).toEqual(['undo']);
+
+    // Swift performed op-A: nothing structural is left on top, so the held press falls through to the text undo, called directly.
+    setUndoDescriptor({});
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'performed' }, 'undo');
+    expect(undoDepth(view.state)).toBe(depthBefore - 1);
+    expect(getQueuedPressDirections()).toEqual([]);
+    expect(isLatched()).toBe(false);
+    expect(undoRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it('a "fallback" reply replays its own text undo first, then the held presses run in order', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    // Two separate history steps (a 600 ms pause between them is what prosemirror-history groups on, so close the group by hand).
+    view.dispatch(view.state.tr.insertText('X'));
+    view.dispatch(closeHistory(view.state.tr));
+    view.dispatch(view.state.tr.insertText('Y', 1));
+    expect(undoDepth(view.state)).toBe(2);
+    registerOps(view, 'op-A');
+    messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view); // routed structurally, latch held
+    press(view); // held
+    setUndoDescriptor({});
+
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'fallback' }, 'undo');
+
+    // One text undo for the fallback itself and one for the held press.
+    expect(undoDepth(view.state)).toBe(0);
+    expect(getQueuedPressDirections()).toEqual([]);
+  });
+
+  it('the menu path queues too (requestUnifiedUndo while latched keeps the press instead of dropping it)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+    expect(isLatched()).toBe(true);
+
+    requestUnifiedUndo();
+    requestUnifiedRedo();
+
+    expect(getQueuedPressDirections()).toEqual(['undo', 'redo']);
+  });
+
+  it('a "failed" reply drops the held presses and tells Swift once (they must not run against an editor that disagrees with the database)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+    press(view);
+    press(view);
+
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'failed' }, 'undo');
+
+    expect(getQueuedPressDirections()).toEqual([]);
+    expect(isLatched()).toBe(false);
+    expect(queueDropped).toHaveBeenCalledTimes(1);
+    expect(queueDropped).toHaveBeenCalledWith({ count: 2 });
+  });
+
+  it('W8 barrierClearsLatchAndQueue: the barrier clear releases the latch, forgets the in-flight opId and the queue, and cancels the timer', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    const depthBefore = undoDepth(view.state);
+    registerOps(view, 'op-A');
+    const { queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    vi.useFakeTimers();
+    press(view);
+    press(view);
+    press(view, 'redo');
+    expect(isLatched()).toBe(true);
+    expect(getQueuedPressDirections()).toEqual(['undo', 'redo']);
+
+    clearStructuralUndoRegistry(); // the barrier (project switch, close, mode switch)
+
+    expect(isLatched()).toBe(false);
+    expect(getInFlightOpId()).toBe(null);
+    expect(getQueuedPressDirections()).toEqual([]);
+    expect(getRegistry().size).toBe(0);
+    // The safety-net timer died with the latch: 30s later nothing is reported.
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(queueDropped).not.toHaveBeenCalled();
+    // A late reply for the request the barrier cancelled is ignored: no stray text undo.
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'fallback' }, 'undo');
+    expect(undoDepth(view.state)).toBe(depthBefore);
+    // And the next press is not held: with nothing structural on top it falls through to the editor's own undo.
+    const next = press(view);
+    expect(next.consumed).toBe(false);
+  });
+
+  it('W9 latchSafetyNetReportsDroppedPresses: on the 30s timeout with presses queued, exactly one undoQueueDropped message is posted', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    vi.useFakeTimers();
+    press(view);
+    press(view);
+    press(view, 'redo');
+    expect(getQueuedPressDirections()).toEqual(['undo', 'redo']);
+
+    await vi.advanceTimersByTimeAsync(29999);
+    expect(queueDropped).not.toHaveBeenCalled();
+    expect(isLatched()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(queueDropped).toHaveBeenCalledTimes(1);
+    expect(queueDropped).toHaveBeenCalledWith({ count: 2 });
+    expect(isLatched()).toBe(false);
+    expect(getInFlightOpId()).toBe(null);
+    expect(getQueuedPressDirections()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(queueDropped).toHaveBeenCalledTimes(1); // once, not again
+  });
+
+  it('W9 control: a timeout with nothing queued posts no undoQueueDropped message (only the latch clears)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    vi.useFakeTimers();
+    press(view);
+
+    await vi.advanceTimersByTimeAsync(30000);
+
+    expect(isLatched()).toBe(false);
+    expect(queueDropped).not.toHaveBeenCalled();
+  });
+
+  // === Fix round 2a, item 3 (JS half): the `cancelled` reply ===
+  // Swift cancels a Cmd-Z / Cmd-Shift-Z that arrives (or was waiting) when a close, quit or project switch has started. The
+  // old reply for that was `fallback`, which made JS replay a PLAIN TEXT undo -- and the closing save then wrote it,
+  // silently removing the user's latest typing. `cancelled` must leave the document alone and drop the held presses quietly.
+
+  it('W8 variant: a cancelled reply clears the latch and drops the held presses silently, replays no text undo and leaves the document untouched', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X')); // typing a stray text undo would remove
+    registerOps(view, 'op-A');
+    const { undoRequested, queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    vi.useFakeTimers();
+    press(view); // Cmd-Z: routed structurally, latch held
+    press(view); // Cmd-Z, held
+    press(view, 'redo'); // Cmd-Shift-Z, held
+    expect(getQueuedPressDirections()).toEqual(['undo', 'redo']);
+    const docBefore = view.state.doc;
+    const undoDepthBefore = undoDepth(view.state);
+    const redoDepthBefore = redoDepth(view.state);
+    let transactionsDispatched = 0;
+    const dispatch = view.dispatch;
+    view.dispatch = (tr) => {
+      transactionsDispatched++;
+      dispatch(tr);
+    };
+
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'cancelled' }, 'undo');
+
+    expect(isLatched()).toBe(false);
+    expect(getInFlightOpId()).toBe(null);
+    expect(getQueuedPressDirections()).toEqual([]);
+    // Byte for byte the same document: not one transaction ran (same object, not merely an equal one), history untouched.
+    expect(transactionsDispatched).toBe(0);
+    expect(view.state.doc).toBe(docBefore);
+    expect(undoDepth(view.state)).toBe(undoDepthBefore);
+    expect(redoDepth(view.state)).toBe(redoDepthBefore);
+    expect(undoRequested).toHaveBeenCalledTimes(1); // the held presses were not routed either
+    expect(queueDropped).not.toHaveBeenCalled(); // no "presses could not be carried out" warning: the window is closing
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(queueDropped).not.toHaveBeenCalled(); // the safety-net timer died with the reply
+
+    // The latch is free again: the next press is routed, not held.
+    expect(press(view).consumed).toBe(true);
+    expect(undoRequested).toHaveBeenCalledTimes(2);
+    expect(getQueuedPressDirections()).toEqual([]);
+  });
+
+  it('a cancelled reply to a redo behaves the same (receiveRedoOutcome), held presses dropped silently', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    registerOps(view, 'op-A');
+    const { redoRequested, queueDropped } = messages();
+    setUndoDescriptor({ redoTopOpId: 'op-A' });
+    press(view, 'redo');
+    press(view);
+    press(view);
+    expect(redoRequested).toHaveBeenCalledWith({ opId: 'op-A' });
+    expect(getQueuedPressDirections()).toEqual(['undo', 'undo']);
+    const docBefore = view.state.doc;
+    const undoDepthBefore = undoDepth(view.state);
+
+    receiveRedoOutcome('op-A', 'cancelled');
+
+    expect(isLatched()).toBe(false);
+    expect(getQueuedPressDirections()).toEqual([]);
+    expect(view.state.doc).toBe(docBefore);
+    expect(undoDepth(view.state)).toBe(undoDepthBefore);
+    expect(queueDropped).not.toHaveBeenCalled();
+  });
+
+  it('a cancelled reply for a stale opId is ignored like any other stale reply (the latch still belongs to the real request)', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+    press(view);
+
+    receiveUndoOutcome('op-OTHER', 'cancelled');
+
+    expect(isLatched()).toBe(true);
+    expect(getInFlightOpId()).toBe('op-A');
+    expect(getQueuedPressDirections()).toEqual(['undo']);
+  });
+
+  // === Fix round 2a, item 7: auto-repeat keydowns are not presses ===
+
+  it('W7 variant: holding the key down during a slow undo queues nothing: exactly one press is performed', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A', 'op-B');
+    const { undoRequested, queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+
+    const first = press(view); // the key goes down
+    expect(first.consumed).toBe(true);
+    expect(undoRequested).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 40; i++) {
+      const repeat = press(view, 'undo', true); // the OS keeps sending auto-repeat while the undo runs
+      expect(repeat.consumed).toBe(true); // consumed: the editor's own keymap must not run a text undo for it
+      expect(repeat.event.defaultPrevented).toBe(true);
+    }
+    expect(getQueuedPressDirections()).toEqual([]);
+    expect(getInFlightOpId()).toBe('op-A');
+
+    // Swift finishes op-A and (as it would) points the descriptor at op-B: nothing was held, so nothing more is routed.
+    setUndoDescriptor({ undoTopOpId: 'op-B' });
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'performed' }, 'undo');
+    expect(isLatched()).toBe(false);
+    expect(undoRequested).toHaveBeenCalledTimes(1);
+    expect(queueDropped).not.toHaveBeenCalled();
+  });
+
+  it('separate taps still queue, in order, while auto-repeat events between them are ignored', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+
+    press(view, 'undo', true);
+    press(view, 'undo', true);
+    press(view, 'undo'); // a distinct tap
+    press(view, 'undo', true);
+    press(view, 'redo'); // another distinct tap
+    press(view, 'redo', true);
+
+    expect(getQueuedPressDirections()).toEqual(['undo', 'redo']);
+  });
+
+  it('a held-down key never produces the "presses could not be carried out" warning: not on the 30s safety net, not on a failed reply', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    vi.useFakeTimers();
+    press(view);
+    for (let i = 0; i < 60; i++) press(view, 'undo', true);
+    expect(getQueuedPressDirections()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(30000); // Swift never replies: the safety net clears the latch
+
+    expect(isLatched()).toBe(false);
+    expect(queueDropped).not.toHaveBeenCalled(); // nothing had been queued, so nothing was dropped
+
+    // And a failed reply with only auto-repeat presses behind it warns about nothing either.
+    press(view);
+    for (let i = 0; i < 60; i++) press(view, 'undo', true);
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'failed' }, 'undo');
+    expect(queueDropped).not.toHaveBeenCalled();
+  });
+
+  // === Slice 2a, "Cmd-Z, Cmd-Z, Cmd-W": the held presses Swift's close must let through its closed gate ===
+  // When a close starts Swift asks `heldUndoPressCount()` how many presses the editor is holding, lets exactly that many
+  // through, and waits until each one has arrived as a request (marked `held: true`) or has been reported as ended without one
+  // (`undoHeldPressSettled`).
+
+  it('heldUndoPressCount: 0 with nothing held, 2 after two presses behind a held latch, 0 once the replies have drained them', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A', 'op-B', 'op-C');
+    messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    expect(heldUndoPressCount()).toBe(0);
+
+    press(view); // goes straight to Swift: in flight, not held
+    expect(heldUndoPressCount()).toBe(0);
+    press(view);
+    press(view);
+    expect(heldUndoPressCount()).toBe(2);
+    press(view, 'undo', true); // an auto-repeat event is not a held press
+    expect(heldUndoPressCount()).toBe(2);
+
+    setUndoDescriptor({ undoTopOpId: 'op-B' });
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'performed' }, 'undo');
+    expect(heldUndoPressCount()).toBe(1); // one drained into a request, one still held
+    setUndoDescriptor({ undoTopOpId: 'op-C' });
+    handleUndoReplyFromSwift({ opId: 'op-B', outcome: 'performed' }, 'undo');
+    expect(heldUndoPressCount()).toBe(0);
+    handleUndoReplyFromSwift({ opId: 'op-C', outcome: 'performed' }, 'undo');
+    expect(heldUndoPressCount()).toBe(0);
+  });
+
+  it('requests drained from the queue carry held: true (undo and redo); a first, direct request does not carry the field', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A', 'op-B', 'op-R');
+    const { undoRequested, redoRequested } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+
+    press(view); // direct
+    press(view); // held
+    press(view, 'redo'); // held
+    expect(undoRequested.mock.calls).toEqual([[{ opId: 'op-A' }]]);
+    expect('held' in undoRequested.mock.calls[0][0]).toBe(false);
+
+    setUndoDescriptor({ undoTopOpId: 'op-B', redoTopOpId: 'op-R' });
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'performed' }, 'undo');
+    expect(undoRequested.mock.calls[1]).toEqual([{ opId: 'op-B', held: true }]);
+
+    setUndoDescriptor({ redoTopOpId: 'op-R' });
+    handleUndoReplyFromSwift({ opId: 'op-B', outcome: 'performed' }, 'undo');
+    expect(redoRequested.mock.calls).toEqual([[{ opId: 'op-R', held: true }]]);
+  });
+
+  it('a drained press that falls through to a text undo posts undoHeldPressSettled {count: 1} and no structural request', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    const depthBefore = undoDepth(view.state);
+    registerOps(view, 'op-A');
+    const { undoRequested, redoRequested, heldSettled, queueDropped } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view); // direct
+    press(view); // held
+    expect(heldSettled).not.toHaveBeenCalled(); // still held: nothing has ended yet
+
+    setUndoDescriptor({}); // nothing structural is left on top
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'performed' }, 'undo');
+
+    expect(undoDepth(view.state)).toBe(depthBefore - 1); // the held press ran as the editor's own undo
+    expect(heldSettled).toHaveBeenCalledTimes(1);
+    expect(heldSettled).toHaveBeenCalledWith({ count: 1 });
+    expect(undoRequested).toHaveBeenCalledTimes(1); // only the first, direct request
+    expect(redoRequested).not.toHaveBeenCalled();
+    expect(queueDropped).not.toHaveBeenCalled();
+    expect(heldUndoPressCount()).toBe(0);
+  });
+
+  it('a cancelled reply with two held presses posts undoHeldPressSettled {count: 2}, no undoQueueDropped, and runs no text undo', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.insertText('X'));
+    registerOps(view, 'op-A');
+    const { queueDropped, heldSettled } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+    press(view);
+    press(view);
+    expect(heldUndoPressCount()).toBe(2);
+    const docBefore = view.state.doc;
+
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'cancelled' }, 'undo');
+
+    expect(heldSettled).toHaveBeenCalledTimes(1);
+    expect(heldSettled).toHaveBeenCalledWith({ count: 2 });
+    expect(queueDropped).not.toHaveBeenCalled();
+    expect(view.state.doc).toBe(docBefore);
+    expect(heldUndoPressCount()).toBe(0);
+  });
+
+  it('a cancelled reply with nothing held posts nothing at all', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped, heldSettled } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'cancelled' }, 'undo');
+
+    expect(heldSettled).not.toHaveBeenCalled();
+    expect(queueDropped).not.toHaveBeenCalled();
+  });
+
+  it('a failed reply posts both undoQueueDropped (the warning) and undoHeldPressSettled with the same count', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped, heldSettled } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+    press(view);
+    press(view);
+
+    handleUndoReplyFromSwift({ opId: 'op-A', outcome: 'failed' }, 'undo');
+
+    expect(queueDropped).toHaveBeenCalledTimes(1);
+    expect(queueDropped).toHaveBeenCalledWith({ count: 2 });
+    expect(heldSettled).toHaveBeenCalledTimes(1);
+    expect(heldSettled).toHaveBeenCalledWith({ count: 2 });
+  });
+
+  it('the 30s safety net posts both undoQueueDropped and undoHeldPressSettled with the same count, once each', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped, heldSettled } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    vi.useFakeTimers();
+    press(view);
+    press(view);
+    press(view, 'redo');
+
+    await vi.advanceTimersByTimeAsync(30000);
+
+    expect(queueDropped).toHaveBeenCalledTimes(1);
+    expect(queueDropped).toHaveBeenCalledWith({ count: 2 });
+    expect(heldSettled).toHaveBeenCalledTimes(1);
+    expect(heldSettled).toHaveBeenCalledWith({ count: 2 });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(heldSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it('a barrier clear reports the presses it discards as settled (no warning), so a close that counted them never waits; nothing held posts nothing', async () => {
+    const e = await makeEditor('Paragraph one.');
+    const view = e.ctx.get(editorViewCtx);
+    registerOps(view, 'op-A');
+    const { queueDropped, heldSettled } = messages();
+    setUndoDescriptor({ undoTopOpId: 'op-A' });
+    press(view);
+    press(view);
+    press(view, 'redo');
+
+    clearStructuralUndoRegistry();
+
+    expect(heldSettled).toHaveBeenCalledTimes(1);
+    expect(heldSettled).toHaveBeenCalledWith({ count: 2 });
+    expect(queueDropped).not.toHaveBeenCalled();
+
+    heldSettled.mockClear();
+    clearStructuralUndoRegistry(); // nothing held now
+    expect(heldSettled).not.toHaveBeenCalled();
   });
 });

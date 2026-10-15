@@ -5,6 +5,7 @@
 
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
+import { closeHistory } from '@milkdown/kit/prose/history';
 import { InputRule, inputRules } from '@milkdown/kit/prose/inputrules';
 import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
@@ -944,7 +945,26 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
   if (tr.docChanged) {
     // Application-origin: the typewriter trigger table marks the renumber dispatch as
     // "no trigger" (plan §2.4.1).
-    withSettingContent(() => view.dispatch(tr));
+    //
+    // `derivedCorrection` (Phase 4b, Fault B): the renumber is an automatic rewrite, not typing.
+    // Untagged, the undo coordinator counted it as a real user edit, so after a section delete it
+    // moved the document away from the saved post-operation copy for good and Cmd-Z was refused.
+    // Deliberately NOT addToHistory:false -- the renumber stays its own text-undo step (the
+    // footnote undo-checkpoint design relies on "undo the renumber" being a separate Cmd-Z).
+    //
+    // History boundary on BOTH sides (t-dfc4fb02, the same pattern as api-content.ts's overlapping heading-level
+    // corrections). Leading: closeHistory resets prevTime to 0 BEFORE the renumber applies, so it can never join the
+    // user's still-open typing group. Trailing: without the second, empty closeHistory dispatch, the state left by the
+    // renumber stores prevTime = the renumber's own time, so the user's very next keystroke within newGroupDelay (500 ms)
+    // at an adjacent position (right after the first renumbered marker, "user resumes typing right where the correction
+    // just happened" -- the common case, not an edge case) would join the renumber's own undo group, and the one Cmd-Z
+    // that should take back only the typing would take back the renumber with it (and the section's saved copy, which
+    // absorbed the renumber, would then no longer match the document).
+    tr.setMeta('derivedCorrection', true);
+    withSettingContent(() => {
+      view.dispatch(closeHistory(tr));
+      view.dispatch(closeHistory(view.state.tr));
+    });
   }
 
   // Update the definitions map with renumbered keys

@@ -71,10 +71,19 @@ private func registerMilkdownMessageHandlers(on controller: WKUserContentControl
     controller.add(coordinator, name: "structuralRedoRequested")
     controller.add(coordinator, name: "historyEdited")
     controller.add(coordinator, name: "structuralUndoRefused")
+    // A Cmd-Z / Cmd-Shift-Z the editor held in its own queue ended without a request to Swift (fix round 5, close "allowance").
+    controller.add(coordinator, name: "undoHeldPressSettled")
     // Esc-ladder bridge (UX contract §6) -- see EscapeLadder.swift.
     controller.add(coordinator, name: "escapeLadder")
     controller.add(coordinator, name: "escapeComposition")
     controller.add(coordinator, name: "escapeWebPopupOpen")
+    // Typing-latency trace (slice 0 measurement, StructuralTrace.swift): posted only while the editor's trace flag is on.
+    controller.add(coordinator, name: "typingEcho")
+    controller.add(coordinator, name: "typingTrace")
+    // Editor-first section delete (t-94369a83 Phase 4b slice 2a): the undo coordinator's 30 s safety net dropped queued presses
+    // (addendum A4), and the first frame after the removal was painted (slice-0 trace, posted only while the trace flag is on).
+    controller.add(coordinator, name: "undoQueueDropped")
+    controller.add(coordinator, name: "efRemovalPainted")
 }
 
 struct MilkdownEditor: NSViewRepresentable {

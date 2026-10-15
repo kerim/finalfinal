@@ -1193,7 +1193,12 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     changes.sort((a, b) => a.from - b.from);
     // Application-origin dispatch: the typewriter plugin must not treat a footnote
     // renumber as typing (plan §2.4.1's renumber row).
-    withAppOrigin(() => view.dispatch({ changes }));
+    //
+    // `derivedCorrection` (Phase 4b, Fault B): the renumber is an automatic rewrite, not typing.
+    // Untagged, the undo coordinator counted it as a real user edit, so after a section delete it
+    // moved the document away from the saved post-operation copy for good and Cmd-Z was refused.
+    // Deliberately NOT addToHistory:false -- the renumber stays in the text history.
+    withAppOrigin(() => view.dispatch({ changes, annotations: derivedCorrection.of(true) }));
   }
 }
 

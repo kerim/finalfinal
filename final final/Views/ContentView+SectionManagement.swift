@@ -275,6 +275,13 @@ extension ContentView {
                 // .dragReorder for a refused reorder.
                 editorState.contentState = .idle
 
+                // t-94369a83 Phase 4b slice 2a (addendum A21): a reorder the lifecycle cancelled (a close, quit or project switch
+                // started) was never run and is not retried or reported: the window is going away.
+                guard !editorState.structuralGate.isClosedToNewWork else {
+                    editorState.sectionReorderRetryAttempted = false
+                    break
+                }
+
                 // §4.3 "Drag-reorder bailed out" -> toast: one retry per gesture (plan's
                 // judgment call). The FIRST refusal within a gesture still stashes-and-retries
                 // silently (MF-3's existing behavior, unchanged) -- only a SECOND consecutive
@@ -303,7 +310,11 @@ extension ContentView {
                 // reordered, so replaying the same (now stale) target order on top of it would
                 // misapply it a second time rather than safely retrying a no-op.
                 editorState.sectionReorderRetryAttempted = false
-                DebugLog.log(.undo, "[ContentView] performSectionReorder: DB write committed but the op failed to finish recording -- not undoable via Cmd-Z; not retrying (the reorder already happened)")
+                DebugLog.log(
+                    .undo,
+                    "[ContentView] performSectionReorder: DB write committed but the op failed to finish recording "
+                        + "-- not undoable via Cmd-Z; not retrying (the reorder already happened)"
+                )
                 editorState.contentState = .idle
                 // §4.3 "a section delete or duplicate was refused, or its undo point was lost"
                 // -> modal alert: the operative fact here is the lost undo point, not that this

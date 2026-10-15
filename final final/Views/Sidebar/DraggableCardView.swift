@@ -74,7 +74,10 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
     ///    which forces `updateNSView` -- and therefore a coordinator refresh -- on every card
     ///    exactly when that staleness would otherwise be observable, while leaving pure content
     ///    edits (which don't change any card's subtree computation) free to skip it. See
-    ///    `OutlineSidebar.structuralSignature(of:)`.
+    ///    `OutlineSidebar.structuralSignature(of:)`. That forced `updateNSView` only refreshes
+    ///    the coordinator (and `nsView`'s plain properties); it rebuilds the hosted SwiftUI card
+    ///    only if its `RenderInputs` changed -- see `renderInputs(themeManager:)` and
+    ///    `Coordinator.refresh`.
     static func == (lhs: DraggableCardView, rhs: DraggableCardView) -> Bool {
         lhs.section === rhs.section && lhs.isGhost == rhs.isGhost && lhs.isActive == rhs.isActive
             && lhs.isZoomed == rhs.isZoomed && lhs.structuralSignature == rhs.structuralSignature
@@ -112,6 +115,7 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(hostingView)
         view.hostingView = hostingView
+        context.coordinator.renderedInputs = renderInputs(themeManager: themeManager)
 
         NSLayoutConstraint.activate([
             hostingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -124,9 +128,19 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
     }
 
     func updateNSView(_ nsView: DraggableNSView, context: Context) {
-        context.coordinator.parent = self
+        // Always refreshed, whatever else changed: the coordinator's `parent` (the drag
+        // payload's `collectSubtreeIds` snapshot, `onDragStarted`, `onSingleClick`, ...) and the
+        // plain properties `DraggableNSView` reads when a drag or click starts.
         nsView.section = section
         nsView.themeManager = themeManager
+
+        // Rebuild the hosted SwiftUI card only when something it renders or was built from has
+        // changed. A structural change (a delete, duplicate, reorder, promote/demote) re-runs
+        // this method for EVERY card via `structuralSignature` in `==`, but a leftover card only
+        // needed its drag context refreshed above; reassigning `rootView` makes SwiftUI rebuild
+        // the card and AppKit re-measure it, and across a ~190-card outline that was the main-
+        // thread stall after an editor-first Delete Section (round 14c).
+        guard context.coordinator.refresh(parent: self, inputs: renderInputs(themeManager: themeManager)) else { return }
 
         // Update hosted SwiftUI content
         let cardView = SectionCardView(
@@ -147,11 +161,75 @@ struct DraggableCardView: NSViewRepresentable, Equatable {
         nsView.hostingView?.rootView = AnyView(cardView)
     }
 
+    /// Everything the hosted `SectionCardView` is built from, other than its closures: the inputs
+    /// whose change means `updateNSView` must reassign the hosting view's `rootView`.
+    ///
+    /// Compared by identity/value, never by section CONTENT: the hosted card holds the section
+    /// object itself (an `@Observable` class) and reads `title`, `status`, `wordCount`, `tags`,
+    /// goals, ... live off it in its own `body`, so a content edit re-renders the card through
+    /// observation whether or not `rootView` is reassigned -- the same reason `==` above compares
+    /// `section` with `===` and why a keystroke already skips `updateNSView` today. A DIFFERENT
+    /// object for the same id (a put-back, a rebuilt list) is what needs a new card.
+    ///
+    /// The theme is carried as the `ThemeManager` instance: the card reads `currentTheme` live
+    /// from that `@Observable` object, so a theme change re-renders it the same way; only a
+    /// different manager object would need a rebuild.
+    ///
+    /// The four closures the hosted card captures (`onSectionUpdated`, `onHoverChanged`,
+    /// `onDuplicate`, `onDelete`) are deliberately not part of this: they capture only the
+    /// section object (compared above), reference-backed `@State` storage reached through
+    /// `OutlineSidebar`'s `self`, and `ContentView`'s own closures (themselves reference-backed,
+    /// see `OutlineSidebarRenderKey`'s doc comment). None captures the per-pass `index`,
+    /// `levelInfos`, `visible` or `structuralSignature`; the one closure that does
+    /// (`collectSubtreeIds`) is never handed to the hosted card, only read through
+    /// `coordinator.parent`, which `Coordinator.refresh` updates on every pass.
+    struct RenderInputs: Equatable {
+        let sectionIdentity: ObjectIdentifier
+        let isGhost: Bool
+        let isActive: Bool
+        let isZoomed: Bool
+        let themeManagerIdentity: ObjectIdentifier
+    }
+
+    /// This pass's `RenderInputs`. The theme manager is a parameter (the callers pass the
+    /// environment's one) so the mapping can be exercised outside a view hierarchy, where
+    /// reading `@Environment` is not possible.
+    func renderInputs(themeManager: ThemeManager) -> RenderInputs {
+        RenderInputs(
+            sectionIdentity: ObjectIdentifier(section),
+            isGhost: isGhost,
+            isActive: isActive,
+            isZoomed: isZoomed,
+            themeManagerIdentity: ObjectIdentifier(themeManager)
+        )
+    }
+
     class Coordinator {
         var parent: DraggableCardView
+        /// The inputs the hosted card was last built from (`makeNSView`, then each rebuild).
+        /// `nil` only before `makeNSView` has built it.
+        var renderedInputs: RenderInputs?
 
         init(_ parent: DraggableCardView) {
             self.parent = parent
+        }
+
+        /// What `updateNSView` does on every pass: refresh `parent` unconditionally (it carries
+        /// the drag payload's `collectSubtreeIds` snapshot, which goes stale on any structural
+        /// change), then say whether the hosted card must be rebuilt. Returns `true` -- and
+        /// records `inputs` as the new rendered state -- only when `inputs` differ from what the
+        /// card was last built from.
+        func refresh(parent newParent: DraggableCardView, inputs: RenderInputs) -> Bool {
+            parent = newParent
+            guard Self.needsRebuild(rendered: renderedInputs, current: inputs) else { return false }
+            renderedInputs = inputs
+            return true
+        }
+
+        /// The pure rebuild decision: rebuild unless the card was already built from exactly
+        /// these inputs.
+        static func needsRebuild(rendered: RenderInputs?, current: RenderInputs) -> Bool {
+            rendered != current
         }
     }
 }

@@ -162,19 +162,10 @@ struct RecentProjectsMenu: View {
             DebugLog.log(.lifecycle, "[RecentProjectsMenu] Ignoring state-restoration replay during launch")
             return
         }
+        // E3 (t-94369a83 3a-1b, round C7a): the open runs inside the lifecycle entry (the old project is saved and
+        // backed up first), and a failure is reported with the actually-resolved URL -- see `ProjectCommands`.
         Task { @MainActor in
-            do {
-                try DocumentManager.shared.openRecentProject(entry)
-                NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-            } catch {
-                DebugLog.log(.fileOps, "[FileCommands] Failed to open recent project: \(error)")
-                // Prefer the actually-resolved URL, since it's now user-visible (the
-                // sheet renders it) and Repair/Open Anyway would act on it -- only
-                // fall back to the synthesized entry.path when resolution itself
-                // failed, in which case there is no resolved URL to use anyway.
-                let displayURL = DocumentManager.shared.resolveBookmark(entry.bookmarkData) ?? URL(fileURLWithPath: entry.path)
-                ProjectOpenErrorState.shared.report(error, url: displayURL)
-            }
+            await ProjectCommands.openRecent(entry)
         }
     }
 }
@@ -216,16 +207,11 @@ struct FileOperations {
             // Explicitly close the panel before async work
             savePanel.orderOut(nil)
 
+            // E7 (t-94369a83 3a-1b, round C8a): the creation runs inside the lifecycle entry (the old project is
+            // saved and backed up first) -- see `ProjectCommands.newProject`, which also shows the failure alert.
             Task { @MainActor in
-                do {
-                    let title = url.deletingPathExtension().lastPathComponent
-                    try DocumentManager.shared.newProject(at: url, title: title)
-                    DebugLog.log(.fileOps, "[FileOperations] Project created, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
-                    NotificationCenter.default.post(name: .projectDidCreate, object: nil)
-                } catch {
-                    DebugLog.log(.fileOps, "[FileOperations] Failed to create project: \(error)")
-                    showErrorAlert("Could Not Create Project", error: error)
-                }
+                let title = url.deletingPathExtension().lastPathComponent
+                await ProjectCommands.newProject(at: url, title: title)
             }
         }
     }
@@ -244,65 +230,38 @@ struct FileOperations {
             // Explicitly close the panel before async work
             openPanel.orderOut(nil)
 
+            // E2 (t-94369a83 3a-1b, round C7a): the open runs inside the lifecycle entry (the old project is saved
+            // and backed up first) -- see `ProjectCommands`, which also reports a failure as it always was.
             Task { @MainActor in
-                do {
-                    try DocumentManager.shared.openProject(at: url)
-                    DebugLog.log(.fileOps, "[FileOperations] Project opened, hasOpenProject: \(DocumentManager.shared.hasOpenProject)")
-                    NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-                } catch {
-                    DebugLog.log(.fileOps, "[FileOperations] Failed to open project: \(error)")
-                    ProjectOpenErrorState.shared.report(error, url: url)
-                }
+                await ProjectCommands.open(url: url)
             }
         }
     }
 
+    /// E1 (t-94369a83 3a-1b, round C7a): Cmd-W, the window's red button and File > Close Project. The work is in
+    /// `ProjectCommands.close` (Getting Started closes directly; the unsaved-changes alert comes first; a regular
+    /// project is saved through the write queue and then closed).
     static func handleCloseProject() {
         DebugLog.log(.fileOps, "[FileOperations] handleCloseProject() called")
-        let dm = DocumentManager.shared
-
-        // Getting Started is an ephemeral playground with nothing to save -- always close
-        // cleanly, no confirmation. (See t-fa000add: the previous "changes not saved" alert
-        // fired inconsistently in both directions; edit awareness now surfaces as an
-        // in-editor toast instead, via SectionSyncService's checkGettingStartedEdited.)
-        if dm.isGettingStartedProject {
-            dm.closeProject()
-            DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (Getting Started)")
-            NotificationCenter.default.post(name: .projectDidClose, object: nil)
-            return
+        Task { @MainActor in
+            await ProjectCommands.close()
         }
+    }
 
-        // Check for unsaved changes (regular projects)
-        if dm.hasUnsavedChanges {
-            let alert = NSAlert()
-            alert.messageText = "Do you want to save changes before closing?"
-            alert.informativeText = "Your changes will be lost if you don't save them."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Save")
-            alert.addButton(withTitle: "Don't Save")
-            alert.addButton(withTitle: "Cancel")
+    /// The "Do you want to save changes before closing?" alert, as the user answered it.
+    static func confirmSaveBeforeClosing() -> UnsavedChangesChoice {
+        let alert = NSAlert()
+        alert.messageText = "Do you want to save changes before closing?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
 
-            let response = alert.runModal()
-            switch response {
-            case .alertFirstButtonReturn:
-                // Save then close
-                handleSaveProject()
-                dm.closeProject()
-                DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (saved)")
-                NotificationCenter.default.post(name: .projectDidClose, object: nil)
-            case .alertSecondButtonReturn:
-                // Close without saving
-                dm.closeProject()
-                DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (no save)")
-                NotificationCenter.default.post(name: .projectDidClose, object: nil)
-            default:
-                // Cancel - do nothing
-                break
-            }
-        } else {
-            dm.closeProject()
-            DebugLog.log(.fileOps, "[FileOperations] Posting .projectDidClose notification (no changes)")
-            NotificationCenter.default.post(name: .projectDidClose, object: nil)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .save
+        case .alertSecondButtonReturn: return .dontSave
+        default: return .cancel
         }
     }
 
@@ -342,51 +301,11 @@ struct FileOperations {
             // Explicitly close the panel before async work
             savePanel.orderOut(nil)
 
+            // E4 (t-94369a83 3a-1b, round C8a): the copy is made inside the lifecycle entry, AFTER the save sequence
+            // wrote the editor's fresh content through the ordered queue (the direct flush that used to sit here is
+            // gone) -- see `ProjectCommands.saveAs` for the copy, the open, the non-fatal rename and the failure alert.
             Task { @MainActor in
-                do {
-                    // Flush pending editor content to database right before copy
-                    AppDelegate.shared?.editorState?.flushContentToDatabase()
-
-                    // PASSIVE checkpoint: merges as much WAL as possible without
-                    // requiring exclusive access. copyItem copies the entire .ff
-                    // package including -wal and -shm files, so SQLite replays
-                    // any remaining WAL data when the copy is opened.
-                    do {
-                        try dm.projectDatabase?.dbWriter.writeWithoutTransaction { db in
-                            try db.checkpoint(.passive)
-                        }
-                    } catch {
-                        DebugLog.log(.fileOps, "[FileOperations] Save As: WAL checkpoint warning: \(error)")
-                    }
-
-                    let fm = FileManager.default
-
-                    // Remove destination if it already exists
-                    if fm.fileExists(atPath: destURL.path) {
-                        try fm.removeItem(at: destURL)
-                    }
-
-                    // Copy the entire .ff package
-                    try fm.copyItem(at: sourceURL, to: destURL)
-
-                    // Open the copy (this internally closes the current project)
-                    try dm.openProject(at: destURL)
-
-                    // Update title in copied database to match new filename
-                    let newTitle = destURL.deletingPathExtension().lastPathComponent
-                    if let db = dm.projectDatabase, var project = try db.fetchProject() {
-                        project.title = newTitle
-                        try db.updateProject(project)
-                        dm.projectTitle = newTitle
-                    }
-
-                    NotificationCenter.default.post(name: .projectDidOpen, object: nil)
-
-                    DebugLog.log(.fileOps, "[FileOperations] Save As completed: \(destURL.path)")
-                } catch {
-                    DebugLog.log(.fileOps, "[FileOperations] Save As failed: \(error)")
-                    showErrorAlert("Could Not Save Project", error: error)
-                }
+                await ProjectCommands.saveAs(from: sourceURL, to: destURL)
             }
         }
     }
@@ -424,20 +343,11 @@ struct FileOperations {
                         // Explicitly close the panel before async work
                         savePanel.orderOut(nil)
 
+                        // E8 (t-94369a83 3a-1b, round C8a): the import runs inside the lifecycle entry (the old project
+                        // is saved and backed up first) and the create tail seeds the new project with `content` -- see
+                        // `ProjectCommands.importMarkdown`, which also shows the failure alert.
                         Task { @MainActor in
-                            do {
-                                let title = saveURL.deletingPathExtension().lastPathComponent
-                                try DocumentManager.shared.newProject(at: saveURL, title: title)
-                                try DocumentManager.shared.saveContent(content)
-                                NotificationCenter.default.post(
-                                    name: .projectDidCreate,
-                                    object: nil,
-                                    userInfo: ["content": content]
-                                )
-                            } catch {
-                                DebugLog.log(.fileOps, "[FileOperations] Failed to import: \(error)")
-                                showErrorAlert("Could Not Import File", error: error)
-                            }
+                            await ProjectCommands.importMarkdown(content, to: saveURL)
                         }
                     }
                 } catch {

@@ -18,6 +18,30 @@ extension BlockParser {
         }
         return splitter.finish()
     }
+
+    /// Whether `markdown`, read the way `splitIntoRawBlocks` reads it, ENDS inside a code fence
+    /// (a line starting with three backticks that was never closed) or inside display math (a `$$`
+    /// fence, bare or glued, that was never closed).
+    ///
+    /// Phase 4a (t-94369a83), plan v2 section 1(b): the per-block Markdown writer
+    /// (`MarkdownBlockDiff`) skips a write whose text ends open when the baseline did not. The reason
+    /// is that a fence or `$$` typed in the middle of a document swallows everything after it into one
+    /// block until the user types the closing line; a diff against that parse would delete or rewrite
+    /// every block below the opener (headings and their status included) and then do it again when
+    /// the closer arrives. A fence opener always leaves the text ending open, however many fences
+    /// follow it, because fences pair up from the top: an odd number of them is open at the end.
+    ///
+    /// This is a splitter-only pass (no block classification, no flags), so it costs a fraction of a
+    /// full `parse`. It reads the splitter's own state, so it can never disagree with `parse` about
+    /// what is open: `inCodeBlock || inDisplayMath` as `finish()` sees them.
+    static func endsInsideOpenFenceOrMath(_ markdown: String) -> Bool {
+        var splitter = RawBlockSplitter()
+        let lines = markdown.components(separatedBy: "\n")
+        for (index, line) in lines.enumerated() {
+            splitter.consume(line: line, at: index, in: lines)
+        }
+        return splitter.endsOpen
+    }
 }
 
 /// Line-at-a-time state machine behind `BlockParser.splitIntoRawBlocks`.
@@ -72,6 +96,11 @@ private struct RawBlockSplitter {
         flushCurrentBlockIfNotBlank()
         return blocks
     }
+
+    /// True when the lines consumed so far leave a code fence or a display-math fence open. `finish()` does not
+    /// reset either flag, so this reads the same before and after it. Read by
+    /// `BlockParser.endsInsideOpenFenceOrMath` (Phase 4a).
+    var endsOpen: Bool { inCodeBlock || inDisplayMath }
 
     // MARK: - Per-line stages
 
@@ -313,8 +342,9 @@ private struct RawBlockSplitter {
             inFootnoteDef = false
         }
 
-        let lineRange = NSRange(line.startIndex..., in: line)
-        if Self.footnoteDefStartPattern.firstMatch(in: line, range: lineRange) != nil {
+        // `footnoteDefStartPattern` (`^\[\^(\d+)\]:`) can only match a line that starts with `[^`.
+        if line.hasPrefix("[^"),
+           Self.footnoteDefStartPattern.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil {
             // Flush previous block before starting footnote def
             flushCurrentBlockIfNotBlank()
             inFootnoteDef = true
@@ -461,8 +491,10 @@ private struct RawBlockSplitter {
     /// absorbed so caption and image stay in one block.
     private func isCaptionAwaitingImage(after index: Int, in lines: [String]) -> Bool {
         let trimmedBlock = currentBlock.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != nil,
-              trimmedBlock.hasSuffix("-->") else { return false }
+        // Both conditions must hold; the suffix test is a plain comparison and most blocks fail it, so it goes first and the
+        // regular expression is only run for blocks that end in `-->`.
+        guard trimmedBlock.hasSuffix("-->"),
+              trimmedBlock.range(of: "^<!--\\s*caption:", options: .regularExpression) != nil else { return false }
 
         // Peek ahead for image line
         var nextIdx = index + 1

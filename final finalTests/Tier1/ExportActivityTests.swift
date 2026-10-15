@@ -96,9 +96,9 @@ struct ExportActivityTests {
     // behind a warning in `pending` and simply never show, greying out the export/print menu
     // with zero visible explanation -- see `ToastCenter.show(_:now:)`'s rule 2)
 
-    @Test("begin(message:) preempts a showing warning outright, and a plain end() with nothing else queued leaves no toast behind")
+    @Test("begin(message:) preempts a showing warning outright, and end() hands the slot back to that warning (t-94369a83 addendum A5)")
     @MainActor
-    func beginPreemptsShowingWarningAndEndLeavesCurrentEmpty() {
+    func beginPreemptsShowingWarningAndEndRestoresTheWarning() {
         let center = ToastCenter()
         let activity = ExportActivity(toastCenter: center)
 
@@ -115,16 +115,17 @@ struct ExportActivityTests {
 
         activity.end()
 
-        // Nothing was queued behind the warning (it was simply preempted, not preserved), so
-        // ending the export leaves the toast slot empty rather than restoring the warning.
+        // Addendum A5 of the section-delete plan changes this deliberately: a progress toast never
+        // permanently replaces a standing warning, so the warning it displaced is shown again when the
+        // progress toast is dismissed (before A5 the slot was left empty and the warning was lost).
         #expect(activity.isRunning == false)
-        #expect(center.current == nil)
+        #expect(center.current?.id == warning.id)
         #expect(center.pending == nil)
     }
 
-    @Test("A toast already queued behind a warning survives the warning being preempted by begin(message:), and is promoted once end() dismisses the progress toast")
+    @Test("A toast queued behind a warning survives the warning being preempted, and stays queued behind the warning end() restores")
     @MainActor
-    func beginPreemptsWarningAndEndPromotesPreviouslyQueuedPending() {
+    func beginPreemptsWarningAndEndRestoresWarningWithPendingStillQueued() {
         let center = ToastCenter()
         let activity = ExportActivity(toastCenter: center)
 
@@ -147,12 +148,13 @@ struct ExportActivityTests {
 
         activity.end()
 
-        // Ending the export dismisses ITS OWN progress toast (via `ToastCenter.dismiss(id:)`),
-        // which promotes whatever was waiting in `pending` -- the success queued behind the
-        // original warning, not the warning itself (which was never preserved).
+        // Ending the export dismisses ITS OWN progress toast (via `ToastCenter.dismiss(id:)`).
+        // Addendum A5 (t-94369a83): the warning it displaced comes back, and the success that was
+        // queued behind that warning is still queued behind it (before A5 the warning was lost and
+        // the success was promoted).
         #expect(activity.isRunning == false)
-        #expect(center.current?.id == queuedSuccess.id)
-        #expect(center.pending == nil)
+        #expect(center.current?.id == warning.id)
+        #expect(center.pending?.toast.id == queuedSuccess.id)
     }
 
     // MARK: - Unbalanced end()
@@ -185,10 +187,10 @@ struct ExportActivityTests {
         let activity = ExportActivity(toastCenter: center)
 
         await #expect(throws: SampleError.self) {
-            // Explicit `Void` return type on the operation closure -- `run<T>` is generic and
-            // this closure only ever throws (no `return`), which leaves nothing for the
-            // compiler to infer `T` from otherwise.
-            try await activity.run("Exporting to PDF…") { () async throws -> Void in
+            // The operation closure only ever throws (no `return`), so `run<T>` infers `T == Void`
+            // from the closure body; the explicit `async throws` signature keeps it a throwing,
+            // async closure with no result.
+            try await activity.run("Exporting to PDF…") { () async throws in
                 #expect(activity.isRunning == true)
                 #expect(center.current?.style == .progress)
                 throw SampleError.boom

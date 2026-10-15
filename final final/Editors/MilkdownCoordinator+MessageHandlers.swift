@@ -14,6 +14,9 @@ extension MilkdownEditor.Coordinator {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isEditorReady = true
+        // UI-test-only (FF_UI_TESTING_CITATION_PREFILL=memoOff): a page created here runs without the citation memo, as the standby
+        // page does (EditorPreloader). A skipped `if` otherwise.
+        if TestMode.isUITestingCitationMemoOff { webView.evaluateJavaScript(CitationPrefillTestScripts.memoOff) { _, _ in } }
         applyPersistedToggleStates()
         batchInitialize()
         startPolling()
@@ -39,12 +42,18 @@ extension MilkdownEditor.Coordinator {
     /// toggle or path changes.
     ///
     /// Always reads and pushes `effectiveCSLStylePath`'s current value, even when it resolves
-    /// to the bundled default -- no "skip if it's just the bundled style" optimization. That
-    /// optimization would be safe at webview-ready (the citeproc engine already constructs
-    /// itself with the bundled style as its compiled-in default), but is NOT safe on the
-    /// notification path: reverting the toggle off after a custom style was active needs the
-    /// bundled style pushed explicitly, or the live editor keeps rendering citations in the
-    /// old custom style until the app relaunches.
+    /// to the bundled default -- no Swift-side "skip if it's just the bundled style" or "already
+    /// pushed" flag. Reverting the toggle off after a custom style was active needs the bundled
+    /// style pushed explicitly, or the live editor keeps rendering citations in the old custom
+    /// style until the app relaunches, and a Swift-side flag could go stale after a Settings
+    /// change or a failed push.
+    ///
+    /// The skipping happens in the page instead: `CiteprocEngine.setStyle` compares the pushed
+    /// text with the style the engine is actually running and returns without rebuilding when
+    /// they are identical (rebuilding from the ~160 KB style takes about a second). A fresh page
+    /// already runs the bundled style, and `EditorPreloader` gives its standby page the current
+    /// style when that page finishes loading (and again when the style changes), so on a claimed
+    /// spare this push is normally free. A page holding a different style still rebuilds.
     func pushCitationStyle() {
         guard let path = ExportSettingsManager.shared.settings.effectiveCSLStylePath,
               let styleXML = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8) else {
@@ -681,6 +690,9 @@ extension MilkdownEditor.Coordinator {
     ///   `wasUndo` signal carried by THIS specific message is dropped along with it --
     ///   mirrors CodeMirror's identical structure/residual, not a new gap introduced here.
     func handleContentPush(_ content: String, wasUndo: Bool = false) {
+        // Slice 0 measurement (StructuralTrace.swift, `contentPush` span), only while tracing is on; `utf16.count`: `count` walks every Character.
+        let traceSpan = StructuralTrace.span("contentPush", "chars=\(content.utf16.count)")
+        defer { traceSpan.end() }
         guard !self.isCleanedUp, self.isEditorReady else { return }
         guard !self.isResettingContentBinding.wrappedValue else { return }
         guard self.contentState == .idle else {
@@ -694,16 +706,38 @@ extension MilkdownEditor.Coordinator {
         guard content != self.lastPushedContent else { return }
 
         // Corruption check (Milkdown-specific)
-        let pushedFirstLine = self.lastPushedContent.components(separatedBy: "\n").first ?? ""
-        let receivedFirstLine = content.components(separatedBy: "\n").first ?? ""
+        // Only each text's first line is read (`Self.firstLine`): splitting a book-length push (~640,000 chars, ~10,000 lines) ran on every push.
+        let pushedFirstLine = Self.firstLine(of: self.lastPushedContent)
+        let receivedFirstLine = Self.firstLine(of: content)
         if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
 
-        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len=\(content.count) firstH=\"" +
-            "\(content.components(separatedBy: "\n").first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)")\"")
+        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len(utf16)=\(content.utf16.count) firstH=\"" +
+            "\(Self.firstLine(of: content, startingWith: "#")?.prefix(60) ?? "(none)")\"")
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
         self.contentBinding.wrappedValue = content
         self.onContentChange(content, wasUndo)
+    }
+
+    /// The text before the first newline (U+000A), as `components(separatedBy: "\n").first ?? ""` gave it, without splitting all of it ("\r" stays).
+    static func firstLine(of text: String) -> String {
+        let end = text.utf8.firstIndex(of: 0x0A) ?? text.endIndex
+        return String(text.unicodeScalars[..<end])
+    }
+
+    /// The first line of `text` starting with `prefix`, or nil, as `components(separatedBy: "\n").first(where:)` gave it; builds only that line.
+    static func firstLine(of text: String, startingWith prefix: String) -> String? {
+        let bytes = text.utf8
+        var lineStart = bytes.startIndex
+        while lineStart < bytes.endIndex {
+            let lineEnd = bytes[lineStart...].firstIndex(of: 0x0A) ?? bytes.endIndex
+            if bytes[lineStart..<lineEnd].starts(with: prefix.utf8) {
+                return String(text.unicodeScalars[lineStart..<lineEnd])
+            }
+            guard lineEnd < bytes.endIndex else { break }
+            lineStart = bytes.index(after: lineEnd)
+        }
+        return nil
     }
 
     // MARK: - 3s Fallback Polling (stats + section title only)

@@ -56,6 +56,13 @@ struct StructuralEntry: Identifiable, Equatable {
     let id: UUID
     let kind: Kind
     let title: String
+
+    /// An editor-first section delete (t-94369a83 Phase 4b slice 2a): recorded the moment the editor removed the section,
+    /// before the database job that writes the Version History copy has run, so `undoSnapshotId` is nil and the snapshot id
+    /// lives on the controller's `SectionDeleteSlotStore` slot for this entry's id. A section delete the old way (Markdown
+    /// mode, zoomed, no writer, the UI-test legacy flag) carries its snapshot id here as before and has no slot.
+    var isEditorFirstDelete: Bool { kind == .sectionDelete && undoSnapshotId == nil }
+
     /// Snapshot to restore FROM when this entry is undone (the pre-op state). Optional: `nil`
     /// for `.documentNoteDelete`, whose inverse is `payload` (the deleted row) instead of a
     /// snapshot -- approved as trivial/contained since every existing call site already
@@ -163,6 +170,12 @@ final class UnifiedUndoService {
     /// equality check once cleared.
     var clearStructuralRegistry: (() -> Void)?
 
+    /// Set by `StructuralUndoController.configure`: called with the id of an editor-first section delete's entry whenever the
+    /// timeline permanently discards it (eviction, a fresh op abandoning the redo branch, `invalidateAll`), so its slot is removed
+    /// (which unpins the slot's snapshot) and its job record forgotten. Nothing else here knows the slot exists: the entry itself
+    /// carries no snapshot id (plan D2.2(f), addendum A17/A18).
+    var discardEditorFirstEntry: ((UUID) -> Void)?
+
     /// Record a completed structural operation. Clears the redo stack (a fresh operation
     /// invalidates any previously-undone-then-abandoned redo path) and evicts the oldest
     /// undo entry once the cap is exceeded.
@@ -204,6 +217,7 @@ final class UnifiedUndoService {
         if let redoSnapshotId = entry.redoSnapshotId {
             SnapshotService.unpinUndoPointSnapshot(redoSnapshotId)
         }
+        if entry.isEditorFirstDelete { discardEditorFirstEntry?(entry.id) }
     }
 
     enum UndoOutcome: Equatable {
@@ -253,6 +267,17 @@ final class UnifiedUndoService {
     /// doesn't match `opId`.
     func replaceTopOfUndoStack(opId: UUID, freshUndoSnapshotId: String) {
         guard let top = undoStack.last, top.id == opId else { return }
+        // An editor-first section delete (t-94369a83 Phase 4b slice 2a, addendum A18) is exempt: its undo snapshot id lives on the
+        // controller's slot, not on the entry, and the caller writes `freshUndoSnapshotId` there (which unpins the id it
+        // replaces). What this call still does for it is drop the consumed redo snapshot, as it does for every entry.
+        if top.isEditorFirstDelete {
+            if let redoSnapshotId = top.redoSnapshotId { SnapshotService.unpinUndoPointSnapshot(redoSnapshotId) }
+            undoStack[undoStack.count - 1] = StructuralEntry(
+                id: top.id, kind: top.kind, title: top.title,
+                undoSnapshotId: nil, redoSnapshotId: nil, createdAt: top.createdAt
+            )
+            return
+        }
         // The old undoSnapshotId and redoSnapshotId are both being discarded here (the fresh
         // entry starts with `redoSnapshotId: nil`) -- unpin them so they rejoin the normal
         // auto-backup population instead of leaking a permanent pin.
@@ -261,6 +286,19 @@ final class UnifiedUndoService {
             id: top.id, kind: top.kind, title: top.title,
             undoSnapshotId: freshUndoSnapshotId, redoSnapshotId: nil, createdAt: top.createdAt
         )
+    }
+
+    /// Removes one entry from whichever stack holds it, unpinning its snapshots (and, for an editor-first section delete, dropping
+    /// its slot through `discardEditorFirstEntry`). Used when such a delete's background job did not apply (t-94369a83 Phase 4b
+    /// slice 2a, plan D6): the entry promises an undo of a delete that never reached the database. Unlike `invalidateAll` it keeps
+    /// every other entry, and it does not bump `generation`, so a sequence running right now is not made to fail.
+    func removeEntry(opId: UUID) {
+        if let index = undoStack.firstIndex(where: { $0.id == opId }) {
+            unpinSnapshots(of: undoStack.remove(at: index))
+        }
+        if let index = redoStack.firstIndex(where: { $0.id == opId }) {
+            unpinSnapshots(of: redoStack.remove(at: index))
+        }
     }
 
     /// Redo-branch barrier (see docs/architecture/unified-undo.md's registry/descriptor

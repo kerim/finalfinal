@@ -65,6 +65,14 @@ final class DiagnosticLogFile: @unchecked Sendable {
     /// Backing cache for `isEnabled`. `nil` means "not cached, next read must hit UserDefaults".
     private static let enabledCache = OSAllocatedUnfairLock<Bool?>(initialState: nil)
 
+    /// `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1`, read ONCE (the first `isEnabled` call), not on every call: building
+    /// `ProcessInfo.environment` costs far more than the rest of `isEnabled`, and `isEnabled` runs on every key press and every
+    /// `DebugLog.log` call. The variable is only ever set in the launch environment of a UI-test run (`app.launchEnvironment`);
+    /// nothing changes it while the app runs, so reading it once gives the same answers. A pure environment read: no lock, so
+    /// the non-recursion invariant on `isEnabled` below is untouched.
+    private static let forcedOnByEnvironment =
+        ProcessInfo.processInfo.environment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] == "1"
+
     /// Whether diagnostic logging is enabled. **Cached**, not a live UserDefaults read on every
     /// call: `append()` below is invoked from arbitrary threads at high frequency (the 500ms
     /// BlockSyncService polling loop, etc.), and a Time Profiler-verified investigation (see
@@ -93,7 +101,7 @@ final class DiagnosticLogFile: @unchecked Sendable {
         // TestMode.clearTestState()'s unconditional wipe of loggingEnabledDefaultsKey. Pure env
         // read -- no lock interaction, so it can't touch this function's documented
         // non-recursion invariant below.
-        if ProcessInfo.processInfo.environment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] == "1" {
+        if forcedOnByEnvironment {
             return true
         }
         return enabledCache.withLock { cached in

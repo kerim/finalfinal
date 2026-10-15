@@ -77,9 +77,159 @@ extension EditorViewState {
         editorMode = editorMode == .wysiwyg ? .source : .wysiwyg
     }
 
+    /// Markdown -> Rich Text, the text half of the switch (everything `handleEditorModeToggle` does before `toggleEditorMode()`): takes
+    /// the text the Markdown editor holds NOW, strips the section anchors and the bibliography START marker, saves THAT to the database
+    /// and hands it to Rich Text as `content`. The bibliography END marker (`BlockParser.bibliographyEndMarker`) is deliberately NOT
+    /// stripped: it is what makes `BlockParser.parse` flag the bibliography heading and its entries, so a text without it stores them
+    /// as ordinary blocks (`BibliographyOpeningSelector`, tier 2). `content` always carried it in Markdown mode (the page's push), and
+    /// the Rich Text editor re-reads its document from the database right after (`onWebViewReady` sets `content` again).
+    ///
+    /// The text is `sourceContent`, not `content`. Just before the switch `CodeMirrorCoordinator.saveAndNotify` reads the page and
+    /// refreshes `sourceContent` only; `content` (the same text with the anchors stripped) is refreshed by the page's own push, which
+    /// runs 50 ms after the last key. Keys typed in that last 50 ms were therefore in `sourceContent` but not in `content`, and saving
+    /// `content` stored the text without them. The incoming Rich Text editor loads its document from the database, so they were lost.
+    ///
+    /// `sourceContent` must hold the RAW document, hidden markers included: `saveAndNotify` reads it with
+    /// `CodeMirrorEditor.Coordinator.preSwitchContentScript` (`getContentRaw()`), not `getContent()`, which strips the end marker (and
+    /// the zoom-notes marker a zoomed flush splits the mini-Notes on) before this function ever sees the text. Reading `getContent()`
+    /// here is what made every switch to Rich Text unflag the bibliography (2026-10-09, first seen in the VM runs of that day).
+    func commitMarkdownTextForRichTextSwitch(sectionSyncService: SectionSyncService) {
+        let (cleaned, anchors) = sectionSyncService.extractSectionAnchors(markdown: sourceContent)
+        DebugLog.log(.editor, "[SWITCH→MW] After extract: cleaned length=\(cleaned.count), anchors=\(anchors.count)")
+        sourceAnchors = anchors
+        // Also strip bibliography marker since Milkdown shouldn't see it
+        let plainText = SectionSyncService.stripBibliographyMarker(from: cleaned)
+        // `skipUnchangedWrite`: when the stored rows already are what this flush would store (no edit since the last save), nothing is
+        // written, so every row keeps its id. A zoomed flush ignores the flag.
+        // Does not wait for a pending section-delete job (plan D7): this runs only when LEAVING Markdown, and an editor-first delete
+        // happens in Rich Text only, whose switch to Markdown already waited for every delete job before it changed anything.
+        flushContentToDatabase(overrideContent: plainText, skipUnchangedWrite: true)
+        content = plainText
+    }
+
+    /// Runs `body` (the switch between Rich Text and Markdown) once every structural command ahead of it has finished and every
+    /// section-delete job has ended (t-94369a83 Phase 4b slice 2a, plan D7, addendum A2). The switch must not change anything
+    /// until then, so the editor stays live and idle during the wait and typing is saved normally.
+    ///
+    /// It enters through the structural gate: a second toggle pressed during the wait is held behind the first and runs after it,
+    /// never in parallel and never dropped; one the lifecycle cancels (a close, quit or project switch started) does not run.
+    /// With the gate idle and no job pending (the normal case) `body` runs right here, in this call, with no task hop: the
+    /// switch keeps its old timing. Returns the waiting task, or nil when `body` already ran.
+    @discardableResult
+    func runAfterPendingStructuralWork(label: String, _ body: @escaping @MainActor () -> Void) -> Task<Void, Never>? {
+        // A close, quit or project switch has started: the project is being saved and closed, and a switch between Rich Text and
+        // Markdown must not run beside that save (fix round 8, F3). This covers a request whose cursor save was already under way.
+        guard activeLifecycle == nil, !structuralGate.isClosedToNewWork else {
+            DebugLog.log(.lifecycle, "[\(label)] not run: the project is closing or switching")
+            return nil
+        }
+        guard structuralGate.isIdle, !efJobRegistry.hasUnsettledWork else {
+            return Task { @MainActor [weak self] in
+                guard let self else { return }
+                // A toggle held behind a slow command shows "Finishing the last change..." after one second (fix round 2a, item 4),
+                // dismissed by id when the toggle starts or is cancelled.
+                var waitToast: DelayedProgressToast?
+                defer { waitToast?.stop() }
+                let toastCenter = self.toastCenter
+                let result = await self.structuralGate.acquire(onQueued: {
+                    waitToast = DelayedProgressToast(toastCenter: toastCenter, message: DelayedProgressToast.finishingMessage)
+                })
+                guard result == .granted else {
+                    DebugLog.log(.lifecycle, "[\(label)] cancelled: the project is closing or switching")
+                    return
+                }
+                defer { self.structuralGate.release() }
+                // `acquire` looks at the barrier only at entry: a waiter queued before the close started is granted the gate while the
+                // close is waiting, and must not run the switch then (F3).
+                guard self.activeLifecycle == nil, !self.structuralGate.isClosedToNewWork else {
+                    DebugLog.log(.lifecycle, "[\(label)] cancelled: a close, quit or switch started while it waited")
+                    return
+                }
+                await self.awaitPendingStructuralJobs()
+                // The wait above suspended: look again.
+                guard self.activeLifecycle == nil, !self.structuralGate.isClosedToNewWork else {
+                    DebugLog.log(.lifecycle, "[\(label)] cancelled: a close, quit or switch started while it waited")
+                    return
+                }
+                body()
+            }
+        }
+        body()
+        return nil
+    }
+
+    /// A switch requested while a structural command is running or queued (`contentState == .structuralUndo`, or the structural gate
+    /// busy: a slow Cmd-Z, a section operation, an undo still waiting for a delete's saving job) is HELD, not dropped (fix round 2a,
+    /// item 4; floor #2/#5): it waits for the command to finish, and for any command queued behind it, then makes the request again
+    /// from the top, so the cursor save, the jobs wait and the switch all run as if the key had just been pressed. "Finishing the
+    /// last change..." shows after one second. A second press while one is held is the same wish and adds nothing; one the
+    /// lifecycle cancels (a close, quit or project switch started) is dropped with the project.
+    ///
+    /// Two places call it: the request itself (`requestEditorModeToggle`, phase one) and the receiver of `.didSaveCursorPosition`
+    /// (phase two, `handleDidSaveCursorPosition`). The second is for a command that started DURING the cursor save: the cursor
+    /// save is two web calls (about half a second on a book-length document), the press passed phase one while everything was
+    /// idle, and the command set `.structuralUndo` before the save replied. Phase two used to drop the switch there without a word.
+    ///
+    /// `.zoomTransition` is deliberately still refused: zoom waits for the delete job BEFORE it sets that state
+    /// (`performUserZoomIn`), so the state lasts only the zoom itself, a few tenths of a second.
+    func holdModeToggleUntilStructuralWorkEnds() {
+        guard heldModeToggleTask == nil else {
+            DebugLog.log(.editor, "[EditorModeToggle] a toggle is already held behind the running structural command")
+            return
+        }
+        DebugLog.log(.editor, "[EditorModeToggle] held: a structural command is running (contentState=\(contentState))")
+        heldModeToggleTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let toast = DelayedProgressToast(toastCenter: self.toastCenter, message: DelayedProgressToast.finishingMessage)
+            defer { toast.stop() }
+            // Wait for this press's turn on the gate (every command that was running or queued before it has then finished) and
+            // look again: normally the state is clear by then; if a command is still mid-way the loop waits once more.
+            var proceedDespiteDeleteWork = false
+            repeat {
+                let result = await self.structuralGate.acquire()
+                guard result == .granted else {
+                    self.heldModeToggleTask = nil
+                    return
+                }
+                // A delete's job and its follow-up work (the resyncs, and the Notes and Bibliography rebuilds they start) end before the
+                // press asks again: the request below saves the caret, and a rebuild that landed after that save would clear it, so
+                // the Markdown editor would open at line 1. The press is held while the gate is held (as `runAfterPendingStructuralWork`
+                // does) so nothing slips in between. Only when there is work to wait for: the wait also bumps
+                // `outOfQueueWriteGeneration`, which a held press behind an ordinary command has no reason to do.
+                // The wait is bounded (15 s) and logs when it gives up; nothing else can register delete work while this press holds the
+                // gate, so work still unsettled afterwards is work that never ended, and the request below must not hold for it again.
+                proceedDespiteDeleteWork = false
+                if self.efJobRegistry.hasUnsettledWork {
+                    await self.awaitPendingStructuralJobs()
+                    proceedDespiteDeleteWork = self.efJobRegistry.hasUnsettledWork
+                }
+                self.structuralGate.release()
+                // A waiter queued before a close or quit started is granted the gate while that lifecycle waits: the press is dropped
+                // with the project, not run beside its save (F3).
+                guard self.activeLifecycle == nil, !self.structuralGate.isClosedToNewWork else {
+                    DebugLog.log(.lifecycle, "[EditorModeToggle] held switch dropped: a close, quit or switch started while it waited")
+                    self.heldModeToggleTask = nil
+                    return
+                }
+                if self.contentState == .structuralUndo { try? await Task.sleep(for: Self.sectionOperationPollInterval) }
+            } while self.contentState == .structuralUndo
+            // The task is over before it asks again: the request below may hold again (a command queued behind this press has
+            // taken the gate), and that new hold must be the one `heldModeToggleTask` names. (A `defer` that cleared it here would
+            // clear the new one instead.)
+            self.heldModeToggleTask = nil
+            // This is the press the user already made, not a second one: the debounce that stops a double-click must not drop it.
+            self.lastToggleRequestTime = .distantPast
+            self.requestEditorModeToggle(ignoringUnfinishedDeleteWork: proceedDespiteDeleteWork)
+        }
+    }
+
     /// Request editor mode toggle - posts notification for current editor to save cursor first.
     /// Gates on debounce interval and blocks during data-sensitive transitions.
-    func requestEditorModeToggle() {
+    ///
+    /// `ignoringUnfinishedDeleteWork` is only for the held press's own second request, after its bounded wait for a delete's work gave
+    /// up: it goes on, and the switch's own wait (`runAfterPendingStructuralWork`) runs as it always did, rather than the press being
+    /// held for ever behind work that never ends.
+    func requestEditorModeToggle(ignoringUnfinishedDeleteWork: Bool = false) {
         // Diagnostic (bug-fix round, ship-fix/fullsuite-round2): records that the request
         // reached this handler at all, plus the two values that decide whether either guard
         // below rejects it -- so a future regression (e.g. a click silently swallowed before it
@@ -87,19 +237,57 @@ extension EditorViewState {
         // request that did arrive.
         DebugLog.log(.editor, "[EditorModeToggle] requestEditorModeToggle called: canToggle=\(canToggleEditorMode) contentState=\(contentState)")
         guard canToggleEditorMode else { return }
+        // A close, quit or project switch is saving the project: no switch begins beside it (fix round 8, F3).
+        guard activeLifecycle == nil, !structuralGate.isClosedToNewWork else {
+            DebugLog.log(.lifecycle, "[EditorModeToggle] not started: the project is closing or switching")
+            return
+        }
         // Don't start the save chain during data-sensitive transitions. .structuralUndo
         // added in the Phase 3 review round: a mode toggle mid-sequence would reassign the
         // WebView StructuralUndoController is still operating on
         // (docs/architecture/unified-undo.md).
         switch contentState {
-        case .projectSwitch, .zoomTransition, .structuralUndo:
+        case .projectSwitch, .zoomTransition:
+            return
+        case .structuralUndo:
+            // Held, not dropped: runs again when the structural command (and any queued behind it) has finished.
+            holdModeToggleUntilStructuralWorkEnds()
             return
         default:
             break
         }
+        // A structural command that is still waiting for its first step (an undo that waits for a delete's saving job holds the gate
+        // while `contentState` is still `.idle`) or commands queued behind it: hold the press now rather than start a cursor save that
+        // the command would overtake. With the gate idle (nothing running, nothing queued) the press goes straight through.
+        //
+        // The same for a delete whose job or follow-up work has not finished (t-94369a83 Phase 4b slice 2a, fix round 9): the gate is
+        // idle then, but the follow-up work starts the Notes and Bibliography rebuilds, and each of those clears the caret the cursor
+        // save below stores (`handleNotesSectionChanged`, `handleBibliographySectionChanged`: a position computed before a rebuild
+        // is stale). A press that saved its caret first and then waited for the delete (`handleEditorModeToggle`) opened the Markdown
+        // editor with no caret, at line 1 column 0, and the next typing landed at the start of the document. Held here, the caret is
+        // saved after the work has ended, and nothing clears it afterwards. The editor stays live while the press is held.
+        let deleteWorkPending = !ignoringUnfinishedDeleteWork && efJobRegistry.hasUnsettledWork
+        guard structuralGate.isIdle, !deleteWorkPending else {
+            holdModeToggleUntilStructuralWorkEnds()
+            return
+        }
         lastToggleRequestTime = Date()  // Record at entry point to close the race window
 
         NotificationCenter.default.post(name: .willToggleEditorMode, object: nil)
+    }
+
+    /// The not-zoomed write of `flushContentToDatabase`: replace every row of the project with `blocks`.
+    ///
+    /// With `skipUnchangedWrite` (passed only by the Markdown <-> Rich Text switch) it uses `replaceBlocksIfChanged`: when the
+    /// rows already stored are the rows this parse would store, nothing is written, every row keeps its id and the write counter
+    /// is not bumped. Otherwise it is `replaceBlocks`, as it always was.
+    func writeWholeDocumentRows(_ blocks: [Block], to db: ProjectDatabase, projectId: String, skipUnchangedWrite: Bool) throws {
+        guard skipUnchangedWrite else {
+            try db.replaceBlocks(blocks, for: projectId)
+            return
+        }
+        let wrote = try db.replaceBlocksIfChanged(blocks, for: projectId)
+        DebugLog.log(.zoom, "[FLUSH] switch flush: stored rows \(wrote ? "differed, wrote them" : "already matched, wrote nothing")")
     }
 
 }

@@ -277,62 +277,59 @@ extension ZoomWordCountSyncTests {
         )
     }
 
-    /// Regression test for the OTHER call site of the drain primitive:
-    /// `performProjectClose()` in `ContentView+ProjectLifecycle.swift` calls
-    /// `blockSyncService.stopPollingAndDrain()` BEFORE its content flush (review round 2,
-    /// close-fetch-fresh-content: `flushAllPendingContent()`, the same helper project switch
-    /// uses -- not `editorState.flushAllSync()`, which close no longer calls at all)
-    /// (drain-then-flush order — MF2, block-sync-poll-races review round 2: this
-    /// used to run the other way around, which meant a poll cycle already in
-    /// flight when the user clicked close could resume and land a stale write
-    /// AFTER the close-time flush had just landed the user's real, current
-    /// content — silently reverting their last edit with no error surfaced
-    /// anywhere). `testReconfigure_drainsInFlightForcedPoll_beforeSwitchingProject`
-    /// above proves the drain primitive as exercised by `reconfigure(...)`; this
-    /// proves the SAME underlying primitive (`drainInFlightPoll()`, reached here
-    /// via `stopPollingAndDrain()` rather than `reconfigure`) as exercised by the
-    /// close path — i.e. that `stopPollingAndDrain()` itself does not return
-    /// until a forced in-flight poll cycle has genuinely finished. That guarantee
-    /// is exactly what `performProjectClose()`'s drain-then-flush ordering
-    /// depends on: the ordering fix in the caller is only load-bearing if the
-    /// callee it awaits first actually blocks until the in-flight cycle is done.
-    /// (`performProjectClose()` itself is not exercised end-to-end here — it
-    /// reaches into `ContentView`'s other services, editorState, and
-    /// notification plumbing, which is impractical to stand up at this unit
-    /// level; this test instead isolates and proves the lower-level primitive
-    /// that call's correctness reduces to.)
+    /// Regression test for the OTHER call site of the drain primitive: the close's save sequence
+    /// (`EditorViewState.runLifecycleFlush`, t-94369a83 Phase 3a-1b, plan section 4.2) stops the poll timer at
+    /// step 0 and DRAINS the in-flight poll cycle at step 4 (F: `BlockSyncService.raceDrain(bound:)`, which wraps
+    /// `drainInFlightPoll()`) BEFORE its fresh fetch and whole-document write (drain-then-write order — MF2,
+    /// block-sync-poll-races review round 2: this used to run the other way around, which meant a poll cycle
+    /// already in flight when the user clicked close could resume and land a stale write AFTER the close-time
+    /// flush had just landed the user's real, current content — silently reverting their last edit with no
+    /// error surfaced anywhere). `testReconfigure_drainsInFlightForcedPoll_beforeSwitchingProject` above proves
+    /// the drain primitive as exercised by `reconfigure(...)`; this proves the SAME underlying primitive
+    /// (`drainInFlightPoll()`, reached here via the sequence's own step 0 + step 4 calls rather than
+    /// `reconfigure`) as exercised by the close path — i.e. that the drain itself does not return until a
+    /// forced in-flight poll cycle has genuinely finished. That guarantee is exactly what the sequence's
+    /// drain-then-write ordering depends on: the ordering is only load-bearing if the callee it awaits first
+    /// actually blocks until the in-flight cycle is done. (The whole sequence is not exercised end-to-end here
+    /// — it reaches into the editor state, the writer and the host, which is impractical to stand up at this
+    /// level; this test instead isolates and proves the lower-level primitive that its correctness reduces to.)
+    ///
+    /// PORTED (round C7b): this used to call `stopPollingAndDrain()`, which has since been deleted: close,
+    /// switch and quit run the lifecycle save sequence, and the unkeyed Getting Started close calls only
+    /// `stopPolling()`. It now makes the two calls the sequence makes, with
+    /// step 4's production bound, and additionally requires the drain to FINISH inside that bound (not time
+    /// out), so a drain that gave up early could not pass either.
     ///
     /// Same technique as `testReconfigure_...` above: parks a FORCED poll cycle
     /// (`pollBlockChangesForTest(force: true)`) at `testAfterGenerationCaptureHook`
     /// — past its own `database`/`projectId`/`generationAtPoll` capture, with a
     /// real `editorState` wired so that capture is a genuine value — makes a real
-    /// edit to the project's content while it's parked, then concurrently calls
-    /// `stopPollingAndDrain()` and records a happens-before-ordered event
-    /// sequence: `.drainCalled` when `stopPollingAndDrain()` starts,
-    /// `.gateReleased` when the parked cycle is released, `.drainReturned` when
-    /// `stopPollingAndDrain()` returns.
+    /// edit to the project's content while it's parked, then concurrently runs
+    /// the sequence's drain (`stopPolling()` + `raceDrain(bound:)`) and records a
+    /// happens-before-ordered event sequence: `.drainCalled` when the drain
+    /// starts, `.gateReleased` when the parked cycle is released, `.drainReturned`
+    /// when the drain returns.
     ///
     /// The assertion is on that recorded ORDER, not on timing — see
     /// `testForcedFlush_waitsForInFlightPoll_thenFlushesFreshEdit`'s doc comment
     /// in ZoomWordCountSyncTests.swift for why an ordering assertion derived from
     /// actual continuation-resume order can't false-pass regardless of machine
-    /// speed. If `stopPollingAndDrain()` ever regressed to return early (e.g. lost
+    /// speed. If the drain ever regressed to return early (e.g. lost
     /// its `drainInFlightPoll()` call entirely, or only drained unforced cycles),
     /// the order here would collapse to `drainCalled, drainReturned, gateReleased`
-    /// — `stopPollingAndDrain()` returning before the gate is even opened — the
+    /// — the drain returning before the gate is even opened — the
     /// same failure shape `testReconfigure_...` uses for the pre-fix
     /// `reconfigure(...)`.
     ///
     /// Also verifies via a direct word-count read that the edit made while
     /// parked has actually reached the database by the time
-    /// `stopPollingAndDrain()` returns — proving the drain didn't just happen to
+    /// the drain returns — proving the drain didn't just happen to
     /// finish in the right order by chance, but actually waited for the cycle's
     /// real work (including its DB write) to complete, which is what makes it
     /// safe for a caller to run its own database write immediately afterward
-    /// (exactly what `performProjectClose()` does with `flushAllPendingContent()`, review
-    /// round 2 -- no longer `flushAllSync()`, which close doesn't call anymore).
+    /// (exactly what the sequence does with its fetch and whole-document write).
     @MainActor
-    func testStopPollingAndDrain_waitsForInFlightForcedPoll_beforeReturning() async throws {
+    func testCloseDrain_waitsForInFlightForcedPoll_beforeReturning() async throws {
         let stack = try await makeStack()
         let (helper, db) = (stack.helper, stack.db)
         let (pid, sync) = (stack.pid, stack.sync)
@@ -370,7 +367,7 @@ extension ZoomWordCountSyncTests {
 
         // Make a real edit AFTER the forced cycle is already parked, so there's
         // a genuine pending batch for it to discover once released -- this is
-        // the edit `performProjectClose()`'s drain-then-flush ordering exists to
+        // the edit the close sequence's drain-then-write ordering exists to
         // protect.
         try await editBetaParagraph(helper.webView)
 
@@ -382,8 +379,14 @@ extension ZoomWordCountSyncTests {
         let drainTask = Task { @MainActor in
             drainStarted.fire()
             log.record("drainCalled")
-            await sync.stopPollingAndDrain()
-            log.record("drainReturned")
+            // The save sequence's step 0 and step 4, with step 4's production bound.
+            sync.stopPolling()
+            let outcome = await sync.raceDrain(bound: LifecycleBounds.production.drain)
+            if case .finished = outcome {
+                log.record("drainReturned")
+            } else {
+                log.record("drainTimedOut")
+            }
         }
         await drainStarted.wait()
 
@@ -396,7 +399,7 @@ extension ZoomWordCountSyncTests {
         let recorded = log.events
         XCTAssertEqual(
             recorded, ["drainCalled", "gateReleased", "drainReturned"],
-            "stopPollingAndDrain() must not return until the parked forced poll " +
+            "the close's drain must not return until the parked forced poll " +
                 "cycle has finished — got order \(recorded)"
         )
 
@@ -404,7 +407,7 @@ extension ZoomWordCountSyncTests {
         XCTAssertGreaterThan(
             after, before,
             "the edit made while the forced cycle was parked must have reached " +
-                "the database by the time stopPollingAndDrain() returns -- " +
+                "the database by the time the drain returns -- " +
                 "proving the drain actually waited for the cycle's write, not " +
                 "just for events to happen to line up (before=\(before), after=\(after))"
         )

@@ -17,7 +17,7 @@ import {
   parseCitationBracket,
   serializeCitation,
 } from './citation-types';
-import { getCiteprocEngine } from './citeproc-engine';
+import { type CitationOptions, getCiteprocEngine } from './citeproc-engine';
 import { isSourceModeEnabled } from './source-mode-plugin';
 
 export {
@@ -227,12 +227,40 @@ export function mergeCitations(existing: string, newCitation: string): string {
   return `[${existingInner}; ${newInner}]`;
 }
 
+/** The citekeys of a citation node, as the node view reads them (split on commas, blanks dropped; no trimming, no case change). */
+export function citationKeysOf(attrs: CitationAttrs): string[] {
+  return attrs.citekeys.split(',').filter((k) => k.trim());
+}
+
+/**
+ * Exactly what the Rich Text node view asks `CiteprocEngine.formatCitation` for, for one citation node. The node view and the
+ * ahead-of-time fill (citation-prefill.ts) both build their request here, so the fill can only warm the memo with the entries a real
+ * load will look up. Throws if `attrs.locators` is not valid JSON (the node view catches that and shows its short form).
+ */
+export function citationFormatRequest(attrs: CitationAttrs): { citekeys: string[]; options: CitationOptions } {
+  const citekeys = citationKeysOf(attrs);
+  return {
+    citekeys,
+    options: {
+      suppressAuthors: attrs.suppressAuthor ? citekeys.map(() => true) : undefined,
+      locators: attrs.locators ? JSON.parse(attrs.locators) : undefined,
+      prefix: attrs.prefix,
+      suffix: attrs.suffix,
+    },
+  };
+}
+
 // NodeView for custom rendering with formatted citation display
 // This must be in the same file as citationNode to maintain atom identity with $view
 // NOTE: $view expects (ctx) => NodeViewConstructor, NOT () => (ctx) => NodeViewConstructor
 const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
   return (node, view, getPos) => {
-    const attrs = node.attrs as CitationAttrs;
+    // The node this view currently shows. ProseMirror reuses a node view for a DIFFERENT citation when the document around it
+    // changes (its `update` is called with whatever compatible node lands in the slot), so `update` below swaps this reference.
+    // Never write into `node.attrs`: that object is the document's own, shared with every state that holds the node (an undo
+    // checkpoint included) -- writing a reused view's new citekeys into it silently changed the saved checkpoint's citations
+    // and the shift cascaded down the document.
+    let currentNode = node;
     // NOTE: citekeys is computed fresh inside updateDisplay() to avoid stale closure
 
     // Track source mode at NodeView creation time
@@ -245,8 +273,9 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
 
     // Update display content
     const updateDisplay = () => {
+      const attrs = currentNode.attrs as CitationAttrs;
       // Compute citekeys fresh from current attrs (not stale closure)
-      const citekeys = attrs.citekeys.split(',').filter((k) => k.trim());
+      const citekeys = citationKeysOf(attrs);
 
       // Source mode: show raw markdown syntax
       if (isSourceModeEnabled()) {
@@ -291,12 +320,8 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
         if (isResolved) {
           // Get formatted citation from citeproc
           try {
-            displayText = engine.formatCitation(citekeys, {
-              suppressAuthors: attrs.suppressAuthor ? citekeys.map(() => true) : undefined,
-              locators: attrs.locators ? JSON.parse(attrs.locators) : undefined,
-              prefix: attrs.prefix,
-              suffix: attrs.suffix,
-            });
+            const request = citationFormatRequest(attrs);
+            displayText = engine.formatCitation(request.citekeys, request.options);
 
             // Build tooltip with full citation info
             const items = citekeys.map((k) => engine.getItem(k)).filter(Boolean) as CSLItem[];
@@ -346,7 +371,7 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
       e.preventDefault();
       e.stopPropagation();
       if (typeof getPos !== 'function') return;
-      const nodeAttrs = node.attrs as CitationAttrs;
+      const nodeAttrs = currentNode.attrs as CitationAttrs;
       // Pass the live getPos closure itself (not a one-time-computed position
       // snapshot) so the popup can re-resolve the citation's CURRENT position at
       // the moment the user actually acts (commit/delete), even if a background
@@ -372,9 +397,8 @@ const citationNodeView = $view(citationNode, (_ctx: Ctx) => {
           return false;
         }
 
-        // Update attrs from node
-        const newAttrs = updatedNode.attrs as CitationAttrs;
-        Object.assign(attrs, newAttrs);
+        // Show the new node. The attrs are read from it, never copied INTO the previous node's attrs object (see `currentNode`).
+        currentNode = updatedNode;
 
         // Refresh display
         updateDisplay();
