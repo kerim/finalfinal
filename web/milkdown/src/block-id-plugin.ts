@@ -206,10 +206,26 @@ export function getRecentlySplitEmptyIds(): Set<string> {
   return new Set(recentlySplitEmptyIds);
 }
 
+/** True for an id the editor made up itself (a block Swift has not confirmed yet). */
+export function isTempBlockId(id: string): boolean {
+  return id.startsWith(TEMP_ID_PREFIX);
+}
+
+/**
+ * One observer of Swift's temp -> permanent id confirmations (the undo coordinator, which keeps a log per saved structural
+ * operation: see `UndoRegistryEntry.confirmLog`). Registered from the coordinator rather than imported here, because the
+ * coordinator already imports this module. Called with every confirmation, before it is queued below.
+ */
+let confirmationListener: ((mapping: Record<string, string>) => void) | null = null;
+export function setConfirmationListener(listener: ((mapping: Record<string, string>) => void) | null): void {
+  confirmationListener = listener;
+}
+
 /**
  * Confirm a temp ID with a permanent ID from Swift
  */
 export function confirmBlockId(tempId: string, permanentId: string): void {
+  confirmationListener?.({ [tempId]: permanentId });
   pendingConfirmations.set(tempId, permanentId);
 }
 
@@ -217,6 +233,7 @@ export function confirmBlockId(tempId: string, permanentId: string): void {
  * Confirm multiple temp IDs at once
  */
 export function confirmBlockIds(mapping: Record<string, string>): void {
+  confirmationListener?.(mapping);
   for (const [tempId, permanentId] of Object.entries(mapping)) {
     pendingConfirmations.set(tempId, permanentId);
   }

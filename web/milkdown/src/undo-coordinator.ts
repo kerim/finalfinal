@@ -18,8 +18,9 @@ import type { EditorState, Transaction } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { commitAndCloseAnnotationEditPopup } from './annotation-edit-popup';
 import { clearEditorHistory, getContent } from './api-content';
-import { clearBlockIds } from './block-id-plugin';
+import { clearBlockIds, setConfirmationListener } from './block-id-plugin';
 import {
+  detectEditsSinceSnapshot,
   flushPendingBlockChanges,
   hasPendingChanges,
   hasUnsettledLocalEdit,
@@ -35,7 +36,7 @@ import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { hideLinkPopups } from './link-tooltip';
 import { rebaseOntoSavedCopy } from './saved-copy-rebase';
-import { noteRealUserEditForEcho } from './typing-trace';
+import { isTraceTypingOn, noteRealUserEditForEcho } from './typing-trace';
 
 // Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
 // (undo-mode-switch-focus investigation legacy -- kept because it proved genuinely useful
@@ -89,6 +90,17 @@ export interface UndoRegistryEntry {
    * Optional (not every test-constructed entry sets it) -- `undefined` reads as `false`
    * (not mid-op), which is the correct default for an already-finalized entry. */
   midOp?: boolean;
+  /** The block-id maps (top-level offset -> id / type) as they stood at `beginStructuralOp`, i.e. for the document in
+   * `checkpoint`. Set by the editor-first section delete (api-section-delete.ts) only; the quick undo puts them back after the
+   * checkpoint swap (api-section-undo.ts) instead of clearing the ids and waiting for Swift to push fresh ones. */
+  idMap?: Map<number, string>;
+  typeMap?: Map<number, string>;
+  /** Temp -> permanent id pairs Swift confirmed since `idMap` was captured, for ids `idMap` held as temp ids. The quick undo
+   * applies them to the restored map (a temp id confirmed after the delete is the permanent id when the section comes back).
+   * Appended in place by `recordConfirmationsInRegistry`; the array and `tempIds` are shared by every spread copy of the entry. */
+  confirmLog?: Array<[string, string]>;
+  /** The temp ids still in `idMap` that no confirmation has been logged for yet (what the listener looks for). */
+  tempIds?: Set<string>;
 }
 
 /** Swift-pushed pointer to the top of each stack (see docs/architecture/unified-undo.md's
@@ -141,6 +153,41 @@ let latchTimeoutId: ReturnType<typeof setTimeout> | null = null;
  * alike, so the order the user pressed them in is kept) wait here instead of being dropped. */
 const queuedPresses: Array<{ direction: 'undo' | 'redo' }> = [];
 
+/** The op whose quick undo (api-section-undo.ts) paused block-sync and has not resumed it yet; null when none did. Lives here so
+ * the barrier clears above and the test reset below drop it, and so `resumeSyncAfterQuickUndo` only ever unpauses a pause the
+ * quick undo itself took (other code, such as a content push, pauses and unpauses block-sync on its own). */
+let quickUndoPausedOpId: string | null = null;
+export function getQuickUndoPausedOpId(): string | null {
+  return quickUndoPausedOpId;
+}
+export function setQuickUndoPausedOpId(opId: string | null): void {
+  quickUndoPausedOpId = opId;
+}
+
+/**
+ * A barrier (`clearStructuralUndoRegistry`) that arrives while a quick undo's pause is still in force (Swift is between the restore
+ * and its `resumeSyncAfterQuickUndo`, which can be a while on a busy writer) takes the pause over: the quick undo's bookkeeping is
+ * dropped, so the later resume reports `resumed: false` and touches nothing, and block-sync must not stay paused for good. Not
+ * every barrier is followed by a content push that unpauses (the section-metadata barrier is not). So: unpause, and queue what was
+ * typed while it was paused, exactly as the resume would have. A barrier that IS followed by a push (zoom, mode switch) simply
+ * pauses again. Never throws.
+ */
+function endQuickUndoPause(): void {
+  if (quickUndoPausedOpId === null) return;
+  const opId = quickUndoPausedOpId;
+  quickUndoPausedOpId = null;
+  setSyncPaused(false);
+  guardedTrace(() => {
+    const editorInstance = getEditorInstance();
+    if (!editorInstance) return;
+    const queued = detectEditsSinceSnapshot(editorInstance.ctx.get(editorViewCtx).state.doc);
+    structTrace(
+      `quick-undo-pause ended by a barrier opId=${shortOpId(opId)} pausedUpdates=${queued.updates} ` +
+        `pausedInserts=${queued.inserts} pausedDeletes=${queued.deletes}`
+    );
+  });
+}
+
 export function getRegistry(): Map<string, UndoRegistryEntry> {
   return registry;
 }
@@ -153,6 +200,24 @@ export function deleteRegistryEntry(opId: string): void {
 export function clearRegistry(): void {
   registry.clear();
 }
+
+/** Swift confirmed temp -> permanent block ids (block-id-plugin.ts calls this for every confirmation). Every saved structural
+ * operation that captured one of those temp ids in its id map (`UndoRegistryEntry.tempIds`) records the pair in its
+ * `confirmLog`, so a quick undo can put the permanent id back on the restored block. Costs one property read when the registry
+ * is empty and one set lookup per pair per entry holding temp ids, which in practice is none or a handful. */
+function recordConfirmationsInRegistry(mapping: Record<string, string>): void {
+  if (registry.size === 0) return;
+  for (const entry of registry.values()) {
+    const temps = entry.tempIds;
+    const log = entry.confirmLog;
+    if (!temps || !log || temps.size === 0) continue;
+    for (const [tempId, permanentId] of Object.entries(mapping)) {
+      if (!temps.delete(tempId)) continue;
+      log.push([tempId, permanentId]);
+    }
+  }
+}
+setConfirmationListener(recordConfirmationsInRegistry);
 
 /** Barrier-only registry clear (see docs/architecture/unified-undo.md's Barriers section):
  * clears the registry and resets the
@@ -169,6 +234,7 @@ export function clearRegistry(): void {
  * `UnifiedUndoService.invalidateAll()`. */
 export function clearStructuralUndoRegistry(): void {
   clearRegistry();
+  endQuickUndoPause(); // a barrier that lands inside the quick undo's paused window ends the pause itself (section 'metadata' barrier)
   setUndoDescriptor({});
   // The barrier replaces the timeline the latch and the queued presses belonged to (a project
   // switch, close, mode switch): a request still in flight will never be answered for it, and a
@@ -261,6 +327,7 @@ export function getQueuedPressDirections(): Array<'undo' | 'redo'> {
  * this codebase's test suites. Not part of the window.FinalFinal bridge. */
 export function resetUndoCoordinatorState(): void {
   registry.clear();
+  quickUndoPausedOpId = null;
   descriptor = {};
   latched = false;
   inFlightOpId = null;
@@ -304,6 +371,19 @@ function guardedTrace(probe: () => void): void {
   } catch {
     // Swallowed on purpose -- see the doc comment above.
   }
+}
+
+/** Quick-undo restore paint marker. Posts `restore painted op=<id8> path=quick|slow` from a task after the first animation frame
+ * that follows the restore (the same frame-then-task mapping as `noteRemovalForPaint`, typing-trace.ts, which times the delete
+ * up to the first paint without the section). Swift's own clock on receipt, minus the key's timestamp, is the undo's latency to
+ * the first paint with the section back. Sent on both paths, so the quick and the slow undo are measured by the same marker. A
+ * lower bound, like every paint figure measured from JavaScript. Ids and a path name only. Posted only while Swift has switched
+ * the typing trace on (`setTraceTyping`), the same gate as `efRemovalPainted`; with it off nothing is scheduled at all. */
+export function noteRestoreForPaint(opId: string, path: 'quick' | 'slow'): void {
+  if (!isTraceTypingOn()) return; // like `noteRemovalForPaint`: a normal session schedules nothing
+  const post = () => guardedTrace(() => structTrace(`restore painted op=${shortOpId(opId)} path=${path}`));
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(post, 0));
+  else setTimeout(post, 0);
 }
 
 function shortOpId(opId: string | undefined): string {
@@ -443,12 +523,23 @@ function decideRouting<TDoc>(params: RoutingParams<TDoc>, direction: 'undo' | 'r
   if (!params.pendingMapsEmpty) return { action: 'fallthrough' };
 
   const target = direction === 'undo' ? entry.postOpDoc : entry.preOpDoc;
-  // Exact equality first and short-circuiting: on the everyday path the fallback is never called.
-  if (!params.docsEqual(params.currentDoc, target) && !(params.docsEquivalent?.(params.currentDoc, target) ?? false)) {
+  if (!docMatchesSavedCopy(params.currentDoc, target, params.docsEqual, params.docsEquivalent)) {
     return { action: 'fallthrough' };
   }
 
   return { action: 'structural', opId };
+}
+
+/** The document half of the routing decision: exact equality first and short-circuiting (on the everyday path the fallback is
+ * never called), then the fallback comparison. ONE function for the routing decision above and for the quick undo's in-turn
+ * re-check (`liveDocMatchesSavedCopy`, api-section-undo.ts), so the two can never apply different rules. */
+function docMatchesSavedCopy<TDoc>(
+  currentDoc: TDoc,
+  target: TDoc,
+  docsEqualFn: (a: TDoc, b: TDoc) => boolean,
+  docsEquivalentFn?: (a: TDoc, b: TDoc) => boolean
+): boolean {
+  return docsEqualFn(currentDoc, target) || (docsEquivalentFn?.(currentDoc, target) ?? false);
 }
 
 export function decideUndoRouting<TDoc>(params: RoutingParams<TDoc>): RoutingDecision {
@@ -534,6 +625,20 @@ function liveRoutingParams(view: EditorView): RoutingParams<Node> {
     docsEqual,
     docsEquivalent: docsEquivalentTimed,
   };
+}
+
+/** The quick undo's / quick redo's in-turn re-check (api-section-undo.ts): does the live document still equal the saved copy the
+ * press was routed against (`postOpDoc` for an undo, `preOpDoc` for a redo), exactly or modulo what the app regenerates? The same
+ * `docMatchesSavedCopy` the routing decision uses, with the same live comparators. A few milliseconds can pass between the press
+ * and the turn that acts on it (Swift reserves its writer ticket in between), and the user can type in them. */
+export function liveDocMatchesSavedCopy(
+  view: EditorView,
+  entry: UndoRegistryEntry,
+  direction: 'undo' | 'redo'
+): boolean {
+  const target = direction === 'undo' ? entry.postOpDoc : entry.preOpDoc;
+  lastEquivalence = null;
+  return docMatchesSavedCopy(view.state.doc, target, docsEqual, docsEquivalentTimed);
 }
 
 /** The ONE live routing decision for a Cmd-Z / Cmd-Shift-Z: the keydown path and the menu path
@@ -988,6 +1093,7 @@ export function performStructuralSwap(opId: string, direction: 'undo' | 'redo'):
         `pendingQueueAtStart=${traceQueuedAtStart} unsettledEditAtStart=${traceUnsettledAtStart}`
     );
   });
+  noteRestoreForPaint(opId, 'slow');
   return true;
 }
 

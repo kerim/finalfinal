@@ -1267,6 +1267,28 @@ export function detectPausedEditsKeepingPending(doc: Node, baseline: Map<string,
 }
 
 /**
+ * Queue the edits made since block-sync's own last baseline, then re-baseline (quick undo of a section delete, plan C1).
+ *
+ * `resetAndSnapshot` set the baseline when the restore finished, and `setSyncPaused(true)` kept `apply` from touching it
+ * afterwards (it returns the state untouched while paused), so `currentState.lastSnapshot` still IS the restored document with
+ * the ids it had then (re-keyed by `updateSnapshotIds` when Swift confirmed temp ids in the meantime). Whatever the document
+ * differs by now is what the user typed while sync was paused. Same diff and same keep-the-queue rule as
+ * `detectPausedEditsKeepingPending`; only the baseline comes from the plugin instead of the caller.
+ */
+export function detectEditsSinceSnapshot(doc: Node): { updates: number; inserts: number; deletes: number } {
+  if (!currentState) return { updates: 0, inserts: 0, deletes: 0 };
+  const before = currentState;
+  const [u, i, d] = [before.pendingUpdates.size, before.pendingInserts.size, before.pendingDeletes.size];
+  detectPausedEditsKeepingPending(doc, before.lastSnapshot);
+  // Counts of what the diff added to the queue (diagnostics only). The queue is edited in place, so `before` is still the state.
+  return {
+    updates: Math.max(0, before.pendingUpdates.size - u),
+    inserts: Math.max(0, before.pendingInserts.size - i),
+    deletes: Math.max(0, before.pendingDeletes.size - d),
+  };
+}
+
+/**
  * Reconciles the pending block-sync queue after a `preserveUserBlocks` rebuild push
  * (`setContentWithBlockIds`'s merge-then-diff path, api-content.ts, via `mergeManagedBlocks`,
  * t-6a0d195d). Two independent corrections:

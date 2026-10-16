@@ -82,9 +82,11 @@ extension XCUIApplication {
         // real user home on every test launch, silently discarding the
         // user's own saved window state.
         let bundleState = "Library/Saved Application State/com.kerim.final-final.testhost.savedState"
+        // e2e-lint: allow nshome -- the saved state is cleaned from BOTH homes on purpose (see the doc comment above); no app file is read here.
         let testRunnerPath = NSHomeDirectory() + "/" + bundleState
 
         // Also try the real user home (in case test runner home differs)
+        // e2e-lint: allow home-url -- same reason: the runner home and the real user home are both cleaned, belt and braces.
         let realUserHome = FileManager.default.homeDirectoryForCurrentUser.path
         let realUserPath = realUserHome + "/" + bundleState
 
@@ -128,12 +130,16 @@ extension XCUIApplication {
     /// Not for a paragraph that contains an inline annotation (a click on or near it opens its popup or selects the atom) nor
     /// for one that wraps onto several visual lines (the probe selects one visual line). `runProbe: false` skips the
     /// confirmation (the click, the Cmd-Left/Right to the exact line edge and the evidence still happen).
+    ///
+    /// `exactLine` (default nil: today's behaviour) is the paragraph's complete text when the caller knows it and it is one text run: the
+    /// paragraph is then found by one exact-value query (about 1.5 s on a book) before the index walk of `editorStaticText(startingWith:)`
+    /// (two round trips per leaf, 1000-2000 s to reach a paragraph behind 662 leaves). Speed only; nothing else changes.
     func placeCaretByClicking(paragraphStartingWith text: String, atEnd: Bool, runProbe: Bool = true,
-                              findTimeout: TimeInterval = 45) -> CaretClickResult {
+                              findTimeout: TimeInterval = 45, exactLine: String? = nil) -> CaretClickResult {
         var result = CaretClickResult()
         for attempt in 1...2 {
             if attempt == 2 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8)) }
-            let (found, inViewNote) = bringParagraphIntoView(startingWith: text, findTimeout: findTimeout)
+            let (found, inViewNote) = bringParagraphIntoView(startingWith: text, findTimeout: findTimeout, exactLine: exactLine)
             guard let leaf = found else {
                 result.probe = "not-found"
                 return result
@@ -165,16 +171,18 @@ extension XCUIApplication {
     /// Each step re-resolves the leaf and waits for its frame to settle. Bounded; never fails: when nothing helps it returns
     /// the leaf as it is and says so in the note, and the caller's own checks decide what that means. Returns a nil leaf only
     /// when the paragraph cannot be found at all.
-    func bringParagraphIntoView(startingWith text: String, findTimeout: TimeInterval = 45) -> (leaf: XCUIElement?, note: String) {
+    func bringParagraphIntoView(
+        startingWith text: String, findTimeout: TimeInterval = 45, exactLine: String? = nil
+    ) -> (leaf: XCUIElement?, note: String) {
         var steps: [String] = []
-        var current = editorStaticText(startingWith: text, timeout: findTimeout)
+        var current = editorStaticText(startingWith: text, exactLine: exactLine, timeout: findTimeout)
         var wheelSign: CGFloat = 1
         for round in 1...4 {
             guard let leaf = current else { break }
             waitForStableFrame(leaf)
             guard leaf.exists else {
                 steps.append("the leaf vanished while its frame settled")
-                current = editorStaticText(startingWith: text, timeout: 10)
+                current = editorStaticText(startingWith: text, exactLine: exactLine, timeout: 10)
                 continue
             }
             let frame = leaf.frame
@@ -200,12 +208,12 @@ extension XCUIApplication {
                 steps.append("\(wanted < 0 ? "PageDown" : "PageUp") from y=\(Int(before))")
             }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
-            current = editorStaticText(startingWith: text, timeout: 10)
+            current = editorStaticText(startingWith: text, exactLine: exactLine, timeout: 10)
             if current == nil, wheelDelta != 0 {
                 steps[steps.count - 1] += " (leaf left the accessibility tree; scrolled back)"
                 editorArea.scroll(byDeltaX: 0, deltaY: -wheelDelta)
                 RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
-                current = editorStaticText(startingWith: text, timeout: 10)
+                current = editorStaticText(startingWith: text, exactLine: exactLine, timeout: 10)
             }
             if let after = current, after.exists {
                 waitForStableFrame(after)
@@ -336,6 +344,7 @@ extension XCTestCase {
     @discardableResult
     func installLocalNetworkPermissionInterruptionMonitor() -> NSObjectProtocol {
         addUIInterruptionMonitor(withDescription: "Local network permission dialog") { alert in
+            // e2e-lint: allow statictext-contains -- scoped to the system alert (`alert.staticTexts`), never app-wide: no heading container.
             let bodyMatches = alert.staticTexts.matching(
                 NSPredicate(
                     format: "(label CONTAINS[c] %@) OR (value CONTAINS[c] %@)",
@@ -520,6 +529,7 @@ enum E2EShotDir {
         if dir.hasPrefix("/") {
             return dir
         }
+        // e2e-lint: allow nshome -- the screenshot-directory helper itself: a relative value stays visibly relative to the runner home (see above).
         return NSHomeDirectory() + "/" + dir
     }
 

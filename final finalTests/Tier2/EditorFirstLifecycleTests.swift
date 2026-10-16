@@ -163,6 +163,9 @@ struct EditorFirstJobWaitTests {
     @Test("U15: a Cmd-Z held on the pending job, then a quit that gives up: the gate is released and the job's future is abandoned")
     func testQuitBeforeJobAppliesAbandonsFutureAndReleasesGate() async throws {
         let rig = try makeRig()
+        // Slice 2b: this pins the SLOW undo's wait for the pending job ("a Cmd-Z held on the job", U15). The quick undo does not wait
+        // for the job; its twin is QuickUndoTamperTwinTests.testQuitRightAfterQuickUndoWithTheJobPendingReleasesTheGate.
+        rig.controller.testForceSlowDeleteUndo = true
         let root = try rig.heading("Second Section")
         try rig.setReply(.init(removedLeaderIds: [root.id]))
         let blocker = try rig.holdQueue()
@@ -224,11 +227,13 @@ struct LifecycleWaitsForGateTests {
         try rig.syncEditorContentFromDatabase()
         let gate = rig.editorState.structuralGate
 
-        // The first Cmd-Z is on the gate and busy: a stand-in rebuild holds it at its entry (every structural command waits there for
-        // the rebuilds that run, fix round 5 part A2), which keeps the order of this test fixed without a sleep.
+        // The first Cmd-Z is on the gate and busy, which keeps the order of this test fixed without a sleep. Before slice 2b a stand-in
+        // rebuild held it at its entry (every structural command waited there for the rebuilds that run, fix round 5 part A2); the
+        // quick undo waits for no rebuild, so the same hold is now the quick undo's own seam: between its reinsert holding a place in
+        // the queue and the call that lets the editor queue typing again, with the gate held and the writer free.
         let firstUndoMayRun = LifecycleEntryHarness.Gate()
         defer { firstUndoMayRun.open() }
-        rig.editorState.registerRebuildTask(Task { @MainActor in await firstUndoMayRun.wait() })
+        rig.controller.testQuickUndoResumeHold = { await firstUndoMayRun.wait() }
         let firstUndo = Task { @MainActor in
             await rig.controller.handleStructuralRequest(opId: entrySecond.id.uuidString, direction: .undo)
         }

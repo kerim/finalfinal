@@ -1,6 +1,7 @@
 // Type definitions and interfaces for the Milkdown editor
 
 import type { DeleteSectionResult } from './api-section-delete';
+import type { QuickResumeResult, QuickUndoResult } from './api-section-undo';
 import type { BlockChanges } from './block-sync-plugin';
 import type { CSLItem } from './citation-plugin';
 import type { PrefillBeginResult, PrefillStepResult } from './citation-prefill';
@@ -311,6 +312,19 @@ declare global {
       // returns the pending-edit batch it consumed on every path. Swift reads it as JSON.stringify(...) like getBlockChanges.
       // `managedIds` is the database's list of Notes/Bibliography block ids at the click.
       deleteSectionEditorFirst: (opId: string, rootBlockId: string, managedIds: string[]) => DeleteSectionResult;
+      // Phase 4b part 2, slice 2b (api-section-undo.ts): the quick undo of that delete. One synchronous turn that re-checks the live
+      // document against the saved post-op copy (refusing, touching nothing, when it differs), swaps the pre-op checkpoint back
+      // in with its block ids, and leaves block-sync PAUSED; Swift calls `resumeSyncAfterQuickUndo` once the reinsert job holds its
+      // ticket. The batch it returns is applied on every path. The latch must be held for `opId` (the press that routed here set it).
+      undoSectionDeleteEditorFirst: (opId: string) => QuickUndoResult;
+      // The quick redo: removes the section again from the CURRENT document under the same opId (a fresh editor-first delete) and
+      // returns the same reply as `deleteSectionEditorFirst`; a re-check refusal reads `ok: false, reason: 'docChanged'`.
+      redoSectionDeleteEditorFirst: (opId: string, rootBlockId: string, managedIds: string[]) => DeleteSectionResult;
+      // Hands block-sync back after a quick undo and queues what was typed while it was paused; no-op when none is pending.
+      resumeSyncAfterQuickUndo: () => QuickResumeResult;
+      // True when the live document no longer equals the quick-undone entry's restored document (`preOpDoc`, by the shared routing check):
+      // Swift then drops the redo branch. False when there is no editor or entry to compare with. Read-only.
+      quickUndoLiveDiffersFromRestored: (opId: string) => boolean;
       finishStructuralSwapSettle: () => boolean;
       cancelPendingInsertions: () => void;
       // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state.

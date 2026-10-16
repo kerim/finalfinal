@@ -231,6 +231,14 @@ extension ContentView {
 
     /// Builds the closure assigned to `editorState.onSectionsUpdated`.
     private func makeSectionsUpdatedHandler() -> () -> Void {
+        Self.makeSectionsUpdatedHandler(for: editorState, syncService: sectionSyncService)
+    }
+
+    /// The closure itself, static so a unit test drives the REAL handler (not a copy of its guards).
+    @MainActor
+    static func makeSectionsUpdatedHandler(
+        for editorState: EditorViewState, syncService sectionSyncService: SectionSyncService
+    ) -> () -> Void {
         { [weak editorState, weak sectionSyncService] in
             guard let editorState = editorState,
                   let sectionSyncService = sectionSyncService else { return }
@@ -243,6 +251,14 @@ extension ContentView {
 
             // Skip during content transitions (drag, zoom, etc.)
             guard editorState.contentState == .idle else { return }
+
+            // A quick undo's restored sections are on the screen before the database holds their rows, so the list is partly overlay:
+            // enforcement writes the database (and drops the redo branch), and must never act on such a list. The reinsert's settle
+            // refreshes the sections once the rows are back, which runs this handler again.
+            guard !Self.hierarchyEnforcementWaitsForQuickUndo(editorState) else {
+                DebugLog.log(.outline, "[onSectionsUpdated] hierarchy check skipped: a quick undo's restore is still pending")
+                return
+            }
 
             // Skip hierarchy enforcement while zoomed to prevent feedback loop:
             // User adds headings → DB observation fires → enforcement modifies levels →

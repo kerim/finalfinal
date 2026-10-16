@@ -139,6 +139,7 @@ extension ContentView {
             // the editor's positional ID-assignment could attach an existing footnote's
             // identity to the wrong (blank) node. Pushing result.markdown directly (the
             // same pattern rebuildDocumentContent already uses) eliminates that mismatch.
+            let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
             guard let result = fetchBlocksWithIds() else {
                 DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: aborting " +
                     "label=\(label) reason=fetchBlocksWithIds-returned-nil")
@@ -179,11 +180,15 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks,
                 managedBlockIds: result.managedBlockIds,
                 preserveUserBlocks: true,
-                traceKind: .footnote)
+                traceKind: .footnote,
+                stillWanted: { editorState.rebuildPushStillWanted(rebuildStamp) })
             // t-6a0d195d: see handleBibliographySectionChanged's matching comment -- the merged
             // push's actual markdown can differ from result.markdown. pendingImageMeta (set just
             // above) is kept regardless -- image metadata isn't affected by which markdown wins.
-            if let merged, merged != result.markdown {
+            // Slice 2b: when a quick undo or redo started since the read, the editor's own text is `content` instead.
+            if await editorState.skipStaleRebuildTail(rebuildStamp, kind: "footnote", blockSync: blockSyncService) {
+                updateSourceContentIfNeeded()
+            } else if let merged, merged != result.markdown {
                 editorState.content = merged
                 updateSourceContentIfNeeded() // #12: keep the Markdown-mode source copy in sync
             }

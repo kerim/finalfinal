@@ -1519,13 +1519,18 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
 // MARK: - 12. Delete, Cmd-Z, then type as soon as the undo has finished
 
 extension WriteQueuePhase4bDeleteFlowE2ETests {
-    /// F7: after the slow undo settles, the Notes and bibliography are pushed back from the database. A sentence typed the moment the undo's own
-    /// `performed` line appears (the app's settle signal) survives that push, and the Notes and bibliography match the reopened project.
+    /// F7: after the undo, the Notes and bibliography are pushed back from the database. A sentence typed the moment the undo's own
+    /// `performed` line appears survives that push, and the Notes and bibliography match the reopened project. Slice 2b (quick undo): the
+    /// `performed` line now comes as soon as the section is back on screen, BEFORE the database work behind it has run, so the sentence
+    /// is typed while the reinsert and its follow-up are still running; nothing it asserted changes, and no plain whole-document push
+    /// (`[SYNC-DIAG:UpdateNSView] PUSHING`) may be logged from the Cmd-Z to the end (plan v2 section 6.4 tamper row).
     func testDeleteUndoThenTypeStraightAfter_book6() {
         let size = Phase4bDelSize.book6
         guard startScenario(size, method: #function, holdMs: Self.holdShortMs), placeCaretAtAnchorEnd(),
               let card = bringSidebarCardIntoView(size.deleteTitle) else { return }
         let from = chooseSidebarItem(card, item: "Delete Section")
+        tail.poll()
+        let pressFrom = tail.lines.count
         pressUndo()
         expectPerformed("undo", from: from, "the undo finished (its own performed line)")
         let sentence = Self.sentence("TWELVE")
@@ -1543,6 +1548,9 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
         assertCheck(managedDifference == nil, "the Notes and Bibliography rows are those of before the delete (\(managedDifference ?? "same"))")
         assertCheck(waitForTypedLine(sentence, timeout: capped(90)),
                     "the sentence is still in the editor (the anchor line reads \"\(Self.anchorLine) \(sentence)\")")
+        tail.poll()
+        let plainPushes = (pressFrom..<max(pressFrom, tail.lines.count)).filter { Self.isPlainContentPush(tail.lines[$0]) }.count
+        assertCheck(plainPushes == 0, "no `[SYNC-DIAG:UpdateNSView] PUSHING` line from the Cmd-Z to the end (\(plainPushes) found)")
 
         guard reopen() else { return }
         let reopened = readRows()
@@ -1560,17 +1568,22 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
 // MARK: - 13. Delete, Cmd-Z, then the mode switch while the undo runs
 
 extension WriteQueuePhase4bDeleteFlowE2ETests {
-    /// F5: the Rich Text / Markdown switch pressed while a slow undo is still running is held, never dropped; it happens when the undo is done,
-    /// the final mode is Markdown, and the restored section is part of the Markdown text.
+    /// Slice 2b rewrote this scenario to its real requirement (plan v2 section 6.4): after Cmd-Z and an immediate Rich Text / Markdown switch
+    /// (Cmd-/), the switch happens (a switch pressed while the undo's reinsert is still running waits for it and is never dropped), the
+    /// Markdown editor shows the document with the restored section, a sentence typed there is saved, and the block table holds the restored
+    /// section's rows and the sentence. The old text said the switch was "held during the slow undo"; with the quick undo the undo is
+    /// over at once and what the switch waits for is the reinsert's settle. Every check the old scenario made is still made; the typed
+    /// sentence and the database comparison with it are added (the sibling `testDeleteThenSwitchToMarkdownAndType_book12` types the same way).
     func testDeleteUndoThenSwitchModeAtOnce_book6() {
         let size = Phase4bDelSize.book6
-        guard startScenario(size, method: #function, holdMs: Self.holdShortMs), let card = bringSidebarCardIntoView(size.deleteTitle) else { return }
+        guard startScenario(size, method: #function, holdMs: Self.holdShortMs), placeCaretAtAnchorEnd(),
+              let card = bringSidebarCardIntoView(size.deleteTitle) else { return }
         let from = chooseSidebarItem(card, item: "Delete Section")
         pressUndo()
         app.typeKey("/", modifierFlags: .command)
         let mode = app.buttons["status-bar-editor-mode"]
         assertCheck(mode.waitForLabel("== 'Markdown'", timeout: capped(size.operationTimeout * 2)),
-                    "the switch was held and then happened: the mode button reads Markdown (it reads \(mode.label))")
+                    "the switch happened (it waited for the undo's reinsert, never dropped): the mode button reads Markdown (it reads \(mode.label))")
         expectPerformed("undo", from: from, "the undo ran to its performed line")
         assertCheck(problemLine(from: from) == nil, "nothing was refused or failed (\(problemLine(from: from) ?? "none"))")
         // The database first; the on-screen check after it (it may have to wait out one slow snapshot of the Rich Text tree it replaces).
@@ -1578,6 +1591,11 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
         assertDocument(readRows(), expect: Phase4bFlowExpectation(), "after delete, Cmd-Z, switch to Markdown")
         assertCheck(app.editorContainsText("# Chapter 1: The Quiet Archive", timeout: capped(size.operationTimeout * 2)),
                     "the Markdown editor is mounted")
+        let sentence = Self.sentence("THIRTEEN")
+        typeNow(" " + sentence)
+        assertCheck(waitForSentenceInDatabase(sentence, timeout: capped(180)), "the sentence typed in the Markdown editor was saved")
+        assertDocument(readRows(), expect: Phase4bFlowExpectation(typed: [sentence]), "after delete, Cmd-Z, switch to Markdown, typing")
+        assertCheck(app.editorContainsText(sentence, timeout: capped(90)), "the sentence is in the Markdown editor")
         assertCheck(mode.label == "Markdown", "the mode is Markdown at the end")
         attachEvidenceScreenshot(app.screenshot(), name: "delete-undo-switch-markdown-book6")
     }

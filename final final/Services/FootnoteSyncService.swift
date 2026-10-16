@@ -88,6 +88,8 @@ final class FootnoteSyncService {
     /// Step 5 (t-4a6e6414): session-only checkpoints of deleted definitions, so ⌘Z can bring the text back, and the content
     /// last seen with the committed refs they are built from. Cleared by `reset()`. Logic: FootnoteSyncService+UndoCheckpoint.swift.
     @ObservationIgnored var undoCheckpoints: [FootnoteUndoCheckpoint] = []
+    /// Slice 2b (plan-v3 D2): a quick undo's hold on new checkpoints (logic: FootnoteSyncService+UndoCheckpoint.swift).
+    @ObservationIgnored var undoCheckpointHold: (token: UUID, belowOrAt: Int)?
     @ObservationIgnored var lastContentWithKnownRefs: String?
     /// Scheduling times for the `[FN-DIAG]` log lines (FootnoteSyncService+Diagnostics.swift). Logging only.
     @ObservationIgnored var fnDiag = FootnoteDiagState()
@@ -244,8 +246,10 @@ final class FootnoteSyncService {
     ///
     /// Phase 3a-1b (C3b): `allowRenumber: false` is the save sequence's refresh (step 7): references are kept
     /// as written and the WHOLE composed rename map is empty (E2) -- see `performFootnoteUpdate`.
+    /// Slice 2b: `stillWanted` is asked after the idle wait (no: nothing touched) and is ANDed into the write's own `stillWanted`.
     func resyncNow(
-        footnoteRefs: [String], projectId: String, fullContent: String, allowRenumber: Bool = true
+        footnoteRefs: [String], projectId: String, fullContent: String, allowRenumber: Bool = true,
+        stillWanted: (() -> Bool)? = nil
     ) async {
         if state == .syncing {
             let deadline = Date().addingTimeInterval(2.0)
@@ -253,6 +257,7 @@ final class FootnoteSyncService {
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
+        guard stillWanted?() ?? true else { DebugLog.log(.undo, "[FootnoteSyncService] resyncNow: superseded by a quick undo"); return }
         guard state == .idle else {
             DebugLog.alwaysPersisted(
                 "[FootnoteSyncService] resyncNow: could not run -- a write was still in flight after the " +
@@ -265,7 +270,7 @@ final class FootnoteSyncService {
         syncGeneration += 1
         await performFootnoteUpdate(
             refs: footnoteRefs, projectId: projectId, fullContent: fullContent,
-            scheduledGeneration: syncGeneration, allowRenumber: allowRenumber)
+            scheduledGeneration: syncGeneration, allowRenumber: allowRenumber, stillWanted: stillWanted)
     }
 
     /// Push footnote definitions to the editor for tooltip display.
@@ -498,7 +503,8 @@ final class FootnoteSyncService {
         projectId: String,
         fullContent: String,
         scheduledGeneration: Int,
-        allowRenumber: Bool = true
+        allowRenumber: Bool = true,
+        stillWanted extraStillWanted: (() -> Bool)? = nil
     ) async {
         guard let database else { return }
 
@@ -542,7 +548,9 @@ final class FootnoteSyncService {
             // `removeNotesBlock` itself now, only once its own write actually applies
             // (§2.3 point 6 -- no renumber posted either way).
             let undoCheckpoint = makeUndoCheckpoint(raw: [], refs: [], renames: [:], content: fullContent, allowRenumber: allowRenumber)
-            await removeNotesBlock(projectId: projectId, scheduledGeneration: scheduledGeneration, undoCheckpoint: undoCheckpoint)
+            await removeNotesBlock(
+                projectId: projectId, scheduledGeneration: scheduledGeneration, undoCheckpoint: undoCheckpoint,
+                stillWanted: extraStillWanted)
             return
         }
 
@@ -599,7 +607,7 @@ final class FootnoteSyncService {
                 lastKnownRefs = effectiveRefs
                 lastRenumberedHash = contentHash
                 carriedRenameMap = [:]
-                committedNotesWrite(undoCheckpoint: undoCheckpoint, content: fullContent)
+                committedNotesWrite(undoCheckpoint: undoCheckpoint, content: fullContent, scheduledGeneration: scheduledGeneration)
                 NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
                 pushDefinitionsToEditor(fullContent: fullContent)
             } catch {
@@ -612,7 +620,7 @@ final class FootnoteSyncService {
         let diagMark = FootnoteDiagMark()
         let result = await systemWriter.perform(
             identity: identity, kind: .notesUpdate,
-            stillWanted: { [weak self] in scheduledGeneration == self?.syncGeneration },
+            stillWanted: { [weak self] in scheduledGeneration == self?.syncGeneration && (extraStillWanted?() ?? true) },
             prepare: composedMap.isEmpty ? nil : { [weak self] in
                 // Post renumbering to web editor BEFORE the DB write -- (editor content
                 // change will trigger another checkAndUpdate which lastKnownRefs catches).
@@ -646,7 +654,7 @@ final class FootnoteSyncService {
             lastKnownRefs = effectiveRefs
             lastRenumberedHash = contentHash
             carriedRenameMap = [:]
-            committedNotesWrite(undoCheckpoint: undoCheckpoint, content: fullContent)
+            committedNotesWrite(undoCheckpoint: undoCheckpoint, content: fullContent, scheduledGeneration: scheduledGeneration)
             // UI-test-only delay of the Notes notification and push (no-op unless FF_UI_TESTING_FOOTNOTE_WRITE_HOLD_MS is set).
             await TestMode.holdFootnoteNotesNotification()
             NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
@@ -894,7 +902,10 @@ final class FootnoteSyncService {
     /// as `performFootnoteUpdate` above -- posts NO renumber (a removal has no rename
     /// map); only dedup state (`lastRenumberedHash`/`lastKnownRefs`) rolls back on any
     /// non-applied outcome, left exactly as it was before this call.
-    private func removeNotesBlock(projectId: String, scheduledGeneration: Int, undoCheckpoint: FootnoteUndoCheckpoint?) async {
+    private func removeNotesBlock(
+        projectId: String, scheduledGeneration: Int, undoCheckpoint: FootnoteUndoCheckpoint?,
+        stillWanted extraStillWanted: (() -> Bool)? = nil
+    ) async {
         guard let database else { return }
 
         DebugLog.log(.footnotes, "[FootnoteSyncService] removeNotesBlock: entry projectId=\(projectId)")
@@ -908,7 +919,7 @@ final class FootnoteSyncService {
         let diagMark = FootnoteDiagMark()
         let result = await systemWriter.perform(
             identity: identity, kind: .notesRemoval,
-            stillWanted: { [weak self] in scheduledGeneration == self?.syncGeneration },
+            stillWanted: { [weak self] in scheduledGeneration == self?.syncGeneration && (extraStillWanted?() ?? true) },
             body: { db in
                 diagMark.set()
                 var anchors: [String: DeletedAnchor]? = [:]
@@ -931,7 +942,7 @@ final class FootnoteSyncService {
             }
             lastRenumberedHash = 0
             lastKnownRefs = []
-            committedNotesWrite(undoCheckpoint: undoCheckpoint)
+            committedNotesWrite(undoCheckpoint: undoCheckpoint, scheduledGeneration: scheduledGeneration)
         case .refused(.noWriter):
             await removeNotesBlockDirectly(projectId: projectId, database: database, undoCheckpoint: undoCheckpoint)
         default:

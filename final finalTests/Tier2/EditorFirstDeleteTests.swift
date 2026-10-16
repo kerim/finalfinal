@@ -36,6 +36,11 @@ struct EditorFirstReply: Encodable {
 }
 
 /// A temporary project, a `StructuralUndoController` wired to it, and a scripted editor.
+///
+/// Slice 2b (quick undo of a section delete): the scripted editor also answers the quick path's calls the way the real one does
+/// (`undoSectionDeleteEditorFirst`, `redoSectionDeleteEditorFirst`, `resumeSyncAfterQuickUndo`, `getContent()`), WITHOUT naming any
+/// production symbol the base commit lacks, so this file compiles with the production change taken out (the must-fail proof).
+/// What it models, and how `contentChanged` is produced: see EditorFirstRig+QuickUndo.swift.
 @MainActor
 final class EditorFirstRig {
     let db: ProjectDatabase
@@ -49,19 +54,19 @@ final class EditorFirstRig {
     /// The view the service is configured with (it keeps its own reference weakly).
     let view = WKWebView()
     /// Everything `deleteSectionEditorFirst` was asked, as the scripts the controller sent.
-    private(set) var deleteScripts: [String] = []
+    var deleteScripts: [String] = []
     /// What the next `deleteSectionEditorFirst` call answers when no reply is registered for its root. Set by the test before it
     /// presses Delete Section.
     var deleteReply: Data?
     /// Replies by the root block id the call names (for tests that press Delete Section on several sections back to back).
-    private var repliesByRoot: [String: Data] = [:]
+    var repliesByRoot: [String: Data] = [:]
     /// The order spy's log.
     let spyLog = GateOrderLog()
     /// Everything the editor was asked, in order: `js <script>` for every call the controller made through its eval seams, and
     /// `setContent preserve=<flag>` for every `setContentWithBlockIds` push. One log, so a test can assert the order across both.
     let events = GateOrderLog()
     /// Every `setContentWithBlockIds` push the controller made (the push itself is replaced by `testSetContentHook`).
-    private(set) var pushes: [Push] = []
+    var pushes: [Push] = []
     /// Alerts the controller asked to show.
     private(set) var alerts: [SectionOperationAlert] = []
     /// What `window.FinalFinal.getContent()` answers (the lifecycle's fetch and the old path's flush). nil = a failed fetch.
@@ -75,7 +80,7 @@ final class EditorFirstRig {
     var heldPressCountDelay: Duration = .zero
     /// How many times the lifecycle asked the editor for that count (the asking itself is what a test of "only when the gate is
     /// busy" pins).
-    private(set) var heldCountReads = 0
+    var heldCountReads = 0
     /// What the editor's document becomes when the undo's checkpoint swap (`window.FinalFinal.performStructuralSwap(opId, 'undo')`)
     /// runs: the real swap replaces the editor's document with the checkpoint the delete captured, i.e. the document as it was before
     /// the delete, so the restored section is in the editor's own blocks again. nil leaves `editorText` alone. Without it a test that
@@ -90,6 +95,47 @@ final class EditorFirstRig {
     /// `fetchAnswerProvider` can answer it for the lifecycle's fetch.
     var editorText: String?
 
+    // MARK: Quick undo and redo (slice 2b)
+
+    /// The clicks by operation id.
+    var clicks: [String: DeleteClick] = [:]
+    var quickUndoAnswer: QuickUndoAnswer = .restore
+    /// Awaited inside the quick undo's answer, before it is returned: holds the restore's JavaScript reply (U-Q25).
+    var quickUndoReplyHold: (() async -> Void)?
+    /// Every quick undo / quick redo / resume script the editor received, in order.
+    var quickUndoScripts: [String] = []
+    var quickRedoScripts: [String] = []
+    var resumeScripts: [String] = []
+    /// How many times `getContent()` was asked of the editor.
+    var getContentCalls = 0
+    /// How many `pushBlockIds` calls the controller made (the push itself is replaced by `testPushBlockIdsHook`).
+    var pushBlockIdsCalls = 0
+    /// The editor's live Markdown as the quick path models it: the pre-delete checkpoint after a quick restore, the document without
+    /// the section after a quick redo, plus whatever `typeIntoEditor` added. `getContent()` answers it when `fetchAnswerProvider` has
+    /// no answer. nil: the quick path has not touched the editor.
+    var quickEditorText: String?
+    /// `contentChanged`, as the rig produces it: the editor tells Swift its live text (`editorState.content = ...`) shortly after
+    /// `resumeSyncAfterQuickUndo` and after `typeIntoEditor`. This flag withholds BOTH: the notification never arrives, and `content`
+    /// stays what it was (the post-delete text), the case the reinsert settle must not trust (U-Q18).
+    var withholdContentUpdate = false
+    /// Pending edits the next poll cycle fetches, oldest first (`queueTyping`). Empty: the poll asks the scripted evaluator.
+    var typingQueue: [BlockChanges] = []
+    /// What `ContentView`'s content-change handler does with the footnote service when `content` changes while the editor is idle.
+    /// Off unless a test turns it on: only the footnote-checkpoint tests need it.
+    var emulatesFootnoteContentChange = false
+    /// The find bar the controller was configured with (the quick undo, the quick redo and the delete click clear its search).
+    let findBar = FindBarState()
+    /// What the editor answers to `quickUndoLiveDiffersFromRestored(opId)` (S1-7): nil derives it (the live text differs from the text the
+    /// quick restore put back, i.e. the user typed during the undo); a value forces the answer.
+    var liveDiffersOverride: Bool?
+    /// The text the last quick restore put into the editor.
+    var lastRestoredText: String?
+    /// Awaited INSIDE the answer to `getContent()`, after the answer was computed: the real reply is as old as its JavaScript turn, however
+    /// late it arrives (U-Q29, U-Q29b).
+    var getContentHold: (() async -> Void)?
+    /// Awaited inside the answer to `redoSectionDeleteEditorFirst`, before it is returned (U-Q31).
+    var quickRedoReplyHold: (() async -> Void)?
+
     struct Push {
         let markdown: String
         let blockIds: [String]
@@ -97,6 +143,9 @@ final class EditorFirstRig {
         let preserveUserBlocks: Bool
         /// `editorState.isResettingContent` at the moment the push ran: the flag that keeps the view from pushing `content` meanwhile.
         let isResettingContent: Bool
+        /// `editorState.content` at the moment the push ran: what the view would push if it were allowed to. After a quick undo it must
+        /// be the EDITOR's own text, never the database's text the push is about to bring in (verdict-v4 V2).
+        var contentAtPush: String = ""
     }
 
     /// Models the view's rule that `editorState.content`, when it differs from what the editor was last given, is pushed into the
@@ -136,54 +185,35 @@ final class EditorFirstRig {
         controller.configure(
             editorState: editorState, blockSyncService: sync, sectionSyncService: SectionSyncService(),
             bibliographySyncService: bibliography, footnoteSyncService: footnotes,
-            annotationSyncService: AnnotationSyncService(), unifiedUndoService: unifiedUndo, findBarState: FindBarState())
-        controller.testEvalBoolOverride = { [events, unowned self] js in
-            events.note("js " + js)
-            if js.contains("beginStructuralOp") { return self.beginStructuralOpAnswer }
-            if js.contains("performStructuralSwap"), js.contains("'undo'"), let restored = self.editorTextAfterUndoSwap {
-                self.editorText = restored
-            }
-            return StructuralUndoControllerTests.realisticEvalBoolDefault(js)
+            annotationSyncService: AnnotationSyncService(), unifiedUndoService: unifiedUndo, findBarState: findBar)
+        // The closures below hold the rig WEAKLY (slice 2b): a test that ends early (a failed `#require`, which is what a targeted break
+        // makes a test do) leaves background tasks of the controller running, and those must find a rig that is gone, not crash on it.
+        installScriptedEditor()
+    }
+
+    /// Hands the controller's and the sync service's test seams to the scripted editor (`EditorFirstRig+QuickUndo.swift` answers). The
+    /// closures hold the rig WEAKLY (slice 2b): a test that ends early (a failed `#require`, which is what a targeted break makes a
+    /// test do) leaves background tasks of the controller running, and those must find a rig that is gone, not crash on it.
+    private func installScriptedEditor() {
+        controller.testEvalBoolOverride = { [weak self] js in
+            self?.answerEvalBool(js) ?? StructuralUndoControllerTests.realisticEvalBoolDefault(js)
         }
-        controller.testEvalVoidOverride = { [events] js in
+        controller.testEvalVoidOverride = { [events, weak self] js in
             events.note("js " + js)
+            if js.contains("resumeSyncAfterQuickUndo") { self?.noteResume(js) }
             return true
         }
         controller.testOrderingSpy = { [spyLog] step in spyLog.note(step) }
-        controller.presentAlert = { [unowned self] alert in self.alerts.append(alert) }
-        sync.testPushBlockIdsHook = { _ in }
-        sync.testSetContentHook = { [unowned self] markdown, blockIds, managed, preserve in
-            self.events.note("setContent preserve=\(preserve)")
-            self.pushes.append(Push(
-                markdown: markdown, blockIds: blockIds, managedBlockIds: managed, preserveUserBlocks: preserve,
-                isResettingContent: self.editorState.isResettingContent))
-            // A merge-guarded push keeps the editor's own blocks and takes the database's Notes and Bibliography; `editorText`, when a
-            // test models the editor, becomes that merge. Otherwise the pushed text is the merge.
-            if preserve {
-                if self.modelsViewPushOfContent, !self.editorState.isResettingContent, self.editorText != nil {
-                    self.editorText = self.editorState.content   // the view pushed `content` while the merge push was awaited
-                }
-                let merged = self.editorText.map { Self.mergingManagedRegions(editor: $0, database: markdown) } ?? markdown
-                self.editorText = merged
-                return merged
-            }
-            return nil
+        controller.presentAlert = { [weak self] alert in self?.alerts.append(alert) }
+        sync.testPushBlockIdsHook = { [events, weak self] _ in
+            self?.pushBlockIdsCalls += 1
+            events.note("pushBlockIds")
         }
-        sync.testJSEvaluator = { [unowned self] script in
-            if script.contains("deleteSectionEditorFirst") {
-                self.deleteScripts.append(script)
-                let registered = self.repliesByRoot.first { script.contains("\"\($0.key)\"") }?.value
-                return (registered ?? self.deleteReply).flatMap { String(data: $0, encoding: .utf8) }
-            }
-            if script.contains("heldUndoPressCount") {
-                self.heldCountReads += 1
-                // A busy editor answers late (JavaScript is single-threaded: the call waits behind a long content push).
-                if self.heldPressCountDelay > .zero { try? await Task.sleep(for: self.heldPressCountDelay) }
-                return self.heldPressCountAnswer
-            }
-            if script.contains("getContent()") { return self.fetchAnswerProvider?() }
-            return try await self.js.evaluate(script)
+        sync.testSetContentHook = { [weak self] markdown, blockIds, managed, preserve in
+            self?.recordPush(markdown: markdown, blockIds: blockIds, managed: managed, preserve: preserve)
+                ?? (preserve ? markdown : nil)
         }
+        sync.testJSEvaluator = { [weak self] script in try await self?.answerScript(script) }
     }
 
     /// The text the Rich Text editor holds after a merge-guarded push: its own blocks (everything before the `# Notes` heading) and the

@@ -134,13 +134,18 @@ final class AutoBackupService {
     ///   guards below so an idle timeout with nothing to back up doesn't pay a gratuitous
     ///   WebView round-trip. The lifecycle callers (close/quit/switch) default this to
     ///   false because each already has an equivalent flush upstream in its own caller.
-    func createBackupIfNeeded(reason: String, needsLiveFlush: Bool = false) async {
-        guard hasUnsavedChanges else {
+    ///
+    /// - Parameter uiTestSeamFiring: true only for the ONE firing of the UI-test idle seam (`TestMode.uiTestingAutoBackupIdleSeconds`,
+    ///   which is nil outside a UI test and spent after one firing): it skips the "no unsaved changes" and the minimum-interval checks,
+    ///   because a test project that was seeded and backed up a moment ago would otherwise make the seam's firing a no-op and the
+    ///   flush it exists to provoke would never run. The idle timer is only armed by a content change, so the content did change.
+    func createBackupIfNeeded(reason: String, needsLiveFlush: Bool = false, uiTestSeamFiring: Bool = false) async {
+        guard hasUnsavedChanges || uiTestSeamFiring else {
             DebugLog.log(.backup, "[AutoBackupService] No unsaved changes, skipping backup on \(reason)")
             return
         }
 
-        guard canCreateBackup() else {
+        guard canCreateBackup() || uiTestSeamFiring else {
             DebugLog.log(.backup, "[AutoBackupService] Too soon since last backup, skipping on \(reason)")
             return
         }
@@ -210,11 +215,15 @@ final class AutoBackupService {
     private func restartIdleTimer() {
         cancelIdleTimer()
 
+        // UI-test-only (slice 2b, verdict-v3 T2): the first idle timer of a launch can be shortened, once, and that one firing skips the
+        // "no unsaved changes" and minimum-interval checks (`createBackupIfNeeded(uiTestSeamFiring:)`). Nil in a normal run.
+        let seamSeconds = TestMode.uiTestingAutoBackupIdleSeconds
         idleTask = Task {
             do {
-                try await Task.sleep(for: .seconds(idleTimeout))
+                try await Task.sleep(for: .seconds(seamSeconds ?? idleTimeout))
                 guard !Task.isCancelled else { return }
-                await createBackupIfNeeded(reason: "idle timeout", needsLiveFlush: true)
+                if seamSeconds != nil { TestMode.consumeAutoBackupIdleSeam() }
+                await createBackupIfNeeded(reason: "idle timeout", needsLiveFlush: true, uiTestSeamFiring: seamSeconds != nil)
                 // Prune old backups only on idle path to avoid slowing project switch/quit
                 try? snapshotService?.pruneAutoBackups()
             } catch {

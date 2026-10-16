@@ -1,7 +1,7 @@
 // Content-related API method implementations for window.FinalFinal
 
 import { type Editor, editorViewCtx, parserCtx } from '@milkdown/kit/core';
-import { closeHistory, history as pmHistory } from '@milkdown/kit/prose/history';
+import { history as pmHistory } from '@milkdown/kit/prose/history';
 import type { NodeType, Node as ProsemirrorNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { Fragment, Slice } from '@milkdown/kit/prose/model';
 import { type Plugin, Selection, type Transaction } from '@milkdown/kit/prose/state';
@@ -59,6 +59,7 @@ import {
 import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { getRecentUserEditSpan } from './recent-edit-span';
+import { dispatchDerivedCorrection } from './redo-branch';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
@@ -2816,20 +2817,11 @@ export function updateHeadingLevels(changes: Array<{ blockId: string; newLevel: 
           appliedCount++;
         }
         if (tr.steps.length > 0) {
-          // Leading boundary: closeHistory resets prevTime to 0 BEFORE this transaction
-          // applies, so it can never join the user's still-open typing group. Tagged
-          // derivedCorrection (not addToHistory:false -- deliberately left undoable) so
-          // undo-coordinator.ts's three provenance predicates route it correctly.
-          view.dispatch(closeHistory(tr).setMeta('derivedCorrection', true));
-          // Trailing boundary -- not optional. Without this second dispatch, the state
-          // left by the one above stores prevTime = tr.time from the correction ITSELF,
-          // so the user's very next transaction within newGroupDelay (500ms, unconfigured
-          // here) at an adjacent position would join the correction's own undo group --
-          // "user resumes typing right where the correction just happened" is the common
-          // case, not an edge case. A second, EMPTY closeHistory dispatch resets
-          // prevTime back to 0 for whatever comes next (applyTransaction performs the
-          // reset and returns early at zero steps).
-          view.dispatch(closeHistory(view.state.tr));
+          // Tagged derivedCorrection (not addToHistory:false -- deliberately left undoable) so
+          // undo-coordinator.ts's three provenance predicates route it correctly. The helper
+          // closes the history on BOTH sides (the trailing boundary is not optional: see its
+          // doc comment) and keeps the redo branch the recorded step would otherwise empty.
+          dispatchDerivedCorrection(view, tr);
         }
       }
 

@@ -50,6 +50,13 @@ struct SectionDeleteJob: Sendable {
     /// writer's id map and compares them with the rows it deleted; a difference is reported in `Output.removedIdsMismatch` and
     /// changes nothing else (fix round 2a, item 10). Nil: the editor sent none, no comparison.
     var editorRemovedIds: [String]?
+    /// Slice 2b (quick undo): where the rows the body saw just before it deleted are kept for a reinsert (plan-v2-addendum 2.1).
+    /// Filled by the after-commit hook BEFORE the slot is written, whether or not the slot still exists. Nil in a job that no quick
+    /// undo can reach (every pre-slice-2b caller).
+    var holder: SectionDeletePayloadHolder?
+    /// The key this job's record has in the `EFJobRegistry`: nil means `opId` (the entry's first job); a redo's job registers under a
+    /// fresh id, because `EFJobRegistry.register` hands back the record already there for a repeated id (verdict-v1 S6).
+    var registryKey: UUID?
 
     /// How the editor's removed ids and the rows the job deleted differ (both mapped to database ids).
     struct RemovedIdsMismatch: Sendable, Equatable {
@@ -116,7 +123,11 @@ struct SectionDeleteJob: Sendable {
         let opId = self.opId
         let slots = self.slots
         let leaders = removedLeaders
+        let holder = self.holder
+        let preDeleteRows = written.blocks
         db.afterNextTransaction(onCommit: { _ in
+            // Slice 2b: the holder first (a reinsert reads it, and the slot may already be gone), then the slot.
+            holder?.fill(rows: preDeleteRows, leaders: leaders, resolvedRootId: rootId)
             _ = slots.recordApplied(opId, snapshotId: snapshotId, removedSections: leaders)
         })
 
@@ -151,14 +162,16 @@ struct SectionDeleteJob: Sendable {
         registry: EFJobRegistry,
         onReserved: (() -> Void)? = nil
     ) async -> SystemWriteResult<Output> {
-        registry.register(opId)
+        let key = registryKey ?? opId
+        registry.register(key)
         // Safety net for a path that leaves this function without settling (nothing does today): the record must resolve.
-        defer { registry.resolve(opId, .abandoned) }
+        defer { registry.resolve(key, .abandoned) }
         let job = self
         let result = await blockSync.performSystemWrite(
             identity: identity, kind: .sectionDelete, stillWanted: { true }, onReserved: onReserved,
             body: { db, idMap in try job.run(db: db, idMap: idMap) })
-        registry.settle(opId, with: result.outcome)
+        if !JobOutcome(result.outcome).isApplied { holder?.markFailed() }
+        registry.settle(key, with: result.outcome)
         return result
     }
 }

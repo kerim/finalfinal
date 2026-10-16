@@ -223,6 +223,110 @@ enum TestMode {
         try? await Task.sleep(for: .milliseconds(milliseconds))
     }
 
+    // MARK: - Quick undo of an editor-first section delete (t-94369a83 Phase 4b slice 2b)
+    //
+    // Every seam below is read through `isUITesting &&`, so a value left in a shell profile can never change a real user's undo, and a
+    // unit-test run can never set one. None of them blocks the database writer: the holds are plain suspensions (the writer, the
+    // system write and `contentState` are all free while they wait), so the 5 s content-state watchdog never meets them.
+
+    /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N=<n>`: the first `n` Cmd-Z presses on an editor-first section delete that WOULD take the
+    /// quick path take today's slow path instead (so a test can time old and new in one session). 0 (unset, unparseable, <= 0, or
+    /// `isUITesting` false) means none. The decision is counted per launch, once per press, by `consumeSlowDeleteUndoSeam()`.
+    static var uiTestingSlowDeleteUndoFirstN: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N"],
+              let value = Int(raw), value > 0 else { return 0 }
+        return value
+    }
+
+    /// How many presses `consumeSlowDeleteUndoSeam()` has forced slow so far in this launch.
+    private static var slowDeleteUndosForced = 0
+
+    /// True (and counted) while fewer than `uiTestingSlowDeleteUndoFirstN` presses have been forced slow in this launch.
+    @MainActor
+    static func consumeSlowDeleteUndoSeam() -> Bool {
+        guard slowDeleteUndosForced < uiTestingSlowDeleteUndoFirstN else { return false }
+        slowDeleteUndosForced += 1
+        return true
+    }
+
+    /// `FF_UI_TESTING_QUICK_UNDO_RESUME_HOLD_MS=<n>`: the quick undo waits `n` ms between the editor's restore (`quick restore done`)
+    /// and the start of the reinsert, so the window holds nothing but the paused editor: the reinsert, its sidebar update and the Notes
+    /// / bibliography rebuild it triggers all start after the wait, and none can land inside it and end the editor's pause early
+    /// (`resumeSyncAfterQuickUndo` follows the reinsert's reservation, still after the wait). Block-sync is paused and the writer is
+    /// free for that whole time, so a UI test can type into the paused window on purpose instead of hoping to hit a few
+    /// milliseconds. `nil` means no wait.
+    static var uiTestingQuickUndoResumeHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_QUICK_UNDO_RESUME_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// `FF_UI_TESTING_REINSERT_SETTLE_HOLD_MS=<n>`: the reinsert's settle (the resyncs and the push of the database's Notes and
+    /// Bibliography into the editor) waits `n` ms after the reinsert's rows have committed, before its first step. A plain
+    /// suspension: the writer is free. `nil` means no wait.
+    static var uiTestingReinsertSettleHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_REINSERT_SETTLE_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// The wait `uiTestingQuickUndoResumeHoldMs` asks for. Logs its two ends twice: with `NSLog` (unified log) and with `DebugLog` at
+    /// `.undo` (diagnostic.log, like the other quick-undo lines), `op` being the entry's first 8 characters, so a test can show that
+    /// every key it typed fell inside.
+    @MainActor   // code review C-L2: no hop to the global executor and back when the seam is off
+    static func holdQuickUndoResume(opId: String) async {
+        guard let milliseconds = uiTestingQuickUndoResumeHoldMs else { return }
+        NSLog("[QuickUndoHold] resume-hold START delayMs=\(milliseconds)")
+        DebugLog.log(.undo, "[QuickUndoHold] start ms=\(milliseconds) op=\(opId)")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+        DebugLog.log(.undo, "[QuickUndoHold] end op=\(opId)")
+        NSLog("[QuickUndoHold] resume-hold END")
+    }
+
+    /// The wait `uiTestingReinsertSettleHoldMs` asks for (same logging, marker family `[ReinsertSettleHold]`).
+    @MainActor   // code review C-L2: as above
+    static func holdReinsertSettle(opId: String) async {
+        guard let milliseconds = uiTestingReinsertSettleHoldMs else { return }
+        NSLog("[QuickUndoHold] settle-hold START delayMs=\(milliseconds)")
+        DebugLog.log(.undo, "[ReinsertSettleHold] start ms=\(milliseconds) op=\(opId)")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+        DebugLog.log(.undo, "[ReinsertSettleHold] end op=\(opId)")
+        NSLog("[QuickUndoHold] settle-hold END")
+    }
+
+    /// `FF_UI_TESTING_AUTOBACKUP_IDLE_SECONDS=<n>`: ONE idle backup per launch fires after `n` seconds of idle instead of 60, and only
+    /// AFTER the first editor-first section delete of the launch: the seam stays dormant (every idle timer takes the real 60 s) until
+    /// `armAutoBackupIdleSeamAfterDelete()` has run at that delete's click, so the document load cannot use the one firing up before the
+    /// delete. From then on the next idle timer that is armed (the delete's own content change arms one) uses `n`;
+    /// `consumeAutoBackupIdleSeam()` is called when it really fires and the seam is spent. The 5-minute minimum between backups is NOT
+    /// changed, so later backups do not add flushes at random moments. `nil` means the real timing.
+    static var uiTestingAutoBackupIdleSeconds: Double? {
+        guard isUITesting, autoBackupIdleSeamArmed, !autoBackupIdleSeamFired,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_AUTOBACKUP_IDLE_SECONDS"],
+              let value = Double(raw), value > 0 else { return nil }
+        return value
+    }
+
+    private static var autoBackupIdleSeamArmed = false
+    private static var autoBackupIdleSeamFired = false
+
+    /// Called by `performEditorFirstDelete` at the first section delete's click: from here on the idle seam may take effect. A no-op
+    /// outside a UI test (the getter above checks `isUITesting` and the variable again).
+    @MainActor
+    static func armAutoBackupIdleSeamAfterDelete() {
+        guard isUITesting else { return }
+        autoBackupIdleSeamArmed = true
+    }
+
+    /// Called by `AutoBackupService` when an idle timer that used the seam's wait has really fired: the seam is spent for this launch.
+    @MainActor
+    static func consumeAutoBackupIdleSeam() {
+        autoBackupIdleSeamFired = true
+    }
+
     /// UI-test-only deterministic main-window width, consumed by
     /// `FinalFinalApp.defaultWindowPlacement` and, as a backstop once the window exists, by
     /// `AppDelegate.applyUITestingWindowWidthOverride(to:)`. Exists because the Outline sidebar's

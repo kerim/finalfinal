@@ -247,6 +247,51 @@ class EditorViewState {
     @ObservationIgnored
     var outOfQueueWriteGeneration = 0
 
+    // MARK: - Quick undo of an editor-first section delete (t-94369a83 Phase 4b slice 2b; logic in the files named below)
+
+    /// A second counter, bumped ONLY at the three structural out-of-queue writes (`StructuralUndoController`'s `performStructuralOp`
+    /// mutation and the slow undo and redo: the writes that put fresh ids on the whole project). The quick undo's eligibility reads
+    /// this one, not `outOfQueueWriteGeneration`: the idle backup, Save Version and export flush the screen's own text into the
+    /// table, which a reinsert that makes the rows equal the saved pre-delete rows overwrites (plan-v3-addendum A1).
+    @ObservationIgnored
+    var structuralOutOfQueueGeneration = 0
+
+    /// Bumped in the synchronous stretch before a quick undo or quick redo sends its JavaScript. A rebuild stamps this when it reads
+    /// the database and skips its editor push when it has moved (`EditorViewState+RebuildGuard.swift`, plan-v4-addendum 3).
+    @ObservationIgnored
+    var editorRestoreGeneration = 0
+
+    /// Quick undos whose reinsert has not yet ended (+1 in the same stretch as the bump above, -1 when the reinsert's job future
+    /// resolves, whatever its outcome). A rebuild that read the database while this was above 0 read the post-delete rows.
+    @ObservationIgnored
+    var pendingReinsertCount = 0
+
+    /// How many `flushLiveContentToDatabase` calls are running (the idle backup, Save Version, export and the old-path structural
+    /// ops). A quick undo or redo waits for them before it decides (plan-v3 verdict T1).
+    @ObservationIgnored
+    var liveFlushRunning = 0
+
+    /// The section leaders a quick undo has put back on the screen whose rows the database does not hold yet, by entry id. The outline
+    /// results merge them in until the reinsert has applied (`withoutPendingRemovals`).
+    @ObservationIgnored
+    var pendingRestoreSections: [UUID: [Block]] = [:] {
+        // An anchor lives only as long as its overlay entry (every clearing site sets the entry to nil).
+        didSet {
+            guard !pendingRestoreAnchors.isEmpty else { return }
+            pendingRestoreAnchors = pendingRestoreAnchors.filter { pendingRestoreSections[$0.key] != nil }
+        }
+    }
+
+    /// Where each pending restore's leaders go in the outline, by entry id (`SidebarRestoreOverlay`): the heading that stood before the
+    /// section in the pre-delete document. An entry without one is placed by its leaders' old sort orders.
+    @ObservationIgnored
+    var pendingRestoreAnchors: [UUID: RestoreAnchor] = [:]
+
+    /// Quick undos whose restored section the sidebar does not show yet: the update waits for the editor's next paint (up to 300 ms).
+    /// Raised when the update is scheduled, lowered when it has run or been dropped.
+    @ObservationIgnored
+    var pendingSidebarRestoreCount = 0
+
     /// Waits for every editor-first delete job to end (applied, failed, refused or abandoned), and for nothing else: never
     /// `writer.awaitSettled()`, so an unrelated queued bibliography job is not waited for (plan D7, addendum A1/A2). Called FIRST by
     /// every direct writer that cannot run while a delete job is pending: zoom in, zoom out, the flush before Save Version and
@@ -1029,8 +1074,8 @@ class EditorViewState {
     /// `blocks` without the leaders of sections an editor-first delete has removed from the screen but whose job has not applied
     /// yet (`pendingRemovalIds`). Returns `blocks` itself when there are none (the normal case: no allocation).
     func withoutPendingRemovals(_ blocks: [Block]) -> [Block] {
-        guard !pendingRemovalIds.isEmpty else { return blocks }
-        return blocks.filter { !pendingRemovalIds.contains($0.id) }
+        guard !pendingRemovalIds.isEmpty || !pendingRestoreSections.isEmpty else { return blocks }
+        return mergingPendingRestores(into: blocks.filter { !pendingRemovalIds.contains($0.id) })
     }
 
     /// Re-fetch outline blocks from database and update sections.

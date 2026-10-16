@@ -428,10 +428,22 @@ struct Phase4bLog {
     }
 
     /// A Swift trace line `[STRUCT-TRACE] t=..ms +..ms <label> op=<id> <step>` (see StructuralUndoController.StructTrace).
+    /// `step: "start"` also finds the lines whose step opens with "start (" (the quick undo and redo log `start (quick)`; the editor-first
+    /// delete logs `start (editor-first) ...`): before slice 2b the suffix match alone did not see them, which made every "no structural
+    /// undo started" check pass without looking at a quick undo (verdict-v1 M22).
     func opLine(label: String, step: String, since: String) -> Phase4bLogLine? {
         lines.first {
-            $0.stamp >= since && $0.text.contains("[STRUCT-TRACE] t=") && $0.text.contains(" \(label) op=") && $0.text.hasSuffix(" \(step)")
+            $0.stamp >= since && $0.text.contains("[STRUCT-TRACE] t=") && $0.text.contains(" \(label) op=")
+                && ($0.text.hasSuffix(" \(step)") || (step == "start" && Self.opensWithStartBracket($0.text, label: label)))
         }
+    }
+
+    /// True when the line's step (the text after ` <label> op=<id> `) begins with "start (".
+    private static func opensWithStartBracket(_ text: String, label: String) -> Bool {
+        guard let marker = text.range(of: " \(label) op=") else { return false }
+        let rest = text[marker.upperBound...]
+        guard let space = rest.firstIndex(of: " ") else { return false }
+        return rest[rest.index(after: space)...].hasPrefix("start (")
     }
 
     /// A refusal or failure the controller (or the sidebar action that called it) logged.
@@ -784,8 +796,11 @@ extension WriteQueuePhase4bTraceE2ETests {
 
     func dbInt(_ sql: String) -> Int? { Int(dbText(sql)) }
 
+    /// Anchored to the heading marker (`# <title>`), as `Phase4bDelHarness.headingRows` is: a number-prefixed subsection title is also a
+    /// substring of the same title in chapters 10 to 12. Only stricter than the plain substring; a title that is a prefix of a longer heading
+    /// ("... copy") still counts, as the duplicate checks rely on. (This class only drives the one-chapter article.)
     func headingRows(_ title: String) -> Int {
-        dbInt("SELECT count(*) FROM block WHERE blockType = 'heading' AND instr(markdownFragment, '\(FixtureDatabase.escape(title))') > 0;") ?? -1
+        dbInt("SELECT count(*) FROM block WHERE blockType = 'heading' AND instr(markdownFragment, '# \(FixtureDatabase.escape(title))') > 0;") ?? -1
     }
 
     func waitForHeadingRows(_ title: String, equalTo wanted: Int, timeout: TimeInterval) -> Int {

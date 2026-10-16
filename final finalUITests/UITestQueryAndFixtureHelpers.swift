@@ -8,6 +8,7 @@
 //  CLI) helpers, document-note seeding, and the fixture-path helpers.
 //
 
+// swiftlint:disable file_length
 import XCTest
 
 // MARK: - Proven-Pattern Query Helpers
@@ -51,7 +52,22 @@ extension XCUIApplication {
     /// the identical failure class: `.exists` is a documented-safe, non-throwing existence
     /// check, so guarding with it before either property access skips a vanished element
     /// instead of crashing the scan.
-    func editorStaticText(startingWith text: String, timeout: TimeInterval = 10) -> XCUIElement? {
+    ///
+    /// `exactLine` (default nil: today's behaviour, nothing else changes): the paragraph's COMPLETE text when the caller knows it and it is
+    /// one text run (it must begin with `text`). It is tried first, for at most `min(timeout, 8)` seconds, as one exact-value query, which
+    /// resolves in about 1.5 s on a book; the index walk below is only the fallback when no leaf has that exact value. Speed only: the
+    /// walk makes two accessibility round trips per element (1.5-3 s each on a book), so reaching a paragraph behind 662 leaves took
+    /// 1000-2000 s (vmtest strike-2 diagnosis, `testTypeDuringQuickUndoWindow_book12`, 2026-10-16).
+    func editorStaticText(startingWith text: String, exactLine: String? = nil, timeout: TimeInterval = 10) -> XCUIElement? {
+        if let exactLine, exactLine.hasPrefix(text) {
+            // e2e-lint: allow statictext-firstmatch -- scoped to `editor-area` (never the sidebar's mirror) and an exact `==` on the value.
+            let leaf = editorArea.staticTexts.matching(NSPredicate(format: "value == %@", exactLine)).firstMatch
+            let exactDeadline = Date(timeIntervalSinceNow: min(timeout, 8))
+            repeat {
+                if leaf.exists { return leaf }
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+            } while Date() < exactDeadline
+        }
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
             for element in editorArea.staticTexts.allElementsBoundByIndex {

@@ -15,6 +15,14 @@ extension ContentView {
         Self.hasHierarchyViolations(in: editorState.sections)
     }
 
+    /// True while a quick undo's restored sections are on the screen but the sidebar or the database does not hold them yet (the
+    /// overlay is set, the reinsert is still pending, or the sidebar update is still waiting for the editor's paint): `sections` is
+    /// then partly overlay or not yet updated, and enforcement -- which writes the database and drops the redo branch -- must not act
+    /// on it. The reinsert's settle refreshes the sections once the rows are back.
+    static func hierarchyEnforcementWaitsForQuickUndo(_ editorState: EditorViewState) -> Bool {
+        !editorState.pendingRestoreSections.isEmpty || editorState.pendingReinsertCount > 0 || editorState.pendingSidebarRestoreCount > 0
+    }
+
     /// Static version for use in closures
     static func hasHierarchyViolations(in sections: [SectionViewModel]) -> Bool {
         for (index, section) in sections.enumerated() {

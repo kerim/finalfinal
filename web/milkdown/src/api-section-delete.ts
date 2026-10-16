@@ -30,7 +30,7 @@ import { editorViewCtx } from '@milkdown/kit/core';
 import type { Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
 import type { EditorState } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { getAllBlockIds, getAllBlockTypes, restoreBlockIdMaps } from './block-id-plugin';
+import { getAllBlockIds, getAllBlockTypes, isTempBlockId, restoreBlockIdMaps } from './block-id-plugin';
 import {
   type BlockChanges,
   flushPendingBlockChanges,
@@ -43,9 +43,12 @@ import { getEditorInstance } from './editor-state';
 import { noteRemovalForPaint } from './typing-trace';
 import {
   beginStructuralOp,
+  cancelPendingInsertions,
   clearFailedStructuralOpEntry,
+  closeEditingPopupsAndClearBoundaryState,
   finalizeStructuralOpPostOpDoc,
   getRegistry,
+  type UndoRegistryEntry,
 } from './undo-coordinator';
 
 /** One section leader the removal took out, for Swift's sidebar bookkeeping. */
@@ -97,7 +100,7 @@ export type SectionRange =
 /** A leader's effective level: headings by their own level, section breaks as level 1; `undefined` for anything else (an `hr`
  * is NOT a leader). Mirrors the database rule `leader = heading || pseudo-section, level = headingLevel ?? 1`
  * (Database+SectionOps.swift `resolveSectionSubtree`). */
-function leaderLevel(node: ProsemirrorNode): number | undefined {
+export function leaderLevel(node: ProsemirrorNode): number | undefined {
   if (node.type.name === 'heading') return (node.attrs.level as number | undefined) ?? 1;
   if (node.type.name === 'section_break') return 1;
   return undefined;
@@ -246,12 +249,36 @@ function restoreBeforeRemoval(
   resetAndSnapshot(view.state.doc);
 }
 
+/** How `removeSectionInEditor` is being used. */
+export interface RemoveSectionOptions {
+  /** 'delete' is the click (the trace line reads `delete-editor-first`); 'redo' is the quick redo of a quick-undone delete
+   * (`redo-editor-first`), which removes the section again from the CURRENT document under the same opId. */
+  label: 'delete' | 'redo';
+  /** The quick redo only (api-section-undo.ts): the registry entry this opId already has. It is deleted from the registry right
+   * before `beginStructuralOp(opId)`, so the redone entry becomes the NEWEST key (the saved-copy rebase targets the last key,
+   * undo-coordinator.ts `advanceRegistryEntries`; plan v3 D8), and it is put back untouched if the removal does not complete: a
+   * failed redo leaves the op undone with the entry it had, so a later press still routes. */
+  previousEntry?: UndoRegistryEntry;
+}
+
 /**
- * Bridge target for `window.FinalFinal.deleteSectionEditorFirst`. Synchronous; Swift calls it as
- * `JSON.stringify(window.FinalFinal.deleteSectionEditorFirst(opId, rootBlockId, managedIds))`.
- * `managedIds` is the list of block ids Swift's database flags Notes or Bibliography (never empty on a real document).
+ * The one editor-side removal, shared by `deleteSectionEditorFirst` (the click) and `redoSectionDeleteEditorFirst` (the quick
+ * redo of an undone delete): steps (a)-(j) of the header. A redo is a fresh delete of the document as it stands now, so it
+ * re-captures `checkpoint`, `preOpDoc`, `postOpDoc` and the block-id maps for the opId and starts a fresh confirmation log;
+ * nothing stored at the undo is swapped in (a stored state would put back labels and Notes the automatic rewrites have since
+ * changed).
  */
-export function deleteSectionEditorFirst(opId: string, rootBlockId: string, managedIds: string[]): DeleteSectionResult {
+export function removeSectionInEditor(
+  opId: string,
+  rootBlockId: string,
+  managedIds: string[],
+  options: RemoveSectionOptions
+): DeleteSectionResult {
+  const { label, previousEntry } = options;
+  // Boundary hygiene first, like every structural op (Swift's slow paths call the same two): an open popup, a Find session or a pending
+  // paste position must not act on offsets this removal is about to invalidate. A popup edit committed here lands BEFORE the checkpoint.
+  closeEditingPopupsAndClearBoundaryState();
+  cancelPendingInsertions();
   let batch: BlockChanges = { updates: [], inserts: [], deletes: [] };
   const failure = (reason: string): DeleteSectionResult => ({
     batch,
@@ -268,6 +295,7 @@ export function deleteSectionEditorFirst(opId: string, rootBlockId: string, mana
 
   let paused = false;
   let begun = false;
+  let replaced = false;
   let dispatched = false;
   let completed = false;
   let checkpoint: EditorState | undefined;
@@ -283,12 +311,24 @@ export function deleteSectionEditorFirst(opId: string, rootBlockId: string, mana
     timer.lap('changes');
     setSyncPaused(true); // (c)
     paused = true;
+    if (previousEntry) {
+      getRegistry().delete(opId);
+      replaced = true;
+    }
     begun = beginStructuralOp(opId); // (d)
     if (!begun) return failure('beginFailed');
-    checkpoint = getRegistry().get(opId)?.checkpoint;
+    const fresh = getRegistry().get(opId);
+    checkpoint = fresh?.checkpoint;
     timer.lap('begin');
     savedIds = getAllBlockIds();
     savedTypes = getAllBlockTypes();
+    if (fresh) {
+      // The maps the quick undo puts back, beside the checkpoint they belong to (api-section-undo.ts), with an empty log of the
+      // temp ids Swift confirms from here on (undo-coordinator.ts `recordConfirmationsInRegistry`).
+      const tempIds = new Set<string>();
+      for (const id of savedIds.values()) if (isTempBlockId(id)) tempIds.add(id);
+      getRegistry().set(opId, { ...fresh, idMap: savedIds, typeMap: savedTypes, confirmLog: [], tempIds });
+    }
     timer.lap('maps');
 
     const range = findSectionRange(view.state.doc, savedIds, rootBlockId, new Set(managedIds)); // (e)
@@ -331,7 +371,7 @@ export function deleteSectionEditorFirst(opId: string, rootBlockId: string, mana
 
     completed = true;
     trace(
-      `delete-editor-first opId=${opId.slice(0, 8)} ok=true removed=${removedIds.length} leaders=${removedLeaderIds.length} ` +
+      `${label}-editor-first opId=${opId.slice(0, 8)} ok=true removed=${removedIds.length} leaders=${removedLeaderIds.length} ` +
         `batchUpdates=${batch.updates.length} batchInserts=${batch.inserts.length} batchDeletes=${batch.deletes.length}` +
         timer.summary()
     );
@@ -345,7 +385,9 @@ export function deleteSectionEditorFirst(opId: string, rootBlockId: string, mana
     }; // (j)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    trace(`delete-editor-first opId=${opId.slice(0, 8)} threw after dispatch=${dispatched}: ${message.slice(0, 200)}`);
+    trace(
+      `${label}-editor-first opId=${opId.slice(0, 8)} threw after dispatch=${dispatched}: ${message.slice(0, 200)}`
+    );
     return failure(`exception: ${message}`);
   } finally {
     if (!completed) {
@@ -354,12 +396,22 @@ export function deleteSectionEditorFirst(opId: string, rootBlockId: string, mana
           restoreBeforeRemoval(view, checkpoint, savedIds, savedTypes);
         } catch (e) {
           trace(
-            `delete-editor-first opId=${opId.slice(0, 8)} could not restore the section: ${String(e).slice(0, 200)}`
+            `${label}-editor-first opId=${opId.slice(0, 8)} could not restore the section: ${String(e).slice(0, 200)}`
           );
         }
       }
-      if (begun) clearFailedStructuralOpEntry(opId);
+      if (replaced && previousEntry) getRegistry().set(opId, previousEntry);
+      else if (begun) clearFailedStructuralOpEntry(opId);
     }
     if (paused) setSyncPaused(false);
   }
+}
+
+/**
+ * Bridge target for `window.FinalFinal.deleteSectionEditorFirst`. Synchronous; Swift calls it as
+ * `JSON.stringify(window.FinalFinal.deleteSectionEditorFirst(opId, rootBlockId, managedIds))`.
+ * `managedIds` is the list of block ids Swift's database flags Notes or Bibliography (never empty on a real document).
+ */
+export function deleteSectionEditorFirst(opId: string, rootBlockId: string, managedIds: string[]): DeleteSectionResult {
+  return removeSectionInEditor(opId, rootBlockId, managedIds, { label: 'delete' });
 }

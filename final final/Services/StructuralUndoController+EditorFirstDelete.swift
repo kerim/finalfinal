@@ -63,11 +63,20 @@ enum EditorFirstUndoResolution: Equatable {
 final class EFReservationSignal {
     private var fired = false
     private var continuation: CheckedContinuation<Void, Never>?
+    /// Slice 2b: true only when the job's `onReserved` fired (the job really holds its place in the queue), not when `fire()` was
+    /// the safety net after `perform` returned without reserving.
+    private(set) var didReserve = false
 
     func fire() {
         fired = true
         continuation?.resume()
         continuation = nil
+    }
+
+    /// The job's `onReserved`: it holds its place in the queue.
+    func fireReserved() {
+        didReserve = true
+        fire()
     }
 
     func wait() async {
@@ -82,8 +91,14 @@ final class EFReservationSignal {
     }
 }
 
+/// A reply of an editor-first call (the delete, the quick undo, the quick redo) that carries the pending changes the call consumed.
+/// Every such call's batch is ALWAYS applied, whether the call succeeded or not (`consumeEditorFirstReply`).
+protocol EditorFirstBatchReply: Decodable {
+    var batch: BlockChanges { get }
+}
+
 /// The JavaScript reply of `deleteSectionEditorFirst` (web/milkdown/src/api-section-delete.ts). Only the fields Swift uses.
-struct EditorFirstDeleteReply: Decodable {
+struct EditorFirstDeleteReply: EditorFirstBatchReply {
     /// Present on EVERY path (even a failed one) and ALWAYS applied: the pending changes the call consumed.
     let batch: BlockChanges
     /// The editor's `ok`: false means the document is unchanged or restored and no registry entry was left.
@@ -129,6 +144,7 @@ extension StructuralUndoController {
         let guardMs = StructTrace.nowMs() - guardStartMs
 
         let opId = UUID()
+        efOpEpoch[opId] = 1   // slice 2b: the per-op epoch starts at the click (plan-v2-addendum 2.2)
         guard let built = editorFirstScript(opId: opId, rootId: rootId, database: db, projectId: pid) else { return nil }
         let script = built.script
         let trace = StructTrace(label: "sectionDelete", opId: String(opId.uuidString.prefix(8)))
@@ -140,6 +156,8 @@ extension StructuralUndoController {
         // `contentGeneration` and discard a batch some routine cycle already fetched, finding M1).
         blockSync.structuralClickPending = true
         defer { blockSync.structuralClickPending = false }
+        TestMode.armAutoBackupIdleSeamAfterDelete()   // UI-test seam FF_UI_TESTING_AUTOBACKUP_IDLE_SECONDS: dormant until the first delete
+        findBarState?.clearSearch()   // code review B-M2: the find bar's cached match positions belong to the document the click removes from
         #if DEBUG
         if testEFBumpGenerationAtClick {
             // Addendum A10: U14's "old shape". Sets `contentState` non-idle and back before reserving, which bumps
@@ -157,7 +175,9 @@ extension StructuralUndoController {
         }
         spy("efJS")
         trace.log("after the editor-first JS call")
-        guard let reply = consumeEditorFirstReply(submission, blockSync: blockSync, database: db, projectId: pid) else {
+        guard let reply = consumeEditorFirstReply(
+            submission, as: EditorFirstDeleteReply.self, blockSync: blockSync, database: db, projectId: pid
+        ) else {
             return .refused
         }
         guard reply.succeeded else {
@@ -197,9 +217,11 @@ extension StructuralUndoController {
             // longer this section's. The delete happened (and is saved), but cannot be undone with Cmd-Z.
             DebugLog.log(.undo, "[StructuralUndoController] editor-first delete: timeline generation changed mid-click -- not recording")
             efSlots.remove(opId)
+            forgetQuickUndoState(opId)
             return .failedAfterCommit
         }
         efRecordedGeneration[opId] = editorState.outOfQueueWriteGeneration
+        efRecordedStructGeneration[opId] = editorState.structuralOutOfQueueGeneration
         unifiedUndoService.record(StructuralEntry(id: opId, kind: .sectionDelete, title: "Delete Section", undoSnapshotId: nil))
         spy("efRecorded")
         await pushDescriptor()
@@ -210,8 +232,10 @@ extension StructuralUndoController {
     /// The one JavaScript expression of the click: `deleteSectionEditorFirst(opId, rootBlockId, managedIds)`, with the managed ids
     /// (Notes and Bibliography rows) read from the database now. Nil when they cannot be read. `managedIdsMs` is how long that read took
     /// (a trace figure only).
-    private func editorFirstScript(
-        opId: UUID, rootId: String, database: ProjectDatabase, projectId: String
+    ///
+    /// `function` (slice 2b): the editor call to make; the quick redo's `redoSectionDeleteEditorFirst` takes the same three arguments.
+    func editorFirstScript(
+        function: String = "deleteSectionEditorFirst", opId: UUID, rootId: String, database: ProjectDatabase, projectId: String
     ) -> (script: String, managedIdsMs: Int)? {
         let managedIds: [String]
         let readStartMs = StructTrace.nowMs()
@@ -224,7 +248,7 @@ extension StructuralUndoController {
         let managedIdsMs = StructTrace.nowMs() - readStartMs
         guard let opLiteral = Self.jsLiteral(opId.uuidString), let rootLiteral = Self.jsLiteral(rootId),
               let managedLiteral = Self.jsLiteral(managedIds) else { return nil }
-        let script = "JSON.stringify(window.FinalFinal.deleteSectionEditorFirst(\(opLiteral), \(rootLiteral), \(managedLiteral)))"
+        let script = "JSON.stringify(window.FinalFinal.\(function)(\(opLiteral), \(rootLiteral), \(managedLiteral)))"
         return (script, managedIdsMs)
     }
 
@@ -232,10 +256,12 @@ extension StructuralUndoController {
     /// or not (the editor consumed it and nothing else will write it); an empty one settles the ticket `.empty`. A bridge call that
     /// threw, or a reply that cannot be read, may or may not have consumed the pending changes: the ticket settles
     /// `.discarded(.bridgeFailed)` and the loss is logged `alwaysPersisted`. Returns nil in those two cases.
-    private func consumeEditorFirstReply(
-        _ submission: BlockSyncService.EditorFirstSubmission, blockSync: BlockSyncService,
+    ///
+    /// Slice 2b: generic over the reply type, so the quick undo's own reply (`QuickUndoReply`) takes exactly the same road.
+    func consumeEditorFirstReply<Reply: EditorFirstBatchReply>(
+        _ submission: BlockSyncService.EditorFirstSubmission, as replyType: Reply.Type, blockSync: BlockSyncService,
         database: ProjectDatabase, projectId: String
-    ) -> EditorFirstDeleteReply? {
+    ) -> Reply? {
         let ticket = submission.ticket
         let json: String?
         switch submission.result {
@@ -249,7 +275,7 @@ extension StructuralUndoController {
             json = value
         }
         guard let json, let data = json.data(using: .utf8),
-              let reply = try? JSONDecoder().decode(EditorFirstDeleteReply.self, from: data) else {
+              let reply = try? JSONDecoder().decode(Reply.self, from: data) else {
             ticket.settleIfOpen(.discarded(.bridgeFailed))
             DebugLog.alwaysPersisted(
                 "[StructuralUndoController] editor-first delete: the editor's reply could not be read. Ticket settled as "
@@ -278,19 +304,38 @@ extension StructuralUndoController {
     /// `.sectionDelete` system write that reserves job N+1). Returns once the job holds its place in the writer's queue (its
     /// `onReserved` fired, or it came back without reserving), never when it applies. The task that runs the job and the work
     /// after it is kept in `efSettleTasks`.
-    private func startEditorFirstJob( // swiftlint:disable:this function_parameter_count
+    ///
+    /// Slice 2b: also the quick redo's way to queue its fresh delete job (`jobKey` set: a fresh registry key, because
+    /// `EFJobRegistry.register` returns the record already there for a repeated id). Creates the entry's payload holder at the first
+    /// click, hands it to the job, and captures the entry's epoch NOW (the settle belongs to the click or redo that started it, not to
+    /// whatever the epoch is when the job ends).
+    /// Returns whether the job really holds its place in the queue (`onReserved` fired).
+    @discardableResult
+    func startEditorFirstJob( // swiftlint:disable:this function_parameter_count
         opId: UUID, rootId: String, removedLeaders: Set<String>, editorRemovedIds: [String]?,
-        database: ProjectDatabase, projectId: String
-    ) async {
-        guard let editorState else { return }
+        database: ProjectDatabase, projectId: String, jobKey: UUID? = nil
+    ) async -> Bool {
+        guard let editorState else { return false }
         efSlots.open(opId)
         let registry = editorState.efJobRegistry
-        registry.register(opId)
+        let registryKey = jobKey ?? opId
+        registry.register(registryKey)
+        let holder = efHolders[opId] ?? SectionDeletePayloadHolder(opId: opId, rootId: rootId, projectId: projectId)
+        efHolders[opId] = holder
+        holder.setClickLeaderIds(removedLeaders)
+        holder.setFootnoteCheckpointMarker(Set((footnoteSyncService?.undoCheckpoints ?? []).map(\.id)))
+        if let jobKey {
+            efLatestJobKey[opId] = jobKey
+            efJobKeys[opId, default: []].append(jobKey)
+        }
+        let epochAtClick = efOpEpoch[opId] ?? 0
         var heldJob = SectionDeleteJob(
             opId: opId, rootBlockId: rootId, projectId: projectId,
             fallbackBibliographyTitle: ExportSettingsManager.shared.effectiveBibliographyHeaderName, slots: efSlots)
         heldJob.bodyHold = jobBodyHold()
         heldJob.editorRemovedIds = editorRemovedIds
+        heldJob.holder = holder
+        heldJob.registryKey = jobKey
         let job = heldJob
         let identity = SystemWriteIdentity(projectId: projectId, database: database)
         let reserved = EFReservationSignal()
@@ -298,17 +343,17 @@ extension StructuralUndoController {
             StructuralTrace.log("job task started")   // slice 0 measurement: when the task actually got its turn on the main actor
             // The job AND the work after it are over on every way out of here: whoever waits for the delete (the close/quit wait, the
             // zoom, the switch to Markdown, Save Version, export) is let go only now, not when the job's future resolved.
-            defer { registry.markSettled(opId) }
+            defer { registry.markSettled(registryKey) }
             guard let blockSync = weakBlockSync else {
                 reserved.fire()
-                registry.resolve(opId, .abandoned)
+                registry.resolve(registryKey, .abandoned)
                 return
             }
             let result = await job.perform(
                 on: blockSync, identity: identity, registry: registry,
                 onReserved: {
                     StructuralTrace.log("onReserved fired")   // slice 0 measurement
-                    reserved.fire()
+                    reserved.fireReserved()
                 })
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
             if case .applied(let output) = result.outcome, let mismatch = output.removedIdsMismatch {
@@ -319,10 +364,12 @@ extension StructuralUndoController {
                     + "the job did not delete (\(mismatch.editorOnly.prefix(5))), and the job deleted \(mismatch.jobOnly.count) row(s) "
                     + "the editor kept (\(mismatch.jobOnly.prefix(5)))")
             }
-            await self?.editorFirstJobSettled(opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: removedLeaders)
+            await self?.editorFirstJobSettled(
+                opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: removedLeaders, epoch: epochAtClick, jobKey: jobKey)
         }
         efSettleTasks[opId] = settleTask
         await reserved.wait()
+        return reserved.didReserve
     }
 
     /// The test/UI hold on the queued job's body (`FF_UI_TESTING_STRUCT_JOB_HOLD_MS`, or the DEBUG seam a unit test sets).
@@ -336,7 +383,7 @@ extension StructuralUndoController {
     }
 
     /// A JSON value as a JavaScript expression (JSON is a subset of JavaScript literals).
-    private static func jsLiteral<T: Encodable>(_ value: T) -> String? {
+    static func jsLiteral<T: Encodable>(_ value: T) -> String? {
         guard let data = try? JSONEncoder().encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -346,17 +393,27 @@ extension StructuralUndoController {
     /// The job's future has resolved with `outcome`. Applied: the rows are gone and the Version History copy exists, so the
     /// removed leaders stop being filtered and the derived content catches up (plan D2.4: each step on its own, no nesting).
     /// Anything else: D6, the put-back.
-    func editorFirstJobSettled(opId: UUID, outcome: JobOutcome, removedLeaders: Set<String>) async {
-        defer { efSettleTasks[opId] = nil }
+    ///
+    /// Slice 2b: `epoch` is the entry's epoch as it stood when this job was started (nil: read it now); `jobKey` is the job's registry
+    /// key (nil: the entry's first job). A settle whose epoch has moved (a quick undo or redo has taken the entry since) skips its
+    /// resyncs and pushes (`resyncAfterEditorFirstDelete`) and leaves the sidebar's pending-removal filter to whoever owns it now.
+    func editorFirstJobSettled(
+        opId: UUID, outcome: JobOutcome, removedLeaders: Set<String>, epoch: Int? = nil, jobKey: UUID? = nil
+    ) async {
+        // Only the entry's latest job clears the slot (a quick redo's job has replaced the first one's).
+        defer { if efLatestJobKey[opId] == jobKey { efSettleTasks[opId] = nil } }
         guard let editorState else { return }
+        let epoch = epoch ?? (efOpEpoch[opId] ?? 0)
         spy("efJobSettled")
         switch outcome {
         case .applied:
-            editorState.pendingRemovalIds.subtract(removedLeaders)
+            // Not when a quick redo has queued a newer delete job for the entry: it has put the leaders back into the filter and its
+            // own settle takes them out.
+            if efLatestJobKey[opId] == jobKey { editorState.pendingRemovalIds.subtract(removedLeaders) }
             #if DEBUG
             await testEFSettleHold?()
             #endif
-            await resyncAfterEditorFirstDelete(editorState: editorState)
+            await resyncAfterEditorFirstDelete(editorState: editorState, opId: opId, epoch: epoch)
         case .abandoned:
             // The lifecycle barrier resolved the future before the job reported: the project is closing or switching.
             editorState.pendingRemovalIds.subtract(removedLeaders)
@@ -381,26 +438,51 @@ extension StructuralUndoController {
     /// whole-document save would then write the editor's half-updated Notes over the database's correct ones. The lifecycle waits for
     /// this whole settle (`EditorViewState.waitForSectionOperation` reads `efJobRegistry.hasUnsettledWork`), so the push has landed
     /// before the save captures the editor.
-    private func resyncAfterEditorFirstDelete(editorState: EditorViewState) async {
-        let content = editorState.content
+    ///
+    /// Slice 2b (plan-v2-addendum 4.1, plan-v3 D1): runs under the entry's epoch `epoch`, captured when the job was started. Immediately
+    /// before EACH step it reads `editorState.content` afresh and checks that the epoch has not moved; a step whose epoch has moved is
+    /// skipped and logged (a quick undo or redo has taken the entry: the text is the restored document's and the reinsert's own settle
+    /// re-derives everything). The two `resyncNow` calls also get the same check as their `stillWanted`. The sidebar refresh and the
+    /// wait for running rebuilds always run.
+    ///
+    /// Code review G-F1/C-M1: the check also ends when ANY quick undo or redo (of another entry too) has bumped
+    /// `editorState.editorRestoreGeneration` since `restoreGeneration` (the value the caller read before the text it works from; nil: now).
+    /// Every such operation runs its own settle with a fresh live read and a full resync, so skipping here is safe.
+    func resyncAfterEditorFirstDelete(editorState: EditorViewState, opId: UUID, epoch: Int, restoreGeneration: Int? = nil) async {
         let projectId = editorState.currentProjectId
+        let restoreGen = restoreGeneration ?? editorState.editorRestoreGeneration
+        let wanted: () -> Bool = { [weak self, weak editorState] in
+            (self?.efOpEpoch[opId] ?? epoch) == epoch && editorState?.editorRestoreGeneration == restoreGen
+        }
+        func skipped(_ step: String) {
+            DebugLog.log(.undo, "[StructuralUndoController] delete settle \(opId): \(step) skipped (a quick undo or redo took the entry)")
+        }
         if let pid = projectId {
-            await bibliographySyncService?.resyncNow(
-                citekeys: BibliographySyncService.extractCitekeys(from: content), projectId: pid)
-            await footnoteSyncService?.resyncNow(
-                footnoteRefs: FootnoteSyncService.extractFootnoteRefs(from: content), projectId: pid, fullContent: content)
+            if wanted() {
+                let content = editorState.content
+                await bibliographySyncService?.resyncNow(
+                    citekeys: BibliographySyncService.extractCitekeys(from: content), projectId: pid, stillWanted: wanted)
+            } else { skipped("bibliography resync") }
+            if wanted() {
+                let content = editorState.content
+                await footnoteSyncService?.resyncNow(
+                    footnoteRefs: FootnoteSyncService.extractFootnoteRefs(from: content), projectId: pid, fullContent: content,
+                    stillWanted: wanted)
+            } else { skipped("footnote resync") }
         }
-        if DocumentManager.shared.projectId == editorState.currentProjectId {
-            await sectionSyncService?.syncNow(editorState.content)
-        }
-        await annotationSyncService?.syncNow(editorState.content)
+        if wanted() {
+            if DocumentManager.shared.projectId == editorState.currentProjectId {
+                await sectionSyncService?.syncNow(editorState.content)
+            }
+        } else { skipped("section sync") }
+        if wanted() { await annotationSyncService?.syncNow(editorState.content) } else { skipped("annotation sync") }
         editorState.refreshSections()
         // The resyncs above write the database's Notes and Bibliography and so start the background rebuilds that carry them into the
         // editor. The settle is over only when those have landed (fix round 5, part A1): the undo, the close and quit wait, and the
         // zoom, mode-switch, Save Version and export waits all wait for the settle, and a rebuild whose push lands after they have
         // started would put the post-delete document back over theirs. (A rebuild the lifecycle deferred has no Task to wait for.)
         await editorState.awaitNoRunningRebuilds(label: "delete follow-up", showsNotice: false)
-        await pushManagedRegionsWhileClosing(editorState: editorState, projectId: projectId)
+        if wanted() { await pushManagedRegionsWhileClosing(editorState: editorState, projectId: projectId) } else { skipped("closing push") }
     }
 
     /// The footnote and bibliography resyncs above wrote the database's Notes and Bibliography. While a lifecycle is armed the
@@ -424,7 +506,7 @@ extension StructuralUndoController {
     ///    `editorState.content` then) is the renumbered text, not a stale one.
     /// 3. The merge-guarded push keeps whatever the editor still holds in its user blocks and takes the database's Notes and
     ///    Bibliography.
-    private func pushManagedRegionsWhileClosing(editorState: EditorViewState, projectId: String?) async {
+    func pushManagedRegionsWhileClosing(editorState: EditorViewState, projectId: String?) async {
         guard editorState.activeLifecycle != nil, editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil,
               let pid = projectId, editorState.currentProjectId == pid else { return }
         // A flush that did not complete (the editor did not answer within the poll's watchdog, or the writer did not settle) may have
@@ -437,15 +519,17 @@ extension StructuralUndoController {
             return
         }
         // The poll suspended: look again (a cancelled lifecycle hands the rebuild back to the handlers, a switch changes the project).
-        guard editorState.activeLifecycle != nil, editorState.currentProjectId == pid, let db = editorState.projectDatabase,
-              let result = fetchFullBlocksWithIds(db: db, pid: pid) else { return }
+        guard editorState.activeLifecycle != nil, editorState.currentProjectId == pid, let db = editorState.projectDatabase else { return }
+        let stamp = editorState.stampRebuildRead()   // slice 2b: on the line before the database read, no `await` between
+        guard let result = fetchFullBlocksWithIds(db: db, pid: pid) else { return }
         let wasResettingContent = editorState.isResettingContent
         editorState.isResettingContent = true
         defer { editorState.isResettingContent = wasResettingContent }
         // As the rebuild handlers and the undo's settle do: `content` first (the view cannot push it meanwhile: the flag above);
-        // `repushManagedRegionsFromDatabase` then replaces it with the merged text when that differs.
+        // `repushManagedRegionsFromDatabase` then replaces it with the merged text when that differs (or, when a quick undo or redo
+        // started since the read, with the editor's own live text: the stamp).
         editorState.content = result.markdown
-        await repushManagedRegionsFromDatabase(result)
+        await repushManagedRegionsFromDatabase(result, stamp: stamp)
     }
 
     // MARK: - D6: the job did not apply
@@ -461,6 +545,8 @@ extension StructuralUndoController {
             efSlots.remove(opId)
             editorState.efJobRegistry.forget(opId)
             efRecordedGeneration[opId] = nil
+            forgetQuickUndoState(opId)   // slice 2b: the holder (a pending reinsert keeps its own reference), the job keys, the generation
+            editorState.pendingRestoreSections[opId] = nil
         }
         unifiedUndoService.removeEntry(opId: opId)
         // Remembered so that a Cmd-Z for this entry that was already on its way (held on the gate while this ran) is answered
@@ -473,6 +559,9 @@ extension StructuralUndoController {
             return
         }
         await evalVoid("window.FinalFinal.clearFailedStructuralOpEntry?.('\(opId.uuidString)')")
+        // Slice 2b (verdict-v4 V4): stamped on the line before the database read; a put-back that a quick undo has overtaken is skipped
+        // (harmless: the editor already shows the section, and the database still holds it).
+        let stamp = editorState.stampRebuildRead()
         if let db = editorState.projectDatabase, let pid = editorState.currentProjectId,
            let result = fetchFullBlocksWithIds(db: db, pid: pid) {
             editorState.content = result.markdown
@@ -483,7 +572,8 @@ extension StructuralUndoController {
                 cursorBoundary: result.bibBoundaryIndex, cursorBoundaryEnd: result.bibBoundaryEndIndex,
                 detectPausedEdits: true,
                 expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds
+                managedBlockIds: result.managedBlockIds,
+                stillWanted: { [weak editorState] in editorState?.rebuildPushStillWanted(stamp) ?? false }
             )
             editorState.isResettingContent = false
             NotificationCenter.default.post(
@@ -515,7 +605,8 @@ extension StructuralUndoController {
     /// closing, the caller replies `cancelled`).
     func resolveEditorFirstUndoSnapshot(for entry: StructuralEntry) async -> EditorFirstUndoResolution {
         guard let editorState else { return .gone }
-        let outcome = await editorState.efJobRegistry.awaitOutcome(entry.id)
+        // Slice 2b: the entry's LATEST delete job (a quick redo's job has its own registry key; the first job's is the entry's id).
+        let outcome = await editorState.efJobRegistry.awaitOutcome(efLatestJobKey[entry.id] ?? entry.id)
         if outcome == .abandoned { return .cancelled }
         if let settle = efSettleTasks[entry.id] { await settle.value }
         guard outcome == .applied else {
@@ -541,16 +632,29 @@ extension StructuralUndoController {
     /// job). Push the DATABASE's managed regions into the editor with the same merge-guarded push a rebuild uses, so typing in
     /// user blocks survives. `result` is the settle's own database read (`fetchFullBlocksWithIds`), so the regions and the
     /// managed ids both come from the database, never from the editor's text.
-    func repushManagedRegionsFromDatabase(_ result: ContentView.BlockFetchResult) async {
-        guard let blockSyncService else { return }
+    ///
+    /// Slice 2b (plan-v4-addendum 3.2, verdict-v4 V2): `stamp`, when given, is the stamp the caller took on the line before its database
+    /// read (`stampRebuildRead`). The push is skipped when a quick undo or redo has started since (`stillWanted`), and then the
+    /// editor's own live text goes into `content` instead (never the database's text over a restore). Returns the text the push left
+    /// as the editor's (the merged text, or the live text after a skipped push), nil when neither could be had; the caller that
+    /// assigned no database text beforehand adopts it into `content` itself.
+    @discardableResult
+    func repushManagedRegionsFromDatabase(_ result: ContentView.BlockFetchResult, stamp: RebuildReadStamp? = nil) async -> String? {
+        guard let blockSyncService else { return nil }
         let merged = await blockSyncService.setContentWithBlockIds(
             markdown: result.markdown, blockIds: result.blockIds,
             imageMeta: result.imageMeta,
             cursorBoundary: result.bibBoundaryIndex, cursorBoundaryEnd: result.bibBoundaryEndIndex,
             expectedBlocks: result.expectedBlocks,
             managedBlockIds: result.managedBlockIds,
-            preserveUserBlocks: true)
+            preserveUserBlocks: true,
+            stillWanted: stamp.map { stamp in { [weak editorState] in editorState?.rebuildPushStillWanted(stamp) ?? false } })
         spy("efRepushManagedRegions")
+        if let stamp, let editorState, !editorState.rebuildPushStillWanted(stamp) {
+            DebugLog.log(.undo, "[STRUCT-TRACE] rebuild push skipped (stale: quick restore) kind=managed-regions")
+            return await editorState.adoptLiveEditorText(
+                blockSync: blockSyncService, why: "a stale managed-regions push", requireUnchangedGeneration: false)
+        }
         DebugLog.log(.undo, "[StructuralUndoController] A20: re-pushed the database's Notes and Bibliography (merged=\(merged != nil))")
         // Fix round 2a, item 6: the merge-guarded push hands back the markdown the editor ACTUALLY holds now (the database's managed
         // regions plus whatever the user typed in user blocks). Like the three rebuild handlers (ContentView+NotificationHandlers
@@ -565,6 +669,7 @@ extension StructuralUndoController {
                 + "(\(merged.count) vs \(result.markdown.count) characters) -- keeping the merged text as the content")
             editorState?.content = merged
         }
+        return merged
     }
 
     // MARK: - Messages and lifecycle

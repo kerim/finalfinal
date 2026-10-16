@@ -7,8 +7,9 @@
 //
 //  UNDER OPTION (b), THE BUILD THIS SERVES (instant delete first, quick undo later), a slot holds the Version History
 //  snapshot the job wrote before it deleted the rows (today's undo restores it), the delete's leader rows (the sidebar
-//  sections the click removed from the outline, kept for slice 2b's quick undo) and a state. The payload rows quick undo
-//  re-inserts are slice 2b and are not here.
+//  sections the click removed from the outline, kept for the quick undo) and a state. The payload rows the quick undo
+//  re-inserts (every row of the project before the delete) are NOT here: they live in `SectionDeletePayloadHolder` (slice 2b),
+//  which the delete job fills in its after-commit hook and which outlives the slot.
 //
 //  LIFETIME. The wiring opens a slot at the click (`open`), before the job is reserved; the job fills it
 //  (`recordApplied`); the timeline's eviction and invalidation remove it (`remove`/`removeAll`), which also unpins the
@@ -30,10 +31,18 @@ final class SectionDeleteSlotStore: Sendable {
     /// Where the entry's undo stands. `reserved`: opened at the click, the job has not applied yet. `applied`: the job
     /// committed and recorded its snapshot. `fallback`: an undo or redo of this entry took today's snapshot path, so every
     /// later undo and redo of it does too (addendum A18, plan D5b).
+    ///
+    /// Slice 2b (quick undo, plan-v2-addendum 2.3), the state machine with its owners:
+    /// - `quickUndone`: set by the quick undo once its reinsert holds a place in the writer's queue; the entry sits on the redo stack.
+    /// - `reinserted`: set by the reinsert's after-commit hook (only from `quickUndone`).
+    /// - back to `reserved`: set by the quick redo before its new delete job is reserved; that job's after-commit makes it `applied`.
+    /// - `fallback` from any state, by the slow path's A18 check or the reinsert's C5 fallback.
     enum State: Sendable, Equatable {
         case reserved
         case applied
         case fallback
+        case quickUndone
+        case reinserted
     }
 
     struct Slot: Sendable, Equatable {
@@ -80,11 +89,15 @@ final class SectionDeleteSlotStore: Sendable {
     func recordApplied(_ opId: UUID, snapshotId: String, removedSections: [Block]) -> Bool {
         slots.withLock { table in
             guard var slot = table[opId] else { return false }
+            // A redo's delete job records a fresh copy over the first job's: the replaced id's pin goes (slice 2b, verdict-v1 S6),
+            // or the pin set would grow by one snapshot per undo-redo cycle.
+            let replaced = slot.snapshotId
             slot.snapshotId = snapshotId
             slot.removedSections = removedSections
             if slot.state == .reserved { slot.state = .applied }
             table[opId] = slot
             SnapshotService.pinUndoPointSnapshot(snapshotId)
+            if let replaced, replaced != snapshotId { SnapshotService.unpinUndoPointSnapshot(replaced) }
             return true
         }
     }
@@ -93,6 +106,39 @@ final class SectionDeleteSlotStore: Sendable {
     func markFallback(_ opId: UUID) {
         slots.withLock { table in
             table[opId]?.state = .fallback
+        }
+    }
+
+    /// The quick undo's reinsert holds its place in the queue: `reserved`, `applied` or `reinserted` becomes `quickUndone`. A
+    /// `fallback` slot (or one that is gone) is left alone. Returns whether the state changed.
+    @discardableResult
+    func markQuickUndone(_ opId: UUID) -> Bool {
+        slots.withLock { table in
+            guard var slot = table[opId], slot.state == .reserved || slot.state == .applied || slot.state == .reinserted else { return false }
+            slot.state = .quickUndone
+            table[opId] = slot
+            return true
+        }
+    }
+
+    /// The reinsert's transaction committed: `quickUndone` becomes `reinserted`. Any other state is left alone (a quick redo that
+    /// ran before the reinsert applied has already moved the slot on to `reserved`).
+    @discardableResult
+    func markReinserted(_ opId: UUID) -> Bool {
+        slots.withLock { table in
+            guard table[opId]?.state == .quickUndone else { return false }
+            table[opId]?.state = .reinserted
+            return true
+        }
+    }
+
+    /// The quick redo's new delete job is about to be reserved: `quickUndone` or `reinserted` becomes `reserved`.
+    @discardableResult
+    func markReserved(_ opId: UUID) -> Bool {
+        slots.withLock { table in
+            guard let state = table[opId]?.state, state == .quickUndone || state == .reinserted else { return false }
+            table[opId]?.state = .reserved
+            return true
         }
     }
 

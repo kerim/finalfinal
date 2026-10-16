@@ -985,6 +985,9 @@ extension EditorViewState {
     /// that no longer exists and is silently lost. Same pairing already used by the
     /// `zoomToSection` and `handleZoomedFootnoteInsertion` call sites.
     func flushLiveContentToDatabase(currentContent: () async -> String?) async {
+        // Slice 2b (verdict-v3 T1): a quick undo or redo of a section delete waits for a flush that is running (`awaitRunningLiveFlush`).
+        liveFlushRunning += 1
+        defer { liveFlushRunning -= 1 }
         // t-94369a83 Phase 4b slice 2a (plan D7): this is a direct write of the whole document, so a pending editor-first
         // delete job is waited for first (covers `modeAwareFlush`'s Rich Text branch, the old-path structural ops, Save Version
         // and export, which all flush through here). Only the delete's own job: never the writer's whole queue.

@@ -99,6 +99,10 @@ struct EditorFirstRebuildWaitTests {
     @Test("Delete, then Cmd-Z at once, the delete's rebuild still in flight: the undo waits for it to land, and no definition is lost")
     func testUndoAtOnceAfterDeleteWaitsForTheRebuild_article() async throws {
         let rig = try makeRig()
+        // Slice 2b: the slow undo waits for the delete's rebuild before its swap, and this test pins that. The quick undo waits for
+        // nothing; its twin (QuickUndoTamperTwinTests.testQuickUndoAtOnceAfterDeleteSettlesNotesAfterTheRebuild_article) pins the
+        // requirement that no definition is lost.
+        rig.controller.testForceSlowDeleteUndo = true
         let before = EditorFirstFootnoteLifecycleTests.footnoteLabels(in: try rig.assembledMarkdown())
         #expect(before.references.count == 9 && before.definitions.count == 9, "the article has nine footnotes: \(before)")
         let root = try rig.heading(Self.sectionTitle)
@@ -175,6 +179,7 @@ struct EditorFirstRebuildWaitTests {
     @Test("A2: a rebuild that something else started (a citation debounce) after the delete: the undo waits for it before its swap")
     func testUndoWaitsForARebuildSomethingElseStarted_article() async throws {
         let rig = try makeRig()
+        rig.controller.testForceSlowDeleteUndo = true   // slice 2b: the slow undo's entry wait (its quick twin: the stale push is skipped, U-Q26)
         let root = try rig.heading(Self.sectionTitle)
         try rig.setReply(.init(removedLeaderIds: [root.id]))
         // The editor holds the post-delete text when the follow-up work starts, so its footnote resync really cleans the Notes.
@@ -214,6 +219,7 @@ struct EditorFirstRebuildWaitTests {
     @Test("F1: a rebuild that starts after the undo has waited for the delete (before it sets its guard) is waited for before the swap")
     func testUndoWaitsForARebuildThatStartedWhileItWaitedForTheDelete_article() async throws {
         let rig = try makeRig()
+        rig.controller.testForceSlowDeleteUndo = true   // slice 2b: the slow undo's last wait before its swap (the quick undo has none)
         let root = try rig.heading(Self.sectionTitle)
         try rig.setReply(.init(removedLeaderIds: [root.id]))
         rig.controller.testEFSettleHold = { [weak rig] in

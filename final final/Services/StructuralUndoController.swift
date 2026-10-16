@@ -80,6 +80,27 @@ final class StructuralUndoController {
     /// was already waiting on the gate is answered `failed`, not `fallback` (fix round 2a, item 12).
     var efPutBackOpIds: Set<UUID> = []
 
+    // Quick undo of an editor-first section delete (t-94369a83 Phase 4b slice 2b; logic in StructuralUndoController+QuickUndo.swift).
+
+    /// The rows the entry's delete job saw just before it deleted, kept where a reinsert can read them whether or not the entry's slot
+    /// still exists (plan-v2-addendum 2.1). Created at the click, removed by `discardEditorFirstEntry`.
+    var efHolders: [UUID: SectionDeletePayloadHolder] = [:]
+
+    /// The per-entry epoch (plan-v2-addendum 2.2), off the slot: bumped by the delete click, the quick undo and the quick redo. Every
+    /// settle captures it when it starts and re-checks it before each resync and push; a discard does not touch it.
+    var efOpEpoch: [UUID: Int] = [:]
+
+    /// The registry key of the entry's latest delete job: nil for the first job (registered under the entry's own id), a fresh id for
+    /// a quick redo's job (`EFJobRegistry.register` hands back the record already there for a repeated id).
+    var efLatestJobKey: [UUID: UUID] = [:]
+
+    /// Every fresh registry key an entry has used (each reinsert, each redo job), forgotten when the entry is discarded.
+    var efJobKeys: [UUID: [UUID]] = [:]
+
+    /// The value of `EditorViewState.structuralOutOfQueueGeneration` when the entry was recorded and at each quick redo: the quick undo
+    /// is eligible only while it is unchanged (plan-v3-addendum A1).
+    var efRecordedStructGeneration: [UUID: Int] = [:]
+
     /// Shows a document-integrity alert (UX contract 4.3). Set by ContentView, which owns the alert's presentation state.
     var presentAlert: ((SectionOperationAlert) -> Void)?
 
@@ -131,6 +152,30 @@ final class StructuralUndoController {
     /// has by then waited for the delete's job and settle) and BEFORE the undo's last wait for running rebuilds. A test starts a
     /// stand-in rebuild here to prove that the last wait exists (fix round 8, F1).
     var testAfterUndoSnapshotResolved: (() async -> Void)?
+
+    /// Test-only (slice 2b): an undo of an editor-first section delete never takes the quick path (the old slow undo runs), the way
+    /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N` does in a UI run.
+    var testForceSlowDeleteUndo = false
+
+    /// Test-only (slice 2b, verdict-v3 T1): awaited in the quick undo after the restore reply has been applied and before the reinsert
+    /// is reserved (the reinsert's unsettled marker is already registered). A test starts a flush here.
+    var testQuickUndoAfterRestore: (() async -> Void)?
+
+    /// Test-only (slice 2b): awaited between the reinsert holding its place in the queue and the call that lets the editor queue
+    /// typing again. Block-sync is paused and the writer is free meanwhile.
+    var testQuickUndoResumeHold: (() async -> Void)?
+
+    /// Test-only (slice 2b): runs first in the reinsert's body and holds the writer's thread until it returns (see
+    /// `SectionReinsertJob.bodyHold`).
+    var testReinsertBodyHold: (@Sendable () -> Void)?
+
+    /// Test-only (slice 2b): awaited at the start of the reinsert's settle, after its job future has resolved.
+    var testReinsertSettleHold: (() async -> Void)?
+
+    /// Test-only (VM-run round): stands in for the editor's next animation frame in the quick undo's deferred sidebar update. While
+    /// set, the update waits for this closure (a test holds it to see the sidebar NOT yet updated, then releases it); without it a
+    /// controller with no web view updates the sidebar at once (there is nothing to paint).
+    var testNextPaintWait: (() async -> Void)?
     #endif
 
     func configure(
@@ -157,6 +202,7 @@ final class StructuralUndoController {
             self?.efSlots.remove(opId)
             self?.editorState?.efJobRegistry.forget(opId)
             self?.efRecordedGeneration[opId] = nil
+            self?.forgetQuickUndoState(opId)   // slice 2b: the holder, the job keys and the generation; NOT the epoch
         }
     }
 
@@ -505,6 +551,7 @@ final class StructuralUndoController {
         }
         // Plan D7: this mutation wrote the block table outside the writer's queue.
         editorState.outOfQueueWriteGeneration &+= 1
+        editorState.structuralOutOfQueueGeneration &+= 1   // slice 2b: a structural write (duplicate, restore, reorder, ...)
         spy(mutationSpyName)
         trace.log("after database mutation (\(mutationSpyName))")
 
@@ -1243,7 +1290,12 @@ final class StructuralUndoController {
         // `fallback` makes the editor replay a plain text undo, which would silently remove the user's latest typing just before the
         // closing save writes it (fix round 2a, item 3; amends A3/A21). `cancelled` clears the latch and the held presses and leaves
         // the document alone.
-        let outcome = await runStructuralCommand(label: "\(direction)", heldPress: held, cancelled: UndoResult.cancelled) {
+        //
+        // Slice 2b (verdict-v1 S8): Cmd-Z and Cmd-Shift-Z take the gate WITHOUT the rebuild wait; `resolveOutcome` decides quick or slow
+        // inside the gate, from fresh state, and the slow branch awaits the running rebuilds first, exactly as the gate used to.
+        let outcome = await runStructuralCommand(
+            label: "\(direction)", heldPress: held, waitsForRebuilds: false, cancelled: UndoResult.cancelled
+        ) {
             await resolveOutcome(opId: opId, direction: direction)
         }
         await sendOutcome(opId: opId, direction: direction, outcome: outcome.jsOutcomeString)
@@ -1309,6 +1361,11 @@ final class StructuralUndoController {
     private func resolveOutcome(opId: String, direction: UndoDirection) async -> UndoResult {
         guard let unifiedUndoService else { return .fallback }
         guard let uuid = UUID(uuidString: opId) else { return .fallback }
+        // Slice 2b: an editor-first section delete that can be put back in the editor at once is (StructuralUndoController+QuickUndo.swift).
+        // Anything else waits for the running rebuilds first (what the gate did before it stopped waiting for undo and redo), then
+        // takes today's path unchanged.
+        if let quick = await resolveQuickPath(opId: uuid, direction: direction) { return quick }
+        await editorState?.awaitNoRunningRebuilds(label: "before \(direction)")
         // The D6 put-back already removed this entry (its delete job did not apply): nothing to undo, and a text undo would remove
         // typing, so `failed` ("report it, touch nothing"), not `fallback` (fix round 2a, item 12).
         if efPutBackOpIds.contains(uuid) { return .failed }
@@ -1380,6 +1437,8 @@ final class StructuralUndoController {
         defer { undoingToast?.stop() }
         let undoSnapshotId: String
         if entry.isEditorFirstDelete {
+            // Slice 2b (UX contract 4.2, wording approved in verdict-v1 item 20): undoing or redoing a section delete in Rich Text is
+            // instant and shows nothing; only when it has to take this slower route does it show "Undoing..." after one second.
             undoingToast = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.undoingMessage)
             switch await resolveEditorFirstUndoSnapshot(for: entry) {
             case .snapshot(let slotSnapshotId): undoSnapshotId = slotSnapshotId
@@ -1542,6 +1601,7 @@ final class StructuralUndoController {
         }
         trace.log("after restoreEntireProject")
         editorState.outOfQueueWriteGeneration &+= 1   // plan D7: a whole-document write outside the writer's queue
+        editorState.structuralOutOfQueueGeneration &+= 1   // slice 2b: a structural one, which puts fresh ids on the whole project
 
         guard await settleAfterDBRestore(db: db, pid: pid, repushManagedRegions: repushManagedRegions) else {
             DebugLog.log(
@@ -1632,6 +1692,12 @@ final class StructuralUndoController {
         if entry.kind == .documentNoteDelete {
             return await performDocumentNoteRedo(entry, db: db)
         }
+        // Slice 2b (verdict-v3 D7): an editor-first delete that was undone the quick way has no redo snapshot and must NEVER be sent to
+        // the slow redo (`.fallback` would make the editor replay a plain text redo): refused with the notice, never wrong.
+        if entry.isEditorFirstDelete, entry.redoSnapshotId == nil {
+            showUndoQueueDroppedWarning()
+            return .failed
+        }
         guard let redoSnapshotId = entry.redoSnapshotId else { return .fallback }
         // t-94369a83 Phase 4b slice 2a (addendum A20): the redo of an editor-first delete re-pushes the database's Notes and
         // Bibliography after its settle too, exactly as its undo does.
@@ -1719,6 +1785,7 @@ final class StructuralUndoController {
         }
         trace.log("after restoreEntireProject")
         editorState.outOfQueueWriteGeneration &+= 1   // plan D7: a whole-document write outside the writer's queue
+        editorState.structuralOutOfQueueGeneration &+= 1   // slice 2b: a structural one, which puts fresh ids on the whole project
 
         guard await settleAfterDBRestore(db: db, pid: pid, repushManagedRegions: repushManagedRegions) else {
             DebugLog.log(
@@ -2217,7 +2284,7 @@ final class StructuralUndoController {
         return true
     }
 
-    private func evalBool(_ js: String) async -> Bool {
+    func evalBool(_ js: String) async -> Bool {   // internal since slice 2b: the quick undo asks the editor one yes/no question
         #if DEBUG
         if let override = testEvalBoolOverride { return override(js) }
         #endif

@@ -29,7 +29,9 @@ extension ContentView {
         // the unified log stream the XCUITest run captures, right alongside the matching
         // "typed chunk" markers RebuildFlushTypingRaceE2ETests.swift logs from its own process.
         NSLog("[RebuildFlushRace] hold-window START delayMs=\(delayMs)")
+        DebugLog.log(.undo, "[RebuildPushHold] start ms=\(delayMs)")   // also in diagnostic.log, like the other quick-undo lines
         try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+        DebugLog.log(.undo, "[RebuildPushHold] end")
         NSLog("[RebuildFlushRace] hold-window END")
     }
 
@@ -106,6 +108,7 @@ extension ContentView {
                 DebugLog.log(.bib, "[CV:bibRebuild] AFTER poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
             }
 
+            let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
@@ -128,7 +131,15 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks,
                 managedBlockIds: result.managedBlockIds,
                 preserveUserBlocks: true,
-                traceKind: .bibliography)
+                traceKind: .bibliography,
+                stillWanted: { editorState.rebuildPushStillWanted(rebuildStamp) })
+            // Slice 2b: a quick undo or redo started since the read (its restore replaced the push, or the push was skipped).
+            if await editorState.skipStaleRebuildTail(rebuildStamp, kind: "bibliography", blockSync: blockSyncService) {
+                updateSourceContentIfNeeded()
+                editorState.isResettingContent = false
+                editorState.contentState = .idle
+                return
+            }
             // t-6a0d195d: the push merges the rebuild's content with whatever the live editor
             // held for user blocks, so the markdown actually pushed can differ from
             // result.markdown (typing in the window between the DB read above and this push
@@ -388,6 +399,7 @@ extension ContentView {
             await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
             FootnoteDiag.log("notes rebuild: forced poll done after \(FootnoteDiag.nowMs() - diagStart)ms")
 
+            let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
@@ -410,8 +422,16 @@ extension ContentView {
                 expectedBlocks: result.expectedBlocks,
                 managedBlockIds: result.managedBlockIds,
                 preserveUserBlocks: true,
-                traceKind: .notes)
+                traceKind: .notes,
+                stillWanted: { editorState.rebuildPushStillWanted(rebuildStamp) })
             FootnoteDiag.log("notes rebuild: editor push done pushDuration=\(FootnoteDiag.nowMs() - pushStart)ms blocks=\(result.blockIds.count)")
+            // Slice 2b: a quick undo or redo started since the read (see handleBibliographySectionChanged).
+            if await editorState.skipStaleRebuildTail(rebuildStamp, kind: "notes", blockSync: blockSyncService) {
+                updateSourceContentIfNeeded()
+                editorState.isResettingContent = false
+                editorState.contentState = .idle
+                return
+            }
             // t-6a0d195d: see handleBibliographySectionChanged's matching comment above -- the
             // merged push's actual markdown can differ from result.markdown.
             if let merged, merged != result.markdown {

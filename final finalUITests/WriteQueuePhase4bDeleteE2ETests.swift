@@ -1018,8 +1018,12 @@ extension Phase4bDelHarness {
 
     func dbInt(_ sql: String) -> Int? { Int(dbText(sql)) }
 
+    /// The heading rows whose text contains `title`, ANCHORED to the heading marker (`# <title>`): a number-prefixed subsection title such as
+    /// "1.2.2 Lantern and Signal" is also a substring of the same title in chapters 10 to 12 ("### 11.2.2 Lantern and Signal": every chapter
+    /// repeats the subsection words), which made the count 2 on the twelve-chapter book and a wait for 1 never end. Only stricter than the
+    /// plain substring it replaces; a title that is a prefix of a longer heading ("... copy") still counts, as the duplicate checks rely on.
     func headingRows(_ title: String) -> Int {
-        dbInt("SELECT count(*) FROM block WHERE blockType = 'heading' AND instr(markdownFragment, '\(FixtureDatabase.escape(title))') > 0;") ?? -1
+        dbInt("SELECT count(*) FROM block WHERE blockType = 'heading' AND instr(markdownFragment, '# \(FixtureDatabase.escape(title))') > 0;") ?? -1
     }
 
     func waitForHeadingRows(_ title: String, equalTo wanted: Int, timeout: TimeInterval) -> Int {
@@ -1236,9 +1240,12 @@ extension Phase4bDelHarness {
     /// place would make every later assertion mean nothing.
     /// `paragraph` (default the anchor) names another plain one-line paragraph near the top of the document to put the caret at the end of
     /// (the rapid-undo scenarios' "Join01 line of the fixture document."); it must be unique and begin the leaf's text.
+    /// `exactLine` (default nil: today's behaviour) is that paragraph's complete one-run text, found by one exact-value query before the
+    /// index walk (speed only: the walk reached "Inner01" in 1000-2000 s on the twelve-chapter book).
     @discardableResult
-    func placeCaretAtAnchorEnd(paragraph prefix: String = Phase4bDelHarness.anchorPrefix) -> Bool {
-        let placed = app.placeCaretByClicking(paragraphStartingWith: prefix, atEnd: true, runProbe: true, findTimeout: capped(90))
+    func placeCaretAtAnchorEnd(paragraph prefix: String = Phase4bDelHarness.anchorPrefix, exactLine: String? = nil) -> Bool {
+        let placed = app.placeCaretByClicking(
+            paragraphStartingWith: prefix, atEnd: true, runProbe: true, findTimeout: capped(90), exactLine: exactLine)
         note("CARET at the end of the \"\(prefix)\" paragraph: probe \(placed.probe) after \(placed.attempts.count) click attempt(s)")
         guard placed.confirmed else {
             fail("the caret could not be placed at the end of the \"\(prefix)\" paragraph (probe: \(placed.probe); \(placed.attempts))")

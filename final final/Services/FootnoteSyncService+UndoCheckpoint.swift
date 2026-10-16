@@ -132,11 +132,20 @@ extension FootnoteSyncService {
     /// computed from as the last content seen with the committed refs, when that is true of it (a renumbering write's
     /// own content still carries the old labels), so the next delete has a "before" even if no keystroke has happened
     /// since the open-time write.
-    func committedNotesWrite(undoCheckpoint: FootnoteUndoCheckpoint?, content: String? = nil) {
+    ///
+    /// `scheduledGeneration` (slice 2b, plan-v3 D2): the `syncGeneration` the write was scheduled under. While a quick undo's hold is
+    /// active (`holdUndoCheckpoints`), a write scheduled at or below the generation the hold captured records no checkpoint: it is a
+    /// delete's own resync, the section is back on the screen, and its checkpoint would bring a footnote's old text back over the
+    /// restored one. A write scheduled after the quick undo records its checkpoint as always.
+    func committedNotesWrite(undoCheckpoint: FootnoteUndoCheckpoint?, content: String? = nil, scheduledGeneration: Int? = nil) {
         if let content, Self.extractFootnoteRefs(from: content) == lastKnownRefs {
             lastContentWithKnownRefs = content
         }
         guard var checkpoint = undoCheckpoint else { return }
+        if let hold = undoCheckpointHold, let scheduledGeneration, scheduledGeneration <= hold.belowOrAt {
+            FootnoteDiag.log("checkpoint withheld: a quick undo's hold is active (write generation \(scheduledGeneration) <= \(hold.belowOrAt))")
+            return
+        }
         checkpoint.committedRefs = lastKnownRefs
         checkpoint.committedNumbering = checkpoint.appliedRenameMap.isEmpty ? .old : .new
         undoCheckpoints.append(checkpoint)
@@ -154,9 +163,52 @@ extension FootnoteSyncService {
         undoCheckpoints = []
     }
 
+    /// A quick undo of a section delete (slice 2b, plan-v2-addendum 4.4): drops every checkpoint recorded since the delete was clicked
+    /// (`marker` is the set of checkpoint ids that existed then). The restored text brings the deleted footnotes back, so the
+    /// definitions the delete's resync removed are restored by the reinsert, and a checkpoint of that resync would only get in the way.
+    func dropUndoCheckpoints(notIn marker: Set<UUID>) {
+        let before = undoCheckpoints.count
+        undoCheckpoints.removeAll { !marker.contains($0.id) }
+        FootnoteDiag.log("quick undo: checkpoints dropped=\(before - undoCheckpoints.count) kept=\(undoCheckpoints.count)")
+    }
+
+    /// Starts the hold for `token` (plan-v3 D2): from now on a write scheduled at or below the current `syncGeneration` records no
+    /// checkpoint when it commits (a delete-resync write that had already reserved before the quick undo commits after it).
+    func holdUndoCheckpoints(token: UUID) {
+        undoCheckpointHold = (token: token, belowOrAt: syncGeneration)
+    }
+
+    /// Ends the burst that is waiting for its deadline, if any (the three lines `checkAndUpdateFootnotes`' equal-refs branch runs),
+    /// WITHOUT bumping `syncGeneration`. A quick undo calls this in its first synchronous stretch (plan-v3 D1): the burst was
+    /// computed from the post-delete document, and the restored text will schedule its own.
+    func cancelPendingDebounce() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        pendingUpdate = nil
+    }
+
+    /// The quick undo's reinsert puts the pre-delete Notes rows back without telling this service, so `lastRenumberedHash` (the hash of
+    /// the refs the delete's resync committed, e.g. 1..45) no longer describes the table (1..54 again). A redo that deletes the same
+    /// section again computes the same refs, hashes to the same value and `perform` returns at its `contentHash != lastRenumberedHash`
+    /// guard: no renumber, the Notes keep all their definitions, for good. Called wherever the Notes rows have just been put back (the
+    /// quick undo's restore, the reinsert's settle, the quick redo's first stretch, the C5 fallback's flush). It clears the hash and
+    /// NOTHING else: `lastKnownRefs` stays (the checkpoint matcher and `makeUndoCheckpoint` were reviewed against it), and the next
+    /// `perform` that applies commits both again.
+    func forgetCommittedNotesState() {
+        lastRenumberedHash = 0
+        FootnoteDiag.log("committed Notes state forgotten (rows were put back by a quick undo): lastRenumberedHash cleared")
+    }
+
+    /// Ends the hold started with `token`. A different token's hold (a later quick undo's) is left alone.
+    func releaseUndoCheckpointHold(token: UUID) {
+        guard undoCheckpointHold?.token == token else { return }
+        undoCheckpointHold = nil
+    }
+
     /// `reset()`: a completed close, switch or open ends the session the checkpoints belong to.
     func resetUndoState() {
         FootnoteDiag.log("reset (project closed, switched or opened): checkpoints cleared=\(undoCheckpoints.count) inFlight=\(inFlightCount)")
+        undoCheckpointHold = nil
         undoCheckpoints = []
         burstStates = []
         lastChecked = nil

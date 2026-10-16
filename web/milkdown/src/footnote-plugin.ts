@@ -5,7 +5,6 @@
 
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx, MilkdownPlugin } from '@milkdown/kit/ctx';
-import { closeHistory } from '@milkdown/kit/prose/history';
 import { InputRule, inputRules } from '@milkdown/kit/prose/inputrules';
 import type { Node } from '@milkdown/kit/prose/model';
 import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
@@ -15,6 +14,7 @@ import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 import { getAllBlockIds } from './block-id-plugin';
 import { getDocumentFootnoteCount, getEditorInstance, getIsZoomMode, setZoomFootnoteState } from './editor-state';
+import { dispatchDerivedCorrection } from './redo-branch';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import { withSettingContent } from './typewriter-plugin';
@@ -952,18 +952,13 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     // Deliberately NOT addToHistory:false -- the renumber stays its own text-undo step (the
     // footnote undo-checkpoint design relies on "undo the renumber" being a separate Cmd-Z).
     //
-    // History boundary on BOTH sides (t-dfc4fb02, the same pattern as api-content.ts's overlapping heading-level
-    // corrections). Leading: closeHistory resets prevTime to 0 BEFORE the renumber applies, so it can never join the
-    // user's still-open typing group. Trailing: without the second, empty closeHistory dispatch, the state left by the
-    // renumber stores prevTime = the renumber's own time, so the user's very next keystroke within newGroupDelay (500 ms)
-    // at an adjacent position (right after the first renumbered marker, "user resumes typing right where the correction
-    // just happened" -- the common case, not an edge case) would join the renumber's own undo group, and the one Cmd-Z
-    // that should take back only the typing would take back the renumber with it (and the section's saved copy, which
-    // absorbed the renumber, would then no longer match the document).
-    tr.setMeta('derivedCorrection', true);
+    // History boundary on BOTH sides, and the redo branch kept across the recorded step (the editor would otherwise lose
+    // every sentence the user had just undone): see `dispatchDerivedCorrection` (t-dfc4fb02; redo-branch.ts). The history
+    // boundary matters here as it does for api-content.ts's overlapping heading-level corrections: the one Cmd-Z that should
+    // take back only the typing must not take back the renumber with it (and the section's saved copy, which absorbed the
+    // renumber, would then no longer match the document).
     withSettingContent(() => {
-      view.dispatch(closeHistory(tr));
-      view.dispatch(closeHistory(view.state.tr));
+      dispatchDerivedCorrection(view, tr);
     });
   }
 

@@ -9,7 +9,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm, remarkGFMPlugin } from '@milkdown/kit/preset/gfm';
 import { isHistoryTransaction } from '@milkdown/kit/prose/history';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
-import { $prose, getMarkdown } from '@milkdown/kit/utils';
+import { $prose } from '@milkdown/kit/utils';
 import { installCmdHeldTracking } from '../../shared/cmd-hover-class';
 import {
   getTypewriterTestState,
@@ -119,7 +119,6 @@ import {
   getPendingBlockContent,
   isEditorMounted,
   setContentPushTimer,
-  setCurrentContent,
   setEditorInstance,
   setEditorMounted,
   setPendingBlockContent,
@@ -174,7 +173,14 @@ import {
 import { cancelAnnotationEditFromLadder, isAnnotationEditPopupOpen } from './annotation-edit-popup';
 import { insertEquation, insertEquationDialog } from './api-math';
 import { deleteSectionEditorFirst } from './api-section-delete';
+import {
+  quickUndoLiveDiffersFromRestored,
+  redoSectionDeleteEditorFirst,
+  resumeSyncAfterQuickUndo,
+  undoSectionDeleteEditorFirst,
+} from './api-section-undo';
 import { cancelCitationEdit, isCitationEditPopupOpen } from './citation-edit-popup';
+import { pushLiveContentToSwift } from './content-push';
 import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { cancelMathEdit, isMathEditPopupOpen } from './math-edit-popup';
 import { mathPlugin } from './math-plugin';
@@ -437,11 +443,7 @@ async function initEditor() {
           }
           const wasUndo = pendingWasUndo;
           pendingWasUndo = false;
-          const md = editorInstance.action(getMarkdown());
-          setCurrentContent(md);
-          const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
-          syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
-          (window as any).webkit?.messageHandlers?.contentChanged?.postMessage({ content: md, wasUndo });
+          pushLiveContentToSwift(wasUndo);
         }, 50)
       );
     }
@@ -768,6 +770,12 @@ window.FinalFinal = {
   finishStructuralSwapSettle,
   // Slice 2a (api-section-delete.ts): editor-first section delete, one synchronous JavaScript turn.
   deleteSectionEditorFirst,
+  // Slice 2b (api-section-undo.ts): the quick undo and quick redo of that delete, and the resume that hands block-sync back
+  // after the quick undo's reinsert holds its writer ticket. See web-api-published.md in the run folder for the reply shapes.
+  undoSectionDeleteEditorFirst,
+  redoSectionDeleteEditorFirst,
+  resumeSyncAfterQuickUndo,
+  quickUndoLiveDiffersFromRestored,
   cancelPendingInsertions,
   // N4 (Phase B remediation plan): force-closes editing popups, clears find/replace state.
   closeEditingPopupsAndClearBoundaryState,

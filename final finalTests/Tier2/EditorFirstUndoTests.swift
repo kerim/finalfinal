@@ -95,6 +95,8 @@ struct EditorFirstUndoTests {
         await undoTwo.value
 
         #expect(replies(rig) == ["undo performed", "redo performed", "undo performed"], "got \(replies(rig))")
+        // Slice 2b: a quick undo replies before its reinsert has applied; the database is read once everything has settled.
+        _ = await rig.waitUntilSettled()
         let texts = Set(try rig.blocks().map(\.textContent))
         #expect(texts.contains("Section B"), "the last undo brings Section B back")
         #expect(!texts.contains("Section A"), "Section A, deleted first, stays deleted")
@@ -110,6 +112,7 @@ struct EditorFirstUndoTests {
         DelayedProgressToast.defaultDelay = .milliseconds(20)
         defer { DelayedProgressToast.defaultDelay = savedDelay }
         let rig = try EditorFirstRig(markdown: Self.fourSections)
+        rig.controller.testForceSlowDeleteUndo = true   // slice 2b: the "Undoing..." notice belongs to the slow path only (UX contract 4.2)
         let sectionA = try rig.heading("Section A")
         try rig.setReply(.init(removedLeaderIds: [sectionA.id]))
         let outcome = await rig.controller.performSectionDelete(rootId: sectionA.id)
@@ -139,6 +142,7 @@ struct EditorFirstUndoTests {
     @Test("Item 6: the merged text the re-push hands back becomes the content (like the rebuild handlers), so it is not pushed over again")
     func testUndoKeepsTheEditorsMergedTextAsContent() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
+        rig.controller.testForceSlowDeleteUndo = true   // slice 2b: this one pins the slow path's own re-push (its quick twin is below)
         let sectionA = try rig.heading("Section A")
         try rig.setReply(.init(removedLeaderIds: [sectionA.id]))
         let outcome = await rig.controller.performSectionDelete(rootId: sectionA.id)
@@ -180,7 +184,8 @@ struct EditorFirstUndoTests {
         let duplicateEntry = try #require(rig.unifiedUndo.undoStack.last)
         #expect(duplicateEntry.id != deleteEntry.id)
 
-        // 3. Cmd-Z undoes the duplicate; 4. Cmd-Z undoes the delete.
+        // 3. Cmd-Z undoes the duplicate; 4. Cmd-Z undoes the delete. (Slice 2b: the duplicate in between wrote the table outside the
+        // queue, so the delete's undo is NOT eligible for the quick path (U-Q10) and this test still pins the slow path unchanged.)
         await press(rig, .undo, duplicateEntry.id)
         await press(rig, .undo, deleteEntry.id)
         let firstRedoSnapshot = try #require(rig.unifiedUndo.redoStack.last?.redoSnapshotId)
@@ -217,6 +222,7 @@ struct UndoAfterInterleavedRebuildTests {
     @Test("A20: after the slow undo of an editor-first delete settles, the database's Notes and Bibliography are pushed into the editor")
     func testUndoReappliesDatabaseManagedRegions_book6() async throws {
         let rig = try EditorFirstRig(markdown: ComplexDocumentFixture.book6.editorMarkdown, configureSyncServices: false)
+        rig.controller.testForceSlowDeleteUndo = true   // slice 2b: pins the slow path's order (quick twin: QuickUndoTamperTwinTests)
         let chapter = try #require(try rig.chapterHeadings().first)
         let managedIds = Set(try rig.db.fetchManagedBlockIds(projectId: rig.pid))
         #expect(!managedIds.isEmpty, "the document must have flagged Notes and Bibliography rows")

@@ -30,6 +30,9 @@ extension FootnoteSyncService {
     /// Called for a change of the references that nothing else consumed. Starts a burst (fixing its deadline and
     /// starting the one timer) or, inside a burst, replaces the waiting snapshot.
     func scheduleBurst(refs: [String], projectId: String, fullContent: String) {
+        // Slice 2b (code review C-M2): a quick undo's checkpoint hold withholds writes scheduled AT OR BELOW the generation it captured.
+        // A burst scheduled after the quick undo must therefore carry a higher one (`state == .idle` here, so no write is in flight).
+        if let hold = undoCheckpointHold, syncGeneration <= hold.belowOrAt { syncGeneration += 1 }
         let snapshot = PendingFootnoteUpdate(
             refs: refs, projectId: projectId, fullContent: fullContent, generation: syncGeneration)
         // A burst is waiting while there is a snapshot and a live (not cancelled) timer for it.

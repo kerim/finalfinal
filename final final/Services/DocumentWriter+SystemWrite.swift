@@ -126,7 +126,8 @@ struct SystemWriteBody<R: Sendable>: Sendable {
 /// queued whole-document save a close/switch/quit takes through the writer, Phase 3a-1b step 6:
 /// `EditorViewState.runLifecycleFlush` via `BlockSyncService.performLifecycleWholeDocumentWrite`), and
 /// `.sectionDelete` (t-94369a83 Phase 4b, slice 2a: the queued job behind an editor-first section
-/// delete, `SectionDeleteJob`; like every kind but FB it never stamps rows or bumps the epoch).
+/// delete, `SectionDeleteJob`; like every kind but FB it never stamps rows or bumps the epoch), and `.sectionReinsert` (slice 2b:
+/// the queued job behind a quick undo of that delete, `SectionReinsertJob`; same rules as `.sectionDelete`).
 enum SystemWriteKind: Sendable, Equatable {
     case bibliographyUpdate
     case bibliographyRemoval
@@ -137,6 +138,7 @@ enum SystemWriteKind: Sendable, Equatable {
     case headingLevels
     case lifecycleWholeDocument
     case sectionDelete
+    case sectionReinsert
 }
 
 // MARK: - No nesting (§1.3)

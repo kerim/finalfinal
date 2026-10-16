@@ -2232,11 +2232,16 @@ extension BlockSyncService {
         /// handlers only. While tracing is on it times the push (`start`/`end <kind>-rebuild-push`, with the document size in
         /// characters) and is sent to the editor so it can name the rebuild when it drops a pending edit; while tracing is off
         /// it is ignored and the JS call is byte-for-byte what it was.
-        traceKind: StructuralTrace.RebuildKind? = nil
+        traceKind: StructuralTrace.RebuildKind? = nil,
+        /// Slice 2b (plan-v4-addendum 3): asked twice, synchronously, with no `await` between the question and the push: before the
+        /// DEBUG hook and again right before `evaluateJavaScript`. False means a quick undo or redo has started since the caller read
+        /// the database, so nothing is pushed and nil is returned (the caller's stale-rebuild tail reads the editor's own text).
+        stillWanted: (() -> Bool)? = nil
     ) async -> String? {
         #if DEBUG
         // Test-only (t-94369a83 Phase 4b slice 2a): stands in for the JavaScript push, which has no `evaluateJS` seam.
         if let testSetContentHook {
+            guard stillWanted?() ?? true else { return nil }
             return await testSetContentHook(markdown, blockIds, managedBlockIds, preserveUserBlocks)
         }
         #endif
@@ -2302,6 +2307,12 @@ extension BlockSyncService {
         }
         let options = optionParts.isEmpty ? "" : ", {\(optionParts.joined(separator: ", "))}"
         let js = "window.FinalFinal.setContentWithBlockIds(`\(escapedMarkdown)`, JSON.parse(`\(escapedIds)`)\(options))"
+
+        // Right before the push, in the same synchronous stretch (nothing suspends between this check and `evaluateJavaScript`).
+        guard stillWanted?() ?? true else {
+            DebugLog.log(.undo, "[BlockSyncService] setContentWithBlockIds: push skipped (stale: a quick undo or redo started since the read)")
+            return nil
+        }
 
         // Under preserveUserBlocks, the JS side returns the ACTUAL merged markdown it pushed
         // (which can differ from `markdown` -- the merge keeps in-flight user typing the DB

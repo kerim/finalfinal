@@ -305,7 +305,10 @@ final class BibliographySyncService {
     /// `performBibliographyUpdate` directly, which has no such guard of its own --
     /// bypassing it and overwriting the user's manual edit. Same guard, same place a
     /// caller would expect it.
-    func resyncNow(citekeys: [String], projectId: String) async {
+    ///
+    /// Slice 2b (plan-v2-addendum 4.2): `stillWanted`, when given, is asked after the idle wait (nothing is touched when it says no) and
+    /// is part of the write's own `stillWanted` at its reservation, so a delete's settle that a quick undo has superseded writes nothing.
+    func resyncNow(citekeys: [String], projectId: String, stillWanted: (() -> Bool)? = nil) async {
         guard isAutoUpdateEnabled else {
             DebugLog.log(.bib, "[BibliographySyncService] resyncNow: skipped -- auto-update is disabled " +
                 "(user has manually edited the bibliography)")
@@ -317,17 +320,16 @@ final class BibliographySyncService {
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
+        guard stillWanted?() ?? true else { DebugLog.log(.undo, "[BibliographySyncService] resyncNow: superseded by a quick undo"); return }
         guard state == .idle else {
             DebugLog.alwaysPersisted(
                 "[BibliographySyncService] resyncNow: could not run -- a write was still in flight after the " +
                 "2s wait; leaving it and any pending debounced update untouched rather than superseding them")
             return
         }
-        debounceTask?.cancel()
-        debounceTask = nil
-        pendingUpdate = nil
+        cancelPendingDebounce()   // the same three lines as before (cancel the timer, drop the waiting update), in the extension below
         syncGeneration += 1
-        await performBibliographyUpdate(citekeys: citekeys, projectId: projectId, scheduledGeneration: syncGeneration)
+        await performBibliographyUpdate(citekeys: citekeys, projectId: projectId, scheduledGeneration: syncGeneration, stillWanted: stillWanted)
     }
 
     /// Regenerate bibliography (manual trigger)
@@ -384,7 +386,7 @@ final class BibliographySyncService {
     /// gate exactly where it was, letting a retry (or a later natural edit reproducing
     /// the same citekeys) see the change as still-pending rather than already-applied.
     func performBibliographyUpdate(
-        citekeys: [String], projectId: String, scheduledGeneration: Int, overrideContent: String? = nil
+        citekeys: [String], projectId: String, scheduledGeneration: Int, overrideContent: String? = nil, stillWanted extra: (() -> Bool)? = nil
     ) async {
         // Deduplicate citekeys early - a citation may appear multiple times in document
         var seen = Set<String>()
@@ -448,7 +450,7 @@ final class BibliographySyncService {
         // Remove bibliography if no citations. `lastKnownCitekeys` is committed inside
         // `removeBibliographyBlock` itself now, only once its own write actually applies.
         guard !uniqueCitekeys.isEmpty else {
-            await removeBibliographyBlock(projectId: projectId, scheduledGeneration: scheduledGeneration)
+            await removeBibliographyBlock(projectId: projectId, scheduledGeneration: scheduledGeneration, stillWanted: extra)
             return
         }
 
@@ -498,7 +500,7 @@ final class BibliographySyncService {
             identity: identity, kind: .bibliographyUpdate,
             stillWanted: { [weak self] in
                 guard let self else { return false }
-                return scheduledGeneration == self.syncGeneration && self.database === identity.database
+                return scheduledGeneration == self.syncGeneration && self.database === identity.database && (extra?() ?? true)
             },
             body: { db in
                 try BibliographySyncService.writeBibliographyRows(db: db, content: bibliographyContent, projectId: projectId)
@@ -627,7 +629,7 @@ final class BibliographySyncService {
     /// `performBibliographyUpdate` above -- same outcome handling, same `.noWriter`
     /// direct-write fallback, same retry-on-any-other-outcome rule (keyed by the empty
     /// citekey set, since a removal has none).
-    private func removeBibliographyBlock(projectId: String, scheduledGeneration: Int) async {
+    private func removeBibliographyBlock(projectId: String, scheduledGeneration: Int, stillWanted extra: (() -> Bool)? = nil) async {
         guard let database else { return }
 
         guard let systemWriter else {
@@ -640,7 +642,7 @@ final class BibliographySyncService {
             identity: identity, kind: .bibliographyRemoval,
             stillWanted: { [weak self] in
                 guard let self else { return false }
-                return scheduledGeneration == self.syncGeneration && self.database === identity.database
+                return scheduledGeneration == self.syncGeneration && self.database === identity.database && (extra?() ?? true)
             },
             body: { db in
                 try BibliographySyncService.writeBibliographyRemoval(db: db, projectId: projectId)
@@ -708,5 +710,25 @@ extension Block {
         let trimmedFragment = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedFragment == BlockParser.bibliographyStartMarker { return true }
         return trimmedFragment.isEmpty && blockType != .heading
+    }
+}
+
+extension BibliographySyncService {
+    /// Ends the update that is waiting for its debounce, if any (the three lines `resyncNow` runs), WITHOUT bumping `syncGeneration`.
+    /// A quick undo of a section delete calls this in its first synchronous stretch (plan-v3 D1): what was waiting was computed from
+    /// the post-delete document, and the restored text schedules its own. (An extension in this file: the fields are `private`.)
+    func cancelPendingDebounce() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        pendingUpdate = nil
+    }
+
+    /// A quick undo's reinsert puts the pre-delete Bibliography rows back without telling this service, so `lastGeneratedHash` (the hash
+    /// of the content the delete's resync committed) no longer describes the table. A redo that deletes the same section again generates
+    /// the same content, `performBibliographyUpdate` sees `contentHash == lastGeneratedHash` and returns without writing: the
+    /// Bibliography keeps the deleted chapter's entries for good. Called wherever the rows have just been put back (the same four points
+    /// as `FootnoteSyncService.forgetCommittedNotesState`). Clears the hash and nothing else; the next write that applies commits it.
+    func forgetCommittedBibliographyState() {
+        lastGeneratedHash = 0
     }
 }
