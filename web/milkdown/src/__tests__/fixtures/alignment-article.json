@@ -1,0 +1,752 @@
+{
+  "about" : "Written by RestorePrimitivesTests.testWriteAlignmentFixtures from StructuralUndoController.editorPayload(for:) (the payload a restore sends the editor); read by restore-payload-alignment.test.ts (V2-3). Regenerate by hand: run that one test with TEST_RUNNER_FF_WRITE_ALIGNMENT_FIXTURES=1 in the environment, then commit the files.",
+  "bibBoundaryEndIndex" : 138,
+  "bibBoundaryIndex" : 102,
+  "blockIds" : [
+    "blk-0001",
+    "blk-0002",
+    "blk-0003",
+    "blk-0004",
+    "blk-0005",
+    "blk-0006",
+    "blk-0007",
+    "blk-0008",
+    "blk-0009",
+    "blk-0010",
+    "blk-0011",
+    "blk-0012",
+    "blk-0013",
+    "blk-0014",
+    "blk-0015",
+    "blk-0016",
+    "blk-0017",
+    "blk-0018",
+    "blk-0019",
+    "blk-0020",
+    "blk-0021",
+    "blk-0022",
+    "blk-0023",
+    "blk-0024",
+    "blk-0025",
+    "blk-0026",
+    "blk-0027",
+    "blk-0028",
+    "blk-0029",
+    "blk-0030",
+    "blk-0031",
+    "blk-0032",
+    "blk-0033",
+    "blk-0034",
+    "blk-0035",
+    "blk-0036",
+    "blk-0037",
+    "blk-0038",
+    "blk-0039",
+    "blk-0040",
+    "blk-0041",
+    "blk-0042",
+    "blk-0043",
+    "blk-0044",
+    "blk-0045",
+    "blk-0046",
+    "blk-0047",
+    "blk-0048",
+    "blk-0049",
+    "blk-0050",
+    "blk-0051",
+    "blk-0052",
+    "blk-0053",
+    "blk-0054",
+    "blk-0055",
+    "blk-0056",
+    "blk-0057",
+    "blk-0058",
+    "blk-0059",
+    "blk-0060",
+    "blk-0061",
+    "blk-0062",
+    "blk-0063",
+    "blk-0064",
+    "blk-0065",
+    "blk-0066",
+    "blk-0067",
+    "blk-0068",
+    "blk-0069",
+    "blk-0070",
+    "blk-0071",
+    "blk-0072",
+    "blk-0073",
+    "blk-0074",
+    "blk-0075",
+    "blk-0076",
+    "blk-0077",
+    "blk-0078",
+    "blk-0079",
+    "blk-0080",
+    "blk-0081",
+    "blk-0082",
+    "blk-0083",
+    "blk-0084",
+    "blk-0085",
+    "blk-0086",
+    "blk-0087",
+    "blk-0088",
+    "blk-0089",
+    "blk-0090",
+    "blk-0091",
+    "blk-0092",
+    "blk-0093",
+    "blk-0094",
+    "blk-0095",
+    "blk-0096",
+    "blk-0097",
+    "blk-0098",
+    "blk-0099",
+    "blk-0100",
+    "blk-0101",
+    "blk-0102",
+    "blk-0103",
+    "blk-0104",
+    "blk-0105",
+    "blk-0106",
+    "blk-0107",
+    "blk-0108",
+    "blk-0109",
+    "blk-0110",
+    "blk-0111",
+    "blk-0112",
+    "blk-0113",
+    "blk-0114",
+    "blk-0115",
+    "blk-0116",
+    "blk-0117",
+    "blk-0118",
+    "blk-0119",
+    "blk-0120",
+    "blk-0121",
+    "blk-0122",
+    "blk-0123",
+    "blk-0124",
+    "blk-0125",
+    "blk-0126",
+    "blk-0127",
+    "blk-0128",
+    "blk-0129",
+    "blk-0130",
+    "blk-0131",
+    "blk-0132",
+    "blk-0133",
+    "blk-0134",
+    "blk-0135",
+    "blk-0136",
+    "blk-0137",
+    "blk-0138"
+  ],
+  "expectedBlocks" : [
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "blockquote",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    }
+  ],
+  "imageMeta" : [
+
+  ],
+  "managedBlockIds" : [
+    "blk-0093",
+    "blk-0094",
+    "blk-0095",
+    "blk-0096",
+    "blk-0097",
+    "blk-0098",
+    "blk-0099",
+    "blk-0100",
+    "blk-0101",
+    "blk-0102",
+    "blk-0103",
+    "blk-0104",
+    "blk-0105",
+    "blk-0106",
+    "blk-0107",
+    "blk-0108",
+    "blk-0109",
+    "blk-0110",
+    "blk-0111",
+    "blk-0112",
+    "blk-0113",
+    "blk-0114",
+    "blk-0115",
+    "blk-0116",
+    "blk-0117",
+    "blk-0118",
+    "blk-0119",
+    "blk-0120",
+    "blk-0121",
+    "blk-0122",
+    "blk-0123",
+    "blk-0124",
+    "blk-0125",
+    "blk-0126",
+    "blk-0127",
+    "blk-0128",
+    "blk-0129",
+    "blk-0130",
+    "blk-0131",
+    "blk-0132",
+    "blk-0133",
+    "blk-0134",
+    "blk-0135",
+    "blk-0136",
+    "blk-0137",
+    "blk-0138"
+  ],
+  "markdown" : "# The Quiet Archive: Notes on Ledgers and Lanterns\n\nAnchor01 line of the fixture document.\n\nAnchor02 line of the fixture document.\n\nAnchor03 line of the fixture document.\n\nAnchor04 line of the fixture document.\n\nAnchor05 line of the fixture document.\n\nAnchor06 line of the fixture document.\n\nAnchor07 line of the fixture document.\n\nAnchor08 line of the fixture document.\n\nAnchor09 line of the fixture document.\n\nAnchor10 line of the fixture document.\n\nAnchor11 line of the fixture document.\n\nAnchor12 line of the fixture document.\n\nAnchor13 line of the fixture document.\n\nAnchor14 line of the fixture document.\n\nBridge district terrace outpost uplands boundary foundry willow dynamo thread. Usage oracle village vantage oracle furrow lantern **ordinance nectar** boundary signal network inquiry kinship yield village. Margin boundary journal inquiry quorum foundry lattice vantage cobalt 村里的老人仍然記得那條河的名字。 terrace lattice tradition passage ribbon. Keystone workshop margin narrative witness market horizon inlet isthmus account heritage lagoon. 學者對於這份文件的年代有不同的看法。 Uplands guild inquiry pillar quarry meadow juniper vantage witness witness bridge boundary uplands ledger. Lattice uplands [@alder2011, {p. 81}] survey terrace bridge furrow summit ledger archive usage guild. Kettle margin hinge ordinance meridian inlet alpine.\n\n## 1.1 Ledgers and Their Keepers\n\nTradition cobalt narrative journal boundary granite boundary passage yield archive district. Kinship district summit register archive tradition estuary uplands register furrow. Dynamo tradition ledger lantern question cadence evidence fabric district [@novak2005, {表2-2}] <!-- ::comment:: lantern kinship village nectar orchard guild archive parchment hinge yield thread usage meadow 这座桥在雨季之前就已经修好了。 --> nectar. Keystone register harbor inlet census account ledge archive heritage meadow dynamo willow. Narrative yarrow estuary witness thread yarrow meridian orchard record meadow question. Umber yarrow vantage record heritage cadence *keystone alpine* zenith account kinship summit fabric ribbon pillar yarrow. Cobalt uplands lattice outpost estuary mosaic keystone thread ledger meadow account ribbon umber lantern. Village gallery zenith juniper tundra district workshop.\n\nMarket quorum account mosaic quarry outpost survey variation estuary pillar. Tundra district lantern record uplands vantage survey summit fabric ember lattice. Archive archive harbor market yarrow network pattern vantage nectar thread. Heritage variation 我们需要重新考虑这些数字的来源。 kinship district harbor register boundary ledge oracle variation. Cadence juniper kinship summit narrative kettle pillar journal workshop guild guild outpost umber variation. Heritage boundary workshop network dynamo quorum gallery ledger granite lantern [@zhao2020, {§ 29}] quorum vessel passage. Terrace ordinance margin account workshop register orchard district quorum margin dynamo. Cadence meridian boundary lattice journal tradition register workshop margin thicket question register. Umber network question archive cobalt.\n\nHinge juniper parchment inquiry jurisdiction ledge pillar meadow village isthmus yield keystone register oracle kettle. Pattern nectar witness parchment orchard account pattern juniper ember furrow keystone. Zenith workshop **kettle juniper** network usage umber quarry account granite. Meadow meadow harbor ember orchard lantern lagoon furrow cobalt survey. Willow workshop ember harbor signal census question vantage pattern thread meridian [@ekwall2002, {p. 97}; @li2012, {p. 103}] <!-- ::task:: [x] outpost foundry district usage workshop village meridian fabric cobalt narrative compass record survey census census horizon witness record ember ember market vessel inquiry isthmus district lantern tundra estuary market quorum ember harbor ribbon hinge thicket ribbon horizon tradition summit lantern --> cadence. Lineage tradition nectar estuary network village orchard harbor passage. Yarrow orchard evidence signal harbor evidence ledge furrow market pattern usage margin hinge dynamo vantage. Alpine passage.\n\n### 1.1.1 Harbor and Nectar\n\nAlpine ember fabric dynamo fabric signal summit hinge yarrow outpost hinge inlet vessel parchment oracle jurisdiction. Register journal kettle signal yarrow quorum pattern 他們把帳冊收在潮濕的木箱裡。 uplands quorum archive isthmus hinge variation thread. Terrace vantage quorum witness lantern kinship compass ordinance narrative juniper quarry lagoon inlet thread market. [@rahman2021] Inlet kettle orchard parchment dynamo parchment juniper alpine foundry. Guild kettle gallery cobalt estuary mosaic cadence margin inquiry. Compass archive dynamo orchard [^1] meadow kinship nectar vantage tundra hinge zenith record inlet fabric tundra. Cadence zenith hinge tradition kinship pattern ledger guild zenith lattice nectar.\n\nOracle granite vessel lantern gallery meridian journal ribbon guild usage lantern tundra usage yield. Compass account kinship question heritage usage lattice alpine evidence ordinance cobalt survey terrace network. Zenith yield orchard workshop ribbon [@sun2013; @morita2018] <!-- ::comment:: inquiry foundry question record meadow umber tundra pattern umber outpost tradition mosaic usage meridian meridian mosaic market archive thread --> ledger willow workshop pillar fabric oracle ledge isthmus survey variation passage. Journal lattice passage archive meridian vessel granite cobalt yarrow vessel. Pattern signal cobalt isthmus harbor margin ribbon tradition inquiry ember. Furrow *district tundra* keystone evidence narrative archive vessel alpine district margin meadow vantage keystone lantern. Keystone hinge guild vessel margin willow variation cadence. Nectar kettle guild kettle kettle orchard dynamo meridian isthmus lantern meadow.\n\nQuarry lineage vantage umber bridge lagoon workshop zenith lattice vantage mosaic lattice compass vessel fabric. Lattice survey willow ordinance yarrow meadow **granite summit** vantage register furrow hinge. Terrace witness harbor vantage horizon census inquiry market granite ledge. Granite nectar register pillar uplands yield vantage 这些记录说明了日常生活的细节。 orchard terrace lattice usage kettle ember harbor heritage ordinance. Lantern ledger isthmus usage network zenith record district foundry keystone question [@ibarra2020] hinge dynamo inlet boundary tradition. Usage granite kettle lagoon inlet terrace granite passage mosaic question terrace dynamo bridge. Compass heritage.\n\nWorkshop inlet willow tradition tundra village boundary village jurisdiction gallery terrace workshop zenith. Meridian oracle alpine alpine keystone inlet variation kinship nectar census margin. Kinship keystone isthmus parchment nectar inlet market ribbon meadow estuary lagoon tundra umber signal. Kinship network ember archive granite village passage [@li2012, {§ 10}; @dewitt2015, {p. 55}] <!-- ::reference:: passage outpost kettle margin kettle summit record journal dynamo boundary uplands thread foundry passage oracle heritage estuary oracle fabric terrace market 村里的老人仍然記得那條河的名字。 --> furrow cobalt cobalt willow quorum signal keystone. Bridge inquiry harbor census uplands evidence lagoon question lantern. Dynamo jurisdiction ribbon cadence parchment pillar district bridge keystone district survey passage. Meridian kettle zenith journal register census outpost witness outpost harbor. Hinge evidence kinship yarrow guild pattern.\n\n### 1.1.2 Dynamo and Lattice\n\nLattice parchment tradition inlet evidence ledge estuary tundra passage quarry cobalt gallery journal. Market census cobalt network network pattern fabric willow workshop tundra granite fabric inlet lantern margin. Variation oracle account alpine nectar 市場上的價格每個月都在變化。 horizon heritage thicket question. Foundry parchment vessel pillar orchard archive vessel keystone lattice zenith cobalt. Quorum terrace umber yield ledge usage bridge record terrace uplands bridge compass juniper. Summit horizon market oracle [@lin2010, {§ 6}; @quist2009, {p. 160}] pattern ember jurisdiction parchment margin guild jurisdiction survey. Market heritage ledge ledge witness quarry cobalt ember. Variation inlet witness umber meridian isthmus jurisdiction survey estuary workshop record. Yarrow furrow lagoon vessel.\n\nKinship quarry boundary bridge heritage compass lattice record. Guild uplands quarry nectar quorum guild thicket compass ribbon **kettle kinship** outpost hinge journal foundry furrow. Tundra granite jurisdiction thread narrative horizon inquiry dynamo usage lattice. Journal [@morita2018, {pp. 32–42}] <!-- ::task:: [ ] vantage juniper summit usage tradition lagoon survey kettle granite lantern umber boundary cobalt meadow inquiry zenith district juniper passage inquiry ordinance furrow narrative narrative isthmus thicket gallery village vantage inlet margin thread guild terrace district census ledger cobalt granite harbor yield oracle gallery usage register tradition compass journal meadow pattern nectar evidence lattice terrace granite thread guild variation network oracle ordinance variation quarry archive cobalt umber meadow dynamo juniper oracle market keystone harbor journal ordinance hinge summit yarrow village quorum passage dynamo narrative market variation terrace lagoon cadence pillar yield nectar juniper margin vessel account vantage witness fabric hinge district yarrow inquiry foundry kettle alpine yarrow variation tundra lattice lattice harbor foundry margin quarry district terrace network survey cobalt kettle vantage archive fabric market record nectar summit tundra ember ordinance summit terrace yield variation dynamo parchment harbor inlet pattern thicket meridian tradition passage willow hinge lagoon district quorum meadow usage census horizon lagoon margin terrace foundry harbor mosaic juniper signal bridge ember district quorum --> isthmus compass ledge isthmus meridian orchard vessel meadow survey village compass journal. Ember zenith fabric bridge thread [@huang2011, {p. 72}] parchment estuary inquiry kettle oracle gallery isthmus pattern yarrow. Meadow harbor alpine gallery meadow guild ledger *tundra quorum* jurisdiction gallery narrative. Hinge evidence keystone compass lantern granite gallery juniper meridian outpost journal. Boundary record.\n\nVillage usage zenith ledger vessel outpost terrace nectar census dynamo register. Survey nectar workshop variation cadence inquiry quorum 这些记录说明了日常生活的细节。 granite parchment isthmus guild meadow. Isthmus juniper furrow uplands granite cadence quorum oracle workshop yarrow lineage inlet narrative 市場上的價格每個月都在變化。 mosaic lattice. Jurisdiction inquiry boundary keystone ledger yarrow lantern market ordinance. Village usage lagoon summit guild register variation [@dewitt2015, {p. 139}] umber outpost. Outpost account ordinance signal thread lattice census meadow jurisdiction willow tundra register lattice gallery. Oracle census [^2] kettle hinge lantern tundra lattice zenith village yarrow kinship. Vantage tundra question uplands network keystone dynamo cadence.\n\nRegister parchment ledge question bridge question meridian willow zenith thicket terrace pattern zenith guild umber bridge. Evidence survey lagoon question meridian ember record question boundary cobalt. Mosaic evidence gallery heritage variation harbor workshop guild village quorum census narrative furrow isthmus. Pattern passage narrative inlet oracle ribbon kinship outpost yarrow [@quist2009, {§ 11}; @guo2015, {p. 63}] <!-- ::comment:: inlet horizon variation lineage journal usage meadow pillar archive passage village evidence quarry harbor journal heritage meadow vantage mosaic network isthmus lineage ribbon account granite journal vessel mosaic pillar willow pattern ledge dynamo pattern meridian --> census. Heritage tradition thicket horizon kettle meadow village lagoon. Estuary keystone isthmus oracle meadow oracle census kettle summit nectar gallery pillar foundry yarrow jurisdiction margin. Thicket outpost boundary question signal variation lagoon meadow outpost cadence account granite cadence guild. Zenith guild zenith boundary evidence hinge ledger parchment.\n\n## 1.2 The Village Registers\n\nUsage alpine kinship archive kettle kinship kinship meadow yield. Isthmus district usage kinship dynamo inlet signal vessel ordinance workshop willow lineage **bridge lineage** usage market. Furrow boundary vessel workshop journal ribbon granite harbor heritage. Kettle mosaic dynamo zenith bridge thread lantern lantern lantern variation 她把名單抄了三遍才交出去。 pattern thicket foundry inlet. Terrace oracle fabric dynamo harbor witness mosaic register uplands dynamo boundary quarry ember estuary census tradition. [@xu2008; @lindqvist2014] Witness lattice lineage foundry quorum survey margin jurisdiction margin guild bridge thicket vessel nectar. Foundry thread village yarrow pillar evidence.\n\nJurisdiction journal mosaic meadow quarry yield keystone ribbon meadow fabric inquiry quorum cobalt district. Parchment survey orchard orchard summit cadence orchard ember umber narrative. Lineage foundry margin market vantage quorum [@holm2010, {p. 54, 59}] <!-- ::reference:: fabric market tundra gallery umber oracle register village orchard yield census orchard terrace vessel thread meridian heritage foundry ledge umber network 學者對於這份文件的年代有不同的看法。 --> witness signal jurisdiction. Vessel evidence quorum terrace harbor hinge orchard ledger cobalt lattice. Passage quorum cadence ember vantage ember lagoon tundra cadence usage boundary granite. District survey yield network furrow *record cobalt* thicket boundary thread lineage vessel thread lagoon kinship. Ledge juniper furrow boundary meadow usage orchard umber compass lantern lantern question quarry alpine. Journal oracle question boundary tundra willow vantage.\n\nYarrow meadow evidence dynamo heritage quorum quorum vantage lagoon evidence summit. Estuary usage narrative survey evidence orchard fabric juniper quarry record kinship inquiry vantage kettle mosaic. Survey summit lagoon juniper gallery guild witness 市場上的價格每個月都在變化。 willow market margin. Gallery boundary terrace yarrow jurisdiction outpost yarrow jurisdiction granite umber witness isthmus. Ledge zenith lantern passage cobalt oracle estuary variation meadow summit. Variation ordinance lagoon market mosaic granite gallery [@wang2016; @castell2008] vessel. Survey meridian foundry tradition meridian village record archive census pattern. Summit orchard keystone bridge fabric umber usage census summit quorum archive furrow ordinance zenith workshop. Ordinance lantern network workshop usage.\n\n### 1.2.1 Yarrow and Keystone\n\nTundra passage umber cadence cobalt ember lagoon yield kinship lattice meridian journal ledge account witness pillar. Thread ledge margin umber hinge oracle guild variation guild foundry bridge keystone **village compass** tradition jurisdiction inlet. Hinge terrace lattice survey kettle vantage market survey journal lantern lineage. Tradition lattice survey ribbon ribbon foundry ordinance guild. Pillar orchard mosaic juniper horizon [@guo2015, {p. 153}; @petrov2016, {p. 155}] <!-- ::comment:: hinge account ordinance quorum passage summit foundry evidence pillar tundra horizon quarry journal witness keystone furrow lattice heritage fabric --> thicket estuary signal. Cadence cadence quarry lantern guild willow workshop lineage ember. Horizon market village bridge estuary signal yarrow passage juniper tradition workshop evidence keystone horizon pillar.\n\nTerrace quarry yield furrow foundry quorum margin summit register. Parchment ribbon pattern question register uplands quarry tundra evidence ledger. Jurisdiction vessel heritage inquiry 这一发现改变了我们对地方档案的理解。 ordinance foundry quarry ledger compass question network inlet inquiry dynamo orchard vantage. Furrow guild village thicket journal journal keystone juniper. Ordinance guild [@lindqvist2014] heritage isthmus kinship kinship ledger mosaic terrace isthmus ordinance meadow foundry network quarry. Willow harbor cadence furrow fabric lagoon market narrative census [^3] usage bridge parchment inlet cadence workshop. Estuary quorum umber passage lattice ordinance bridge vantage pillar estuary. Census margin lattice kinship ledger summit.\n\nZenith lagoon lagoon fabric cadence tundra ledge meridian isthmus furrow outpost meridian lagoon mosaic. Yield granite district meridian survey record kinship inquiry survey zenith variation inquiry inlet. Signal yarrow hinge inquiry harbor orchard [@liu2014, {§ 28}] <!-- ::task:: [ ] parchment variation district vantage inquiry pillar passage willow uplands ember dynamo --> variation cadence nectar estuary. Ember ordinance network lagoon uplands harbor heritage cobalt estuary dynamo journal thread quorum quarry nectar. Keystone terrace bridge lattice foundry village tradition witness mosaic meridian juniper witness. Keystone *village district* oracle network quorum meadow boundary guild nectar oracle census yarrow. Granite passage lagoon witness boundary harbor pattern inquiry census evidence quorum meadow quarry. Gallery cobalt thicket lantern guild inquiry village quorum.\n\nTundra district dynamo granite cadence inlet cobalt estuary dynamo ledge fabric passage kinship. Oracle tradition network narrative ledge vessel evidence workshop **alpine guild** estuary compass record mosaic compass. Quarry jurisdiction ember terrace ledger district kinship quorum market lattice heritage compass cobalt mosaic ordinance gallery. 市場上的價格每個月都在變化。 Uplands outpost jurisdiction passage record meridian network hinge lattice pattern parchment bridge. Narrative survey district thicket village jurisdiction jurisdiction guild [@castell2008, {p. 10, 15}] oracle keystone dynamo usage thicket register ember. Inlet village pillar lagoon evidence ribbon pillar question alpine pattern zenith compass tradition.\n\n### 1.2.2 Lantern and Signal\n\nZenith harbor witness quarry furrow bridge inquiry district tradition signal meridian evidence summit guild. Lattice account vessel tundra harbor boundary journal fabric granite tradition bridge. Uplands alpine tundra evidence yarrow [@petrov2016, {p. 10}] <!-- ::comment:: foundry quorum oracle alpine thread tundra hinge ember alpine quorum ember quorum oracle bridge keystone ledger isthmus isthmus evidence lattice hinge account fabric guild umber ember district parchment evidence kinship signal kettle mosaic yield parchment parchment district quarry usage cadence village pattern 每一頁邊緣都留下了不同人的筆跡。 --> foundry umber market umber outpost tundra fabric witness fabric willow. Lantern estuary zenith evidence lantern vessel dynamo harbor boundary narrative terrace willow isthmus nectar outpost fabric. Meridian umber tradition pillar [@zhou2017, {p. 148, 151}] inlet heritage usage summit lineage pillar lagoon. Ribbon thicket variation ordinance question umber pattern umber variation. Yarrow outpost signal cadence lagoon parchment question dynamo. Alpine network meadow quarry tundra.\n\nQuorum quarry narrative lagoon variation signal isthmus ordinance bridge cobalt kettle summit boundary. Tradition vessel terrace ember passage dynamo bridge question margin ordinance meadow. Market 调查的结果和最初的假设并不一致。 pattern archive alpine compass jurisdiction oracle foundry ledger network market. Willow ordinance boundary bridge jurisdiction dynamo lattice isthmus journal witness horizon vessel lantern workshop 这座桥在雨季之前就已经修好了。 inlet. Nectar register ledge witness heritage narrative boundary keystone. Tradition witness fabric census vessel lagoon passage ribbon jurisdiction. Uplands heritage hinge tradition inlet ordinance [@garrido2013, {p. 134}] ordinance jurisdiction inquiry thread nectar uplands. Tradition signal inlet evidence usage willow meridian witness foundry orchard. Yarrow zenith horizon boundary orchard margin signal.\n\nKeystone parchment cobalt ordinance lattice umber orchard yield outpost network estuary. Market oracle granite signal mosaic record ledge workshop pattern village. **alpine margin** Mosaic summit harbor lagoon district workshop compass lineage. Zenith account pattern heritage thicket inlet zenith vantage network fabric passage harbor lagoon [@tanaka2003, {p. 120}] <!-- ::comment:: variation orchard hinge harbor tundra orchard ember meadow guild --> keystone estuary isthmus. Account kettle journal keystone vantage account furrow jurisdiction archive ribbon ledger terrace. Furrow journal granite meadow vessel *willow pillar* summit signal margin witness inquiry market journal vessel dynamo vantage estuary. Keystone lantern passage foundry mosaic harbor evidence keystone witness.\n\nHeritage fabric village journal kinship foundry parchment alpine workshop. Archive record oracle meadow record thread record evidence survey granite willow. Cobalt usage quorum 村里的老人仍然記得那條河的名字。 journal lantern gallery witness vantage register archive jurisdiction zenith orchard. Bridge narrative boundary terrace summit parchment market mosaic record market willow passage [@hu2004; @okafor2012; @ma2019, {p. 144}] quorum census heritage. Zenith ledger vessel heritage hinge gallery ember tundra lineage alpine keystone jurisdiction summit. Umber estuary boundary umber fabric cobalt [^4] kettle oracle hinge estuary ledger ledger tundra vantage quorum estuary. Yarrow archive narrative margin network gallery record evidence. Granite umber narrative hinge.\n\n## 1.3 Prices at the Market\n\nVillage summit passage network gallery kettle quarry hinge isthmus vantage harbor dynamo. Evidence inlet parchment market horizon juniper isthmus margin guild inlet kettle lantern kinship. District usage juniper cadence estuary quarry quorum keystone lineage thread bridge zenith hinge workshop. Ledger cobalt harbor zenith yield ledge yarrow uplands tradition yarrow [@kaplan1999] <!-- ::task:: [x] bridge inquiry orchard umber nectar lantern usage margin inlet vessel lantern usage workshop signal tundra --> workshop fabric oracle usage ledger. Uplands variation ember heritage lineage boundary summit register lattice hinge foundry cadence. Zenith archive heritage workshop cadence district district tradition. Register fabric kettle bridge jurisdiction survey market kettle margin narrative. Gallery margin village harbor dynamo cadence ledger district bridge journal network ledger.\n\nKeystone oracle witness variation village ledger meridian yield dynamo meridian bridge boundary cobalt witness lantern. Gallery margin fabric compass isthmus yarrow **passage witness** market orchard inlet furrow market harbor workshop quorum. Question pillar ledge compass usage keystone thread zenith. Cobalt kinship workshop ember oracle 學者對於這份文件的年代有不同的看法。 tradition estuary vantage usage mosaic guild orchard. Thread margin quorum variation signal summit zenith yarrow record alpine. Juniper kettle oracle [@zhang2009, {p. 41}] fabric inquiry village ledger fabric ember. Ordinance thicket village fabric horizon heritage yarrow census district yield inquiry pillar willow inquiry.\n\nGallery keystone tradition vessel nectar vantage isthmus archive. Cadence census inquiry outpost orchard meridian census terrace. Cadence granite tradition granite passage tradition ordinance uplands lattice ember passage uplands. Question cobalt [@brandt2019, {§ 20}] <!-- ::comment:: evidence nectar cadence narrative market harbor yarrow alpine fabric meridian 村里的老人仍然記得那條河的名字。 --> boundary heritage inquiry lagoon thicket ledger. Willow quarry ledger uplands archive record terrace kinship hinge jurisdiction. Lagoon parchment nectar tradition jurisdiction gallery ledge lattice. Market record question terrace vantage register *ledge workshop* parchment gallery inlet granite uplands boundary estuary ember. Vessel ordinance boundary census bridge signal lagoon quorum isthmus ordinance inlet evidence dynamo. District boundary kettle census meridian kettle meridian census.\n\n> Cobalt archive dynamo cadence kettle jurisdiction estuary narrative. Ribbon district vessel meridian tundra network ordinance ledger willow compass yarrow hinge. Margin summit ember register evidence lattice lineage lantern quarry outpost juniper horizon. Summit juniper kinship inlet dynamo inlet heritage thread account inquiry passage usage. Thread passage quorum parchment inlet thread foundry workshop passage thicket pattern. 调查的结果和最初的假设并不一致。\n\n### 1.3.1 Keystone and Tundra\n\nThread ribbon dynamo pillar narrative terrace bridge workshop witness cadence lattice dynamo yarrow ribbon. Hinge ordinance uplands orchard juniper vantage boundary usage juniper record narrative guild gallery. Inquiry orchard district furrow tundra furrow 她把名單抄了三遍才交出去。 compass record margin ember question register district kettle. Meridian pillar ordinance bridge cadence ordinance umber quorum. Thicket account market variation village uplands lattice quorum summit kettle isthmus question lantern. Terrace question tradition [@okafor2012] ordinance record vantage cadence juniper census market journal. Foundry archive workshop uplands isthmus survey census lagoon guild estuary compass. Survey guild ribbon cadence ember guild tradition evidence. Harbor summit survey survey.\n\nPassage zenith granite estuary district bridge vantage witness cadence. Record jurisdiction willow granite usage jurisdiction mosaic usage network kinship narrative lattice heritage. Furrow compass orchard granite compass market **horizon passage** summit quorum survey juniper quorum kinship cobalt witness alpine lattice. Kettle hinge thread furrow inquiry archive margin tradition journal cadence thicket village dynamo vessel census willow. Variation [@wu2005, {p. 86}] <!-- ::reference:: uplands compass vantage archive zenith vantage lantern lagoon isthmus inquiry granite terrace survey usage archive workshop account terrace yarrow yarrow ribbon harbor gallery record signal yield meadow ribbon dynamo mosaic ember outpost narrative usage boundary market workshop --> archive terrace signal bridge granite passage alpine thread dynamo foundry inlet estuary lineage keystone thread. Kinship cobalt survey network market hinge granite summit quarry passage survey lantern.\n\nSummit foundry record horizon lagoon juniper signal juniper willow ledge ledge ledge. Village inquiry meadow yield record narrative yield lattice isthmus archive ledge 他們把帳冊收在潮濕的木箱裡。 ledge outpost cadence. Furrow district tundra granite gallery oracle meadow journal survey furrow archive horizon alpine narrative margin. Vessel ordinance ledger thicket [@farouk2017, {p. 139}; @chen2018, {p. 142}] horizon lantern district account question lattice estuary alpine margin record. Umber market meridian village lineage lagoon margin account question lineage vessel. Tradition [^5] meridian question witness umber tradition evidence journal boundary lattice lagoon variation. Meridian meridian ribbon uplands kinship ember jurisdiction horizon compass umber harbor.\n\nInlet fabric survey vantage market pattern isthmus vessel terrace umber tundra kinship passage. Alpine vantage lineage juniper yield cobalt alpine vantage register fabric granite guild [@soto2007] <!-- ::task:: [ ] meridian horizon foundry nectar orchard kinship jurisdiction guild ember ordinance variation variation hinge --> furrow tundra. Ledge pillar ordinance register pillar ember orchard usage isthmus umber tundra meridian umber. Keystone thread ledger guild cobalt yield tradition inlet census [@ma2019] uplands record heritage cobalt. Zenith zenith inlet vessel boundary thicket usage vantage signal bridge variation willow vantage inlet. Parchment narrative gallery alpine question foundry *yarrow uplands* market hinge usage inquiry lagoon willow dynamo margin. Guild uplands umber question vessel record yield usage umber tundra keystone meadow network quarry evidence.\n\n### 1.3.2 Orchard and Orchard\n\nVessel lagoon gallery outpost meridian tundra orchard ribbon ledger. Ledge thread register district bridge terrace workshop census. **willow compass** Cobalt quorum oracle census inlet boundary heritage juniper harbor ember harbor. Lattice meadow yield workshop meridian 这些记录说明了日常生活的细节。 archive zenith dynamo alpine yield fabric lineage ledger ember lineage summit. Vessel mosaic foundry parchment summit nectar 这一发现改变了我们对地方档案的理解。 summit mosaic workshop oracle uplands dynamo yield witness harbor. Granite heritage vessel nectar yield journal estuary [@jovic2006] ember cobalt inlet margin parchment. Lagoon archive inquiry parchment harbor narrative orchard juniper. Mosaic margin juniper.\n\nCobalt tundra uplands thicket isthmus isthmus vessel foundry foundry quorum alpine. Guild jurisdiction record usage thread archive ribbon ribbon juniper inlet hinge inlet vantage witness pillar nectar. Furrow survey uplands granite yarrow network ordinance zenith thread quarry juniper compass lattice. Orchard passage witness yarrow tradition [@chen2018, {p. 19}] <!-- ::comment:: margin outpost village tundra zenith furrow willow bridge jurisdiction willow signal kettle fabric juniper lineage narrative cobalt variation zenith lineage quorum heritage evidence nectar ordinance pillar market ember account compass compass account record furrow ribbon dynamo compass tundra dynamo foundry meadow heritage signal margin margin pattern alpine passage kettle summit umber ribbon kettle thread yarrow ember lantern isthmus variation inquiry evidence variation workshop keystone yield thicket mosaic narrative fabric terrace vantage census willow keystone tundra yield question journal market witness terrace oracle ribbon oracle survey meridian pillar juniper thread quarry variation cobalt kinship thicket meridian market village oracle umber kettle cobalt variation lineage inquiry parchment kinship juniper quarry thicket jurisdiction yarrow meadow evidence heritage meadow record market juniper zenith parchment lagoon hinge question journal yarrow workshop oracle tundra ledge heritage gallery journal witness kettle granite 她把名單抄了三遍才交出去。 --> foundry oracle account. Willow yield alpine inlet lantern ledge variation fabric ribbon signal record vantage usage. Isthmus pattern nectar gallery passage inlet summit guild inquiry. Usage kettle compass narrative register heritage thicket compass. Margin mosaic inlet variation gallery signal pattern market. Meadow evidence vessel.\n\nHarbor granite workshop quarry meadow journal ordinance hinge lineage witness. Margin ember inquiry cadence quorum inlet dynamo orchard alpine alpine gallery inquiry. Bridge workshop juniper ledger register journal horizon summit hinge granite juniper 这些记录说明了日常生活的细节。 dynamo record ledge juniper uplands. Alpine yield witness evidence passage margin market network witness evidence network foundry heritage ribbon inquiry. Ledger umber pattern boundary meadow willow witness mosaic quorum terrace district ribbon [@alder2011, {§ 六(一)}] foundry tradition. Census boundary market lattice thicket meadow mosaic vantage jurisdiction question terrace alpine nectar vessel lantern. Heritage terrace outpost uplands cadence horizon evidence tundra kinship workshop cadence orchard. Ledge juniper.\n\nLagoon horizon thread market journal keystone record cobalt estuary compass umber jurisdiction boundary question village horizon. Lagoon thread uplands willow lattice **keystone willow** terrace boundary lineage ledge ledge narrative network vantage. Parchment jurisdiction lantern archive terrace yield passage guild. Juniper witness mosaic lattice tundra [@novak2005] <!-- ::reference:: outpost pillar parchment ember juniper quorum nectar parchment ember boundary inlet lineage cadence --> outpost oracle question meadow yield witness vessel ribbon fabric lantern yarrow. Cobalt bridge meridian heritage workshop estuary mosaic cadence census *harbor hinge* parchment. District ember mosaic question jurisdiction parchment ember yield. Compass summit vantage survey dynamo account signal network zenith uplands zenith.\n\n## 1.4 Bridges and Boundaries\n\nKinship kinship mosaic bridge orchard uplands tradition question signal thicket umber oracle tundra pattern foundry zenith. Inquiry quorum summit witness lantern dynamo yarrow 她把名單抄了三遍才交出去。 meridian tradition hinge. Tradition journal alpine cadence quorum passage survey pattern jurisdiction quorum cadence vessel uplands kettle. Fabric witness network boundary bridge [@zhao2020] lantern jurisdiction question vantage lantern juniper cobalt ledge market. Mosaic lagoon lagoon account harbor narrative jurisdiction inlet isthmus. Guild thicket lattice terrace [^6] pillar pattern thicket yarrow ordinance. Nectar isthmus cobalt summit ledger oracle thicket isthmus market vantage. Gallery horizon question inquiry vantage heritage kinship.\n\nLantern vantage alpine pattern record boundary cobalt terrace quarry meridian. Nectar parchment kettle question estuary juniper usage ember fabric yarrow bridge gallery witness. Archive lantern network compass quarry archive ember record vessel kinship foundry jurisdiction. Parchment yarrow harbor nectar lagoon umber parchment usage village question lantern vantage furrow yield [@ekwall2002] <!-- ::comment:: register oracle oracle census market signal signal witness workshop survey network foundry dynamo willow isthmus quarry furrow account heritage record oracle thread umber gallery vessel witness summit thicket ribbon boundary register ribbon network vantage ember kinship record journal market variation jurisdiction boundary dynamo guild --> question. Foundry thread ledger fabric ledge question pattern kettle granite. Vantage alpine kinship lattice estuary ledge signal variation umber meridian market. Orchard ledge village mosaic yarrow pattern market oracle lineage parchment yield village vantage boundary. Boundary village quarry keystone juniper record nectar foundry uplands summit lineage lantern.\n\nTundra journal usage journal harbor gallery isthmus meadow narrative census. Gallery ledge register juniper orchard uplands ledge usage. Lantern orchard quorum **ember umber** evidence tundra furrow nectar lattice village journal question keystone usage pillar evidence. Horizon yarrow witness thread district yield jurisdiction bridge signal 这一发现改变了我们对地方档案的理解。 keystone compass juniper thread lineage meadow signal. Thread foundry isthmus compass terrace network ledge usage umber granite ordinance lagoon harbor. [@rahman2021] Compass meadow keystone network harbor thread cobalt yield isthmus lantern cobalt thread. Zenith pillar record lineage granite nectar heritage yarrow.\n\n### 1.4.1 Summit and Inlet\n\nOrchard terrace meadow willow quarry account compass evidence. Ordinance inlet journal thread margin kettle granite cobalt market quorum meadow ordinance usage ember ordinance summit. Mosaic gallery nectar mosaic village zenith [@sun2013] <!-- ::task:: [ ] jurisdiction witness tradition thicket market fabric isthmus meridian thread narrative pattern pattern vessel market thicket ribbon market inquiry dynamo meridian 她把名單抄了三遍才交出去。 --> tradition survey inlet tundra compass oracle pillar. Signal yarrow register record foundry meadow guild jurisdiction furrow variation survey meadow. Keystone ordinance guild ledge vantage workshop lineage cobalt tradition lineage lineage *market estuary* foundry parchment meridian. Workshop meadow register oracle evidence ribbon passage meadow archive vantage thread usage. Zenith meridian hinge ledge alpine lagoon ledge lantern furrow jurisdiction thread nectar dynamo terrace.\n\nNarrative inlet furrow witness passage question yarrow orchard furrow orchard tradition alpine summit. Witness granite census meadow survey district signal record thread jurisdiction gallery. Thicket isthmus ember orchard outpost district network journal juniper 她把名單抄了三遍才交出去。 hinge outpost willow. Ember survey survey thicket cobalt variation thread cobalt margin heritage. Furrow gallery gallery lantern evidence margin estuary estuary register umber dynamo thread village thread. Yarrow village orchard ember inlet [@ibarra2020, {p. 16}] hinge heritage gallery inquiry summit workshop guild. Inquiry meadow summit boundary ordinance pillar terrace pillar foundry lattice question guild mosaic. Orchard lineage ordinance record meadow willow narrative horizon mosaic register bridge.\n\nZenith dynamo kinship inquiry witness narrative uplands kinship zenith. Granite summit variation lagoon oracle keystone nectar granite quorum register. Network alpine **umber furrow** passage thread register pattern juniper survey yarrow journal. Umber network keystone ordinance inlet horizon signal thicket guild village margin. Village witness [@li2012] <!-- ::comment:: dynamo outpost isthmus lantern survey archive archive horizon ledge yarrow meadow harbor willow uplands heritage kinship --> parchment ordinance gallery census keystone passage orchard outpost tradition isthmus. Tradition variation yarrow quorum willow market oracle witness village. Lattice [@lin2010, {p. 27}; @quist2009, {p. 32}] zenith variation gallery network estuary survey inlet terrace jurisdiction guild alpine journal thicket. Question ledge lineage cobalt record pillar district.\n\nFabric furrow quarry lineage harbor witness furrow ledge lineage quorum orchard compass mosaic ember. Parchment granite jurisdiction signal 这一发现改变了我们对地方档案的理解。 journal horizon yield archive workshop yarrow gallery survey ember workshop. Nectar yarrow boundary quarry usage mosaic oracle lantern 这些记录说明了日常生活的细节。 juniper yarrow estuary summit alpine. Tradition guild furrow witness ledge meadow quarry compass. Tundra heritage gallery survey usage [@morita2018; @xu2008] survey zenith workshop passage dynamo. Journal inquiry vantage foundry jurisdiction heritage outpost estuary boundary. Keystone ember narrative boundary [^7] zenith ledger district inquiry margin alpine journal vantage lineage lantern nectar. Meadow census census workshop cadence granite.\n\n### 1.4.2 Inlet and Parchment\n\nCensus fabric estuary thicket foundry cobalt tundra vessel ordinance harbor survey orchard lantern dynamo signal ribbon. Ember jurisdiction heritage furrow record yield willow willow survey uplands guild. Inquiry jurisdiction inquiry margin archive pillar [@huang2011] <!-- ::comment:: inlet register district tradition harbor tundra network ember tundra market survey narrative thicket thread question meridian thicket --> estuary quarry narrative lineage. Mosaic outpost granite hinge margin horizon alpine isthmus kinship yarrow vessel. Survey signal juniper bridge survey tundra kinship archive cadence cobalt inlet register cobalt. Vantage variation gallery jurisdiction *estuary vessel* pattern question passage survey question cobalt summit. Isthmus cobalt quarry journal margin hinge margin lineage archive outpost register horizon network. Orchard kinship district thread nectar fabric estuary bridge zenith parchment ordinance.\n\nLagoon signal fabric orchard meadow fabric yarrow inquiry district boundary furrow heritage dynamo lineage terrace thread. Quarry horizon isthmus bridge keystone **lattice survey** account quarry village. Pillar summit granite quarry vessel mosaic lineage horizon pillar zenith zenith meridian market ledge. Estuary dynamo oracle witness 這個問題需要更仔細的檢視與討論。 boundary guild journal question granite district village. Hinge horizon compass willow hinge usage meadow hinge village thicket. Cobalt bridge summit [@dewitt2015, {p. 44}; @wang2016, {p. 54}] yarrow margin ribbon survey tundra. Survey ember vantage record kettle census willow bridge workshop heritage narrative boundary inlet. Dynamo ribbon.\n\nSummit district pillar boundary register alpine survey district vessel question question estuary evidence parchment thicket boundary. Quorum parchment umber ledger census quarry vantage outpost compass. Gallery quorum oracle terrace network inquiry thread isthmus signal lineage vessel ordinance evidence. Lineage ordinance vantage meadow meadow gallery inquiry [@quist2009, {p. 156}] <!-- ::task:: [x] journal vessel inquiry bridge orchard vantage dynamo tradition gallery ledger keystone jurisdiction record summit passage village hinge kettle ribbon hinge ledger kettle compass fabric narrative furrow pattern keystone ember isthmus juniper mosaic lagoon jurisdiction yarrow mosaic pattern 她把名單抄了三遍才交出去。 --> yield workshop heritage thread dynamo fabric lagoon granite. Census ledger tundra compass evidence vessel village ember furrow record kinship orchard register quarry market. Alpine lineage horizon keystone quarry fabric register vessel quorum ordinance horizon vessel. Network tundra jurisdiction account guild thread willow ember keystone.\n\nJurisdiction zenith lattice record jurisdiction usage ember guild ledge bridge network dynamo. Variation thicket horizon ledge granite variation harbor cadence. Summit vessel passage lagoon jurisdiction village kinship lattice narrative archive cobalt yarrow usage. 这座桥在雨季之前就已经修好了。 Horizon pillar nectar ledger uplands mosaic harbor furrow ordinance quorum. Guild lattice compass guild vessel ribbon market pillar thicket terrace summit lattice archive lattice compass fabric. Outpost cadence census signal quarry inquiry [@xu2008, {p. 52}] ordinance pillar mosaic register inlet keystone terrace cobalt thicket ledger. Estuary margin inquiry journal nectar gallery harbor vantage evidence vantage thicket survey ribbon village signal lattice. Jurisdiction orchard ember hinge question.\n\n## 1.5 Lanterns After Dark\n\nQuarry vantage umber thread network fabric evidence thicket passage. Guild witness record guild granite foundry zenith hinge estuary fabric journal pattern **alpine estuary** pillar foundry survey. Terrace jurisdiction uplands outpost vessel compass kettle dynamo. Estuary granite district foundry market account isthmus lattice quorum. Isthmus [@holm2010; @liu2014] <!-- ::comment:: oracle hinge village juniper outpost register granite question isthmus question --> nectar ledger thread lagoon lantern vessel jurisdiction ledge willow. Quorum uplands survey register network compass passage jurisdiction estuary market journal *furrow orchard* outpost census uplands meadow. Pattern heritage ordinance dynamo quorum kinship jurisdiction oracle passage village. Zenith ledge question evidence account juniper.\n\nKeystone orchard meridian ember quorum ribbon tundra market mosaic furrow archive uplands foundry usage granite granite. Meadow gallery yarrow uplands network guild guild 这些记录说明了日常生活的细节。 margin meadow journal vantage thread lineage. Harbor lattice oracle bridge variation market lattice network vantage bridge orchard kinship village ribbon foundry. Ledger [@wang2016, {pp. 156–164}] vantage ribbon journal survey compass kettle question. Variation archive yarrow alpine lineage nectar lattice yarrow yield tradition account lattice vessel lineage alpine. [^8] Meadow workshop bridge evidence question boundary yarrow record outpost thread uplands variation. Juniper record harbor archive journal register lineage fabric keystone lineage.\n\nRecord quarry vessel guild lineage alpine outpost nectar tradition register juniper. Quarry fabric market parchment market yarrow orchard meridian variation variation terrace quarry. Quarry lagoon lagoon account gallery summit compass variation fabric witness tundra question. Summit inquiry kinship quarry hinge oracle umber cadence signal horizon zenith archive oracle lagoon. [@guo2015, {p. 57}; @petrov2016, {p. 63}] <!-- ::reference:: signal narrative lantern vessel foundry dynamo parchment usage lattice hinge thread district lattice archive narrative --> Usage granite register usage passage terrace usage dynamo meridian passage keystone journal. Thicket horizon ledger isthmus lantern bridge pillar village ember margin keystone pillar nectar horizon. Keystone furrow gallery outpost uplands pillar estuary estuary archive lagoon archive vessel. Tundra horizon question network dynamo vessel gallery workshop inlet.\n\n### 1.5.1 Cadence and Narrative\n\nHarbor kettle uplands isthmus passage signal bridge usage quorum cadence pattern inlet. Terrace archive parchment horizon tundra usage tradition quarry. Jurisdiction **record ledge** question market kinship kinship jurisdiction narrative uplands orchard tundra willow vantage journal dynamo boundary workshop. Boundary thread hinge umber zenith survey 这些记录说明了日常生活的细节。 thread ember heritage lagoon. Uplands foundry pattern ribbon oracle isthmus usage orchard alpine vantage tradition yarrow terrace willow. Uplands meadow [@lindqvist2014] isthmus furrow umber gallery yarrow juniper. Granite ledger mosaic jurisdiction question willow inlet umber hinge foundry orchard terrace nectar census.\n\nOrchard usage orchard hinge ledge guild oracle terrace lattice furrow yarrow vantage passage. Vantage cadence evidence gallery variation orchard usage hinge guild village [@liu2014, {p. 136, 138}] <!-- ::task:: [ ] horizon summit summit fabric hinge guild guild alpine quorum yarrow evidence vessel survey estuary question meridian bridge compass fabric vantage harbor 我们需要重新考虑这些数字的来源。 --> nectar compass oracle compass. Network keystone lantern question lantern account vessel juniper nectar meridian narrative workshop kinship inquiry. Quarry usage cadence vantage [@castell2008] granite tundra tundra lattice market market. Question question survey census tradition account alpine ordinance quorum cadence. Inquiry margin signal witness juniper yarrow *horizon inlet* ledge account meadow village vantage market zenith juniper. Ember passage outpost archive usage ordinance quarry heritage foundry. Furrow lagoon signal ledge summit.\n\nNarrative foundry account account ordinance zenith keystone dynamo dynamo keystone. Inquiry vantage lineage summit compass juniper pattern meadow register. Ribbon bridge outpost hinge isthmus account 市場上的價格每個月都在變化。 pattern yield horizon compass. Meridian ledge furrow record summit variation boundary thicket. Orchard keystone ribbon cadence ledger lattice bridge guild village. Horizon heritage margin 每一頁邊緣都留下了不同人的筆跡。 kettle meadow dynamo heritage usage inquiry lantern outpost village. Outpost ember fabric uplands margin district market lineage vessel. Dynamo register lantern quorum foundry kettle [@petrov2016] workshop usage lineage record margin witness guild pillar inlet. Hinge signal gallery village juniper boundary ledge variation tradition alpine inlet passage quorum evidence.\n\nNarrative pattern oracle journal market passage harbor thicket ledge journal compass gallery pillar village isthmus. Nectar inquiry mosaic furrow inquiry quorum account ledger. Cobalt quorum ember archive horizon **furrow horizon** witness record workshop. Witness archive market pillar inquiry inquiry ribbon quarry. Compass kinship alpine inlet ribbon market pillar inlet oracle cadence umber archive village keystone hinge. Vantage [@zhou2017, {pp. 12–18}] <!-- ::comment:: mosaic umber ordinance terrace ledge jurisdiction horizon tradition village parchment uplands cobalt summit oracle thread usage record kettle hinge inlet jurisdiction harbor question tradition outpost workshop passage boundary yield tundra narrative variation yield gallery zenith quorum tradition juniper guild signal granite boundary --> signal foundry pillar ordinance nectar ledger yield lagoon network meridian summit district zenith. Mosaic hinge cadence account vessel lattice yarrow register tradition archive yield pillar witness. Harbor.\n\n### 1.5.2 Jurisdiction and Quarry\n\nJurisdiction dynamo kettle account pattern cadence estuary lagoon keystone horizon keystone. Estuary inlet pattern market isthmus cobalt network thread vessel. Umber inlet margin 這個問題需要更仔細的檢視與討論。 outpost lantern boundary vantage tradition yield dynamo ordinance juniper quorum. Isthmus compass lattice thread cadence archive pattern journal jurisdiction. Keystone isthmus register [@garrido2013, {附件二}] survey meadow oracle market signal gallery meridian dynamo terrace network usage. Narrative meadow estuary oracle pattern pillar estuary dynamo village ledge margin [^9] parchment. Parchment keystone passage witness ember lineage nectar lagoon zenith pattern terrace. Ledge ledger jurisdiction witness granite journal variation keystone orchard inquiry.\n\nWillow ember willow umber cobalt cobalt compass inquiry signal terrace. Market bridge terrace evidence granite usage witness mosaic lagoon inquiry guild hinge. Narrative estuary signal orchard record margin inlet signal. Passage workshop fabric [@tanaka2003] <!-- ::reference:: yield furrow pillar market signal account umber ordinance workshop pillar ledger inlet witness network dynamo uplands passage witness guild foundry survey bridge village workshop census hinge question usage yarrow meridian alpine hinge register lagoon inquiry ribbon meridian keystone willow evidence granite village parchment ledge outpost census usage terrace harbor district keystone lattice guild ordinance horizon narrative village register kettle census outpost journal ledger thicket meadow oracle narrative mosaic vantage lattice archive thread mosaic archive tundra vessel estuary record heritage pillar usage district inquiry passage vantage usage lineage market kinship umber census archive umber willow isthmus oracle orchard boundary archive village archive survey register register signal inlet inlet variation harbor keystone network usage dynamo witness horizon village lagoon kettle kinship horizon granite passage orchard --> yarrow orchard dynamo boundary account tundra ember signal lattice usage. Pattern uplands vessel inlet witness account variation market quarry keystone village. Outpost usage vantage cobalt market willow cobalt vantage compass archive village *granite gallery* fabric record. Compass passage zenith meadow dynamo compass alpine ordinance. District kettle workshop lattice quorum district witness summit. Ordinance alpine village journal account census passage archive lantern willow. Meridian oracle thread.\n\nParchment workshop quorum ember summit lantern district usage signal harbor archive account ledger inquiry ordinance. Juniper lantern mosaic lineage question gallery **archive signal** network summit kettle census. Umber juniper juniper thread evidence mosaic pillar inlet usage summit passage furrow ordinance umber outpost journal. Witness 这些记录说明了日常生活的细节。 usage parchment kettle terrace meadow inlet lantern account zenith summit compass ledger. Pattern nectar keystone lineage thread tradition furrow orchard [@hu2004, {p. 119}] granite juniper register witness. Isthmus signal survey thread foundry kettle summit mosaic network juniper. Ordinance archive kettle network survey passage.\n\nOrdinance kinship compass gallery cadence boundary usage survey village pattern guild witness workshop oracle jurisdiction market. Meridian narrative oracle hinge village guild guild summit inquiry usage. Umber uplands dynamo lineage passage quorum meadow furrow. Compass cadence keystone alpine gallery horizon signal parchment. Inlet thread dynamo [@kaplan1999, {§ 六(一)}] <!-- ::comment:: foundry cadence variation bridge evidence juniper orchard usage ember quorum kinship evidence gallery dynamo ember district survey narrative juniper meadow 市場上的價格每個月都在變化。 --> bridge keystone oracle tradition lantern pattern vantage. Bridge workshop village harbor outpost summit meridian willow. Tradition willow tradition market gallery thicket kettle survey ordinance vantage usage. Bridge parchment juniper lattice furrow lineage heritage usage outpost. Orchard question kettle usage ember meadow record village gallery.\n\n## 1.6 Conclusion\n\nNetwork kettle alpine yarrow ordinance vessel evidence register. Nectar usage passage summit narrative narrative fabric yield record market. Zenith lattice census oracle inquiry question granite cadence. Dynamo lagoon vantage heritage tradition margin margin 我们需要重新考虑这些数字的来源。 ledger juniper kettle. Inquiry pillar mosaic census workshop isthmus village hinge. Summit ordinance parchment journal guild tradition umber juniper. Thread journal passage willow ledge tundra meadow boundary heritage district. Terrace kettle isthmus [@zhang2009, {附件二}] kettle vessel yarrow zenith nectar fabric lantern. Thread lineage harbor evidence nectar quarry willow fabric orchard. Foundry outpost umber inquiry kinship tradition network summit ledger keystone lineage terrace gallery inlet oracle.\n\nQuorum passage network ember hinge ribbon cobalt orchard census tradition. Mosaic inquiry vessel furrow kinship estuary workshop granite survey furrow workshop **zenith furrow** compass quarry narrative inlet terrace. Dynamo heritage boundary compass jurisdiction yield parchment margin ordinance pillar. Horizon orchard dynamo fabric jurisdiction tundra [@brandt2019] <!-- ::task:: [ ] tradition harbor pattern inquiry horizon signal yield thread census network district lagoon quarry quarry parchment vantage parchment journal signal --> witness outpost kinship lantern witness granite dynamo orchard. Lineage oracle granite tundra granite estuary keystone workshop lagoon ledge evidence village. *survey signal* Register umber ledge orchard kettle guild compass juniper guild vantage. Estuary archive oracle quarry furrow summit foundry compass zenith evidence.\n\nEvidence inlet harbor lineage horizon furrow thicket horizon yarrow signal record gallery thread mosaic inlet. Ember foundry variation evidence register lantern foundry quarry foundry lagoon yield village cobalt fabric witness 市場上的價格每個月都在變化。 heritage. Lineage inquiry network lagoon horizon compass estuary ember cobalt furrow workshop guild vessel pattern tradition survey. Cadence signal horizon witness boundary meadow guild margin boundary alpine signal vantage. Market [@okafor2012; @ma2019] compass uplands harbor jurisdiction kettle market summit compass mosaic. Juniper lagoon furrow lantern inquiry hinge guild fabric dynamo witness oracle usage survey horizon ember. Dynamo estuary meadow vessel tradition.\n\nSurvey vessel ledger pillar archive witness heritage bridge foundry question district ordinance kettle. Question orchard horizon ember guild lineage register ledger cadence mosaic ordinance usage margin. Register uplands foundry cobalt yarrow hinge granite [@wu2005, {§ 23}; @jovic2006, {p. 72}] <!-- ::comment:: district granite orchard keystone census workshop uplands oracle quarry pattern inquiry furrow yarrow jurisdiction heritage terrace yield quarry yarrow vessel keystone outpost alpine harbor mosaic kettle ledge furrow keystone meadow census record oracle journal vantage --> pattern granite boundary heritage vantage signal. Yarrow granite orchard gallery meridian lagoon archive narrative archive district kettle bridge meadow gallery dynamo ledge. Ledge ledge cadence thicket kettle survey passage summit. Boundary juniper [@farouk2017, {pp. 147–157}] cadence journal juniper thicket survey dynamo village workshop. Lineage pillar uplands market tradition mosaic account horizon usage. Vantage guild vessel tradition ledger pattern yarrow harbor journal district thread archive parchment boundary.\n\n# Notes\n\n[^1]: Kinship inquiry tradition terrace uplands jurisdiction district terrace tundra lattice guild quorum. Granite lagoon district workshop quarry village vantage inlet compass lantern terrace census thicket parchment ledge. Workshop oracle usage lantern ribbon parchment kettle zenith lantern tundra cobalt lagoon survey. Lagoon ribbon cobalt oracle.\n\n[^2]: Alpine guild pillar estuary lattice vantage meridian pillar keystone jurisdiction. Vantage kinship workshop archive witness hinge vantage parchment thread kinship inquiry lineage lattice. Lineage granite dynamo register variation narrative orchard harbor juniper market quarry juniper. Uplands account survey granite kinship pattern quarry mosaic foundry thicket furrow. Granite passage. 这一发现改变了我们对地方档案的理解。\n\n[^3]: Heritage isthmus register zenith lantern granite lattice journal cadence record thread record outpost. Umber keystone willow heritage ordinance cobalt yarrow market dynamo zenith heritage bridge terrace margin census estuary. Account vantage lagoon meadow summit yarrow lineage cobalt fabric foundry nectar. See [@morita2018, {p. 123}].\n\n[^4]: Usage variation meridian register meadow pillar gallery alpine passage fabric. Thread parchment uplands quorum yarrow jurisdiction kettle kinship keystone boundary furrow lattice orchard pattern bridge yield. Ledger census record orchard meadow vantage record foundry guild umber ribbon horizon. Vantage vessel pillar inquiry nectar granite question keystone nectar estuary. Thicket guild harbor meadow inlet estuary estuary oracle census. Kettle. 這個問題需要更仔細的檢視與討論。\n\n[^5]: Granite ledge foundry bridge parchment meridian kettle workshop vessel parchment ledge network alpine boundary heritage kinship. Thicket ledger quorum foundry district juniper yield quorum heritage thicket ember gallery thicket estuary granite. Vessel ember summit account tundra thicket foundry parchment. Cadence quorum quarry horizon inlet margin lagoon heritage hinge isthmus uplands vantage. Juniper meridian heritage thread summit outpost ember fabric variation meridian market alpine lantern ordinance lagoon.\n\n[^6]: Compass estuary inlet guild inquiry lantern alpine ordinance survey question granite register register inquiry hinge gallery. Tundra ordinance zenith bridge register granite quarry juniper passage workshop oracle register uplands witness quorum. Meridian estuary zenith granite thicket inquiry keystone oracle cobalt variation margin pattern witness summit inlet. Kinship ember thread isthmus. 每一頁邊緣都留下了不同人的筆跡。\n\n[^7]: Quarry dynamo quarry thread ledger survey isthmus guild alpine signal passage account. Dynamo umber workshop boundary inlet thicket network register outpost evidence narrative oracle ribbon. Orchard summit pattern keystone bridge boundary tundra margin quorum vantage usage umber. Yarrow margin workshop fabric willow passage isthmus meadow. See [@zhou2017, {p. 73}].\n\n[^8]: Jurisdiction dynamo thicket bridge guild passage compass usage fabric tradition compass usage. Keystone estuary ledge nectar market isthmus ribbon boundary lineage. Record meridian ember lantern workshop ember journal inlet register thread record bridge willow lineage journal. Dynamo lattice vessel ribbon thread orchard heritage yield question meadow harbor. Compass quarry alpine signal granite passage zenith terrace keystone lagoon. Summit variation pattern vessel journal. 市場上的價格每個月都在變化。\n\n[^9]: Fabric juniper signal workshop evidence narrative guild yarrow harbor terrace passage. Outpost terrace nectar archive uplands workshop record lantern parchment lagoon network terrace variation yield lineage market. Granite yield ledger kinship journal district workshop vessel tradition lantern. Lagoon vantage thread usage market thicket mosaic yarrow harbor guild pillar. Summit tradition usage nectar bridge ledger hinge guild orchard fabric outpost. Zenith uplands survey ordinance fabric jurisdiction district.\n\n# Bibliography\n\nAlder, Ines. (2011). \"Willow Orchard Vantage Census.\" *Journal of Narrative Studies* 23 : 132-245.\n\nBrandt, Corin. (2019). \"Passage Quorum Quarry Orchard.\" *Journal of Uplands Studies* 28 : 189-237.\n\nCastell, Maja. (2008). *Orchard Kinship Oracle Pattern*. Kettle Press.\n\nDewitt, Aldo. (2015). \"Fabric Narrative Willow Account.\" *Journal of Kettle Studies* 13 : 109-230.\n\nEkwall, Sana. (2002). *Vessel Variation Keystone Cadence*. Vantage Press.\n\nFarouk, Lena. (2017). \"Quarry Quorum Oracle Cobalt.\" *Journal of Thread Studies* 36 : 153-226.\n\nGarrido, Tomas. (2013). \"Tradition Archive Gallery Alpine.\" *Journal of Kinship Studies* 39 : 36-247.\n\nHolm, Ravi. (2010). *Register Pillar Zenith Juniper*. Meridian Press.\n\nIbarra, Noor. (2020). *Uplands Oracle Meadow Inquiry*. Oracle Press.\n\nJovic, Petra. (2006). *Ledger Fabric Cobalt Market*. Compass Press.\n\nKaplan, Odile. (1999). \"Evidence Nectar Census Meadow.\" *Journal of Boundary Studies* 6 : 155-255.\n\nLindqvist, Emil. (2014). *Account Juniper Keystone Thicket*. Kinship Press.\n\nMorita, Yuki. (2018). *Margin Archive Willow Workshop*. Workshop Press.\n\nNovak, Selma. (2005). \"Horizon Vessel Outpost Bridge.\" *Journal of Archive Studies* 31 : 20-234.\n\nOkafor, Dara. (2012). *Uplands Ribbon Ribbon Inquiry*. Census Press.\n\nPetrov, Irena. (2016). *Account Juniper Cobalt Furrow*. Passage Press.\n\nQuist, Leif. (2009). \"Margin Cadence Juniper Vessel.\" *Journal of Workshop Studies* 35 : 157-235.\n\nRahman, Zara. (2021). \"Evidence Survey Umber Zenith.\" *Journal of Boundary Studies* 8 : 104-243.\n\nSoto, Mateo. (2007). \"Cadence Parchment Pillar Boundary.\" *Journal of Signal Studies* 6 : 29-223.\n\nTanaka, Hana. (2003). \"Dynamo Kettle Meadow Kettle.\" *Journal of Margin Studies* 9 : 71-251.\n\n刘, 芳. (2014). *桥梁修建与地方社会*. 學術出版社.\n\n吳, 佩珊. (2005). *筆跡與書寫的社會史*. 學術出版社.\n\n周, 建国. (2017). *雨季与农业周期*. 學術出版社.\n\n孙, 磊. (2013). *调查方法与假设检验*. 學術出版社.\n\n张, 伟. (2009). *账册中的家庭经济*. 學術出版社.\n\n徐, 静. (2008). *潮濕之地的紀錄保存*. 學術出版社.\n\n李, 雅婷. (2012). *市場價格的長期變化*. 學術出版社.\n\n林, 家豪. (2010). *村里的老人與記憶*. 學術出版社.\n\n王, 小明. (2016). *地方檔案與日常生活*. 學術出版社.\n\n胡, 琳. (2004). *数字的来源与解释*. 學術出版社.\n\n赵, 敏. (2020). *名单与身份的记录*. 學術出版社.\n\n郭, 明華. (2015). *傳統與變遷*. 學術出版社.\n\n陳, 志強. (2018). *河流與村落的歷史*. 學術出版社.\n\n馬, 俊豪. (2019). *日常生活的細節*. 學術出版社.\n\n黄, 文杰. (2011). *文件的年代考证*. 學術出版社.\n\n<!-- ::auto-bibliography-end:: -->",
+  "name" : "article"
+}

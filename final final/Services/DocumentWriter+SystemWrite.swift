@@ -127,7 +127,12 @@ struct SystemWriteBody<R: Sendable>: Sendable {
 /// `EditorViewState.runLifecycleFlush` via `BlockSyncService.performLifecycleWholeDocumentWrite`), and
 /// `.sectionDelete` (t-94369a83 Phase 4b, slice 2a: the queued job behind an editor-first section
 /// delete, `SectionDeleteJob`; like every kind but FB it never stamps rows or bumps the epoch), and `.sectionReinsert` (slice 2b:
-/// the queued job behind a quick undo of that delete, `SectionReinsertJob`; same rules as `.sectionDelete`).
+/// the queued job behind a quick undo of that delete, `SectionReinsertJob`; same rules as `.sectionDelete`), and `.sectionDuplicate`
+/// (t-18b7fa48 Phase 4b slice 3: the queued job behind an editor-first Duplicate Section, `SectionDuplicateJob`; same rules), and
+/// `.structuralReplace` (t-18b7fa48 Phase 4b slice 2: the queued job behind an editor-first Version History restore,
+/// `StructuralReplaceJob`; same rules, and in particular it NEVER bumps the epoch or restamps rows: it writes the project's rows with
+/// `ProjectDatabase.replaceProjectRows`, not `replaceBlocks`, because the text typed after the click is typed into the restored
+/// document and a bump would make the writer refuse that batch whole).
 enum SystemWriteKind: Sendable, Equatable {
     case bibliographyUpdate
     case bibliographyRemoval
@@ -139,6 +144,8 @@ enum SystemWriteKind: Sendable, Equatable {
     case lifecycleWholeDocument
     case sectionDelete
     case sectionReinsert
+    case sectionDuplicate
+    case structuralReplace
 }
 
 // MARK: - No nesting (§1.3)
@@ -199,6 +206,37 @@ final class SystemReservation {
         if !consumed {
             ticket.writer.abandonSystemReservation(ticket.seq)
         }
+    }
+}
+
+/// A system write that already holds its place in the writer's queue but has not been waited for or run yet: steps 1 to 4 of
+/// `performSystemWrite` done in the CALLER's own synchronous stretch (`BlockSyncService.reserveSystemWriteNow`), steps 6 to 8 still to
+/// do (`BlockSyncService.runReservedSystemWrite`). t-18b7fa48 Phase 4b slice 3, round 3c, binding requirement R3+: the editor-first
+/// slow undo's job must be reserved in the click's reply turn with no `await` between the reply and the reservation, and
+/// `performSystemWrite` can only be awaited (it spans the job's whole life). Holding the handle IS the reservation; if it is dropped
+/// unrun, `SystemReservation.deinit` settles the sequence (`abandonSystemReservation`).
+@MainActor
+final class ReservedSystemWrite {
+    let reservation: SystemReservation
+    /// The editor state whose `systemWriteInFlight` count this write raised at its reservation (captured ONCE, as step 4 does);
+    /// `runReservedSystemWrite` brings it down on every way out.
+    weak var editorState: EditorViewState?
+
+    init(reservation: SystemReservation, editorState: EditorViewState?) {
+        self.reservation = reservation
+        self.editorState = editorState
+    }
+}
+
+/// What `BlockSyncService.reserveSystemWriteNow` answers: the write holds its place in the queue, or it was refused at steps 1 to 3
+/// before reserving anything (the same reasons `performSystemWrite` answers there).
+enum SystemWriteReservationResult {
+    case held(ReservedSystemWrite)
+    case refused(SystemRefuseReason)
+
+    var isHeld: Bool {
+        if case .held = self { return true }
+        return false
     }
 }
 

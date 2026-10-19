@@ -330,6 +330,14 @@ struct LossLedger: Sendable, Equatable {
     /// `noteMarkdownStaleEpochRejection`; the writer cannot see it itself (`rejectedWholeBatchForStaleEpoch` feeds no
     /// other counter, only a log line). Counted for Markdown batches ONLY, so Rich Text's poll is unchanged.
     var markdownStaleEpochRejections = 0
+    #if DEBUG
+    /// DEBUG only (t-18b7fa48 Phase 4b slice 2, round 2d-i): how many editor batches the database refused WHOLE for a stale epoch
+    /// (`EditorApplyResult.rejectedWholeBatchForStaleEpoch`) in a Rich Text apply (the editor batch path, `mergeApplyResultLocked`).
+    /// In a release build that refusal feeds no counter, only the log line of rule 1; a test needs a number it can read. The
+    /// editor-first restore tests assert it did not move: a restore job that bumped the project's write epoch (the old
+    /// `replaceBlocks`) would make the writer refuse the text typed after the click, wholesale and without a message.
+    var debugRichTextStaleEpochRejections = 0
+    #endif
 }
 
 // MARK: - Internal state
@@ -2416,6 +2424,10 @@ actor DocumentWriter {
             writerState.ledger.staleAnchorInsertsRejected += result.rejectedStaleAnchorInserts.count
             sig.events.append(.insertRejected(holderSeq, result.rejectedStaleAnchorInserts.count))
         }
+        #if DEBUG
+        // Beside the log line the database wrote for rule 1 (`applyBlockChangesFromEditor`): a batch refused whole for a stale epoch.
+        if result.rejectedWholeBatchForStaleEpoch { writerState.ledger.debugRichTextStaleEpochRejections += 1 }
+        #endif
     }
 
     // MARK: - System writes (Phase 2, t-94369a83, §1)

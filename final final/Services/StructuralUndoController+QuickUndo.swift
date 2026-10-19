@@ -48,6 +48,9 @@ struct QuickUndoReply: EditorFirstBatchReply {
     let restoredIds: [String]
     /// The headings and section breaks among them: what the sidebar shows again.
     let restoredLeaderIds: [String]
+    /// The section leaders the undo took OUT of the document (t-18b7fa48): empty for the undo of a delete (a delete only removes), the
+    /// copy's leaders for the undo of a duplicate, which the sidebar hides at once. Absent in a reply from an older editor.
+    let removedLeaderIds: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -55,6 +58,18 @@ struct QuickUndoReply: EditorFirstBatchReply {
         case reason
         case restoredIds
         case restoredLeaderIds
+        case removedLeaderIds
+    }
+}
+
+extension StructuralEntry {
+    /// What an editor-first entry's operation is called in the quick undo's diagnostic log ("... not in the pre-<label> document").
+    var operationLabel: String {
+        switch kind {
+        case .sectionDuplicate: return "duplicate"
+        case .restoreProject, .restoreSectionReplace, .restoreSectionDuplicate: return "restore"
+        default: return "delete"
+        }
     }
 }
 
@@ -79,6 +94,9 @@ extension StructuralUndoController {
         efLatestJobKey[opId] = nil
         efRecordedStructGeneration[opId] = nil
         efSettleTasks[opId] = nil
+        efDuplicateCopies[opId] = nil   // t-18b7fa48: a duplicate entry's copies
+        efRestorePlans[opId] = nil   // t-18b7fa48 round 2d-i: a restore entry's plan
+        efSnapshotJobKeys[opId] = nil   // t-18b7fa48 round 3c: the latest slow undo or redo job's key
         if let keys = efJobKeys.removeValue(forKey: opId) {
             for key in keys { editorState?.efJobRegistry.forget(key) }
         }
@@ -101,7 +119,7 @@ extension StructuralUndoController {
     }
 
     private func quickPathPossible(_ entry: StructuralEntry, redo: Bool) -> Bool {
-        guard entry.isEditorFirstDelete, let editorState else { return false }
+        guard entry.isEditorFirst, let editorState else { return false }
         guard editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil else { return false }
         guard let slot = efSlots.slot(entry.id), let holder = efHolders[entry.id], holder.outcome != .failed else { return false }
         guard efRecordedStructGeneration[entry.id] == editorState.structuralOutOfQueueGeneration else { return false }
@@ -122,7 +140,14 @@ extension StructuralUndoController {
         guard let entry = top(), entry.id == opId, quickPathPossible(entry, redo: redo) else { return nil }
         await editorState.awaitRunningLiveFlush()
         guard let fresh = top(), fresh.id == opId, quickPathPossible(fresh, redo: redo) else { return nil }
-        if redo { return await performQuickRedoOfDelete(fresh) }
+        // The redo branches by the entry's kind (t-18b7fa48): a duplicate's redo is a fresh editor-first duplicate with the first
+        // click's copy ids; a delete's is a fresh editor-first delete. Every editor-first entry, of either kind, can take the quick
+        // path and meets the slow-undo test seams below [S13].
+        if redo {
+            if fresh.kind == .sectionDuplicate { return await performQuickRedoOfDuplicate(fresh) }
+            if fresh.isVersionRestore { return await performQuickRedoOfRestore(fresh) }
+            return await performQuickRedoOfDelete(fresh)
+        }
         #if DEBUG
         if testForceSlowDeleteUndo { return nil }
         #endif
@@ -204,9 +229,23 @@ extension StructuralUndoController {
         footnoteSyncService?.dropUndoCheckpoints(notIn: holder.snapshot().footnoteCheckpointMarker)
         forgetCommittedDerivedState()   // the restore brings the deleted footnotes and citations back: the resync's committed state is stale
         StructuralTrace.log("quick-undo lap: undo checkpoints dropped")   // laps: where the time between the restore and the reinsert goes
-        let sidebarUpdate = showRestoredSections(
-            opId: opId, reinsertKey: reinsertKey, epoch: epoch, holder: holder,
-            restoredLeaderIds: Set(reply.restoredLeaderIds), database: db)
+        let sidebarUpdate: Task<Void, Never>?
+        if entry.kind == .sectionDuplicate {
+            // The undo of a duplicate restores no section: it takes the copy out. Its leaders leave the sidebar at once.
+            hideDuplicateInSidebar(opId: opId, removedLeaderIds: Set(reply.removedLeaderIds ?? []), holder: holder)
+            sidebarUpdate = nil
+        } else if entry.isVersionRestore {
+            // The undo of a restore swaps the two documents: the restored outline leaves and the previous one comes back, at once
+            // (t-18b7fa48 rounds 2d-i and 2d-ii). Both outlines are the plan's: a whole restore replaced the whole document, so "the
+            // leaders the swap took out" is every leader of the restored document; a section replace swaps the leaders of the range;
+            // a restore as duplicate takes out only its own leaders (the plan's, cut down to the ones the editor reports: A5).
+            swapSidebarForQuickUndoOfRestore(opId: opId, holder: holder, editorRemovedLeaderIds: Set(reply.removedLeaderIds ?? []))
+            sidebarUpdate = nil
+        } else {
+            sidebarUpdate = showRestoredSections(
+                opId: opId, reinsertKey: reinsertKey, epoch: epoch, holder: holder,
+                restoredLeaderIds: Set(reply.restoredLeaderIds), database: db)
+        }
         StructuralTrace.log("quick-undo lap: showRestoredSections returned")
         // A13: the section sync's tracking belongs to the post-delete document.
         sectionSyncService?.cancelPendingSync()
@@ -221,7 +260,7 @@ extension StructuralUndoController {
         await TestMode.holdQuickUndoResume(opId: trace.opId)   // UI-test seam, before the reinsert starts (see TestMode); no wait when off
         let reserved = startReinsert(
             opId: opId, reinsertKey: reinsertKey, epoch: epoch, holder: holder, database: db, projectId: pid,
-            sidebarUpdate: sidebarUpdate)
+            sidebarUpdate: sidebarUpdate, operationLabel: entry.operationLabel)
         StructuralTrace.log("quick-undo lap: reinsert task started")
         await reserved.wait()
         StructuralTrace.log("quick-undo lap: reinsert reservation wait returned (didReserve=\(reserved.didReserve))")
@@ -301,7 +340,7 @@ extension StructuralUndoController {
     /// that runs the job also runs everything after it (`reinsertSettled`) and is what the unsettled marker `reinsertKey` stands for.
     private func startReinsert( // swiftlint:disable:this function_parameter_count
         opId: UUID, reinsertKey: UUID, epoch: Int, holder: SectionDeletePayloadHolder, database: ProjectDatabase, projectId: String,
-        sidebarUpdate: Task<Void, Never>?
+        sidebarUpdate: Task<Void, Never>?, operationLabel: String
     ) -> EFReservationSignal {
         let reserved = EFReservationSignal()
         guard let editorState, let blockSync = blockSyncService else {
@@ -313,6 +352,7 @@ extension StructuralUndoController {
         }
         let registry = editorState.efJobRegistry
         var heldJob = SectionReinsertJob(opId: opId, projectId: projectId, holder: holder, slots: efSlots)
+        heldJob.operationLabel = operationLabel   // "delete" or "duplicate": the wording of the job's diagnostic log
         #if DEBUG
         heldJob.bodyHold = testReinsertBodyHold
         #endif
@@ -369,6 +409,12 @@ extension StructuralUndoController {
         findBarState?.clearSearch()   // code review B-M2: the boundary hygiene every slow structural path does
         bumpEpoch(opId)
         editorState.editorRestoreGeneration += 1
+        // Round 1g-B, review A3: the rebuild stamp moves the click's way (see `performQuickRedoOfDuplicate`). A rebuild that stamps after
+        // the redo's reply and reads a table that still holds the section (the redo's delete job has not committed) must not push
+        // that table over the editor, which no longer shows the section. The job takes the count over (`ownsPendingJobCount`); the
+        // exits below that reserve no job bring it down in `abandonQuickRedo`.
+        editorState.editorFirstClickGeneration &+= 1
+        editorState.pendingEditorFirstJobs += 1
         footnoteSyncService?.cancelPendingDebounce()
         bibliographySyncService?.cancelPendingDebounce()
         let redoKey = UUID()
@@ -412,7 +458,7 @@ extension StructuralUndoController {
         efSlots.markReserved(opId)
         let reservedForReal = await startEditorFirstJob(
             opId: opId, rootId: holder.rootId, removedLeaders: removedLeaders, editorRemovedIds: reply.removedIds,
-            database: db, projectId: pid, jobKey: redoKey)
+            database: db, projectId: pid, jobKey: redoKey, ownsPendingJobCount: true)
         blockSync.structuralClickPending = false   // as the click does, once the job holds its place
         trace.log("delete job reserved")
         spy("quickRedoJobReserved")
@@ -436,8 +482,10 @@ extension StructuralUndoController {
     }
 
     /// The quick redo's refusal: the document is as it was (the section is on the screen), the press is answered `failed` with the
-    /// notice. When the stretch had already moved the epoch and the generation, one fresh settle puts the skipped steps back.
-    private func abandonQuickRedo(
+    /// notice. When the stretch had already moved the epoch and the generation (`changedEpoch`, which is also the one point at which
+    /// the stretch raised `pendingEditorFirstJobs`, round 1g-B review A3), the count comes down FIRST (the fresh settle's own rebuilds
+    /// must stamp as current, the rule of `runEditorFirstStructuralClick`) and one fresh settle puts the skipped steps back.
+    func abandonQuickRedo(
         opId: UUID, redoKey: UUID? = nil, reason: String, trace: StructTrace, changedEpoch: Bool
     ) async -> UndoResult {
         trace.log("refused (quick) reason=\(reason)")
@@ -447,7 +495,10 @@ extension StructuralUndoController {
             editorState?.efJobRegistry.markSettled(redoKey)
         }
         showUndoQueueDroppedWarning()
-        if changedEpoch { startFreshSettleAfterRefusedRestore(opId: opId) }
+        if changedEpoch {
+            releasePendingEditorFirstJob()
+            startFreshSettleAfterRefusedRestore(opId: opId)
+        }
         return .failed
     }
 }

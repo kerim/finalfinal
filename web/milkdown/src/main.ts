@@ -173,12 +173,15 @@ import {
 import { cancelAnnotationEditFromLadder, isAnnotationEditPopupOpen } from './annotation-edit-popup';
 import { insertEquation, insertEquationDialog } from './api-math';
 import { deleteSectionEditorFirst } from './api-section-delete';
+import { duplicateSectionEditorFirst, redoSectionDuplicateEditorFirst } from './api-section-duplicate';
 import {
   quickUndoLiveDiffersFromRestored,
   redoSectionDeleteEditorFirst,
   resumeSyncAfterQuickUndo,
   undoSectionDeleteEditorFirst,
 } from './api-section-undo';
+import { redoReplaceRangeEditorFirst, replaceRangeEditorFirst } from './api-structural-replace';
+import { structuralSwapEditorFirst } from './api-structural-swap';
 import { cancelCitationEdit, isCitationEditPopupOpen } from './citation-edit-popup';
 import { pushLiveContentToSwift } from './content-push';
 import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
@@ -770,6 +773,17 @@ window.FinalFinal = {
   finishStructuralSwapSettle,
   // Slice 2a (api-section-delete.ts): editor-first section delete, one synchronous JavaScript turn.
   deleteSectionEditorFirst,
+  // Phase 4b slice 3 (api-section-duplicate.ts): editor-first section duplicate and its quick redo. The quick UNDO of a duplicate is
+  // `undoSectionDeleteEditorFirst` below (the generic checkpoint swap; its reply names the leaders it removed in `removedLeaderIds`).
+  duplicateSectionEditorFirst,
+  redoSectionDuplicateEditorFirst,
+  // Phase 4b slice 2, round 2c (api-structural-replace.ts): the editor-first Version History restores (whole document, flat section,
+  // insert after an anchor) and the quick redo. The quick UNDO of any of them is `undoSectionDeleteEditorFirst` below.
+  replaceRangeEditorFirst,
+  redoReplaceRangeEditorFirst,
+  // Phase 4b slice 3, round 3b (api-structural-swap.ts): the slow snapshot undo/redo done in the editor first -- the checkpoint (or
+  // redo checkpoint) swap, the payload's ids, the settle, all in one synchronous turn, returning the pending-edit batch on every path.
+  structuralSwapEditorFirst,
   // Slice 2b (api-section-undo.ts): the quick undo and quick redo of that delete, and the resume that hands block-sync back
   // after the quick undo's reinsert holds its writer ticket. See web-api-published.md in the run folder for the reply shapes.
   undoSectionDeleteEditorFirst,

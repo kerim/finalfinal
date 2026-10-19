@@ -172,6 +172,20 @@ extension FootnoteSyncService {
         FootnoteDiag.log("quick undo: checkpoints dropped=\(before - undoCheckpoints.count) kept=\(undoCheckpoints.count)")
     }
 
+    /// A queued job is about to rewrite EVERY Notes row from a snapshot or a version (the editor-first slow undo and redo, the
+    /// whole-project restore; fix round F1, finding D): every checkpoint describes a table that is about to be gone, and one that
+    /// matched the document the editor then shows (the swapped-in text equals a state of the checkpoint) would queue a footnote restore
+    /// planned against the table as it was BEFORE the job, behind the job, renumbering rows the job has already put in order. All of
+    /// them go, and so does the burst in progress (it describes a document that is replaced). Quick undo drops only the checkpoints
+    /// recorded since the click (`dropUndoCheckpoints(notIn:)`) because its restored rows are exactly the ones those checkpoints started
+    /// from; a snapshot is any older document, so nothing recorded earlier is safe either.
+    func dropAllUndoCheckpoints() {
+        let before = undoCheckpoints.count
+        undoCheckpoints = []
+        burstStates = []
+        FootnoteDiag.log("queued Notes rewrite: checkpoints dropped=\(before) burst states cleared")
+    }
+
     /// Starts the hold for `token` (plan-v3 D2): from now on a write scheduled at or below the current `syncGeneration` records no
     /// checkpoint when it commits (a delete-resync write that had already reserved before the quick undo commits after it).
     func holdUndoCheckpoints(token: UUID) {
@@ -196,7 +210,7 @@ extension FootnoteSyncService {
     /// `perform` that applies commits both again.
     func forgetCommittedNotesState() {
         lastRenumberedHash = 0
-        FootnoteDiag.log("committed Notes state forgotten (rows were put back by a quick undo): lastRenumberedHash cleared")
+        FootnoteDiag.log("committed Notes state forgotten (the Notes rows were rewritten by a structural job): lastRenumberedHash cleared")
     }
 
     /// Ends the hold started with `token`. A different token's hold (a later quick undo's) is left alone.

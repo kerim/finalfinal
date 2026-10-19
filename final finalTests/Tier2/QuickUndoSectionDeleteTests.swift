@@ -26,6 +26,7 @@ struct QuickUndoSectionDeleteTests: QuickUndoFixtures {
     private func rowsAroundDeleteAndUndo(article: Bool, slow: Bool) async throws -> (before: [Block], after: [Block]) {
         let rig = article ? try makeArticleRig() : try makeBookRig()
         rig.controller.testForceSlowDeleteUndo = slow
+        rig.controller.testForceLegacyStructural = slow   // t-18b7fa48 round 3c: the "slow" side here is the OLD body (its swap is looked for)
         rig.editorTextAfterUndoSwap = try rig.assembledMarkdown()
         let before = try rig.blocks()
         let deleted = try await delete(rig, article ? Self.villageRegisters : nil)

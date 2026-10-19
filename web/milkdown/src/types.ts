@@ -1,7 +1,10 @@
 // Type definitions and interfaces for the Milkdown editor
 
 import type { DeleteSectionResult } from './api-section-delete';
+import type { DuplicatedBlock, DuplicateSectionResult } from './api-section-duplicate';
 import type { QuickResumeResult, QuickUndoResult } from './api-section-undo';
+import type { ReplaceRangePayload, ReplaceRangeResult } from './api-structural-replace';
+import type { StructuralSwapPayload, StructuralSwapResult } from './api-structural-swap';
 import type { BlockChanges } from './block-sync-plugin';
 import type { CSLItem } from './citation-plugin';
 import type { PrefillBeginResult, PrefillStepResult } from './citation-prefill';
@@ -312,6 +315,40 @@ declare global {
       // returns the pending-edit batch it consumed on every path. Swift reads it as JSON.stringify(...) like getBlockChanges.
       // `managedIds` is the database's list of Notes/Bibliography block ids at the click.
       deleteSectionEditorFirst: (opId: string, rootBlockId: string, managedIds: string[]) => DeleteSectionResult;
+      // Phase 4b slice 3 (api-section-duplicate.ts): the editor inserts the section's copy first, in one synchronous turn, with a
+      // fresh PERMANENT id per copied block, and returns the pending-edit batch it consumed on every path (Swift always applies
+      // it). Refuses (`ok: false`, document untouched) for a managed root. `copies` lists every copied block (source id, new id)
+      // in document order; `insertedSectionsSnapshot` the copied section leaders for the sidebar.
+      duplicateSectionEditorFirst: (opId: string, rootBlockId: string, managedIds: string[]) => DuplicateSectionResult;
+      // The quick redo of a quick-undone duplicate: a fresh duplicate of the CURRENT document under the same opId that reuses the
+      // first click's `copies` ids; a re-check refusal reads `ok: false, reason: 'docChanged'`.
+      redoSectionDuplicateEditorFirst: (
+        opId: string,
+        rootBlockId: string,
+        managedIds: string[],
+        copies?: DuplicatedBlock[]
+      ) => DuplicateSectionResult;
+      // Phase 4b slice 2, round 2c (api-structural-replace.ts): the three Version History restores. The editor replaces the document
+      // ('whole'), the target heading's flat section ('section') or inserts a fragment after an anchor ('insertAfter') first, in one
+      // synchronous turn, giving the new top-level blocks the payload's ids, and returns the pending-edit batch it consumed on every
+      // path (Swift always applies it). A refusal (`ok: false`, e.g. 'idAlignment') leaves the document untouched. The quick UNDO
+      // is `undoSectionDeleteEditorFirst` below (the generic checkpoint swap).
+      replaceRangeEditorFirst: (opId: string, payload: ReplaceRangePayload) => ReplaceRangeResult;
+      // The quick redo of a quick-undone replace: a fresh replace of the CURRENT document under the same opId, from the first click's
+      // payload (the same ids); a re-check refusal reads `ok: false, reason: 'docChanged'`.
+      redoReplaceRangeEditorFirst: (opId: string, payload: ReplaceRangePayload) => ReplaceRangeResult;
+      // Phase 4b slice 3, round 3b (api-structural-swap.ts): the SLOW snapshot undo/redo done in the editor first. One synchronous turn:
+      // takes the pending-edit batch, re-checks that the live document still equals the saved copy (`ok: false`, `reason: 'docChanged'`
+      // otherwise, nothing swapped), checks the payload's ids against the target document (`idAlignment`), swaps the entry's checkpoint
+      // ('undo') or redo checkpoint ('redo') in exactly as `performStructuralSwap` does, gives the blocks the payload's ids and settles
+      // block-sync. `noCheckpoint`: no entry / no checkpoint for that direction, nothing swapped. The batch comes back on every path
+      // (Swift always applies it). The latch must be held for `opId` (the press that routed here set it); Swift replies with
+      // `receiveUndoOutcome` / `receiveRedoOutcome` afterwards.
+      structuralSwapEditorFirst: (
+        opId: string,
+        direction: 'undo' | 'redo',
+        payload: StructuralSwapPayload
+      ) => StructuralSwapResult;
       // Phase 4b part 2, slice 2b (api-section-undo.ts): the quick undo of that delete. One synchronous turn that re-checks the live
       // document against the saved post-op copy (refusing, touching nothing, when it differs), swaps the pre-op checkpoint back
       // in with its block ids, and leaves block-sync PAUSED; Swift calls `resumeSyncAfterQuickUndo` once the reinsert job holds its

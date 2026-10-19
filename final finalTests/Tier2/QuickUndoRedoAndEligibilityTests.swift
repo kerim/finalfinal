@@ -162,6 +162,10 @@ struct QuickUndoRedoAndEligibilityTests: QuickUndoFixtures {
     @Test("U-Q10: a duplicate after the delete writes the table outside the queue: the delete's undo takes the slow path")
     func testIneligibleEntriesTakeTheSlowPath() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
+        // t-18b7fa48 round 1e-i: a duplicate is editor-first now and no longer writes the table outside the queue, so it no longer
+        // makes the delete's undo ineligible. This test pins the OLD duplicate (the legacy body, which still does); the editor-first
+        // twin is EditorFirstDuplicateTests.testDeleteUndoStaysQuickAfterDuplicate (U-S1-1).
+        rig.controller.testForceLegacyStructural = true
         rig.editorTextAfterUndoSwap = try rig.assembledMarkdown()
         let sectionA = try rig.heading("Section A")
         let sectionC = try rig.heading("Section C")
@@ -188,6 +192,7 @@ struct QuickUndoRedoAndEligibilityTests: QuickUndoFixtures {
     @Test("U-Q10: an entry whose slot fell back, and an undo forced slow, take the slow path; the quick path ran for none of them")
     func testFallbackSlotAndForcedSeamTakeTheSlowPath_book6() async throws {
         let fallback = try makeBookRig()
+        fallback.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: "the slow path" this test looks for is the OLD body's swap
         fallback.editorTextAfterUndoSwap = try fallback.assembledMarkdown()
         let one = try await delete(fallback)
         fallback.controller.efSlots.markFallback(one.entry.id)
@@ -197,6 +202,7 @@ struct QuickUndoRedoAndEligibilityTests: QuickUndoFixtures {
             "a fallback slot takes the slow path")
 
         let forced = try makeBookRig()
+        forced.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: see above
         forced.editorTextAfterUndoSwap = try forced.assembledMarkdown()
         forced.controller.testForceSlowDeleteUndo = true
         let two = try await delete(forced)
@@ -326,6 +332,7 @@ struct QuickUndoRedoAndEligibilityTests: QuickUndoFixtures {
     @Test("U-Q19 (S8): a Cmd-Z queued on the gate behind another structural command decides quick or slow INSIDE")
     func testUndoQueuedBehindAnotherCommandDecidesInside() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: "the slow path" this test looks for is the OLD body's swap
         rig.editorTextAfterUndoSwap = try rig.assembledMarkdown()
         let snapshots = SnapshotService(database: rig.db, projectId: rig.pid)
         defer { for snapshot in (try? snapshots.fetchAllSnapshots()) ?? [] { SnapshotService.unpinUndoPointSnapshot(snapshot.id) } }

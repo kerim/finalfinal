@@ -50,6 +50,9 @@ extension EditorViewState {
         // Reset content state machine
         contentState = .idle
 
+        // A re-push owed to the project that is going away is not owed to the next one (t-18b7fa48 round 1b-ii).
+        managedRegionsNeedRepush = false
+
         // Reset filters
         statusFilter = nil
         headerLevelFilter = nil

@@ -236,10 +236,17 @@ extension ProjectDatabase {
 
     /// Insert a new section
     func insertSection(_ section: Section) throws {
-        var section = section
         try write { db in
-            try section.insert(db)
+            try Self.insertSection(db: db, section)
         }
+    }
+
+    /// `insertSection(_:)` on an open `Database`, for a caller already inside a write transaction (t-18b7fa48 Phase 4b, slice 2: the
+    /// Version History restore job inserts the snapshot's sections in the same transaction that replaces the block rows). Static for
+    /// the same reason as the other db-level forms: with no `self`, a nested `ProjectDatabase.write` is structurally impossible.
+    static func insertSection(db: Database, _ section: Section) throws {
+        var section = section
+        try section.insert(db)
     }
 
     /// Update an existing section
@@ -316,10 +323,16 @@ extension ProjectDatabase {
     /// Delete all sections for a project
     func deleteAllSections(projectId: String) throws {
         try write { db in
-            try Section
-                .filter(Section.Columns.projectId == projectId)
-                .deleteAll(db)
+            try Self.deleteAllSections(db: db, projectId: projectId)
         }
+    }
+
+    /// `deleteAllSections(projectId:)` on an open `Database`, for a caller already inside a write transaction (see
+    /// `insertSection(db:_:)`).
+    static func deleteAllSections(db: Database, projectId: String) throws {
+        try Section
+            .filter(Section.Columns.projectId == projectId)
+            .deleteAll(db)
     }
 
     // MARK: - Reorder Operations

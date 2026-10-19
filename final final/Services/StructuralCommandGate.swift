@@ -176,4 +176,5 @@ final class DelayedProgressToast {
     /// The shared text of the held-command and wait toasts.
     static let finishingMessage = "Finishing the last change\u{2026}"
     static let undoingMessage = "Undoing\u{2026}"
+    static let redoingMessage = "Redoing\u{2026}"
 }

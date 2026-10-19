@@ -103,6 +103,7 @@ struct EditorFirstRebuildWaitTests {
         // nothing; its twin (QuickUndoTamperTwinTests.testQuickUndoAtOnceAfterDeleteSettlesNotesAfterTheRebuild_article) pins the
         // requirement that no definition is lost.
         rig.controller.testForceSlowDeleteUndo = true
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: pins the OLD slow body (its wait before the swap)
         let before = EditorFirstFootnoteLifecycleTests.footnoteLabels(in: try rig.assembledMarkdown())
         #expect(before.references.count == 9 && before.definitions.count == 9, "the article has nine footnotes: \(before)")
         let root = try rig.heading(Self.sectionTitle)
@@ -180,6 +181,7 @@ struct EditorFirstRebuildWaitTests {
     func testUndoWaitsForARebuildSomethingElseStarted_article() async throws {
         let rig = try makeRig()
         rig.controller.testForceSlowDeleteUndo = true   // slice 2b: the slow undo's entry wait (its quick twin: the stale push is skipped, U-Q26)
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: pins the OLD slow body (its swap event is what is looked for)
         let root = try rig.heading(Self.sectionTitle)
         try rig.setReply(.init(removedLeaderIds: [root.id]))
         // The editor holds the post-delete text when the follow-up work starts, so its footnote resync really cleans the Notes.
@@ -220,6 +222,7 @@ struct EditorFirstRebuildWaitTests {
     func testUndoWaitsForARebuildThatStartedWhileItWaitedForTheDelete_article() async throws {
         let rig = try makeRig()
         rig.controller.testForceSlowDeleteUndo = true   // slice 2b: the slow undo's last wait before its swap (the quick undo has none)
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: pins the OLD slow body's last wait before its swap (F1)
         let root = try rig.heading(Self.sectionTitle)
         try rig.setReply(.init(removedLeaderIds: [root.id]))
         rig.controller.testEFSettleHold = { [weak rig] in
@@ -281,7 +284,10 @@ struct EditorFirstRebuildWaitTests {
         await rig.settle(entry.id)
         try rig.syncEditorContentFromDatabase()
 
-        // A Duplicate (another structural command) still waits at its entry for a running rebuild.
+        // A Duplicate that takes the OLD whole-document path (t-18b7fa48 round 1e-ii: the editor-first Duplicate is now granted at once,
+        // like Delete -- D6's gate mode; its twin is testEditorFirstDuplicateClickIsNotHeldByARunningRebuild_article) still waits at
+        // its entry for a running rebuild.
+        rig.controller.testForceLegacyStructural = true
         let secondRebuildMayLand = LifecycleEntryHarness.Gate()
         defer { secondRebuildMayLand.open() }
         let before = rig.events.items.count
@@ -294,5 +300,36 @@ struct EditorFirstRebuildWaitTests {
         secondRebuildMayLand.open()
         let duplicateOutcome = await duplicate.value
         #expect(duplicateOutcome == .performed)
+    }
+
+    // MARK: - F7, editor-first Duplicate (t-18b7fa48 round 1e-ii, D6 gate mode)
+
+    @Test("F7 (Duplicate): an editor-first Duplicate click is granted at once while a rebuild runs, as Delete is")
+    func testEditorFirstDuplicateClickIsNotHeldByARunningRebuild_article() async throws {
+        let rig = try makeRig()
+        let rebuildMayLand = LifecycleEntryHarness.Gate()
+        defer { rebuildMayLand.open() }
+        startRebuild(rig, mayLand: rebuildMayLand)
+        let started = await gateWaitUntil { self.indexOf(rig, "rebuild read") != nil }
+        #expect(started)
+
+        // The editor inserts the copy first; a rebuild is stamped against the click instead of being waited for (it takes seconds on
+        // a book, and a Duplicate pressed while one is landing must stay instant).
+        let section = try rig.heading("1.4 Bridges and Boundaries")
+        let duplicate = Task { @MainActor in await rig.controller.performSectionDuplicate(rootId: section.id) }
+        let finishedAtOnce = await gateWaitUntil({ rig.unifiedUndo.undoStack.count == 1 }, iterations: 200)
+        #expect(finishedAtOnce, "the editor-first Duplicate click was held by the running rebuild")
+        if finishedAtOnce {
+            #expect(!rig.editorState.runningRebuildTasks.isEmpty, "and the rebuild is still in flight")
+        } else {
+            rebuildMayLand.open()   // a click that is held must not hang the test: the rebuild lands and the click goes on
+        }
+        #expect(rig.scripts(containing: "beginStructuralOp").isEmpty, "the editor-first Duplicate did not start the old sequence")
+        let outcome = await duplicate.value
+        #expect(outcome == .performed)
+        let entry = try #require(rig.unifiedUndo.undoStack.last)
+        #expect(entry.kind == .sectionDuplicate)
+        rebuildMayLand.open()
+        await rig.settle(entry.id)
     }
 }

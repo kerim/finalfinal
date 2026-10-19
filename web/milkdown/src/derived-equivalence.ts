@@ -38,7 +38,18 @@
 //     run) skips nothing either: exact comparison, never a wrong restore.
 //   * Footnote definition paragraphs (a paragraph starting with a `footnote_def` atom) leave the body.
 //     Their text is kept by label and compared through the references that point at them, in reference
-//     order. A label defined twice makes the document ambiguous: never equivalent.
+//     order. A label that a reference carries and that is defined twice with DIFFERENT texts makes the document
+//     ambiguous (which text does the reference stand for?): never equivalent. The same label defined twice with the
+//     same text is one footnote twice (a Notes push and the saved copy's rebase can leave that: round F3c), and extra
+//     definitions of a label no reference carries are orphans (below); neither is ambiguous. The TEXT of a definition is
+//     the user's (the Notes section is rebuilt by Swift from the definition rows: it renumbers, reorders and drops
+//     orphans, but what is written in a definition is stored there and edited there), so two different texts for the
+//     same reference are a real difference. What the app regenerates is which definitions the Notes hold and under
+//     which number: a reference whose definition is missing in the LIVE document (`a`) while the saved copy (`b`) holds it
+//     is not a difference (round F3b of t-18b7fa48: after the renumber is taken back as text, the references carry their
+//     old numbers again while the Notes push had already deleted definitions of the new numbering, so some references
+//     have no definition until the next rebuild). The swap restores the saved copy's definition and the Notes are rebuilt
+//     afterwards; the live document has no text there that the swap could drop. The reverse stays different.
 //   * A heading directly followed by a definition paragraph (the Notes heading) stays in the body only
 //     when some definition in its run is referenced from the body; Swift removes it when no footnote
 //     remains.
@@ -61,7 +72,7 @@
 import { Fragment, type Node } from '@milkdown/kit/prose/model';
 
 interface Projection {
-  /** The footnote label defined twice, or null. A duplicate makes the document ambiguous: never equivalent. */
+  /** A footnote label that a reference carries and that is defined twice with different texts, or null. Ambiguous: never equivalent. */
   duplicateLabel: string | null;
   /** Top-level body nodes in canonical form. */
   body: Node[];
@@ -213,18 +224,15 @@ function buildProjection(doc: Node): Projection {
 
   const { skipped, shape } = findBibliography(children);
 
-  // Definitions (by label) and, in document order, the labels of the references in the body.
+  // Definitions (by label, in document order) and, in document order, the labels of the references in the body.
   const isDef: boolean[] = children.map((child, i) => !skipped[i] && isDefinitionParagraph(child));
-  const defs = new Map<string, Fragment>();
+  const defList: Array<{ label: string; text: Fragment }> = [];
   const refs: string[] = [];
-  let duplicateLabel: string | null = null;
   children.forEach((child, i) => {
     if (skipped[i]) return;
     if (isDef[i]) {
       const marker = child.firstChild as Node;
-      const label = String(marker.attrs.label);
-      if (defs.has(label) && duplicateLabel === null) duplicateLabel = label;
-      defs.set(label, child.content.cut(marker.nodeSize));
+      defList.push({ label: String(marker.attrs.label), text: child.content.cut(marker.nodeSize) });
       return;
     }
     child.descendants((n) => {
@@ -232,6 +240,19 @@ function buildProjection(doc: Node): Projection {
     });
   });
   const referenced = new Set(refs);
+
+  // A label defined more than once is ambiguous ONLY when a reference carries that label and the definitions that compete for it say
+  // different things: then it cannot be told which text the reference stands for. Equal texts are the same footnote twice (the Notes
+  // push and the saved copy's rebase can leave both: round F3c of t-18b7fa48), and extra definitions of a label NO reference carries
+  // are orphans, which the orphan rule below already covers (each such paragraph counts as an orphan, compared as a multiset).
+  const defs = new Map<string, Fragment>();
+  let duplicateLabel: string | null = null;
+  for (const { label, text } of defList) {
+    const earlier = defs.get(label);
+    if (earlier !== undefined && referenced.has(label) && !earlier.eq(text) && duplicateLabel === null)
+      duplicateLabel = label;
+    defs.set(label, text);
+  }
 
   const body: Node[] = [];
   const bodyIndex: number[] = [];
@@ -244,7 +265,7 @@ function buildProjection(doc: Node): Projection {
 
   const notes = refs.map((label) => defs.get(label) ?? null);
   const orphans: Fragment[] = [];
-  for (const [label, text] of defs) {
+  for (const { label, text } of defList) {
     if (!referenced.has(label)) orphans.push(text);
   }
   return { duplicateLabel, body, bodyIndex, notes, orphans, bibliography: shape };
@@ -304,12 +325,36 @@ export function explainDerivedDifference(a: Node, b: Node): string | null {
   }
 
   if (pa.notes.length !== pb.notes.length) return `reference count differs: a=${pa.notes.length} b=${pb.notes.length}`;
+  let withoutDefinition = 0;
   for (let i = 0; i < pa.notes.length; i++) {
     const x = pa.notes[i];
     const y = pb.notes[i];
+    // A reference with NO definition in `a` (the live document) whose definition `b` (the saved copy) holds is a difference in
+    // which definitions the Notes hold, not in what anyone wrote: the Notes membership and numbering are what the app
+    // regenerates (round F3b of t-18b7fa48), and the swap puts the saved copy's definition back, so nothing the user made
+    // since can be dropped by it (`a` has no text there at all). The reverse (`a` has a definition `b` lacks) and any
+    // difference between two definitions' TEXTS stay different: that is text the user may have written.
+    if (x === null && y !== null) {
+      withoutDefinition++;
+      continue;
+    }
     const same = x === null || y === null ? x === y : x.eq(y);
     if (!same) {
       return `footnote text differs at reference ${i} of ${pa.notes.length}: a=${describeFragment(x)} b=${describeFragment(y)}`;
+    }
+  }
+  // The judge's must-fix on that rule: a reference that lacks its definition in `a` may be the reference of a definition the Notes
+  // rebuild relabelled to a number no reference carries, i.e. the definition sits in `a` as an ORPHAN, and an orphan in `a` is otherwise
+  // ignored when `b` has none (below). Together the two would let text the user typed into that definition vanish with the swap. So once
+  // a reference was skipped, every orphan of `a` must be a text `b` holds as well (as a referenced definition or as an orphan).
+  if (withoutDefinition > 0) {
+    const inB = [...pb.notes.filter((text): text is Fragment => text !== null), ...pb.orphans];
+    const foreign = pa.orphans.filter((text) => !inB.some((other) => other.eq(text))).length;
+    if (foreign > 0) {
+      return (
+        `orphan definition in a not in b while a reference lacks its definition: ${foreign} of a's ${pa.orphans.length} ` +
+        `orphan(s), ${withoutDefinition} reference(s) without a definition in a`
+      );
     }
   }
   return orphansDifference(pa.orphans, pb.orphans);

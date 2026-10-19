@@ -33,6 +33,11 @@
 // The quick REDO is not a swap at all: `redoSectionDeleteEditorFirst` removes the section again from the document as it stands
 // NOW, under the same opId, through the shared `removeSectionInEditor` (api-section-delete.ts). Swift then queues an ordinary delete
 // job behind the reinsert. A stored redo state would put back labels and Notes the automatic rewrites have changed since.
+//
+// The undo is generic: it swaps the entry's pre-op checkpoint back in, whatever the op changed. It is also the quick undo of an
+// editor-first DUPLICATE (api-section-duplicate.ts), where the swap takes the copy OUT; the reply's `removedLeaderIds` names the
+// leaders it removed so Swift can hide them from the sidebar at once (t-18b7fa48 [S4]). The duplicate's redo (a fresh duplicate
+// under the same opId) passes the same `checkQuickRedoAllowed` gate as the delete's.
 
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { EditorState } from '@milkdown/kit/prose/state';
@@ -60,6 +65,7 @@ import {
   liveDocMatchesSavedCopy,
   noteRestoreForPaint,
   setQuickUndoPausedOpId,
+  type UndoRegistryEntry,
 } from './undo-coordinator';
 
 /** What `undoSectionDeleteEditorFirst` returns, on every path. Swift reads it as `JSON.stringify(...)`, like `getBlockChanges`. */
@@ -75,6 +81,11 @@ export interface QuickUndoResult {
   restoredIds: string[];
   /** The subset of `restoredIds` that are section leaders (headings and section breaks). */
   restoredLeaderIds: string[];
+  /** Ids of the section leaders (headings and section breaks) the undo took OUT of the document: the live leaders whose id the
+   * restored document does not hold, read before the swap, in document order. Empty for the undo of a delete (a delete only
+   * removes). For the undo of an editor-first duplicate they are the copy's leaders, so Swift can hide them from the sidebar at once
+   * (t-18b7fa48 [S4]). */
+  removedLeaderIds: string[];
 }
 
 /** What `resumeSyncAfterQuickUndo` returns. Swift reads it as `JSON.stringify(...)`; the call never throws. */
@@ -108,8 +119,8 @@ function trace(message: string): void {
 
 const emptyBatch = (): BlockChanges => ({ updates: [], inserts: [], deletes: [] });
 
-/** Wall-clock laps of one call, as whole milliseconds in the trace line. */
-class Laps {
+/** Wall-clock laps of one call, as whole milliseconds in the trace line. Exported for api-structural-swap.ts, which traces the same way. */
+export class Laps {
   private readonly start = performance.now();
   private last = this.start;
   private readonly ms: Array<[string, number]> = [];
@@ -144,7 +155,7 @@ export function undoSectionDeleteEditorFirst(opId: string): QuickUndoResult {
   let batch: BlockChanges = emptyBatch();
   const refuse = (reason: string): QuickUndoResult => {
     trace(`quick-undo opId=${shortId} refused reason=${reason.slice(0, 200)}`);
-    return { batch, ok: false, reason, restoredIds: [], restoredLeaderIds: [] };
+    return { batch, ok: false, reason, restoredIds: [], restoredLeaderIds: [], removedLeaderIds: [] };
   };
 
   const editorInstance = getEditorInstance();
@@ -184,6 +195,15 @@ export function undoSectionDeleteEditorFirst(opId: string): QuickUndoResult {
     typesBefore = getAllBlockTypes();
 
     const restoredIdMap = applyConfirmLog(entry.idMap, entry.confirmLog ?? []);
+    // [S4] The leaders the swap is about to take out: live leaders whose id the restored document does not hold. Read from the
+    // LIVE document and its id map, so it has to happen before `updateState` below.
+    const keptIds = new Set(restoredIdMap.values());
+    const removedLeaderIds: string[] = [];
+    stateBefore.doc.forEach((node, pos) => {
+      const id = idsBefore.get(pos);
+      if (id === undefined || keptIds.has(id) || leaderLevel(node) === undefined) return;
+      removedLeaderIds.push(id);
+    });
     const carry = carryRedoBranch(view.state, entry.checkpoint, idsBefore, restoredIdMap); // (e), first half: see `redo-branch.ts`
     if (carry && !carry.carried) {
       // A never-expected guard: the plain swap below loses the editor's redo branch (what the user undid by typing), never the document.
@@ -225,7 +245,7 @@ export function undoSectionDeleteEditorFirst(opId: string): QuickUndoResult {
         `redoCarried=${carry?.carried ? carry.events : 0} batchUpdates=${batch.updates.length} batchInserts=${batch.inserts.length} batchDeletes=${batch.deletes.length}` +
         laps.summary()
     );
-    return { batch, ok: true, restoredIds, restoredLeaderIds };
+    return { batch, ok: true, restoredIds, restoredLeaderIds, removedLeaderIds };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return refuse(`exception: ${message}`);
@@ -285,8 +305,9 @@ export function resumeSyncAfterQuickUndo(): QuickResumeResult {
 /** The editor's `contentChanged` notification for the restored text, off the paint path: reading the Markdown of a whole book
  * takes long enough to delay the next keystroke's echo. Same quiet-period idea as main.ts's 50 ms typing debounce, and the same
  * function sends it. Uses an idle callback where the browser has one. The text is read when the callback runs, so it is never
- * older than what the user typed in between. */
-function scheduleContentChanged(): void {
+ * older than what the user typed in between. Exported for api-structural-swap.ts: a checkpoint swap changes the document with no
+ * document-changing transaction, so main.ts's typing debounce never fires for it. */
+export function scheduleContentChanged(): void {
   const send = () => {
     if (getIsSettingContent() || !getContentHasBeenSet()) return; // a programmatic content set sends its own
     pushLiveContentToSwift(false);
@@ -297,42 +318,54 @@ function scheduleContentChanged(): void {
 }
 
 /**
+ * The gate every quick REDO passes before it changes anything (the delete's, below, and the duplicate's, api-section-duplicate.ts):
+ * the boundary hygiene every structural op performs, the flush of the 100 ms detection debounce, and the re-check that this press
+ * may still run: the redo latch is held for this very op, the registry entry is finished, and the live document still equals the
+ * saved pre-op copy (`liveDocMatchesSavedCopy`, the one shared comparison the routing decision made when the key was pressed,
+ * exact or modulo what the app regenerates). Touches nothing on a refusal beyond the hygiene and the flush every path performs.
+ * Returns the registry entry the redo replaces, or the reason: 'noEditor', 'notInFlight', 'noEntry', 'midOp' or 'docChanged'.
+ */
+export function checkQuickRedoAllowed(opId: string): { entry: UndoRegistryEntry } | { reason: string } {
+  const editorInstance = getEditorInstance();
+  if (!editorInstance) return { reason: 'noEditor' };
+  const view = editorInstance.ctx.get(editorViewCtx);
+  closeEditingPopupsAndClearBoundaryState();
+  cancelPendingInsertions();
+  flushPendingBlockChanges();
+  const entry = getRegistry().get(opId);
+  if (!isLatched() || getInFlightOpId() !== opId) return { reason: 'notInFlight' };
+  if (!entry) return { reason: 'noEntry' };
+  if (entry.midOp) return { reason: 'midOp' };
+  if (!liveDocMatchesSavedCopy(view, entry, 'redo')) return { reason: 'docChanged' };
+  return { entry };
+}
+
+/**
  * Bridge target for `window.FinalFinal.redoSectionDeleteEditorFirst`. Synchronous; Swift calls it, with the structural-redo latch
  * held for `opId`, as `JSON.stringify(window.FinalFinal.redoSectionDeleteEditorFirst(opId, rootBlockId, managedIds))`, the same
  * way it calls `deleteSectionEditorFirst`, and reads the same reply (`DeleteSectionResult`). Re-checks that the live document is
- * still the saved pre-op copy (nothing is touched on a refusal: `ok: false`, `reason: 'docChanged'`, an empty batch), then removes
- * the section from the document as it is NOW, under the same opId, as a fresh editor-first delete.
+ * still the saved pre-op copy (`checkQuickRedoAllowed`; nothing is touched on a refusal: `ok: false`, `reason: 'docChanged'`, an
+ * empty batch), then removes the section from the document as it is NOW, under the same opId, as a fresh editor-first delete.
  */
 export function redoSectionDeleteEditorFirst(
   opId: string,
   rootBlockId: string,
   managedIds: string[]
 ): DeleteSectionResult {
-  const refuse = (reason: string): DeleteSectionResult => {
-    trace(`quick-redo opId=${opId.slice(0, 8)} refused reason=${reason}`);
+  const gate = checkQuickRedoAllowed(opId);
+  if ('reason' in gate) {
+    trace(`quick-redo opId=${opId.slice(0, 8)} refused reason=${gate.reason}`);
     return {
       batch: emptyBatch(),
       ok: false,
-      reason,
+      reason: gate.reason,
       removedIds: [],
       removedLeaderIds: [],
       predecessorId: null,
       removedSectionsSnapshot: [],
     };
-  };
-
-  const editorInstance = getEditorInstance();
-  if (!editorInstance) return refuse('noEditor');
-  const view = editorInstance.ctx.get(editorViewCtx);
-  closeEditingPopupsAndClearBoundaryState();
-  cancelPendingInsertions();
-  flushPendingBlockChanges();
-  const entry = getRegistry().get(opId);
-  if (!isLatched() || getInFlightOpId() !== opId) return refuse('notInFlight');
-  if (!entry) return refuse('noEntry');
-  if (entry.midOp) return refuse('midOp');
-  if (!liveDocMatchesSavedCopy(view, entry, 'redo')) return refuse('docChanged');
-  return removeSectionInEditor(opId, rootBlockId, managedIds, { label: 'redo', previousEntry: entry });
+  }
+  return removeSectionInEditor(opId, rootBlockId, managedIds, { label: 'redo', previousEntry: gate.entry });
 }
 
 /**

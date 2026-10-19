@@ -50,6 +50,10 @@ extension StructuralUndoController {
         footnoteSyncService?.releaseUndoCheckpointHold(token: key)   // (a)
 
         // (b) What the reinsert did.
+        // Whether this undo still owns the entry. A redo (or a later undo) that took it moved the epoch and set the entry's sidebar
+        // overlay itself (the redo of a duplicate shows the copy again until its job commits); this settle must not wipe that
+        // overlay on its way out (round 1g-A, review A4). Every clear of `pendingRestoreSections` below is guarded by it.
+        let epochUnmoved = (efOpEpoch[opId] ?? epoch) == epoch
         switch result.outcome {
         case .applied(let output):
             // The table equals the pre-delete rows from here on, whatever the epoch checks below decide; a delete-resync write that
@@ -59,31 +63,51 @@ extension StructuralUndoController {
                 "applied inserted=\(output.insertedIds.count) updated=\(output.updatedIds.count) deleted=\(output.deletedIds.count) "
                 + "userRowsDeleted=\(output.deletedUserRows)")
             spy("reinsertApplied")
-            let epochUnmoved = (efOpEpoch[opId] ?? epoch) == epoch
+            if epochUnmoved {
+                // The undo of a DUPLICATE (t-18b7fa48): the copy's rows are out of the table now, so the leaders the undo hid from the
+                // sidebar stop being filtered (a redo that took the entry meanwhile released them itself, and moved the epoch).
+                // A Version History restore (round 2d-ii) counts too when it inserted nothing: a section replace whose restored text is a
+                // bare heading keeps the heading's id, so the ids the undo hid are the ones the table now holds again.
+                let state = holder.snapshot()
+                if !state.insertedBlockIds.isEmpty || efRestorePlans[opId] != nil {
+                    editorState.pendingRemovalIds.subtract(state.clickLeaderIds)
+                }
+            }
             if epochUnmoved, output.wroteRows, rootRowIsMissing(holder: holder, editorState: editorState) {
-                await reinsertFallback(opId: opId, key: key, why: "rows applied but the section's root row is not there", editorState: editorState)
+                await reinsertFallback(
+                    opId: opId, key: key, why: "rows applied but the section's root row is not there", epochUnmoved: epochUnmoved,
+                    editorState: editorState)
                 return
             }
-            editorState.pendingRestoreSections[opId] = nil
+            liftOverlay(of: opId, ifOwned: epochUnmoved, editorState: editorState)
         case .refused(let reason) where Self.isLifecycleRefusal(reason):
             // Code review G-F6: the closing save only helps while the lifecycle is still armed; one that was cancelled (or has ended)
             // leaves the project open with the section on the screen and not in the table, so it is the C5 case then.
             if editorState.activeLifecycle == nil {
-                await reinsertFallback(opId: opId, key: key, why: "refused(\(reason)) and no lifecycle is armed", editorState: editorState)
+                await reinsertFallback(
+                    opId: opId, key: key, why: "refused(\(reason)) and no lifecycle is armed", epochUnmoved: epochUnmoved,
+                    editorState: editorState)
                 return
             }
             DebugLog.log(.lifecycle, "[StructuralUndoController] reinsert \(opId): not applied (\(reason)) -- the closing save writes the editor")
-            editorState.pendingRestoreSections[opId] = nil
+            liftOverlay(of: opId, ifOwned: epochUnmoved, editorState: editorState)
             return
         case .refused(let reason):
-            await reinsertFallback(opId: opId, key: key, why: "refused(\(reason))", editorState: editorState)
+            await reinsertFallback(opId: opId, key: key, why: "refused(\(reason))", epochUnmoved: epochUnmoved, editorState: editorState)
             return
         case .failed(let error):
-            await reinsertFallback(opId: opId, key: key, why: "failed(\(error))", editorState: editorState)
+            await reinsertFallback(opId: opId, key: key, why: "failed(\(error))", epochUnmoved: epochUnmoved, editorState: editorState)
             return
         }
 
         await settleDerivedContent(opId: opId, epoch: epoch, editorState: editorState, trace: trace)   // (c)-(e)
+    }
+
+    /// Lifts the sidebar overlay that shows entry `opId`'s section, but only while this undo still owns the entry. A redo (or a later
+    /// undo) that took it moved the epoch and set the overlay itself; wiping it here would hide the section's cards until that
+    /// operation's own settle (round 1g-A, review A4).
+    private func liftOverlay(of opId: UUID, ifOwned epochUnmoved: Bool, editorState: EditorViewState) {
+        if epochUnmoved { editorState.pendingRestoreSections[opId] = nil }
     }
 
     /// (c)-(e) of the settle, only while this quick undo still owns the entry: the editor's own text is read, the resyncs run from it,
@@ -148,13 +172,13 @@ extension StructuralUndoController {
     /// `fallback` (a later undo or redo of it is the old path or, for a quick-undone entry, a refusal with the notice), and the loss
     /// risk is logged. The unsettled marker is settled FIRST: the flush waits for pending structural jobs and would otherwise wait out
     /// its own entry's bound (verdict-v1 S10).
-    private func reinsertFallback(opId: UUID, key: UUID, why: String, editorState: EditorViewState) async {
+    private func reinsertFallback(opId: UUID, key: UUID, why: String, epochUnmoved: Bool, editorState: EditorViewState) async {
         DebugLog.alwaysPersisted(
             "[StructuralUndoController] quick undo \(opId): the reinsert did not put the rows back (\(why)) -- writing the editor's content "
             + "to the database and marking the entry's slot fallback")
         editorState.efJobRegistry.markSettled(key)
         efSlots.markFallback(opId)
-        editorState.pendingRestoreSections[opId] = nil
+        liftOverlay(of: opId, ifOwned: epochUnmoved, editorState: editorState)
         await editorState.flushLiveContentToDatabase { [weak self] in await self?.blockSyncService?.fetchContentFromWebView() }
         forgetCommittedDerivedState()   // the flush rewrote the Notes rows from the editor's text
         editorState.refreshSections()
@@ -166,18 +190,23 @@ extension StructuralUndoController {
     /// rebuilds that were running have landed. Stamped on the line before the database read; the database's text never goes into
     /// `content` before the push; `isResettingContent` holds the view off while the push runs; afterwards `content` is the merged text
     /// the editor now holds (or its live text when a newer quick undo or redo made the push stale).
-    func quickRepushManagedRegions(editorState: EditorViewState) async {
+    ///
+    /// Returns whether the push actually reached the editor (t-18b7fa48 round 1b-ii): false for an early exit and for a push skipped as
+    /// stale, which raises `managedRegionsNeedRepush` itself when an editor-first click is among the reasons.
+    @discardableResult
+    func quickRepushManagedRegions(editorState: EditorViewState) async -> Bool {
         guard editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil,
-              let pid = editorState.currentProjectId, let db = editorState.projectDatabase else { return }
+              let pid = editorState.currentProjectId, let db = editorState.projectDatabase else { return false }
         let stamp = editorState.stampRebuildRead()
-        guard let result = fetchFullBlocksWithIds(db: db, pid: pid) else { return }
+        guard let result = fetchFullBlocksWithIds(db: db, pid: pid) else { return false }
         // Code review C-L1: the rebuild handlers clear `isResettingContent` unconditionally when they end, so a rebuild that started
         // while this push was out has set the flag for ITS OWN protection; clearing it here would end that early. The flag is cleared
         // only when no rebuild is running; otherwise the running rebuild clears it.
         editorState.isResettingContent = true
-        let text = await repushManagedRegionsFromDatabase(result, stamp: stamp)
-        if let text { editorState.adoptEditorText(text) }
+        let repush = await repushManagedRegions(result, stamp: stamp)
+        if let text = repush.text { editorState.adoptEditorText(text) }
         if editorState.runningRebuildTasks.isEmpty { editorState.isResettingContent = false }
+        return repush.pushed
     }
 
     // MARK: - A restore that was refused (verdict-v3 D1, verdict-v4 V1)
@@ -187,35 +216,10 @@ extension StructuralUndoController {
     /// skipped left the editor's Notes half updated (renumbered references, old Notes). One fresh settle under the new epoch,
     /// registered as unsettled work, puts the steps back (`resyncAfterEditorFirstDelete`) and, after any reinsert still pending has
     /// ended, one merge-guarded push with a fresh stamp makes the editor's Notes the database's (typing in user blocks survives).
+    ///
+    /// Since t-18b7fa48 round 1b the body is `startFreshSettleAfterRefusedEditorFirstClick(opId:)`
+    /// (StructuralUndoController+EditorFirstStructural.swift), which also serves the editor-first clicks' refusal exits (D6a).
     func startFreshSettleAfterRefusedRestore(opId: UUID) {
-        guard let editorState else { return }
-        let registry = editorState.efJobRegistry
-        let key = UUID()
-        registry.register(key)
-        efJobKeys[opId, default: []].append(key)
-        let epoch = efOpEpoch[opId] ?? 0
-        Task { @MainActor [weak self, weak editorState] in
-            defer {
-                registry.resolve(key, .applied)
-                registry.markSettled(key)
-            }
-            guard let self, let editorState else { return }
-            // Code review G-F2: the text this settle works from is the editor's own, read first (the undo's `contentChanged` may
-            // not have arrived); a quick undo or redo of any entry that starts meanwhile takes over (the generation, G-F1).
-            let restoreGeneration = editorState.editorRestoreGeneration
-            if let blockSync = self.blockSyncService {
-                await editorState.adoptLiveEditorText(blockSync: blockSync, why: "the fresh settle after a refused restore")
-            }
-            guard editorState.editorRestoreGeneration == restoreGeneration else { return }
-            await self.resyncAfterEditorFirstDelete(
-                editorState: editorState, opId: opId, epoch: epoch, restoreGeneration: restoreGeneration)
-            // A reinsert that is still pending (a refused redo right after a quick undo) must have ended before the push reads.
-            let clock = ContinuousClock()
-            let end = clock.now.advanced(by: .seconds(15))
-            while editorState.pendingReinsertCount > 0, clock.now < end { try? await Task.sleep(for: .milliseconds(10)) }
-            if (self.efOpEpoch[opId] ?? epoch) == epoch, editorState.activeLifecycle == nil {
-                await self.quickRepushManagedRegions(editorState: editorState)
-            }
-        }
+        startFreshSettleAfterRefusedEditorFirstClick(opId: opId)
     }
 }

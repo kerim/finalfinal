@@ -5,19 +5,23 @@
 //  PHASE 4b PART 2, SLICE 2a (bt task t-94369a83): THE BEHAVIOUR OF THE EDITOR-FIRST SECTION DELETE, on documents long enough to matter.
 //  In Rich Text mode, Delete Section removes the section on screen at once; a queued job then deletes the rows in the database and writes
 //  the Version History copy behind anything typed; commands pressed while an earlier one is finishing WAIT in order and are never refused;
-//  Cmd-Z and Cmd-Shift-Z of a section delete stay today's slow snapshot undo (about 0.7 s on the article, 1.9 s on the six-chapter book,
-//  3 s on the twelve-chapter book); zoom, Save Version, export, the switch to Markdown, close and quit wait only for the delete's own job.
+//  Cmd-Z and Cmd-Shift-Z of a section delete were the slow snapshot undo when this class was written (about 0.7 s on the article, 1.9 s on
+//  the six-chapter book, 3 s on the twelve-chapter book). Since slice 2b they take the quick path (the editor puts the section back at once),
+//  and since Phase 4b slice 3 (t-18b7fa48) the slow snapshot undo that remains for entries that cannot take the quick path is editor-first
+//  too and keeps typing; zoom, Save Version, export, the switch to Markdown, close and quit wait only for the delete's own job.
 //
 //  EVERY SCENARIO RUNS ON A LONG DOCUMENT (the e2e-verify skill's fixture rule): the generated article (about 7,500 words, 17 sections, 68
 //  citation groups, 9 footnotes), the six-chapter book (about 44,700 words, 102 sections, 408 citation groups, 54 footnotes) or the
 //  twelve-chapter book (about 89,300 words). The documents, the launch and the app-log follower are those of WriteQueuePhase4bDeleteE2ETests.swift
 //  (`Phase4bDelGenerator`, `Phase4bDelHarness`); every note and result line starts with the fixture's tag, so a figure never stands alone.
 //
-//  WHAT THE TESTS DO NOT DO (binding, from the plan's A22 and the brief):
-//   - No test types while a slow Cmd-Z is running and expects that typing to survive: that loss is the known floor debt A22, kept until slice 2b.
-//     Typing happens before the delete, between the delete and the next command (the section is already off the screen), or after the undo's own
-//     `performed` line; never inside the undo.
-//   - No wait exists to dodge that debt, and no test waits a fixed time. Every wait is a condition: the app's own log
+//  WHAT THE TESTS DO NOT DO (binding, from the plan's A22 and the brief; A22 itself is closed, see the first point):
+//   - No test types while an undo is running and expects that typing to survive. A22 was the floor debt that typing made inside a slow Cmd-Z
+//     was lost; slice 2b closed it for the quick undo and Phase 4b slice 3 (t-18b7fa48) for the slow one, and the scenarios that type during
+//     an undo live in WriteQueuePhase4bQuickUndoE2ETests and WriteQueuePhase4bStructuralQueueE2ETests. The scenarios here still type before the
+//     delete, between the delete and the next command (the section is already off the screen), or after the undo's own `performed` line,
+//     never inside the undo, because what they check is the delete's own behaviour.
+//   - No wait exists to dodge that old debt, and no test waits a fixed time. Every wait is a condition: the app's own log
 //     (`[STRUCT-TRACE] ... performed`, the editor-ready line), a database row, the sidebar card, a status-bar label, a toast.
 //
 //  HOW A DELETE IS HELD OPEN ON PURPOSE: the scenarios whose point is a command arriving while the delete's job is still running set
@@ -303,12 +307,19 @@ enum Phase4bFlow {
 
 /// The scripted walk over every footnote reference of a saved document (addendum A19): the numbers in reading order are 1...n with no gap or
 /// repeat, every definition matches a reference, and none is blank.
+///
+/// `sharedLabels` (default false: every other test is unchanged) is for a document that holds a COPY of a footnoted section (Duplicate
+/// Section, t-18b7fa48). The app treats a footnote reference by its label, so the copy carries the original's labels unchanged: two `[^5]`
+/// are two references to ONE note (the same as on `main`; the copy never gets a new number or a definition of its own). The walk then
+/// reads the labels, not the occurrences: the FIRST appearances of the labels in reading order are 1...k (a repeat is allowed only for a
+/// label already seen), the definitions are 1...k, one for each distinct label, and none is blank; "references equal definitions"
+/// compares the DISTINCT labels with the definitions. `refs` is still every occurrence in reading order.
 struct Phase4bFlowWalk {
     var refs: [Int] = []
     var definitions: [(number: Int, text: String)] = []
     var problems: [String] = []
 
-    init(rows: [Phase4bFlowRow]) {
+    init(rows: [Phase4bFlowRow], sharedLabels: Bool = false) {
         for row in rows {
             if let found = Phase4bFlow.definition(row.fragment) {
                 definitions.append(found)
@@ -316,15 +327,46 @@ struct Phase4bFlowWalk {
                 refs += Phase4bFlow.footnoteRefs(in: row.fragment)
             }
         }
-        let wanted = Array(stride(from: 1, through: refs.count, by: 1))
-        if refs != wanted { problems.append("reference numbers in reading order are \(describe(refs)), not 1...\(refs.count)") }
-        let definitionNumbers = definitions.map(\.number)
-        if definitionNumbers != Array(stride(from: 1, through: definitions.count, by: 1)) {
-            problems.append("definition numbers are \(describe(definitionNumbers)), not 1...\(definitions.count)")
-        }
-        if refs.count != definitions.count { problems.append("\(refs.count) reference(s) but \(definitions.count) definition(s)") }
+        problems = sharedLabels ? sharedLabelProblems() : occurrenceProblems()
         let blank = definitions.filter { $0.text.isEmpty }.map(\.number)
         if !blank.isEmpty { problems.append("blank definition(s): \(blank)") }
+    }
+
+    /// The problem with the definitions' numbers (they must be 1...m in document order), if any.
+    private var definitionNumberProblem: String? {
+        let numbers = definitions.map(\.number)
+        guard numbers != Array(stride(from: 1, through: definitions.count, by: 1)) else { return nil }
+        return "definition numbers are \(describe(numbers)), not 1...\(definitions.count)"
+    }
+
+    /// The reference and definition-number half of the walk when every occurrence is its own reference: the numbers in reading order are
+    /// 1...n, the definitions are 1...m, and there are as many references as definitions.
+    private func occurrenceProblems() -> [String] {
+        var found: [String] = []
+        if refs != Array(stride(from: 1, through: refs.count, by: 1)) {
+            found.append("reference numbers in reading order are \(describe(refs)), not 1...\(refs.count)")
+        }
+        if let problem = definitionNumberProblem { found.append(problem) }
+        if refs.count != definitions.count { found.append("\(refs.count) reference(s) but \(definitions.count) definition(s)") }
+        return found
+    }
+
+    /// The same half when a copied section re-references its original's footnotes by the same labels (`sharedLabels`): the first
+    /// appearances of the labels are 1...k, the definitions are 1...m, and there is one definition for each DISTINCT label.
+    private func sharedLabelProblems() -> [String] {
+        var found: [String] = []
+        var seen = Set<Int>()
+        let firstAppearances = refs.filter { seen.insert($0).inserted }
+        let distinct = firstAppearances.count
+        if firstAppearances != Array(stride(from: 1, through: distinct, by: 1)) {
+            found.append("the first appearances of the reference labels in reading order are \(describe(firstAppearances)), "
+                + "not 1...\(distinct) (all \(refs.count) occurrence(s): \(describe(refs)))")
+        }
+        if let problem = definitionNumberProblem { found.append(problem) }
+        if distinct != definitions.count {
+            found.append("\(distinct) distinct reference label(s) (\(refs.count) reference(s)) but \(definitions.count) definition(s)")
+        }
+        return found
     }
 
     private func describe(_ numbers: [Int]) -> String {
@@ -1309,6 +1351,8 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
     /// The model answer, from the unified timeline: timeline [delete A, duplicate B]. Cmd-Z undoes the duplicate (B's copy leaves), the next
     /// Cmd-Z undoes the delete (A returns), Cmd-Shift-Z redoes the delete (A leaves again; the duplicate stays undone), and the sentence typed
     /// afterwards stays. Final: A gone, B present once with no copy, the sentence in place. The reopened project agrees.
+    /// Since Duplicate Section is editor-first, the duplicate's `performed` line means its database job is QUEUED, not that the copy's rows are
+    /// written: the test waits for the copy's sidebar card and then for its rows before the first Cmd-Z (every later read is after a settle).
     func testMixedTimeline_book6() {
         let size = Phase4bDelSize.book6
         let deleted = Phase4bDelSize.pairSecond      // A: chapter 4
@@ -1321,8 +1365,17 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
         expectPerformed("sectionDelete", from: from, "the delete reached its performed line")
         chooseSidebarItem(duplicateCard, item: "Duplicate Section")
         expectPerformed("sectionDuplicate", from: from, "the duplicate reached its performed line")
-        let copies = blocksContaining(duplicated + " copy")
-        assertCheck(copies >= 1, "the copy of \"\(duplicated)\" exists in the block table (\(copies) row(s))")
+        let copyTitle = duplicated + " copy"
+        assertCheck(waitForCard(copyTitle, present: true, timeout: capped(30)), "the copy's sidebar card is shown")
+        // `performed` of an editor-first duplicate means its database job holds its place in the queue, not that the rows are written, so the
+        // copy's rows are WAITED for (a condition, bounded by a fixed timeout like the typed-sentence wait), not read once.
+        let rowsDeadline = Date(timeIntervalSinceNow: size.operationTimeout)
+        var copies = blocksContaining(copyTitle)
+        while copies < 1, Date() < rowsDeadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+            copies = blocksContaining(copyTitle)
+        }
+        assertCheck(copies >= 1, "the copy of \"\(duplicated)\" reached the block table once its queued job ran (\(copies) row(s))")
         pressUndo()
         pressUndo()
         pressRedo()

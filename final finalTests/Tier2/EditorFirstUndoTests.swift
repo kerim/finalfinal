@@ -113,6 +113,7 @@ struct EditorFirstUndoTests {
         defer { DelayedProgressToast.defaultDelay = savedDelay }
         let rig = try EditorFirstRig(markdown: Self.fourSections)
         rig.controller.testForceSlowDeleteUndo = true   // slice 2b: the "Undoing..." notice belongs to the slow path only (UX contract 4.2)
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: pins the OLD slow body (its restore and settle run inside the press)
         let sectionA = try rig.heading("Section A")
         try rig.setReply(.init(removedLeaderIds: [sectionA.id]))
         let outcome = await rig.controller.performSectionDelete(rootId: sectionA.id)
@@ -143,6 +144,7 @@ struct EditorFirstUndoTests {
     func testUndoKeepsTheEditorsMergedTextAsContent() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
         rig.controller.testForceSlowDeleteUndo = true   // slice 2b: this one pins the slow path's own re-push (its quick twin is below)
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: pins the OLD slow body's re-push inside the press
         let sectionA = try rig.heading("Section A")
         try rig.setReply(.init(removedLeaderIds: [sectionA.id]))
         let outcome = await rig.controller.performSectionDelete(rootId: sectionA.id)
@@ -166,6 +168,9 @@ struct EditorFirstUndoTests {
     @Test("U20: delete, duplicate, Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Z keep exactly the live snapshot ids pinned")
     func testFallbackRedoReplacesAndUnpins() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
+        // t-18b7fa48 round 1e-i: this test pins the legacy duplicate (its entry carries the undo and redo snapshot ids it reads
+        // below); an editor-first duplicate entry keeps its snapshot on the slot like a delete's. The twin is U-S1-2a.
+        rig.controller.testForceLegacyStructural = true
         let sectionA = try rig.heading("Section A")
         let sectionC = try rig.heading("Section C")
         try rig.setReply(.init(removedLeaderIds: [sectionA.id]))
@@ -223,6 +228,7 @@ struct UndoAfterInterleavedRebuildTests {
     func testUndoReappliesDatabaseManagedRegions_book6() async throws {
         let rig = try EditorFirstRig(markdown: ComplexDocumentFixture.book6.editorMarkdown, configureSyncServices: false)
         rig.controller.testForceSlowDeleteUndo = true   // slice 2b: pins the slow path's order (quick twin: QuickUndoTamperTwinTests)
+        rig.controller.testForceLegacyStructural = true   // t-18b7fa48 round 3c: pins the OLD slow body's order (settle, then the push)
         let chapter = try #require(try rig.chapterHeadings().first)
         let managedIds = Set(try rig.db.fetchManagedBlockIds(projectId: rig.pid))
         #expect(!managedIds.isEmpty, "the document must have flagged Notes and Bibliography rows")

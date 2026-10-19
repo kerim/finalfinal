@@ -28,6 +28,8 @@ struct QuickUndoStubReply: Encodable {
     var reason: String?
     var restoredIds: [String] = []
     var restoredLeaderIds: [String] = []
+    /// The leaders the undo took OUT (t-18b7fa48): empty for the undo of a delete, the copy's leaders for the undo of a duplicate.
+    var removedLeaderIds: [String] = []
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -35,6 +37,7 @@ struct QuickUndoStubReply: Encodable {
         case reason
         case restoredIds
         case restoredLeaderIds
+        case removedLeaderIds
     }
 }
 
@@ -67,6 +70,15 @@ extension EditorFirstRig {
     /// Everything the class's `testJSEvaluator` is asked: the delete click, the quick undo and redo, the poll's two calls while the
     /// typing queue holds an edit, then the editor's other queries, then the scripted evaluator.
     func answerScript(_ script: String) async throws -> Any? {
+        // The slow undo and redo (round 3c): `structuralSwapEditorFirst`, answered in EditorFirstRig+SlowUndo.swift.
+        if script.contains("structuralSwapEditorFirst") { return answerSwapClick(script) }
+        // Duplicate Section (t-18b7fa48): the click and the quick redo. (Neither name contains the other, nor the delete's.)
+        if script.contains("redoSectionDuplicateEditorFirst") { return answerQuickRedoOfDuplicate(script) }
+        if script.contains("duplicateSectionEditorFirst") { return answerDuplicateClick(script) }
+        // The Version History restore (round 2d-i): the click and the quick redo. ("redoReplaceRangeEditorFirst" does not contain
+        // "replaceRangeEditorFirst": the letter before "eplace" is a capital R.)
+        if script.contains("redoReplaceRangeEditorFirst") { return answerQuickRedoOfReplace(script) }
+        if script.contains("replaceRangeEditorFirst") { return answerReplaceClick(script) }
         if script.contains("deleteSectionEditorFirst") {
             deleteScripts.append(script)
             noteClick(script)
@@ -124,14 +136,30 @@ extension EditorFirstRig {
         events.note("setContent preserve=\(preserve)")
         pushes.append(Push(
             markdown: markdown, blockIds: blockIds, managedBlockIds: managed, preserveUserBlocks: preserve,
-            isResettingContent: editorState.isResettingContent, contentAtPush: editorState.content))
-        guard preserve else { return nil }
+            isResettingContent: editorState.isResettingContent, contentAtPush: editorState.content,
+            detectPausedEdits: sync.testSetContentLastDetectPausedEdits))
+        guard preserve else {
+            if modelsWholePushOnEditor { applyWholePush(markdown) }
+            return nil
+        }
         if modelsViewPushOfContent, !editorState.isResettingContent, editorText != nil {
             editorText = editorState.content   // the view pushed `content` while the merge push was awaited
         }
         let merged = editorText.map { Self.mergingManagedRegions(editor: $0, database: markdown) } ?? markdown
         editorText = merged
         return merged
+    }
+
+    /// What the real editor does with a whole-document push (round 1g-A, review T1): its document becomes the pushed text. Keystrokes made
+    /// while the push is in flight (`typedDuringNextWholePush`) survive as pending changes only when the push asked for
+    /// `detectPausedEdits` (block-sync-plugin.ts `detectPausedEditsAndSnapshot`: it diffs the document against the snapshot taken when
+    /// the push settled); without the option the replace has already discarded them.
+    func applyWholePush(_ markdown: String) {
+        editorText = markdown
+        quickEditorText = markdown
+        guard let typing = typedDuringNextWholePush else { return }
+        typedDuringNextWholePush = nil
+        if sync.testSetContentLastDetectPausedEdits { typeIntoEditor(typing.block, appending: typing.suffix) }
     }
 
     // MARK: - Waiting
@@ -183,6 +211,17 @@ extension EditorFirstRig {
         guard literals.count >= 2 else { return }
         let opId = literals[0]
         let rootId = literals[1]
+        if let copy = pendingDuplicateCopy(rootId: rootId), (try? db.sectionBlockIds(rootId: rootId, projectId: pid)) == nil {
+            // Round 1g-A (review A1): the root is the copy of a duplicate whose job has not committed, so the database does not hold it.
+            // The editor does: it holds the document with the copy, and the removal takes it back to the document before the duplicate.
+            clicks[opId] = DeleteClick(
+                opId: opId, rootId: rootId, subtreeIds: copy.copyIds, leaderIds: copy.copyLeaderIds,
+                preDeleteText: editorText ?? quickEditorText ?? copy.preText)
+            quickEditorText = copy.preText
+            editorText = copy.preText
+            if !withholdContentUpdate { editorState.content = copy.preText }   // `contentChanged` after the removal
+            return
+        }
         let subtree = (try? db.sectionBlockIds(rootId: rootId, projectId: pid)) ?? [rootId]
         let rowsById = Dictionary(((try? blocks()) ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let leaders = subtree.filter { id in
@@ -205,10 +244,24 @@ extension EditorFirstRig {
             return Self.json(QuickUndoStubReply(succeeded: false, reason: reason))
         case .restore, .restoreWithBatch:
             var reply = QuickUndoStubReply(restoredIds: click?.subtreeIds ?? [], restoredLeaderIds: click?.leaderIds ?? [])
+            // The undo of a DUPLICATE restores no ids (the pre-op document holds nothing the live one lacks) and takes the copy's
+            // leaders out.
+            let duplicate = duplicateClicks[opId]
+            if let duplicate { reply = QuickUndoStubReply(removedLeaderIds: duplicate.copyLeaderIds + undoAlsoReportsRemoved) }
+            // The undo of a RESTORE (round 2d-i) brings back the ids the restored document lacks and takes out the ones only it has.
+            let replace = replaceClicks[opId]
+            if let replace {
+                let newIds = Set(replace.newIds)
+                let previousIds = Set(replace.previousIds)
+                reply = QuickUndoStubReply(
+                    restoredIds: replace.previousIds.filter { !newIds.contains($0) },
+                    restoredLeaderIds: replace.previousLeaderIds.filter { !newIds.contains($0) },
+                    removedLeaderIds: replace.newLeaderIds.filter { !previousIds.contains($0) })
+            }
             if case .restoreWithBatch(let batch) = quickUndoAnswer { reply.batch = batch }
             // The real swap puts the checkpoint's document into the editor; `editorTextAfterUndoSwap` is the same wish the slow path's
             // emulation honours.
-            let restored = editorTextAfterUndoSwap ?? click?.preDeleteText
+            let restored = editorTextAfterUndoSwap ?? click?.preDeleteText ?? duplicate?.preText ?? replace?.preText
             if let restored {
                 quickEditorText = restored
                 editorText = restored
@@ -256,11 +309,24 @@ extension EditorFirstRig {
     /// What `ContentView`'s content-change handler does with the footnote service when `content` changes while the editor is idle
     /// (`checkAndUpdateFootnotes`). Off unless a test turns it on (`emulatesFootnoteContentChange`): only the footnote-checkpoint tests
     /// need it.
-    private func runContentChangeHandlers() {
+    func runContentChangeHandlers() {
         guard emulatesFootnoteContentChange, editorState.contentState == .idle else { return }
         let text = editorState.content
         footnotes.checkAndUpdateFootnotes(
             footnoteRefs: FootnoteSyncService.extractFootnoteRefs(from: text), projectId: pid, fullContent: text)
+    }
+
+    /// The editor's `contentChanged` push after a replacement of its document, through the 50 ms debounce: the footnote service's check of
+    /// the new text runs AFTER the click's reply has been processed (and the job reserved), not inside the reply. `events` gets
+    /// `content push` when it has run, so a test can wait for it. Only when a test turns `emulatesFootnoteContentChange` on; the slow
+    /// undo's swap does the same inline (EditorFirstRig+SlowUndo.swift), the whole restore's click calls this (fix round F4).
+    func emulateDebouncedContentPush() {
+        guard emulatesFootnoteContentChange, !withholdContentUpdate else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            self?.runContentChangeHandlers()
+            self?.events.note("content push")
+        }
     }
 
     /// Queues one edit for the next poll cycle to fetch (the editor's `getBlockChanges`): `block`'s text gets `suffix` appended.

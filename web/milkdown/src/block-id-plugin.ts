@@ -3,7 +3,7 @@
 // These IDs survive edits elsewhere in the document.
 
 import type { Node } from '@milkdown/kit/prose/model';
-import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import { type EditorState, Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { Mapping } from '@milkdown/kit/prose/transform';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
@@ -53,8 +53,9 @@ const BLOCK_TYPES = new Set([
  */
 const ATOMIC_BLOCK_TYPES: ReadonlySet<string> = new Set(['figure', 'math_display']);
 
-// Generate a UUID for new blocks
-function generateBlockId(): string {
+// Generate a UUID for new blocks. Exported for the editor-first duplicate (api-section-duplicate.ts), which mints the PERMANENT
+// ids of the blocks it copies with this same generator, so a copy never carries a `temp-` id (see `setTopLevelIdsAt`).
+export function generateBlockId(): string {
   // Use crypto.randomUUID if available, otherwise fallback
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -808,6 +809,48 @@ export function replaceTopLevelIds(idsByIndex: string[], doc: Node): void {
   if (index !== idsByIndex.length) {
     syncLog('BlockId:replaceTopLevelIds', `PARITY MISMATCH: assigned ${index} of ${idsByIndex.length} ids`);
   }
+}
+
+/**
+ * Give the top-level blocks at `positions` the permanent ids in `ids` (parallel arrays: `ids[i]` belongs to the block starting at
+ * `positions[i]`), IN PLACE in `currentBlockIds` -- the same Map object the plugin's own state and `getAllBlockIds` read, see
+ * `setBlockIdsForTopLevel`'s comment on why it is never reassigned. The block types stay as the plugin recorded them.
+ *
+ * For an operation that inserts blocks whose permanent ids it already holds: the editor-first duplicate mints a fresh UUID per
+ * copied block (`generateBlockId`), dispatches the insertion, and calls this right after the dispatch. The plugin's `apply` has by
+ * then given each inserted block a `temp-` id (it has no other way to name a block it did not see before); this replaces it, so
+ * block-sync's re-baseline (`resetAndSnapshot`) records the copy under its permanent id and the copy is never reported as an
+ * insert, and typing in it later is an UPDATE of that id.
+ *
+ * Call it on the document the positions were taken from (right after the inserting dispatch, before anything else changes the
+ * document). It does NOT repaint: `data-block-id` is a decoration that only recomputes on a transaction, so the caller dispatches
+ * a step-less transaction afterwards (api-content.ts `redecorateBlockIds` is the established technique).
+ */
+export function setTopLevelIdsAt(positions: readonly number[], ids: readonly string[]): void {
+  if (positions.length !== ids.length) {
+    throw new Error(`setTopLevelIdsAt: ${positions.length} positions but ${ids.length} ids`);
+  }
+  for (let i = 0; i < positions.length; i++) {
+    const previous = currentBlockIds.get(positions[i]);
+    // A split-empty marker names the temp id being replaced; the marker is for that dead id only.
+    if (previous !== undefined && isTempBlockId(previous)) recentlySplitEmptyIds.delete(previous);
+    currentBlockIds.set(positions[i], ids[i]);
+  }
+}
+
+/**
+ * Re-point the block-id plugin's state in `state` at the live offset -> id map (`currentBlockIds`). For a state that was swapped in whole
+ * (`view.updateState(savedState)`, the structural checkpoint swap): that state's plugin state still names the Map object it had when
+ * it was saved, and every docChanged transaction since replaced `currentBlockIds` with a new Map (`apply`), so the saved Map holds the
+ * ids the blocks had back then. `decorations()` paints `data-block-id` from the plugin state, so without this the swapped-in document
+ * would paint those old ids until the next document-changing transaction, whatever `setBlockIdsForTopLevel` has put in the live map.
+ * The next `apply` re-aliases the state itself (it reads `currentBlockIds`, never `value.blockIds`). Call it after the ids are set and
+ * before the step-less dispatch that repaints. It mutates the plugin-state object of `state`, which for a swapped-in checkpoint IS the
+ * saved object: that is the point, the saved state becomes the live state.
+ */
+export function pointPluginStateAtLiveIds(state: EditorState): void {
+  const pluginState = blockIdPluginKey.getState(state);
+  if (pluginState) pluginState.blockIds = currentBlockIds;
 }
 
 /**

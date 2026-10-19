@@ -139,6 +139,49 @@ extension ProjectDatabase {
         }
         return SectionSubtree(blockIds: result, rootTitle: root.outlineTitle)
     }
+
+    /// The ordered block ids of a section's FLAT range (t-18b7fa48 Phase 4b, slice 2, plan D3): the leader `headingId` (a heading or a
+    /// section break) and its OWN body only, up to but not including the next heading of ANY level, the next section break, the first
+    /// Notes / Bibliography row (the auto-bibliography marker row included), or the end of the document. A deeper heading below it is
+    /// NOT part of the range, which is what separates this from `resolveSectionSubtree` (the delete / duplicate rule, where a section
+    /// owns every deeper heading under it).
+    ///
+    /// Why a second rule exists. A Version History section is the text between two headings of any level, the way
+    /// `SectionSyncService` cuts a document into `section` rows (`buildParsedHeaders`: a section ends at the next boundary, whatever its
+    /// level, or at the first managed section). A restore that replaces "the section" must therefore replace exactly that text, so a
+    /// level-1 chapter keeps its level-2 children when its own text is replaced. The editor-side twin is `findFlatSectionRange`
+    /// (web/milkdown, round 2c); the queued job removes by this rule what the editor already replaced by its own, so the two must pick
+    /// the same rows for the same document.
+    ///
+    /// Returns `nil` when `headingId` is not a row of the project, is not a heading or a section break, or is a Notes / Bibliography
+    /// row (those are machine-managed and never restored by hand). A one-row range (a heading with no body) is `[headingId]`.
+    ///
+    /// Reads only the columns it needs, in assembly order (`sortOrder`, a heading before a non-heading at the same value): the caller
+    /// is the click, which must not decode every row of a book on the main thread.
+    static func flatSectionBlockIds(db: Database, headingId: String, projectId: String) throws -> [String]? {
+        let headingRaw = BlockType.heading.rawValue
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT id, blockType, isPseudoSection, isNotes, isBibliography FROM block WHERE projectId = ? \
+            ORDER BY sortOrder, CASE WHEN blockType = ? THEN 0 ELSE 1 END, rowid
+            """, arguments: [projectId, headingRaw])
+
+        var range: [String] = []
+        for row in rows {
+            let id: String = row["id"]
+            let isManaged = (row["isNotes"] as Bool) || (row["isBibliography"] as Bool)
+                || (row["blockType"] as String) == BlockType.bibliography.rawValue
+            let isLeader = (row["blockType"] as String) == headingRaw || (row["isPseudoSection"] as Bool)
+            if range.isEmpty {
+                guard id == headingId else { continue }
+                guard isLeader, !isManaged else { return nil }
+                range.append(id)
+            } else {
+                if isLeader || isManaged { break }
+                range.append(id)
+            }
+        }
+        return range.isEmpty ? nil : range
+    }
 }
 
 // MARK: - Delete / Duplicate (forward ops only -- see file header)
@@ -215,62 +258,169 @@ extension ProjectDatabase {
     @discardableResult
     func duplicateSections(rootId: String, projectId: String) throws -> String? {
         try write { db in
-            guard let subtree = try Self.resolveSectionSubtree(db: db, rootId: rootId, projectId: projectId) else {
-                return nil
+            try Self.duplicateSections(db: db, rootId: rootId, projectId: projectId, copies: nil)?.newTitle
+        }
+    }
+
+    /// What `duplicateSections(db:rootId:projectId:copies:)` made.
+    struct DuplicatedSubtree: Sendable, Equatable {
+        /// The copy's display title (the root heading with " copy" when the root is a heading), for a `StructuralEntry` title.
+        let newTitle: String
+        /// The ids of EVERY row the copy inserted, in document order (a row the editor has no node for, a list item, is in it too).
+        let copiedBlockIds: [String]
+        /// How the editor's copies and the rows differ, when they did (t-18b7fa48 `duplicateCopiesMismatch`). Logged by the caller,
+        /// never thrown: the copy is made either way, the rows that got no editor id get fresh ones.
+        let copiesMismatch: String?
+    }
+
+    /// The body of `duplicateSections(rootId:projectId:)` on an open `Database`, for a caller already inside a write transaction
+    /// (t-18b7fa48 Phase 4b slice 3, `SectionDuplicateJob`: the rows are copied in the same transaction that wrote the Version
+    /// History snapshot). Returns `nil`, with nothing written, when the root is not a duplicable leader, exactly as the instance
+    /// method does.
+    ///
+    /// `copies` (nil: every copy gets a fresh UUID, today's behaviour, which the instance method keeps): the ids the EDITOR gave the
+    /// copies it inserted, one per copied top-level node in document order, each with the id the source node had in the editor
+    /// (`source`, already resolved through the writer's temp-id map). They are matched against `BlockParser.alignmentPairs` of the
+    /// subtree's rows by the source id, for EVERY row (an empty paragraph the editor shows is a row `BlockParser.alignmentPairs` skips,
+    /// and it takes the editor's id for its copy too), then by position where the ids do not match but the counts of copies and
+    /// aligned nodes agree (`alignmentPairs` lists one pair per top-level editor node: same-type list rows merged, empty fragments and
+    /// the bibliography marker skipped). A row the editor has no node for (a list's later items) gets a fresh UUID. A new id that is
+    /// already a row of the table is never reused (it would break the primary key): that copy gets a fresh UUID too. Every difference
+    /// that remains is reported in `copiesMismatch`; the caller then pushes the database's ids to the editor, so both sides agree.
+    static func duplicateSections(
+        db: Database, rootId: String, projectId: String, copies: [(source: String, new: String)]?
+    ) throws -> DuplicatedSubtree? {
+        guard let subtree = try Self.resolveSectionSubtree(db: db, rootId: rootId, projectId: projectId) else {
+            return nil
+        }
+        let orderedIds = subtree.blockIds
+        guard !orderedIds.isEmpty else { return nil }
+
+        let fetched = try Block.filter(keys: orderedIds).fetchAll(db)
+        guard fetched.count == orderedIds.count else { return nil }
+        let idOrder = Dictionary(uniqueKeysWithValues: orderedIds.enumerated().map { ($1, $0) })
+        let orderedBlocks = fetched.sorted { (idOrder[$0.id] ?? 0) < (idOrder[$1.id] ?? 0) }
+
+        guard let lastSortOrder = orderedBlocks.map(\.sortOrder).max() else { return nil }
+        let nextBlock = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.sortOrder > lastSortOrder)
+            .order(Block.Columns.sortOrder)
+            .fetchOne(db)
+        // No following block (subtree is the last thing in the document): fabricate an
+        // upper bound far enough past lastSortOrder to give every copy its own fractional
+        // slot; there's nothing after it to collide with.
+        let upperBound = nextBlock?.sortOrder ?? (lastSortOrder + Double(orderedBlocks.count) + 1.0)
+        let step = (upperBound - lastSortOrder) / Double(orderedBlocks.count + 1)
+
+        var idMap: [String: String] = [:]
+        var mismatch: String?
+        if let copies {
+            let match = try Self.matchEditorCopies(db: db, copies: copies, orderedBlocks: orderedBlocks)
+            idMap = match.matched
+            mismatch = match.mismatch
+        }
+        for block in orderedBlocks where idMap[block.id] == nil { idMap[block.id] = UUID().uuidString }
+
+        var newTitle = subtree.rootTitle + " copy"
+        for (index, original) in orderedBlocks.enumerated() {
+            var copy = original
+            copy.id = idMap[original.id] ?? UUID().uuidString
+            // Remap intra-subtree parentId (list_item -> its containing list block, etc.)
+            // to the COPY's parent, not the original's -- a block whose parent falls
+            // outside the subtree (shouldn't happen structurally) drops the reference
+            // rather than pointing at a block that was never duplicated.
+            copy.parentId = original.parentId.flatMap { idMap[$0] }
+            copy.sortOrder = lastSortOrder + step * Double(index + 1)
+            copy.createdAt = Date()
+            copy.updatedAt = Date()
+            if index == 0, original.blockType == .heading {
+                copy.textContent += " copy"
+                copy.markdownFragment = Self.appendCopySuffix(toHeadingFragment: original.markdownFragment)
+                // `copy = original` above carries over the ORIGINAL's stored wordCount
+                // verbatim; appending " copy" to textContent without this call would persist
+                // a one-word-short count forever (wordCount is a stored column, not computed
+                // on read). Must run before `copy.insert(db)` below.
+                copy.recalculateWordCount()
+                newTitle = copy.outlineTitle
             }
-            let orderedIds = subtree.blockIds
-            guard !orderedIds.isEmpty else { return nil }
+            try copy.insert(db)
+        }
 
-            let fetched = try Block.filter(keys: orderedIds).fetchAll(db)
-            guard fetched.count == orderedIds.count else { return nil }
-            let idOrder = Dictionary(uniqueKeysWithValues: orderedIds.enumerated().map { ($1, $0) })
-            let orderedBlocks = fetched.sorted { (idOrder[$0.id] ?? 0) < (idOrder[$1.id] ?? 0) }
+        // The duplicated subtree inserts new heading rows -- re-persist sectionParentId
+        // to match. See Database+BlockParents.swift.
+        try Self.recomputeSectionParents(db: db, projectId: projectId)
 
-            guard let lastSortOrder = orderedBlocks.map(\.sortOrder).max() else { return nil }
-            let nextBlock = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(Block.Columns.sortOrder > lastSortOrder)
-                .order(Block.Columns.sortOrder)
-                .fetchOne(db)
-            // No following block (subtree is the last thing in the document): fabricate an
-            // upper bound far enough past lastSortOrder to give every copy its own fractional
-            // slot; there's nothing after it to collide with.
-            let upperBound = nextBlock?.sortOrder ?? (lastSortOrder + Double(orderedBlocks.count) + 1.0)
-            let step = (upperBound - lastSortOrder) / Double(orderedBlocks.count + 1)
+        return DuplicatedSubtree(
+            newTitle: newTitle, copiedBlockIds: orderedBlocks.compactMap { idMap[$0.id] }, copiesMismatch: mismatch)
+    }
 
-            var idMap: [String: String] = [:]
-            for block in orderedBlocks { idMap[block.id] = UUID().uuidString }
-
-            var newTitle = subtree.rootTitle + " copy"
-            for (index, original) in orderedBlocks.enumerated() {
-                var copy = original
-                copy.id = idMap[original.id] ?? UUID().uuidString
-                // Remap intra-subtree parentId (list_item -> its containing list block, etc.)
-                // to the COPY's parent, not the original's -- a block whose parent falls
-                // outside the subtree (shouldn't happen structurally) drops the reference
-                // rather than pointing at a block that was never duplicated.
-                copy.parentId = original.parentId.flatMap { idMap[$0] }
-                copy.sortOrder = lastSortOrder + step * Double(index + 1)
-                copy.createdAt = Date()
-                copy.updatedAt = Date()
-                if index == 0, original.blockType == .heading {
-                    copy.textContent += " copy"
-                    copy.markdownFragment = Self.appendCopySuffix(toHeadingFragment: original.markdownFragment)
-                    // `copy = original` above carries over the ORIGINAL's stored wordCount
-                    // verbatim; appending " copy" to textContent without this call would persist
-                    // a one-word-short count forever (wordCount is a stored column, not computed
-                    // on read). Must run before `copy.insert(db)` below.
-                    copy.recalculateWordCount()
-                    newTitle = copy.outlineTitle
-                }
-                try copy.insert(db)
+    /// Matches the editor's copies against the subtree's rows (see `duplicateSections(db:rootId:projectId:copies:)`). Returns the copy
+    /// id for every row the editor has a node for (original row id -> copy id) and a short description of every difference, nil when
+    /// there was none. Never throws on a difference.
+    ///
+    /// Two passes (round 1g-C, review A2). First EVERY row of the subtree, not only the rows `BlockParser.alignmentPairs` lists, is
+    /// matched by its id against the `source` of an editor copy: the editor mints a copy for every top-level node it has, an empty
+    /// paragraph included, while `alignmentPairs` skips the rows with an empty fragment, so a blank paragraph's row used to be left
+    /// with a fresh id the editor never held and typing into that copy was silently not saved. Then, only when the counts of copies
+    /// and aligned nodes agree, a node the first pass found no source for takes the copy at its position. A row the editor has no
+    /// copy for (a list's later items, a row the editor does not show) gets a fresh id and is not a difference.
+    ///
+    /// What is reported (and makes the caller push the database's ids to the editor): a node of the editor's that got a fresh id, an
+    /// editor copy that matched no row, a match by position, and an id that was already a row or repeated.
+    private static func matchEditorCopies(
+        db: Database, copies: [(source: String, new: String)], orderedBlocks: [Block]
+    ) throws -> (matched: [String: String], mismatch: String?) {
+        let pairs = BlockParser.alignmentPairs(orderedBlocks)
+        // A new id that is already a row cannot be used; one repeated in the list is used once.
+        var matcher = EditorCopyMatcher(taken: Set(try Block.filter(keys: copies.map(\.new)).select(Column("id"), as: String.self).fetchAll(db)))
+        var newBySource: [String: String] = [:]
+        for copy in copies where !copy.source.isEmpty && newBySource[copy.source] == nil { newBySource[copy.source] = copy.new }
+        for row in orderedBlocks {
+            guard let candidate = newBySource[row.id] else { continue }
+            if !matcher.claim(candidate, for: row.id) {
+                matcher.notes.append("copy id \(candidate.prefix(8)) is already a row or repeated: a fresh id was minted")
             }
+        }
+        matcher.fillByPosition(pairs: pairs.map(\.id), copies: copies.map(\.new))
+        matcher.describeDifferences(pairs: pairs.map(\.id), copies: copies.map(\.new), rowCount: orderedBlocks.count)
+        return (matcher.matched, matcher.notes.isEmpty ? nil : matcher.notes.joined(separator: "; "))
+    }
 
-            // The duplicated subtree inserts new heading rows -- re-persist sectionParentId
-            // to match. See Database+BlockParents.swift.
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
+    /// The state of `matchEditorCopies`: which copy ids are spent, which rows have theirs, what to report.
+    private struct EditorCopyMatcher {
+        let taken: Set<String>
+        var used = Set<String>()
+        var matched: [String: String] = [:]
+        var notes: [String] = []
 
-            return newTitle
+        /// A node of the editor's that the source pass found no copy for takes the copy at its position, when the counts agree.
+        mutating func fillByPosition(pairs: [String], copies: [String]) {
+            guard pairs.count == copies.count else { return }
+            var byPosition = 0
+            for (index, pairId) in pairs.enumerated() where matched[pairId] == nil {
+                if claim(copies[index], for: pairId) { byPosition += 1 }
+            }
+            if byPosition > 0 { notes.append("\(byPosition) copy(ies) matched by position, not by source id") }
+        }
+
+        /// What is left after both passes: nodes without a copy, copies without a row. Adds the counts when anything is reported.
+        mutating func describeDifferences(pairs: [String], copies: [String], rowCount: Int) {
+            let freshNodes = pairs.filter { matched[$0] == nil }.count
+            if freshNodes > 0 { notes.append("\(freshNodes) node(s) got a fresh id") }
+            let unmatchedCopies = copies.filter { !used.contains($0) && !taken.contains($0) }.count
+            if unmatchedCopies > 0 { notes.append("\(unmatchedCopies) editor copy(ies) matched no row of the section") }
+            guard !notes.isEmpty else { return }
+            notes.append("the editor copied \(copies.count) top-level block(s); the section has \(pairs.count) node(s) in \(rowCount) row(s)")
+        }
+
+        /// Gives `rowId` the copy id `candidate` when it is usable (not empty, not already a row of the table, not spent). False
+        /// otherwise, and then nothing changed.
+        mutating func claim(_ candidate: String, for rowId: String) -> Bool {
+            guard !candidate.isEmpty, !taken.contains(candidate), !used.contains(candidate) else { return false }
+            matched[rowId] = candidate
+            used.insert(candidate)
+            return true
         }
     }
 

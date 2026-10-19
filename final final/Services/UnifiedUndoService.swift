@@ -57,11 +57,30 @@ struct StructuralEntry: Identifiable, Equatable {
     let kind: Kind
     let title: String
 
-    /// An editor-first section delete (t-94369a83 Phase 4b slice 2a): recorded the moment the editor removed the section,
+    /// An editor-first section delete (t-94369a83 Phase 4b slice 2a) is recorded the moment the editor removed the section,
     /// before the database job that writes the Version History copy has run, so `undoSnapshotId` is nil and the snapshot id
     /// lives on the controller's `SectionDeleteSlotStore` slot for this entry's id. A section delete the old way (Markdown
-    /// mode, zoomed, no writer, the UI-test legacy flag) carries its snapshot id here as before and has no slot.
-    var isEditorFirstDelete: Bool { kind == .sectionDelete && undoSnapshotId == nil }
+    /// mode, zoomed, no writer, the UI-test legacy flag) carries its snapshot id here as before and has no slot. (The dedicated
+    /// `isEditorFirstDelete` property that said so lost its last production caller when `isEditorFirst` took over, fix round F1,
+    /// review B10.)
+    ///
+    /// An editor-first Duplicate Section (t-18b7fa48 Phase 4b slice 3) has the same shape as an editor-first delete: recorded the
+    /// moment the editor inserted the copy, with `undoSnapshotId` nil, the snapshot its background job wrote kept on the controller's
+    /// slot, the undo's payload in the controller's holder. `isEditorFirst` is true for both, and is what every place that treats such
+    /// an entry specially (the quick undo and redo, the slow undo's snapshot lookup, the eviction and replace rules below) asks. A
+    /// duplicate the old way (Markdown mode, zoomed, no writer, the UI-test legacy flag) carries its snapshot id here as before.
+    ///
+    /// A Version History restore of the WHOLE project (t-18b7fa48 Phase 4b slice 2, round 2d-i) is the third kind: recorded the moment
+    /// the editor replaced its document, snapshot id nil here, the snapshot its job wrote on the slot, the quick undo's payload in the
+    /// holder. The two section restores (replace a section, restore as duplicate; round 2d-ii) are the fourth and fifth.
+    var isEditorFirst: Bool {
+        (kind == .sectionDelete || kind == .sectionDuplicate || isVersionRestore) && undoSnapshotId == nil
+    }
+
+    /// One of the three Version History restores (whatever path recorded it).
+    var isVersionRestore: Bool {
+        kind == .restoreProject || kind == .restoreSectionReplace || kind == .restoreSectionDuplicate
+    }
 
     /// Snapshot to restore FROM when this entry is undone (the pre-op state). Optional: `nil`
     /// for `.documentNoteDelete`, whose inverse is `payload` (the deleted row) instead of a
@@ -217,7 +236,7 @@ final class UnifiedUndoService {
         if let redoSnapshotId = entry.redoSnapshotId {
             SnapshotService.unpinUndoPointSnapshot(redoSnapshotId)
         }
-        if entry.isEditorFirstDelete { discardEditorFirstEntry?(entry.id) }
+        if entry.isEditorFirst { discardEditorFirstEntry?(entry.id) }
     }
 
     enum UndoOutcome: Equatable {
@@ -270,7 +289,7 @@ final class UnifiedUndoService {
         // An editor-first section delete (t-94369a83 Phase 4b slice 2a, addendum A18) is exempt: its undo snapshot id lives on the
         // controller's slot, not on the entry, and the caller writes `freshUndoSnapshotId` there (which unpins the id it
         // replaces). What this call still does for it is drop the consumed redo snapshot, as it does for every entry.
-        if top.isEditorFirstDelete {
+        if top.isEditorFirst {
             if let redoSnapshotId = top.redoSnapshotId { SnapshotService.unpinUndoPointSnapshot(redoSnapshotId) }
             undoStack[undoStack.count - 1] = StructuralEntry(
                 id: top.id, kind: top.kind, title: top.title,

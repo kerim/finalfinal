@@ -197,6 +197,33 @@ enum TestMode {
         return value
     }
 
+    /// UI-test-only (t-18b7fa48 Phase 4b slice 1, round 1i): `FF_UI_TESTING_STRUCT_JOB_HOLD_FIRST_N=<n>` limits the
+    /// `FF_UI_TESTING_STRUCT_JOB_HOLD_MS` hold to the first `n` editor-first jobs of this launch (counted in the order their
+    /// clicks created them, by `consumeStructuralJobHold()`); every later job runs without a hold. Exists because two held jobs
+    /// in a row keep the writer busy for twice the hold, past the 5 s content-state watchdog, which changes the behaviour a test
+    /// is about: a test that only needs its FIRST job still pending when a second command arrives holds the first alone.
+    /// `nil` (unset, unparseable, <= 0, or `isUITesting` false) means no limit: every job is held, as before. Same
+    /// `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingStructuralJobHoldFirstN: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_STRUCT_JOB_HOLD_FIRST_N"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// How many jobs `consumeStructuralJobHold()` has granted a hold so far in this launch.
+    private static var structuralJobHoldsGranted = 0
+
+    /// True (and counted) while the next job is to be held: always, when no limit is set; else while fewer than
+    /// `uiTestingStructuralJobHoldFirstN` jobs have been held in this launch. Called once per job, where the job is created.
+    @MainActor
+    static func consumeStructuralJobHold() -> Bool {
+        guard let limit = uiTestingStructuralJobHoldFirstN else { return true }
+        guard structuralJobHoldsGranted < limit else { return false }
+        structuralJobHoldsGranted += 1
+        return true
+    }
+
     /// UI-test-only (board task t-dfc4fb02): `FF_UI_TESTING_FOOTNOTE_WRITE_HOLD_MS=<n>` delays the NOTES NOTIFICATION after the
     /// footnote write has committed (the writer is NOT blocked: a blocking hold trips the 5 s content-state watchdog and a plain
     /// whole-document push, see board). Concretely, `FootnoteSyncService.performFootnoteUpdate` waits `n` milliseconds in a plain
@@ -229,7 +256,8 @@ enum TestMode {
     // unit-test run can never set one. None of them blocks the database writer: the holds are plain suspensions (the writer, the
     // system write and `contentState` are all free while they wait), so the 5 s content-state watchdog never meets them.
 
-    /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N=<n>`: the first `n` Cmd-Z presses on an editor-first section delete that WOULD take the
+    /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N=<n>`: the first `n` Cmd-Z presses on an editor-first section delete (or, since
+    /// t-18b7fa48 round 1e-i, an editor-first duplicate) that WOULD take the
     /// quick path take today's slow path instead (so a test can time old and new in one session). 0 (unset, unparseable, <= 0, or
     /// `isUITesting` false) means none. The decision is counted per launch, once per press, by `consumeSlowDeleteUndoSeam()`.
     static var uiTestingSlowDeleteUndoFirstN: Int {
@@ -297,9 +325,37 @@ enum TestMode {
         NSLog("[QuickUndoHold] settle-hold END")
     }
 
+    /// `FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS=<n>` (t-18b7fa48 round 3d): a SLOW (snapshot) undo or redo, editor first
+    /// (`StructuralUndoController.queuedSnapshotUndo`), waits `n` ms (clamped to 15,000) after its plan has been read and BEFORE its swap
+    /// click. It makes the window the model calls EFSnapTypedInWait (the user types between the press and the swap) as wide as a UI test
+    /// needs, instead of hoping that the test's own typing falls inside the few hundred milliseconds a real wait leaves it, or inside a
+    /// writer hold, which cannot exceed about 3.9 s (the content-state watchdog fires at 5 s). The wait is on the Swift side only: a plain
+    /// `Task.sleep` on the main actor in the press's gate turn, as a real wait for a delete's job is; the editor is live and the writer is
+    /// free, so the typing is seen by the click's re-check exactly as typing during a real wait is (the click takes batch N and re-checks
+    /// the document). `nil` (unset, unparseable, <= 0, or `isUITesting` false) means no wait, and nothing differs from a normal press.
+    /// Same `isUITesting &&` guard as every sibling flag, so a value left in a shell profile never slows a real user's undo.
+    static var uiTestingSlowUndoPressHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return min(value, 15_000)
+    }
+
+    /// The wait `uiTestingSlowUndoPressHoldMs` asks for, called ONCE per press by `queuedSnapshotUndo` after the plan has been read and
+    /// before the first swap click (not again before the `noCheckpoint` fallback's second click). Logs its two ends at `.undo`
+    /// (diagnostic.log, marker family `[SlowUndoPressHold]`, `op` being the entry's first 8 characters), so a test can show that every key
+    /// it typed fell inside. A plain suspension: nothing is blocked. Returns at once when unset (every normal launch).
+    @MainActor
+    static func holdSlowUndoPress(opId: String) async {
+        guard let milliseconds = uiTestingSlowUndoPressHoldMs else { return }
+        DebugLog.log(.undo, "[SlowUndoPressHold] start ms=\(milliseconds) op=\(opId)")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+        DebugLog.log(.undo, "[SlowUndoPressHold] end op=\(opId)")
+    }
+
     /// `FF_UI_TESTING_AUTOBACKUP_IDLE_SECONDS=<n>`: ONE idle backup per launch fires after `n` seconds of idle instead of 60, and only
     /// AFTER the first editor-first section delete of the launch: the seam stays dormant (every idle timer takes the real 60 s) until
-    /// `armAutoBackupIdleSeamAfterDelete()` has run at that delete's click, so the document load cannot use the one firing up before the
+    /// `armAutoBackupIdleSeamAfterStructuralClick()` has run at that delete's click, so the document load cannot use the one firing up before the
     /// delete. From then on the next idle timer that is armed (the delete's own content change arms one) uses `n`;
     /// `consumeAutoBackupIdleSeam()` is called when it really fires and the seam is spent. The 5-minute minimum between backups is NOT
     /// changed, so later backups do not add flushes at random moments. `nil` means the real timing.
@@ -313,12 +369,23 @@ enum TestMode {
     private static var autoBackupIdleSeamArmed = false
     private static var autoBackupIdleSeamFired = false
 
-    /// Called by `performEditorFirstDelete` at the first section delete's click: from here on the idle seam may take effect. A no-op
-    /// outside a UI test (the getter above checks `isUITesting` and the variable again).
+    /// Called by `runEditorFirstStructuralClick` at the first editor-first structural click (a section delete or a duplicate): from
+    /// here on the idle seam may take effect. A no-op outside a UI test (the getter above checks `isUITesting` and the variable
+    /// again). (Named `...AfterDelete` until t-18b7fa48 round 1e-i, when a duplicate began to arm it too.)
     @MainActor
-    static func armAutoBackupIdleSeamAfterDelete() {
+    static func armAutoBackupIdleSeamAfterStructuralClick() {
         guard isUITesting else { return }
         autoBackupIdleSeamArmed = true
+    }
+
+    /// UI-test-only (t-18b7fa48 round 1e-i): `FF_UI_TESTING_LEGACY_STRUCTURAL=1` makes Duplicate Section and (round 2d-i) the
+    /// whole-project version restore take today's whole sequence (flush the editor, undo-point copy, copy the rows, push the whole
+    /// document back) instead of the editor-first path, so a UI test can time old and new in one session. Later rounds extend it to
+    /// the two section restores and the slow undo and redo. Delete
+    /// Section keeps its own flag (`isUITestingStructuralLegacyDelete`). Same `isUITesting &&` guard as every sibling flag, so a value
+    /// left in a shell profile never switches the fast duplicate off for a real user and a unit-test run can never set it.
+    static var isUITestingLegacyStructural: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_LEGACY_STRUCTURAL"] == "1"
     }
 
     /// Called by `AutoBackupService` when an idle timer that used the seam's wait has really fired: the seam is spent for this launch.

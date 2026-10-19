@@ -1,0 +1,49 @@
+{
+  "about" : "Written by RestorePrimitivesTests.testWriteAlignmentFixtures from StructuralUndoController.editorPayload(for:) (the payload a restore sends the editor); read by restore-payload-alignment.test.ts (V2-3). Regenerate by hand: run that one test with TEST_RUNNER_FF_WRITE_ALIGNMENT_FIXTURES=1 in the environment, then commit the files.",
+  "blockIds" : [
+    "blk-0001",
+    "blk-0002",
+    "blk-0003",
+    "blk-0006",
+    "blk-0008",
+    "blk-0009"
+  ],
+  "expectedBlocks" : [
+    {
+      "blockType" : "heading",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "bullet_list",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "ordered_list",
+      "nonEmpty" : true
+    },
+    {
+      "blockType" : "image",
+      "nonEmpty" : false
+    },
+    {
+      "blockType" : "paragraph",
+      "nonEmpty" : true
+    }
+  ],
+  "imageMeta" : [
+    {
+      "alt" : "A figure",
+      "id" : "blk-0008",
+      "src" : "media/figure.png"
+    }
+  ],
+  "managedBlockIds" : [
+
+  ],
+  "markdown" : "## Loose list section\n\nBefore the lists.\n\n- first item\n\n- second item\n\n- third item\n\n1. step one\n\n2. step two\n\n![A figure](media/figure.png)\n\nAfter the figure.",
+  "name" : "looseListSection"
+}

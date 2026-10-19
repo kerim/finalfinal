@@ -1,0 +1,125 @@
+{
+  "about": "Written by duplicate-section-editor-first.test.ts (V1-13) from the real duplicateSectionEditorFirst reply; read by DuplicateSectionsEditorCopiesTests.testARealWebReplyGivesEveryEditorCopyItsRow. Regenerate with `cd web && pnpm vitest run -u`.",
+  "rootId": "sx",
+  "rows": [
+    {
+      "id": "sx",
+      "blockType": "heading",
+      "headingLevel": 2,
+      "textContent": "Section X",
+      "markdownFragment": "## Section X"
+    },
+    {
+      "id": "sx-intro",
+      "blockType": "paragraph",
+      "textContent": "Intro paragraph.",
+      "markdownFragment": "Intro paragraph."
+    },
+    {
+      "id": "sx-tight",
+      "blockType": "bullet_list",
+      "textContent": "tight one tight two",
+      "markdownFragment": "- tight one\n- tight two"
+    },
+    {
+      "id": "sx-gap-1",
+      "blockType": "paragraph",
+      "textContent": "Between the lists.",
+      "markdownFragment": "Between the lists."
+    },
+    {
+      "id": "sx-loose",
+      "blockType": "bullet_list",
+      "textContent": "loose one",
+      "markdownFragment": "- loose one"
+    },
+    {
+      "id": "sx-loose-2",
+      "blockType": "bullet_list",
+      "textContent": "loose two",
+      "markdownFragment": "- loose two"
+    },
+    {
+      "id": "sx-gap-2",
+      "blockType": "paragraph",
+      "textContent": "After the loose list.",
+      "markdownFragment": "After the loose list."
+    },
+    {
+      "id": "sx-fig",
+      "blockType": "image",
+      "textContent": "cap",
+      "markdownFragment": "![cap](media/photo.png)"
+    },
+    {
+      "id": "sx-blank",
+      "blockType": "paragraph",
+      "textContent": "",
+      "markdownFragment": ""
+    },
+    {
+      "id": "sx-last",
+      "blockType": "paragraph",
+      "textContent": "Last paragraph of X.",
+      "markdownFragment": "Last paragraph of X."
+    }
+  ],
+  "reply": {
+    "ok": true,
+    "batch": {
+      "updates": [],
+      "inserts": [],
+      "deletes": []
+    },
+    "copies": [
+      {
+        "sourceId": "sx",
+        "newId": "copy-0"
+      },
+      {
+        "sourceId": "sx-intro",
+        "newId": "copy-1"
+      },
+      {
+        "sourceId": "sx-tight",
+        "newId": "copy-2"
+      },
+      {
+        "sourceId": "sx-gap-1",
+        "newId": "copy-3"
+      },
+      {
+        "sourceId": "sx-loose",
+        "newId": "copy-4"
+      },
+      {
+        "sourceId": "sx-gap-2",
+        "newId": "copy-5"
+      },
+      {
+        "sourceId": "sx-fig",
+        "newId": "copy-6"
+      },
+      {
+        "sourceId": "sx-blank",
+        "newId": "copy-7"
+      },
+      {
+        "sourceId": "sx-last",
+        "newId": "copy-8"
+      }
+    ],
+    "insertedLeaderIds": [
+      "copy-0"
+    ],
+    "insertedSectionsSnapshot": [
+      {
+        "id": "copy-0",
+        "kind": "heading",
+        "level": 2,
+        "title": "Section X copy"
+      }
+    ],
+    "predecessorId": "sx-last"
+  }
+}

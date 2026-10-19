@@ -21,6 +21,25 @@
 //  undo's and quick redo's synchronous stretch before their JavaScript is sent; the pending count is +1 there and -1 when the
 //  reinsert's job future resolves.
 //
+//  THE SAME GUARD FOR AN EDITOR-FIRST CLICK (t-18b7fa48 round 1b, D6 option (a)). Delete Section, Duplicate Section and the Version
+//  History restore of the whole project (the two section restores follow in round 2d-ii) change the editor's document before the
+//  database follows. A rebuild that read before
+//  the click holds a document without that change; its push would put the old text back over the new one. So the stamp has two more
+//  fields, backed by `editorFirstClickGeneration` (bumped in the click's synchronous stretch) and `pendingEditorFirstJobs` (+1 there,
+//  -1 when the job's future resolves, or at once when the click reserved no job), and ONLY `rebuildPushStillWanted` reads them. The
+//  click touches neither `editorRestoreGeneration` nor `pendingReinsertCount`, so no settle that reads those behaves differently.
+//  The quick REDO of a delete or a duplicate raises the same two fields in its own stretch (round 1g-B, review A3): it is an
+//  editor-first change with a job to follow, and the restore generation alone would not skip a rebuild that reads after its reply.
+//  ORDER, which the operation's own settle depends on: the job-pending count is lowered BEFORE the settle (or the put-back) starts. The
+//  settle's rebuilds stamp after the job has applied; with the count still raised they would stamp "read while pending", skip their
+//  own pushes, and the editor's Notes would never be updated.
+//
+//  THE RE-PUSH OWED AFTER A SKIP (t-18b7fa48 round 1b-ii). A rebuild whose push the click's stamp skipped has left the editor's Notes
+//  and Bibliography as they were (the database is right). Two section operations back to back (delete a footnoted section, then at
+//  once delete or duplicate another) make that everyday, and the operations' own settles cannot repair it: the footnote service skips
+//  a second resync of the same references. So every skip for an editor-first reason raises `managedRegionsNeedRepush`
+//  (`noteStalePushSkipped`), and the shared settle tail puts the regions in once no editor-first job is pending.
+//
 
 import Foundation
 
@@ -29,6 +48,11 @@ struct RebuildReadStamp: Equatable, Sendable {
     let generation: Int
     /// A quick undo's reinsert was still pending when the database was read, so what was read is the post-delete table.
     let readWhileReinsertPending: Bool
+    /// `editorFirstClickGeneration` when the database was read (t-18b7fa48 D6): an editor-first click since then has changed the
+    /// editor's document, and what was read does not have the change.
+    let clickGeneration: Int
+    /// An editor-first click's job was still pending when the database was read, so what was read is the table before the job.
+    let readWhileEditorFirstJobPending: Bool
 }
 
 extension EditorViewState {
@@ -37,13 +61,19 @@ extension EditorViewState {
 
     /// Call on the line immediately before the database read of a rebuild (no `await` between the two).
     func stampRebuildRead() -> RebuildReadStamp {
-        RebuildReadStamp(generation: editorRestoreGeneration, readWhileReinsertPending: pendingReinsertCount > 0)
+        RebuildReadStamp(
+            generation: editorRestoreGeneration, readWhileReinsertPending: pendingReinsertCount > 0,
+            clickGeneration: editorFirstClickGeneration, readWhileEditorFirstJobPending: pendingEditorFirstJobs > 0)
     }
 
-    /// Whether what a rebuild read is still what the editor should be given: no quick undo or redo has started since, and the
-    /// database was not read with a reinsert pending.
+    /// Whether what a rebuild read is still what the editor should be given: no quick undo or redo has started since, no editor-first
+    /// click has started since, and the database was read with neither a reinsert nor an editor-first job pending.
+    ///
+    /// The two editor-first fields (t-18b7fa48 D6, option (a)) are read here and nowhere else: `editorRestoreGeneration` and
+    /// `pendingReinsertCount` are untouched by a click, so no settle that reads them behaves differently.
     func rebuildPushStillWanted(_ stamp: RebuildReadStamp) -> Bool {
         !stamp.readWhileReinsertPending && stamp.generation == editorRestoreGeneration
+            && !stamp.readWhileEditorFirstJobPending && stamp.clickGeneration == editorFirstClickGeneration
     }
 
     /// After a rebuild's push call has returned: when its stamp went stale (a quick undo or redo started since it read, so either its
@@ -52,9 +82,37 @@ extension EditorViewState {
     /// section and annotation syncs). Returns false, doing nothing, when the stamp is current: the caller goes on exactly as before.
     func skipStaleRebuildTail(_ stamp: RebuildReadStamp, kind: String, blockSync: BlockSyncService) async -> Bool {
         guard !rebuildPushStillWanted(stamp) else { return false }
+        // Before the first suspension: the settle that waits for this rebuild (`awaitNoRunningRebuilds`) sees the flag the moment the
+        // rebuild's Task ends.
+        noteStalePushSkipped(stamp, kind: kind)
         await adoptLiveEditorText(blockSync: blockSync, why: "a stale \(kind) rebuild", requireUnchangedGeneration: false)
-        DebugLog.log(.undo, "[STRUCT-TRACE] rebuild push skipped (stale: quick restore) kind=\(kind)")
         return true
+    }
+
+    /// A push of the database's text into the editor was skipped because `stamp` is no longer wanted: logs which part of the stamp went
+    /// stale (the words name the reason, no longer always "quick restore"), and, when an EDITOR-FIRST click is among the reasons (the
+    /// click generation moved, or the database was read while an editor-first job was pending), raises `managedRegionsNeedRepush`.
+    /// The database is right and the editor still holds the old Notes and Bibliography; the last editor-first settle to finish puts
+    /// them in (`settleManagedRegionsAtEndOfEditorFirstSettle`, t-18b7fa48 round 1b-ii). A stamp that went stale only because a quick
+    /// undo or redo started raises nothing: the reinsert's own settle pushes the regions (the existing quick-undo design).
+    func noteStalePushSkipped(_ stamp: RebuildReadStamp, kind: String) {
+        var reasons: [String] = []
+        if stamp.generation != editorRestoreGeneration { reasons.append("restore generation moved") }
+        if stamp.readWhileReinsertPending { reasons.append("read while reinsert pending") }
+        var editorFirstReason = false
+        if stamp.clickGeneration != editorFirstClickGeneration {
+            reasons.append("click generation moved")
+            editorFirstReason = true
+        }
+        if stamp.readWhileEditorFirstJobPending {
+            reasons.append("read while job pending")
+            editorFirstReason = true
+        }
+        if editorFirstReason { managedRegionsNeedRepush = true }
+        DebugLog.log(
+            .undo,
+            "[STRUCT-TRACE] rebuild push skipped (stale: \(reasons.joined(separator: ", "))) kind=\(kind)"
+                + (editorFirstReason ? " -- a re-push of the managed regions is owed" : ""))
     }
 
     // MARK: - Reading the editor's own text

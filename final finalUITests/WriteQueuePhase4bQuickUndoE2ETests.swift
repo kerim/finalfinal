@@ -66,7 +66,9 @@ import XCTest
 struct Phase4bQuRun {
     let label: String
     let opId: String
-    /// True when the sequence began `start (quick)`; false for the slow path's plain `start`.
+    /// True when the sequence began `start (quick...` (`start (quick)`, or `start (quick, duplicate)` / `start (quick, restore)` for the quick
+    /// redo of a duplicate or a restore). False for both slow roads: the old body's plain `start`, and, since t-18b7fa48 slice 3, the queued
+    /// slow undo and redo's `start (editor-first undo)` / `start (editor-first redo)`.
     let quick: Bool
     let startT: Int
     /// The Z key press this run answers: the log's stamp and the app's clock reading.

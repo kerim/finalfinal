@@ -45,6 +45,10 @@ struct EditorFirstReply: Encodable {
 final class EditorFirstRig {
     let db: ProjectDatabase
     let pid: String
+    /// This rig's share of the process's `DebugLog.always` lines (round 2d-i, addendum must-fix 2): only the lines that carry its project
+    /// id, collected through a PRIVATE observer of the log, so a suite running in parallel (which writes `[EF-STRUCT] ... fell back` lines
+    /// on purpose, and which may replace `DebugLog.alwaysSink` at any moment) can neither put a line in nor take one out.
+    let logScope: RigLogScope
     let sync = BlockSyncService()
     let editorState = EditorViewState()
     let controller = StructuralUndoController()
@@ -136,6 +140,90 @@ final class EditorFirstRig {
     /// Awaited inside the answer to `redoSectionDeleteEditorFirst`, before it is returned (U-Q31).
     var quickRedoReplyHold: (() async -> Void)?
 
+    // MARK: Editor-first structural operations other than delete (t-18b7fa48 round 1e-i; EditorFirstRig+StructuralQueue.swift answers them)
+
+    /// The pending edits the next `duplicateSectionEditorFirst` call consumes and returns as its `batch` (typing up to the click). nil:
+    /// an empty batch. Spent by the call.
+    var duplicateClickBatch: BlockChanges?
+    /// Makes the next editor-first structural job fail, the way a database fault would (round 1g-A, review T1): the duplicate's answer
+    /// installs a trigger that aborts the insert of the copy's rows, so the queued job throws while it copies, its transaction (the
+    /// Version History snapshot included) rolls back, and the database is left EXACTLY as it was: the section's root row is still
+    /// there, which the earlier seam (it deleted the root row) could not say. Spent by the call. (`testFailedJobPutsTheSectionBack`
+    /// fails a delete job by retiring the writer instead, which also refuses every later poll; a put-back that must keep typing from
+    /// after the click needs the writer alive.)
+    var forceNextJobFailure = false
+    /// The editor answers the next Duplicate Section click `ok:false`, reason `rootNotFound` (round 1g-A, review A7): its own id for
+    /// the root heading is still a temporary one, although the database row and the sidebar are confirmed. Like every editor answer it
+    /// still hands back the batch it consumed. Spent by the call.
+    var forceEditorRootNotFound = false
+    /// The editor's reply to the next Duplicate Section click lists one MORE copy than the section has nodes in the table, a copy of a
+    /// node the table has no row for (round 1g-C, review A2: an editor node whose id the rows lack). The job then reports that the
+    /// copies and the rows differ, and the settle pushes the database's ids to the editor. Spent by the call.
+    var duplicateReplyAddsCopyWithoutRow = false
+    /// Models what the real editor does with a WHOLE-document push (`setContentWithBlockIds` without `preserveUserBlocks`: the D6
+    /// put-back): `editorText` becomes the pushed text. Off by default (a push leaves `editorText` alone, as before), so only the
+    /// tests that look at what the put-back leaves ON THE SCREEN turn it on (round 1g-A, review T1).
+    var modelsWholePushOnEditor = false
+    /// Keystrokes the user makes WHILE the next whole-document push is in flight (the editor's block-sync is paused for it). The real
+    /// editor keeps them as pending changes only when the push asked for `detectPausedEdits`; otherwise the replace discards them. The
+    /// rig does the same: kept, they are in `editorText` and queued for the next poll; not kept, they are gone. Spent by the push.
+    var typedDuringNextWholePush: (block: Block, suffix: String)?
+    /// Every `duplicateSectionEditorFirst(...)` and `redoSectionDuplicateEditorFirst(...)` script the editor received, in order.
+    var duplicateScripts: [String] = []
+    var redoDuplicateScripts: [String] = []
+    /// What each Duplicate Section click's editor held, by operation id: what the quick undo of the duplicate answers.
+    var duplicateClicks: [String: DuplicateClick] = [:]
+    /// The editor refuses the next Duplicate Section click (`ok:false`, reason `managedRoot`) and, as the real one does on every path,
+    /// still hands back the batch it consumed (`duplicateClickBatch`). Spent by the call (round 1e-ii, U-S1-9).
+    var forceEditorRefusal = false
+    /// How the stand-in editor works out the document it holds after a duplicate (round 1e-ii). false (the default): from the database's
+    /// rows plus the copy, which is right whenever the database and the editor agree. true: from the editor's OWN text (`editorText`, else
+    /// `quickEditorText`) with the copy inserted right after the original section's text, which is what the real editor does and what a
+    /// test needs when the editor's Notes differ from the database's (a delete's half-updated Notes) or when the editor holds a section
+    /// the database does not have yet (a quick undo whose reinsert is still pending).
+    var duplicateInsertsIntoEditorText = false
+    /// The editor refuses the next quick REDO of a duplicate (`ok:false`, with this reason; the batch is empty, as a redo consumes none
+    /// that matters). Spent by the call (round 1g-B, review A3: the redo's abandon exits).
+    var refuseNextDuplicateRedoWith: String?
+    // MARK: Editor-first Version History restore (t-18b7fa48 Phase 4b slice 2, round 2d-i; EditorFirstRig+StructuralQueue.swift answers it)
+
+    /// The pending edits the next `replaceRangeEditorFirst` call consumes and returns as its `batch` (typing up to the click). nil: an
+    /// empty batch. Spent by the call. (The refusal and job-failure switches are the duplicate's: `forceEditorRefusal`,
+    /// `forceNextJobFailure`; the restore's answer spends them too.)
+    var replaceClickBatch: BlockChanges?
+    /// Every `replaceRangeEditorFirst(...)` and `redoReplaceRangeEditorFirst(...)` script the editor received, in order.
+    var replaceScripts: [String] = []
+    var redoReplaceScripts: [String] = []
+    /// What each restore click's editor held, by operation id: what the quick undo of the restore answers.
+    var replaceClicks: [String: ReplaceClick] = [:]
+    // MARK: Editor-first slow undo and redo (t-18b7fa48 Phase 4b slice 3, round 3c; EditorFirstRig+SlowUndo.swift answers it)
+
+    /// The pending edits the next `structuralSwapEditorFirst` call consumes and returns as its `batch`, on EVERY path (typing up to the
+    /// call). nil: an empty batch. Spent by the call.
+    var swapClickBatch: BlockChanges?
+    /// The editor answers the next swap `ok:false`, reason `docChanged` (the user typed while the press waited): nothing is swapped, and
+    /// the batch is still handed back. Spent by the call.
+    var swapLiveDiffers = false
+    /// The editor answers the next swap `ok:false`, reason `noCheckpoint` (no saved state for the entry). Spent by the call.
+    var swapAnswerNoCheckpoint = false
+    /// The editor answers the next swap `ok:false`, reason `idAlignment` (the payload does not fit the saved document). Spent by the call.
+    var swapAnswerIdAlignment = false
+    /// Every `structuralSwapEditorFirst(...)` script the editor received, in order.
+    var swapScripts: [String] = []
+    /// `getContentCalls` at the moment the latest swap script was answered: how many live-content reads came BEFORE the swap.
+    var getContentCallsAtSwap: Int?
+    /// Runs inside the answer to the next `structuralSwapEditorFirst` call, after it is recorded and before it is answered. Spent by the call.
+    var onSwapAnswered: (() -> Void)?
+
+    /// The always-persisted log lines of THIS rig (see `logScope`).
+    var persistedLog: [String] { logScope.lines }
+
+    /// Leader ids the editor's reply to the quick UNDO of a duplicate lists in `removedLeaderIds` besides the copy's own (round 1g-B,
+    /// review A5). The real editor lists "the live leaders whose id the checkpoint's id map lacks" (api-section-undo.ts); after a
+    /// flush that re-minted the ids of non-heading blocks (the idle backup, Save Version, export) that is every section break of the
+    /// document, the original sections' too. Empty: the reply lists the copy's leaders only.
+    var undoAlsoReportsRemoved: [String] = []
+
     struct Push {
         let markdown: String
         let blockIds: [String]
@@ -146,6 +234,8 @@ final class EditorFirstRig {
         /// `editorState.content` at the moment the push ran: what the view would push if it were allowed to. After a quick undo it must
         /// be the EDITOR's own text, never the database's text the push is about to bring in (verdict-v4 V2).
         var contentAtPush: String = ""
+        /// The push's `detectPausedEdits` option (round 1g-A, review T1).
+        var detectPausedEdits = false
     }
 
     /// Models the view's rule that `editorState.content`, when it differs from what the editor was last given, is pushed into the
@@ -164,7 +254,9 @@ final class EditorFirstRig {
     /// hold them up.
     init(markdown: String, configureSyncServices: Bool = true, lifecycleServices: Bool = false) throws {
         db = try TestFixtureFactory.createTemporary(content: markdown)
-        pid = try TestFixtureFactory.getProjectId(from: db)
+        let projectId = try TestFixtureFactory.getProjectId(from: db)
+        pid = projectId
+        logScope = RigLogScope(projectId: projectId)
         sync.configure(database: db, projectId: pid, webView: view)
         sync.editorState = editorState
         editorState.toastCenter = toasts
@@ -407,7 +499,7 @@ struct EditorFirstDeleteTests {
         // The Edit menu says "Undo Delete Section" at once, before the job has applied anything.
         let entry = try #require(rig.unifiedUndo.undoStack.last)
         #expect(entry.kind == .sectionDelete)
-        #expect(entry.isEditorFirstDelete)
+        #expect(entry.undoSnapshotId == nil, "an editor-first delete carries no snapshot id on its entry")
 
         await rig.settle(entry.id)
 
@@ -497,7 +589,11 @@ struct EditorFirstDeleteTests {
         let typed = BlockChanges(updates: [BlockUpdate(
             id: paragraph.id, textContent: "The first chapter's body. KEPT", markdownFragment: "The first chapter's body. KEPT",
             headingLevel: nil)])
-        try rig.setReply(.init(batch: typed, succeeded: false, reason: "rootNotFound", removedLeaderIds: []))
+        // Round 1g-B: the refusal this test sends is `managedRoot` (the editor's own managed set says the root is Notes or Bibliography,
+        // a stale set: the database agrees it is a section). It used to be `rootNotFound`; round 1g-A (review A7) made that reply behave
+        // like `noEditor` (nothing changed, the old sequence takes the press: `testRootNotFoundReplyDeletesTheSectionTheOldWay`), so it
+        // is no longer a refusal. `managedRoot` still is one in production (web/milkdown/src/api-section-delete.ts).
+        try rig.setReply(.init(batch: typed, succeeded: false, reason: "managedRoot", removedLeaderIds: []))
 
         let outcome = await rig.controller.performSectionDelete(rootId: root.id)
 
@@ -513,6 +609,34 @@ struct EditorFirstDeleteTests {
         #expect(applied, "the batch the call consumed must still reach the database")
         let stillThere = try rig.blocks().contains { $0.id == root.id }
         #expect(stillThere, "the section is still in the database")
+    }
+
+    // Round 1g-B (the Delete twin of the Duplicate test of round 1g-A, review A7, in EditorFirstDuplicateOverlayTests): the editor answers
+    // `rootNotFound` (its own id for the root heading is still a temporary one, although the database row and the sidebar entry are
+    // confirmed). The call changed nothing, so the press goes on the old way and the section is deleted; it is not refused with
+    // "Couldn't Delete Section ... Nothing was changed".
+    @Test("A7 (Delete): a rootNotFound reply sends the press down the old way: the section is deleted, nothing is refused, no alert shows")
+    func testRootNotFoundReplyDeletesTheSectionTheOldWay() async throws {
+        let rig = try EditorFirstRig(markdown: Self.threeSections)
+        let snapshots = SnapshotService(database: rig.db, projectId: rig.pid)
+        defer { for snapshot in (try? snapshots.fetchAllSnapshots()) ?? [] { SnapshotService.unpinUndoPointSnapshot(snapshot.id) } }
+        let root = try rig.heading("Second Section")
+        try rig.setReply(.init(succeeded: false, reason: "rootNotFound"), forRoot: root.id)
+
+        let outcome = await rig.controller.performSectionDelete(rootId: root.id)
+
+        #expect(outcome == .performed, "Delete Section on a heading the editor has no id for yet ended \(outcome)")
+        #expect(rig.deleteScripts.count == 1, "the editor was asked \(rig.deleteScripts.count) times")
+        #expect(!rig.scripts(containing: "beginStructuralOp").isEmpty, "the old whole sequence did not run")
+        let texts = try rig.blocks().map(\.textContent)
+        #expect(!texts.contains("Second Section") && !texts.contains("The second section's body."), "the section is still in the table: \(texts)")
+        #expect(texts.contains("First Chapter") && texts.contains("Third Section"), "a neighbouring section was removed too: \(texts)")
+        #expect(rig.alerts.isEmpty, "an alert was raised: \(rig.alerts)")
+        #expect(rig.editorState.pendingEditorFirstJobs == 0, "the pending count stayed up")
+        #expect(rig.editorState.efJobRegistry.outstandingCount == 0, "no editor-first job may be queued for a press the old sequence carried out")
+        let entry = try #require(rig.unifiedUndo.undoStack.last, "the delete was not recorded")
+        #expect(rig.unifiedUndo.undoStack.count == 1 && entry.kind == .sectionDelete, "got \(rig.unifiedUndo.undoStack)")
+        #expect(entry.undoSnapshotId != nil, "the entry must be the old path's (it carries an undo snapshot), not an editor-first one")
     }
 
     // MARK: - U6

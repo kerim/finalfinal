@@ -35,7 +35,7 @@ import { getEditorInstance, setCurrentContent } from './editor-state';
 import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { hideLinkPopups } from './link-tooltip';
-import { rebaseOntoSavedCopy } from './saved-copy-rebase';
+import { describeBlockDifferences, rebaseOntoSavedCopy } from './saved-copy-rebase';
 import { isTraceTypingOn, noteRealUserEditForEcho } from './typing-trace';
 
 // Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
@@ -347,7 +347,9 @@ export function resetUndoCoordinatorState(): void {
 // as `[editor] [MilkdownEditor] JS DEBUG: [STRUCT-TRACE] ...` when Diagnostics logging is on.
 // The lines: `finalize` (op saved its post-op document), `registry-advance` (an automatic rewrite
 // moved a saved document forward), `registry-rebase` (an automatic rewrite that landed AFTER the user typed was applied
-// to the newest saved document, or refused: `rebased`, `too-far`, `overlap` or `mismatch`, counts and timing only),
+// to the newest saved document, or refused: `rebased`, `too-far`, `overlap` or `mismatch`, counts and timing only, plus
+// the index ranges and node types where the saved copy differs from the live document and what the chain changed),
+// `registry-chain` (the same two lists for an automatic chain that left a text-history step, which is never rebased),
 // `push-probe` (did the user type between the op's start and its
 // content push), `routing-refused` (why a Cmd-Z / Cmd-Shift-Z was not routed structurally),
 // `swap` and `settle` (the checkpoint swap and its settle). Every caller is a structural-op path
@@ -641,6 +643,18 @@ export function liveDocMatchesSavedCopy(
   return docMatchesSavedCopy(view.state.doc, target, docsEqual, docsEquivalentTimed);
 }
 
+/** ` liveVsSaved=[...]` for the `routing-equivalence` line of a press whose fallback comparison said "different": the top-level
+ * index ranges and node types where the live document differs from the saved copy the press was routed against
+ * (`describeBlockDifferences`; counts only, never text). Empty when no entry is on top of the stack. Costs one region diff,
+ * on a refused press only. */
+function liveVsSavedCopy(view: EditorView, direction: 'undo' | 'redo'): string {
+  const topOpId = direction === 'undo' ? descriptor.undoTopOpId : descriptor.redoTopOpId;
+  const entry = topOpId === undefined ? undefined : registry.get(topOpId);
+  if (!entry) return '';
+  const target = direction === 'undo' ? entry.postOpDoc : entry.preOpDoc;
+  return ` liveVsSaved=[${describeBlockDifferences(view.state.doc, target)}]`;
+}
+
 /** The ONE live routing decision for a Cmd-Z / Cmd-Shift-Z: the keydown path and the menu path
  * (`requestUnified`) both call it, so both use the fallback comparison and both log it. Runs only on
  * those key presses, never per keystroke. */
@@ -672,7 +686,8 @@ function decideLiveRouting(view: EditorView, direction: 'undo' | 'redo'): Routin
       structTrace(
         `routing-equivalence direction=${direction} decision=${decision.action} result=${ran.result} ms=${ran.ms.toFixed(1)} ` +
           `totalMs=${totalMs.toFixed(1)}` +
-          (ran.reason === null ? '' : ` reason=${ran.reason}`)
+          (ran.reason === null ? '' : ` reason=${ran.reason}`) +
+          (ran.result ? '' : liveVsSavedCopy(view, direction))
       )
     );
   }
@@ -896,11 +911,16 @@ function advanceRegistryEntries(before: Node, after: Node, rebaseNewest: boolean
     );
   }
 
+  if (!rebaseNewest && newestId !== undefined && !newestPostAdvanced)
+    traceChainWithHistoryStep(newestId, before, after);
   if (rebaseNewest && newestId !== undefined && !newestPostAdvanced) rebaseNewestPostOpDoc(newestId, before, after);
 }
 
 /** The rebase of `advanceRegistryEntries`'s doc comment, for the newest entry's `postOpDoc` only. One counts-only
- * `registry-rebase` trace line per attempt that got past "the chain changed no block" (nothing is logged for that). */
+ * `registry-rebase` trace line per attempt that got past "the chain changed no block" (nothing is logged for that). The
+ * line names where the saved copy differs from the live document before the chain (`user=`) and what the chain changed
+ * (`chain=`) as index ranges and node types, never text (`describeBlockDifferences`); `historyStep=false` because only a
+ * chain with no text-history step is ever offered to the rebase (see `chainHasHistoryStep`). */
 function rebaseNewestPostOpDoc(opId: string, before: Node, after: Node): void {
   const entry = registry.get(opId);
   if (!entry) return;
@@ -914,9 +934,30 @@ function rebaseNewestPostOpDoc(opId: string, before: Node, after: Node): void {
     structTrace(
       `registry-rebase opId=${shortOpId(opId)} result=${outcome.result} userRanges=${outcome.userRanges} ` +
         `chainRanges=${outcome.chainRanges} cells=${outcome.cells} ms=${ms.toFixed(1)} ` +
-        `children=${savedChildren}->${outcome.doc === null ? 'same' : outcome.doc.childCount}`
+        `children=${savedChildren}->${outcome.doc === null ? 'same' : outcome.doc.childCount} historyStep=false ` +
+        `user=[${outcome.userSummary}] chain=[${outcome.chainSummary}]`
     )
   );
+}
+
+/** One counts-only `registry-chain` trace line for an automatic chain that left a text-history step (the footnote renumber
+ * and any other `derivedCorrection`), which is never rebased: where the newest entry's saved copy differs from the live
+ * document before the chain (`savedVsBefore=`) and what the chain changed (`chain=`), as index ranges and node types,
+ * never text. Together with the `registry-rebase` lines this shows, chain by chain, which one first moved the live
+ * document away from the saved copy at a given block. Runs once per such chain while an entry exists, never per keystroke
+ * (a chain with a real user edit does not get here). */
+function traceChainWithHistoryStep(opId: string, before: Node, after: Node): void {
+  guardedTrace(() => {
+    const entry = registry.get(opId);
+    if (!entry) return;
+    const start = performance.now();
+    const savedVsBefore = describeBlockDifferences(entry.postOpDoc, before);
+    const chain = describeBlockDifferences(before, after);
+    structTrace(
+      `registry-chain opId=${shortOpId(opId)} historyStep=true rebase=skipped savedVsBefore=[${savedVsBefore}] ` +
+        `chain=[${chain}] ms=${(performance.now() - start).toFixed(1)}`
+    );
+  });
 }
 
 /**

@@ -811,6 +811,12 @@ class BlockSyncService {
     /// under `preserveUserBlocks`, else nil). No cost in release builds (property doesn't exist).
     var testSetContentHook: ((String, [String], Set<String>, Bool) async -> String?)?
 
+    /// Test-only (t-18b7fa48 round 1g-A, review T1): the `detectPausedEdits` option of the push that is going through
+    /// `testSetContentHook` (the hook's own arguments carry no options). It is the flag that keeps keystrokes typed while the push
+    /// is in flight (the editor's block-sync paused) as pending changes instead of discarding them, so a test that stands in for the
+    /// editor needs it to tell the two apart. Set just before the hook is called. No cost in release builds (property doesn't exist).
+    var testSetContentLastDetectPausedEdits = false
+
     /// Test-only hook, awaited immediately after `ticket.noteFetched()` -- i.e.,
     /// while this cycle's editor sequence is genuinely OPEN (`SystemWriteScope.
     /// heldEditorSeq` is already set to it, and `DocumentWriter.isOpen(_:)` reports
@@ -1499,6 +1505,12 @@ class BlockSyncService {
     /// Returns nil, having reserved nothing and consumed nothing, when there is no writer, no web view or the epoch could not be
     /// read: the caller then takes today's slow path for this one press.
     func submitEditorFirstDelete(database: ProjectDatabase, projectId: String, script: String) async -> EditorFirstSubmission? {
+        await submitEditorFirstCall(database: database, projectId: projectId, script: script)
+    }
+
+    /// The same call under its general name (t-18b7fa48 round 1e-i): every editor-first structural operation (a delete, a duplicate,
+    /// their quick undo and redo) submits its one JavaScript call this way. `submitEditorFirstDelete` above forwards here.
+    func submitEditorFirstCall(database: ProjectDatabase, projectId: String, script: String) async -> EditorFirstSubmission? {
         guard let webView, let (ticket, stamp) = reserveWriterTurn(database: database, projectId: projectId) else { return nil }
         do {
             let value = try await evaluateJS(script, in: webView) as? String
@@ -2045,6 +2057,67 @@ class BlockSyncService {
         return SystemWriteResult(outcome: outcome, prepareRan: prepareRan)
     }
 
+    // MARK: - A system write reserved in the caller's own synchronous stretch (t-18b7fa48 Phase 4b slice 3, round 3c)
+
+    /// Steps 1 to 4 of `performSystemWrite`, and nothing else, as ONE synchronous call: the nesting check, the writer and identity
+    /// checks, and the reservation. It never suspends, so a caller that is itself in a synchronous stretch (the editor-first slow
+    /// undo's click reply, requirement R3+) holds its place in the queue before any other main-actor turn can run. `stillWanted` is
+    /// not part of it (the one caller's is always true), and there is no `prepare`.
+    ///
+    /// Returns the handle, or the reason the write was refused before it reserved anything (the same reasons `performSystemWrite`
+    /// answers at these steps). A handle MUST be given to `runReservedSystemWrite` (it brings `systemWriteInFlight` down); the
+    /// existing `performSystemWrite` is unchanged and still the only way every other kind of write runs.
+    @MainActor
+    func reserveSystemWriteNow(identity: SystemWriteIdentity) -> SystemWriteReservationResult {
+        // Step 1: nesting.
+        if SystemWriteScope.active { return .refused(.nested) }
+        if let heldSeq = SystemWriteScope.heldEditorSeq, let writer, writer.isOpen(heldSeq) { return .refused(.nested) }
+        // Step 3: writer + identity.
+        guard let writer else { return .refused(.noWriter) }
+        guard identity.database === writer.database, identity.projectId == writer.projectId else {
+            return .refused(.identityMismatch)
+        }
+        // Step 4: reserve (and §2.8: the content-state watchdog waits this write out; the count comes down in `runReservedSystemWrite`).
+        let systemWriteEditorState = editorState
+        systemWriteEditorState?.systemWriteInFlight += 1
+        return .held(ReservedSystemWrite(reservation: SystemReservation(writer.reserveSystem()), editorState: systemWriteEditorState))
+    }
+
+    /// Steps 6 and 8 of `performSystemWrite` for a write `reserveSystemWriteNow` reserved: wait for the turn, then apply, inside the
+    /// same `SystemWriteScope.active` window. (Step 5, `prepare`, and step 7, the re-check, are absent: there is no `prepare`, and
+    /// `stillWanted` is always true.) The outcome handling is the existing code's, line for line.
+    @MainActor
+    func runReservedSystemWrite<R: Sendable>(
+        _ reserved: ReservedSystemWrite,
+        kind: SystemWriteKind,
+        identity: SystemWriteIdentity,
+        body: @escaping @Sendable (Database, IdMap) throws -> SystemWriteBody<R>
+    ) async -> SystemWriteResult<R> {
+        defer { reserved.editorState?.systemWriteInFlight -= 1 }
+        let reservation = reserved.reservation
+        let outcome = await SystemWriteScope.$active.withValue(true) { () async -> SystemWriteOutcome<R> in
+            // Step 6: wait.
+            let turnResult = await reservation.ticket.writer.waitForTurnAsync(reservation.ticket.seq)
+            if turnResult == .skipped {
+                let reason = reservation.ticket.writer.systemSkipReason(reservation.ticket.seq) ?? .writerReplaced
+                reservation.ticket.writer.discardSystemSkipReason(reservation.ticket.seq)
+                reservation.consume()
+                return .refused(.skipped(reason))
+            }
+            // Step 8: apply.
+            let outcome = await reservation.ticket.writer.applySystemWrite(
+                reservation.ticket.seq, kind: kind, identity: identity, body: body)
+            switch outcome {
+            case .applied, .failed:
+                reservation.consume()
+            case .refused:
+                break   // out-of-turn or retired: `reservation`'s `deinit` settles it, as in `performSystemWrite`
+            }
+            return outcome
+        }
+        return SystemWriteResult(outcome: outcome, prepareRan: false)
+    }
+
     /// Send ID confirmations back to the editor
     private func confirmBlockIds(webView: WKWebView, mapping: [String: String]) async {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: mapping),
@@ -2242,6 +2315,7 @@ extension BlockSyncService {
         // Test-only (t-94369a83 Phase 4b slice 2a): stands in for the JavaScript push, which has no `evaluateJS` seam.
         if let testSetContentHook {
             guard stillWanted?() ?? true else { return nil }
+            testSetContentLastDetectPausedEdits = detectPausedEdits
             return await testSetContentHook(markdown, blockIds, managedBlockIds, preserveUserBlocks)
         }
         #endif

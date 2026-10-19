@@ -266,6 +266,28 @@ class EditorViewState {
     @ObservationIgnored
     var pendingReinsertCount = 0
 
+    /// Bumped in the synchronous stretch of every editor-first structural CLICK (Delete Section, Duplicate Section and the whole-project
+    /// Version History restore; `runEditorFirstStructuralClick`, and the quick redo of each) before its JavaScript goes out. Read ONLY by
+    /// the rebuild guard: a rebuild that stamped before the click skips its editor push (t-18b7fa48 D6, option (a)). Deliberately not
+    /// `editorRestoreGeneration`: that one is read by the settles of the quick undo and redo, whose behaviour a click must not change.
+    @ObservationIgnored
+    var editorFirstClickGeneration = 0
+
+    /// Editor-first clicks whose job has not ended yet (+1 in the click's stretch, -1 when the job's future resolves, or at once when
+    /// the click reserved no job). A rebuild that read the database while this was above 0 read the table without the click's change.
+    /// Read ONLY by the rebuild guard. The count comes down BEFORE the operation's own settle starts, or the settle's rebuilds would
+    /// stamp as "read while pending" and skip their own pushes (t-18b7fa48 D6 ordering).
+    @ObservationIgnored
+    var pendingEditorFirstJobs = 0
+
+    /// Set when a push of the database's Notes and Bibliography into the editor was skipped because an editor-first click had made its
+    /// stamp stale (`noteStalePushSkipped`: the click generation moved, or the read happened while a job was pending). The database is
+    /// right and the editor is not, and nothing else would put it right: the operation's own settle cannot repair it
+    /// (`FootnoteSyncService` skips a second resync of the same references). The last editor-first settle to finish re-pushes and clears
+    /// it (`settleManagedRegionsAtEndOfEditorFirstSettle`), once no editor-first job is pending. t-18b7fa48 round 1b-ii.
+    @ObservationIgnored
+    var managedRegionsNeedRepush = false
+
     /// How many `flushLiveContentToDatabase` calls are running (the idle backup, Save Version, export and the old-path structural
     /// ops). A quick undo or redo waits for them before it decides (plan-v3 verdict T1).
     @ObservationIgnored

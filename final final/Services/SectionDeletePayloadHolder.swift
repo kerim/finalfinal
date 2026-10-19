@@ -39,7 +39,8 @@ final class SectionDeletePayloadHolder: Sendable {
 
     struct State: Sendable {
         /// Every row of the project, in `sortOrder`, as the delete job's own transaction read them just before the delete. The
-        /// reinsert makes the table EXACTLY equal to this.
+        /// reinsert makes the table EXACTLY equal to this. For a Duplicate Section entry (t-18b7fa48) these are "the rows before the
+        /// op": the rows the duplicate job's own transaction read just before it copied the section (`fillForDuplicate`).
         var preDeleteRows: [Block] = []
         /// The section's leader rows (headings and section breaks) among the deleted rows: what the sidebar shows again.
         var leaders: [Block] = []
@@ -55,6 +56,9 @@ final class SectionDeletePayloadHolder: Sendable {
         var footnoteCheckpointMarker: Set<UUID> = []
         /// The token of the footnote checkpoint hold the quick undo set (released by the reinsert's settle or a quick redo).
         var checkpointHoldToken: UUID?
+        /// A Duplicate Section entry only (t-18b7fa48): the ids of every row the duplicate job inserted (its latest job). The quick undo
+        /// of that duplicate removes exactly these, so its reinsert counts them as expected removals, not as rows of the user's.
+        var insertedBlockIds: Set<String> = []
     }
 
     let opId: UUID
@@ -85,6 +89,38 @@ final class SectionDeletePayloadHolder: Sendable {
             state.preDeleteRows = rows
             state.leaders = leaders
             state.resolvedRootId = resolvedRootId
+            state.outcome = .applied
+            state.jobSerial += 1
+        }
+    }
+
+    /// The duplicate job's after-commit record (t-18b7fa48). The holder serves a duplicate entry the same way it serves a delete one:
+    /// `rows` are every row of the project just before the duplicate (the reinsert makes the table equal to them, which takes the
+    /// copy out again), `insertedIds` the rows the duplicate added, and there are no leaders to show again (an undo of a duplicate
+    /// removes sections, it restores none).
+    func fillForDuplicate(rows: [Block], resolvedRootId: String, insertedIds: [String]) {
+        lock.withLock { state in
+            state.preDeleteRows = rows
+            state.leaders = []
+            state.resolvedRootId = resolvedRootId
+            state.insertedBlockIds = Set(insertedIds)
+            state.outcome = .applied
+            state.jobSerial += 1
+        }
+    }
+
+    /// The restore job's after-commit record (t-18b7fa48 Phase 4b slice 2, round 2d-i). The holder serves a Version History restore the
+    /// way it serves a duplicate: `rows` are every row of the project just before the restore (the reinsert makes the table equal to
+    /// them, which takes the restored document out and puts the old one back), `insertedIds` the ids the restore added that the old
+    /// document did not have (the reinsert counts their removal as expected, not as rows of the user's), `resolvedRootId` any row the
+    /// old document still holds after the reinsert (the settle's "the root row is there" sanity check), and `leaders` the old
+    /// document's section leaders (what the sidebar shows again after the undo).
+    func fillForRestore(rows: [Block], leaders: [Block], resolvedRootId: String, insertedIds: [String]) {
+        lock.withLock { state in
+            state.preDeleteRows = rows
+            state.leaders = leaders
+            state.resolvedRootId = resolvedRootId
+            state.insertedBlockIds = Set(insertedIds)
             state.outcome = .applied
             state.jobSerial += 1
         }

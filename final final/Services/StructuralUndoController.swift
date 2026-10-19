@@ -101,6 +101,23 @@ final class StructuralUndoController {
     /// is eligible only while it is unchanged (plan-v3-addendum A1).
     var efRecordedStructGeneration: [UUID: Int] = [:]
 
+    /// An editor-first Duplicate Section entry's `copies` (t-18b7fa48 Phase 4b slice 3; StructuralUndoController+EditorFirstDuplicate.swift),
+    /// by the entry's id: the editor's answer at its latest click or redo, one per copied top-level block. The quick redo hands them
+    /// back so the new copy takes the SAME ids (S9). Removed with the rest of the entry's state (`forgetQuickUndoState`).
+    var efDuplicateCopies: [UUID: [DuplicatedBlock]] = [:]
+
+    /// An editor-first Version History restore entry's plan (t-18b7fa48 Phase 4b slice 2, round 2d-i;
+    /// StructuralUndoController+EditorFirstRestore.swift), by the entry's id: the rows and the editor payload of its FIRST click. The quick
+    /// redo sends the same payload again (same ids, S9), and the quick undo's sidebar update needs the leaders of both documents. Removed
+    /// with the rest of the entry's state (`forgetQuickUndoState`).
+    var efRestorePlans: [UUID: RestorePlan] = [:]
+
+    /// The registry key of the entry's latest editor-first slow undo or redo job (t-18b7fa48 Phase 4b slice 3, round 3c;
+    /// StructuralUndoController+QueuedSnapshotUndo.swift), by the entry's id. A press for the same entry that arrives before that job
+    /// and its settle have ended waits for them (`awaitPendingSnapshotSwap`): the redo needs the snapshot the undo's job writes. Removed
+    /// with the rest of the entry's state (`forgetQuickUndoState`).
+    var efSnapshotJobKeys: [UUID: UUID] = [:]
+
     /// Shows a document-integrity alert (UX contract 4.3). Set by ContentView, which owns the alert's presentation state.
     var presentAlert: ((SectionOperationAlert) -> Void)?
 
@@ -134,6 +151,21 @@ final class StructuralUndoController {
     /// the UI-test flag `FF_UI_TESTING_STRUCT_LEGACY_DELETE` does in a UI run. U5 uses it to show the old order.
     var testForceLegacyDelete = false
 
+    /// Test-only (t-18b7fa48 round 1e-i): Duplicate Section and (rounds 2d-i and 2d-ii) the three Version History restores (the whole
+    /// project, replace a section, restore as duplicate) take today's whole sequence even in Rich Text, the way the UI-test flag
+    /// `FF_UI_TESTING_LEGACY_STRUCTURAL` does in a UI run (`TestMode.isUITestingLegacyStructural`). The old-path tests that pin the
+    /// legacy body (U-Q10, U20) and the parity tests set it. Round 3c extends it to the slow undo and redo (`takesTheEditorFirstPath`):
+    /// with it set they run the old body, so the tests that pin that body's mechanics keep doing so.
+    var testForceLegacyStructural = false
+
+    /// Test-only (t-18b7fa48 round 2d-i): the plan of the latest editor-first Version History restore click (its rows and payload ids), so
+    /// a unit test can type into a block of the RESTORED document by the id the editor now holds. Round 3c: also the plan of the latest
+    /// editor-first slow undo or redo (the swapped-in document's rows and ids).
+    var testLastRestorePlan: RestorePlan?
+
+    /// Test-only (round 2d-i): the title of every alert the put-back showed (`putBackAfterFailedEditorFirstOp`), oldest first.
+    var testShownAlerts: [String] = []
+
     /// Test-only (addendum A10): the editor-first click bumps `contentGeneration` (sets `contentState` non-idle and back) before it
     /// reserves, the way the old whole-document sequence did. U14's "old shape". NEVER use `testForceLegacyDelete` for that: the
     /// old sequence's flush would heal the very loss U14 looks for.
@@ -154,7 +186,8 @@ final class StructuralUndoController {
     var testAfterUndoSnapshotResolved: (() async -> Void)?
 
     /// Test-only (slice 2b): an undo of an editor-first section delete never takes the quick path (the old slow undo runs), the way
-    /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N` does in a UI run.
+    /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N` does in a UI run. Since t-18b7fa48 round 1e-i it covers every editor-first entry, a
+    /// duplicate's too (`StructuralEntry.isEditorFirst`) [S13].
     var testForceSlowDeleteUndo = false
 
     /// Test-only (slice 2b, verdict-v3 T1): awaited in the quick undo after the restore reply has been applied and before the reinsert
@@ -235,11 +268,15 @@ final class StructuralUndoController {
     /// the new one (the VM's `testDeleteUndoAtOnce_article`: the delete's rebuild landing on top of the undo's restore). A rebuild
     /// never waits for this gate, and one the lifecycle deferred (no running Task) is not waited for, so the wait cannot deadlock.
     ///
-    /// `waitsForRebuilds: false` is for the editor-first Delete click only (fix round 8, F7): a rebuild includes its trailing section
-    /// and annotation syncs, which take seconds on a book, and a second Delete pressed while the first one's rebuild is landing
-    /// must stay instant. The click's own removal happens in the editor first, and a rebuild's push is merge-guarded (it keeps the
-    /// editor's user blocks and takes the database's Notes and Bibliography), so it cannot bring the removed section back. Everything
-    /// else (Duplicate, undo and redo, restores, reorders, and a Delete that falls back to the old whole-document path) still waits.
+    /// `waitsForRebuilds: false` is for the editor-first clicks (fix round 8, F7, for Delete; t-18b7fa48 for Duplicate and the whole-project
+    /// restore): a rebuild includes its trailing section and annotation syncs, which take seconds on a book, and a second click pressed
+    /// while the first one's rebuild is landing must stay instant. The click's own change happens in the editor first. For Delete the
+    /// rebuild's push is also merge-guarded (it keeps the editor's user blocks and takes the database's Notes and Bibliography), so it
+    /// cannot bring the removed section back. That argument does NOT carry over to Duplicate and the restores: a rebuild that read the
+    /// database before the click holds a document without the copy (or with the old text), and a push of it would take the copy (or the
+    /// restored text) out of the editor. For them the rebuild stamp (`editorFirstClickGeneration`, `pendingEditorFirstJobs`, read by
+    /// `rebuildPushStillWanted`) is the ONLY protection against a stale rebuild push. Everything else (undo and redo, the section
+    /// restores, reorders, and any click that falls back to the old whole-document path) still waits.
     func runStructuralCommand<T>(
         label: String,
         heldPress: Bool = false,
@@ -842,29 +879,44 @@ final class StructuralUndoController {
             )
             return .refused
         }
-        return await performStructuralOp(
-            kind: .restoreSectionReplace, title: "Restore Section",
-            zoomPolicy: .autoZoomOut, mutationSpyName: "restoreSectionReplace",
-            // Judge round 2 fix (must-fix 1): the atomic sub-write below (`updateSection` +
-            // `rebuildContentFromSections` + `replaceBlocks`, no non-atomic multi-write risk
-            // verified for this op) means any throw here is safely `.refused` -- but its
-            // existence guards (does snapshotSectionId/targetSectionId still resolve) are
-            // moved into `precheck` below so a doomed op never even reaches steps 1-4 first.
-            commitSemantics: .atomic,
-            precheck: { db, _ in
-                guard try db.fetchSnapshotSection(id: snapshotSectionId) != nil else {
-                    throw SnapshotError.sectionNotFound
+        // t-18b7fa48 Phase 4b slice 2, round 2d-ii (plan-v3 D10), in this order: the multi-window guard above, then the structural gate,
+        // then `.autoZoomOut`, then the editor-first attempt in the SAME gate turn. In Rich Text this is
+        // `performEditorFirstSectionRestoreReplace` (StructuralUndoController+EditorFirstSectionRestore.swift): the editor replaces
+        // the section's own text at once and the database follows as a queued job. It returns nil, having changed nothing the old
+        // restore would not do itself (a zoomed editor has been zoomed out), when this press has to take today's whole sequence
+        // below (Markdown mode, the UI-test legacy flag, a target that cannot be told apart in the document, a version's section
+        // that cannot go through the editor, no writer turn, an editor that refuses: D7, D8). Like the whole-project restore, the
+        // click takes the gate WITHOUT the rebuild wait (the rebuild stamp protects the editor instead) and the old sequence waits
+        // for the running rebuilds itself.
+        return await runStructuralCommand(label: "restoreSectionReplace", waitsForRebuilds: false, cancelled: StructuralOpOutcome.refused) {
+            if let outcome = await performEditorFirstSectionRestoreReplace(
+                snapshotSectionId: snapshotSectionId, targetSectionId: targetSectionId
+            ) { return outcome }
+            await editorState.awaitNoRunningRebuilds(label: "before restoreSectionReplace (old path)")
+            return await performStructuralOpUngated(
+                kind: .restoreSectionReplace, title: "Restore Section",
+                zoomPolicy: .autoZoomOut, mutationSpyName: "restoreSectionReplace",
+                // Judge round 2 fix (must-fix 1): the atomic sub-write below (`updateSection` +
+                // `rebuildContentFromSections` + `replaceBlocks`, no non-atomic multi-write risk
+                // verified for this op) means any throw here is safely `.refused` -- but its
+                // existence guards (does snapshotSectionId/targetSectionId still resolve) are
+                // moved into `precheck` below so a doomed op never even reaches steps 1-4 first.
+                commitSemantics: .atomic,
+                precheck: { db, _ in
+                    guard try db.fetchSnapshotSection(id: snapshotSectionId) != nil else {
+                        throw SnapshotError.sectionNotFound
+                    }
+                    guard try db.fetchSection(id: targetSectionId) != nil else {
+                        throw SnapshotError.targetSectionNotFound
+                    }
+                },
+                mutate: { service, _, _ in
+                    try service.restoreSectionReplace(
+                        snapshotSectionId: snapshotSectionId, targetSectionId: targetSectionId, createSafetyBackup: false
+                    )
                 }
-                guard try db.fetchSection(id: targetSectionId) != nil else {
-                    throw SnapshotError.targetSectionNotFound
-                }
-            },
-            mutate: { service, _, _ in
-                try service.restoreSectionReplace(
-                    snapshotSectionId: snapshotSectionId, targetSectionId: targetSectionId, createSafetyBackup: false
-                )
-            }
-        )
+            )
+        }
     }
 
     /// Full-project restore, requested by VersionHistoryWindow's "Restore Entire Project"
@@ -882,28 +934,40 @@ final class StructuralUndoController {
             )
             return .refused
         }
-        return await performStructuralOp(
-            kind: .restoreProject, title: "Restore Entire Project",
-            zoomPolicy: .autoZoomOut, mutationSpyName: "restoreEntireProject",
-            // Judge round 2 fix (must-fix 1): `restoreEntireProject`'s body is the ONE
-            // genuinely non-atomic mutate closure in this whole controller -- five separate,
-            // unwrapped `database.*` writes with no transaction spanning them (verified
-            // against `SnapshotService.swift`). A throw partway through can leave the DB
-            // mid-restore, so `.mayPartiallyCommit` is the honest declaration here. The
-            // existence guard (does snapshotId still resolve) is moved into `precheck` so
-            // "the snapshot id doesn't exist" -- which throws before ANY of the five writes --
-            // is never misclassified as a partial-write failure; only a genuine mid-write
-            // throw past that guard reaches `.mayPartiallyCommit`.
-            commitSemantics: .mayPartiallyCommit,
-            precheck: { db, _ in
-                guard try db.fetchSnapshot(id: snapshotId) != nil else {
-                    throw SnapshotError.snapshotNotFound
+        // t-18b7fa48 Phase 4b slice 2, round 2d-i (plan-v3 D10), in this order: the multi-window guard above, then the structural gate,
+        // then `.autoZoomOut`, then the editor-first attempt in the SAME gate turn. In Rich Text this is
+        // `performEditorFirstRestoreProject` (StructuralUndoController+EditorFirstRestore.swift): the editor replaces its document at
+        // once and the database follows as a queued job. It returns nil, having changed nothing the old restore would not do itself
+        // (a zoomed editor has been zoomed out), when this press has to take today's whole sequence below (Markdown mode, the UI-test
+        // legacy flag, a version with no blocks, no writer turn, an editor that refuses: D7). Like Delete and Duplicate, the click takes
+        // the gate WITHOUT the rebuild wait (the rebuild stamp protects the editor instead, and a rebuild includes section and
+        // annotation syncs that take seconds on a book), and the old sequence waits for the running rebuilds itself.
+        return await runStructuralCommand(label: "restoreProject", waitsForRebuilds: false, cancelled: StructuralOpOutcome.refused) {
+            if let outcome = await performEditorFirstRestoreProject(snapshotId: snapshotId) { return outcome }
+            await editorState.awaitNoRunningRebuilds(label: "before restoreProject (old path)")
+            return await performStructuralOpUngated(
+                kind: .restoreProject, title: "Restore Entire Project",
+                zoomPolicy: .autoZoomOut, mutationSpyName: "restoreEntireProject",
+                // Judge round 2 fix (must-fix 1): `restoreEntireProject`'s body is the ONE
+                // genuinely non-atomic mutate closure in this whole controller -- five separate,
+                // unwrapped `database.*` writes with no transaction spanning them (verified
+                // against `SnapshotService.swift`). A throw partway through can leave the DB
+                // mid-restore, so `.mayPartiallyCommit` is the honest declaration here. The
+                // existence guard (does snapshotId still resolve) is moved into `precheck` so
+                // "the snapshot id doesn't exist" -- which throws before ANY of the five writes --
+                // is never misclassified as a partial-write failure; only a genuine mid-write
+                // throw past that guard reaches `.mayPartiallyCommit`.
+                commitSemantics: .mayPartiallyCommit,
+                precheck: { db, _ in
+                    guard try db.fetchSnapshot(id: snapshotId) != nil else {
+                        throw SnapshotError.snapshotNotFound
+                    }
+                },
+                mutate: { service, _, _ in
+                    try service.restoreEntireProject(from: snapshotId, createSafetyBackup: false)
                 }
-            },
-            mutate: { service, _, _ in
-                try service.restoreEntireProject(from: snapshotId, createSafetyBackup: false)
-            }
-        )
+            )
+        }
     }
 
     /// Restore-as-duplicate, requested by VersionHistoryWindow's duplicate-insert confirmation
@@ -923,24 +987,34 @@ final class StructuralUndoController {
             )
             return .refused
         }
-        return await performStructuralOp(
-            kind: .restoreSectionDuplicate, title: "Restore Section as Duplicate",
-            zoomPolicy: .autoZoomOut, mutationSpyName: "restoreSectionAsDuplicate",
-            // Judge round 2 fix (must-fix 1): see performSectionRestoreReplace's matching
-            // comment -- no non-atomic multi-write risk verified for this op's mutate body,
-            // so `.atomic`; existence guard moved into `precheck`.
-            commitSemantics: .atomic,
-            precheck: { db, _ in
-                guard try db.fetchSnapshotSection(id: snapshotSectionId) != nil else {
-                    throw SnapshotError.sectionNotFound
+        // t-18b7fa48 Phase 4b slice 2, round 2d-ii: the same order and the same attempt as `performSectionRestoreReplace`, with
+        // `performEditorFirstRestoreSectionDuplicate` (StructuralUndoController+EditorFirstSectionRestore.swift) in front of the old body.
+        return await runStructuralCommand(
+            label: "restoreSectionDuplicate", waitsForRebuilds: false, cancelled: StructuralOpOutcome.refused
+        ) {
+            if let outcome = await performEditorFirstRestoreSectionDuplicate(
+                snapshotSectionId: snapshotSectionId, insertAfterSectionId: insertAfterSectionId
+            ) { return outcome }
+            await editorState.awaitNoRunningRebuilds(label: "before restoreSectionDuplicate (old path)")
+            return await performStructuralOpUngated(
+                kind: .restoreSectionDuplicate, title: "Restore Section as Duplicate",
+                zoomPolicy: .autoZoomOut, mutationSpyName: "restoreSectionAsDuplicate",
+                // Judge round 2 fix (must-fix 1): see performSectionRestoreReplace's matching
+                // comment -- no non-atomic multi-write risk verified for this op's mutate body,
+                // so `.atomic`; existence guard moved into `precheck`.
+                commitSemantics: .atomic,
+                precheck: { db, _ in
+                    guard try db.fetchSnapshotSection(id: snapshotSectionId) != nil else {
+                        throw SnapshotError.sectionNotFound
+                    }
+                },
+                mutate: { service, _, _ in
+                    try service.restoreSectionAsDuplicate(
+                        snapshotSectionId: snapshotSectionId, insertAfterSectionId: insertAfterSectionId, createSafetyBackup: false
+                    )
                 }
-            },
-            mutate: { service, _, _ in
-                try service.restoreSectionAsDuplicate(
-                    snapshotSectionId: snapshotSectionId, insertAfterSectionId: insertAfterSectionId, createSafetyBackup: false
-                )
-            }
-        )
+            )
+        }
     }
 
     /// Sidebar "Delete Section" (Phase 4, plan §7/§6 -- ported forward op from the
@@ -986,28 +1060,38 @@ final class StructuralUndoController {
 
     /// Sidebar "Duplicate Section" (Phase 4, plan §7/§6). See `performSectionDelete`'s doc
     /// comment for the shared reasoning.
+    ///
+    /// t-18b7fa48 Phase 4b slice 3: in Rich Text, not zoomed, on a duplicable root, this is the editor-first path
+    /// (`performEditorFirstDuplicate`, StructuralUndoController+EditorFirstDuplicate.swift): the editor inserts the copy at once and
+    /// the database follows as a queued job. Everything else (Markdown mode, zoomed, no writer, the UI-test legacy flag) runs today's
+    /// whole sequence below, unchanged, with its own bumps of the out-of-queue counters. Like Delete, the click takes the gate without
+    /// the rebuild wait (the rebuild stamp protects the editor instead), and the old path waits for the running rebuilds itself.
     @discardableResult
     func performSectionDuplicate(rootId: String) async -> StructuralOpOutcome {
-        await performStructuralOp(
-            kind: .sectionDuplicate, title: "Duplicate Section",
-            zoomPolicy: .refuseIfZoomed, mutationSpyName: "duplicateSections",
-            // Judge round 2 fix (must-fix 1): `duplicateSections` is one `try write { }`, same
-            // reasoning as performSectionDelete's matching comment.
-            commitSemantics: .atomic,
-            precheck: { db, pid in
-                // Same resolvability/bibliography/notes check `duplicateSections` itself
-                // applies via `resolveSectionSubtree` (MF-2) -- read-only, so a refusal here
-                // never mints a snapshot or JS registry entry.
-                guard try db.sectionBlockIds(rootId: rootId, projectId: pid) != nil else {
-                    throw StructuralOpError.refused
+        await runStructuralCommand(label: "sectionDuplicate", waitsForRebuilds: false, cancelled: StructuralOpOutcome.refused) {
+            if let outcome = await performEditorFirstDuplicate(rootId: rootId) { return outcome }
+            await editorState?.awaitNoRunningRebuilds(label: "before sectionDuplicate (old path)")
+            return await performStructuralOpUngated(
+                kind: .sectionDuplicate, title: "Duplicate Section",
+                zoomPolicy: .refuseIfZoomed, mutationSpyName: "duplicateSections",
+                // Judge round 2 fix (must-fix 1): `duplicateSections` is one `try write { }`, same
+                // reasoning as performSectionDelete's matching comment.
+                commitSemantics: .atomic,
+                precheck: { db, pid in
+                    // Same resolvability/bibliography/notes check `duplicateSections` itself
+                    // applies via `resolveSectionSubtree` (MF-2) -- read-only, so a refusal here
+                    // never mints a snapshot or JS registry entry.
+                    guard try db.sectionBlockIds(rootId: rootId, projectId: pid) != nil else {
+                        throw StructuralOpError.refused
+                    }
+                },
+                mutate: { _, db, pid in
+                    guard try db.duplicateSections(rootId: rootId, projectId: pid) != nil else {
+                        throw StructuralOpError.refused
+                    }
                 }
-            },
-            mutate: { _, db, pid in
-                guard try db.duplicateSections(rootId: rootId, projectId: pid) != nil else {
-                    throw StructuralOpError.refused
-                }
-            }
-        )
+            )
+        }
     }
 
     /// Sidebar drag-reorder -- single-section or subtree drag (Phase 7, plan §7). Promotes
@@ -1368,7 +1452,8 @@ final class StructuralUndoController {
         await editorState?.awaitNoRunningRebuilds(label: "before \(direction)")
         // The D6 put-back already removed this entry (its delete job did not apply): nothing to undo, and a text undo would remove
         // typing, so `failed` ("report it, touch nothing"), not `fallback` (fix round 2a, item 12).
-        if efPutBackOpIds.contains(uuid) { return .failed }
+        // Round 2d-i, review B1: the remembered id is used up by the press it was kept for (a removed entry gets no second press).
+        if efPutBackOpIds.remove(uuid) != nil { return .failed }
 
         // (An op already mid-flight used to be answered `.failed` here. It is no longer possible to get here while another
         // command runs: `handleStructuralRequest` holds this request on the structural gate until its turn, plan D1.1.)
@@ -1413,6 +1498,14 @@ final class StructuralUndoController {
 
     /// The audited undo sequence (plan §4.4).
     private func performUndo(opId: UUID) async -> UndoResult {
+        // Fix round F1 (review B2/B3/A2): "Undoing..." belongs to the WHOLE press, for every entry, from its first line, so the wait for
+        // earlier editor-first work just below (a slow undo's job and settle, a pending quick undo's reinsert: seconds on a book) is not
+        // silent. It shows from one second (UX contract 4.1) and is dismissed by id on every exit, in this function's own `defer`.
+        let undoingToast = editorState.map { DelayedProgressToast(toastCenter: $0.toastCenter, message: DelayedProgressToast.undoingMessage) }
+        defer { undoingToast?.stop() }
+        // Round 3c: a slow undo or redo of this entry that is still being carried through (its job and settle) is waited for first, and
+        // an entry whose job did not apply was put back (nothing to undo, and a plain text undo now would remove typing).
+        if await awaitPendingSnapshotSwap(opId: opId) == .putBack { return .failed }
         guard let editorState, let unifiedUndoService,
               let db = editorState.projectDatabase,
               let pid = editorState.currentProjectId,
@@ -1429,17 +1522,14 @@ final class StructuralUndoController {
         // `undoSnapshotId == nil` guard, waits for the job (its future always resolves) and for the work that follows it, and then
         // continues on today's path with that snapshot id. "Undoing..." shows from one second, dismissed by id on every exit.
         //
-        // Fix round 2a, item 1: the "Undoing..." toast belongs to the WHOLE undo, so it is dismissed by id in this function's own
-        // `defer`: after the snapshot restore, the settle and the A20 re-push, on every exit (it used to be dismissed as soon as the
-        // snapshot id was found, before the 1.7-3.4 s restore ran). Item 12: an entry the D6 put-back already removed answers
-        // `.failed` (nothing was undone and the section was put back already: a plain text undo now would remove typing).
-        var undoingToast: DelayedProgressToast?
-        defer { undoingToast?.stop() }
+        // Fix round 2a, item 1: the "Undoing..." toast belongs to the WHOLE undo (it is created at the top of this function since fix
+        // round F1 and dismissed by id in its `defer`): after the snapshot restore, the settle and the A20 re-push, on every exit.
+        // Item 12: an entry the D6 put-back already removed answers `.failed` (nothing was undone and the section was put back already:
+        // a plain text undo now would remove typing).
         let undoSnapshotId: String
-        if entry.isEditorFirstDelete {
+        if entry.isEditorFirst {
             // Slice 2b (UX contract 4.2, wording approved in verdict-v1 item 20): undoing or redoing a section delete in Rich Text is
             // instant and shows nothing; only when it has to take this slower route does it show "Undoing..." after one second.
-            undoingToast = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.undoingMessage)
             switch await resolveEditorFirstUndoSnapshot(for: entry) {
             case .snapshot(let slotSnapshotId): undoSnapshotId = slotSnapshotId
             case .gone: return .failed
@@ -1452,7 +1542,12 @@ final class StructuralUndoController {
         #if DEBUG
         await testAfterUndoSnapshotResolved?()
         #endif
-        let repushManagedRegions = entry.isEditorFirstDelete
+        // t-18b7fa48 Phase 4b slice 3 (round 3c): in Rich Text the slow undo is editor-first (StructuralUndoController+
+        // QueuedSnapshotUndo.swift): ONE editor call swaps the saved state in, a queued job makes the database equal to the snapshot,
+        // and nothing typed meanwhile is lost. nil: this press takes the body below (Markdown mode, zoomed, the UI-test legacy flag,
+        // an editor that cannot take the swap), in this same gate turn.
+        if let queued = await queuedSnapshotUndo(entry: entry, direction: .undo, snapshotId: undoSnapshotId) { return queued }
+        let repushManagedRegions = entry.isEditorFirst
 
         let trace = StructTrace(label: "undo", opId: String(opId.uuidString.prefix(8)))
         StructuralTrace.beginOp(label: "undo", opId: trace.opId) // slice 0 measurement: see performStructuralOp
@@ -1681,6 +1776,11 @@ final class StructuralUndoController {
     /// FROM the redo-point snapshot captured at undo time (`entry.redoSnapshotId`) -- the
     /// post-op state, exactly reversing the undo that put this entry on the redo stack.
     private func performRedo(opId: UUID) async -> UndoResult {
+        // Fix round F1 (review B2/B3/A2): the notice belongs to the whole press, as in `performUndo` ("Redoing..." here).
+        let redoingToast = editorState.map { DelayedProgressToast(toastCenter: $0.toastCenter, message: DelayedProgressToast.redoingMessage) }
+        defer { redoingToast?.stop() }
+        // Round 3c: see `performUndo`. The redo needs the snapshot the slow undo's job writes, so it waits for that job here.
+        if await awaitPendingSnapshotSwap(opId: opId) == .putBack { return .failed }
         guard let editorState, let unifiedUndoService,
               let db = editorState.projectDatabase,
               let pid = editorState.currentProjectId,
@@ -1694,14 +1794,16 @@ final class StructuralUndoController {
         }
         // Slice 2b (verdict-v3 D7): an editor-first delete that was undone the quick way has no redo snapshot and must NEVER be sent to
         // the slow redo (`.fallback` would make the editor replay a plain text redo): refused with the notice, never wrong.
-        if entry.isEditorFirstDelete, entry.redoSnapshotId == nil {
+        if entry.isEditorFirst, entry.redoSnapshotId == nil {
             showUndoQueueDroppedWarning()
             return .failed
         }
         guard let redoSnapshotId = entry.redoSnapshotId else { return .fallback }
+        // t-18b7fa48 Phase 4b slice 3 (round 3c): the slow redo is editor-first in Rich Text, like the slow undo (see `performUndo`).
+        if let queued = await queuedSnapshotUndo(entry: entry, direction: .redo, snapshotId: redoSnapshotId) { return queued }
         // t-94369a83 Phase 4b slice 2a (addendum A20): the redo of an editor-first delete re-pushes the database's Notes and
         // Bibliography after its settle too, exactly as its undo does.
-        let repushManagedRegions = entry.isEditorFirstDelete
+        let repushManagedRegions = entry.isEditorFirst
 
         let trace = StructTrace(label: "redo", opId: String(opId.uuidString.prefix(8)))
         StructuralTrace.beginOp(label: "redo", opId: trace.opId) // slice 0 measurement: see performStructuralOp
@@ -1837,7 +1939,7 @@ final class StructuralUndoController {
         }
         // Addendum A18: an editor-first delete keeps its undo snapshot id on its slot, not on the entry (`replaceTopOfUndoStack`
         // is exempt for it). Writing the fresh id there unpins the one it replaces, so the pin set keeps exactly the live ids.
-        if entry.isEditorFirstDelete { efSlots.snapshotIdWrite(opId, undoSnapshotId) }
+        if entry.isEditorFirst { efSlots.snapshotIdWrite(opId, undoSnapshotId) }
         unifiedUndoService.replaceTopOfUndoStack(opId: opId, freshUndoSnapshotId: undoSnapshotId)
         recorded = true
         await pushDescriptor()
@@ -2244,30 +2346,12 @@ final class StructuralUndoController {
     /// Fetch + assemble the full (never zoomed -- callers always zoom out first) document
     /// from the DB, mirroring `ContentView.fetchBlocksWithIds()`'s non-zoomed path. Kept
     /// local to this controller rather than reaching into ContentView, which has no public
-    /// surface for it.
+    /// surface for it. The assembly itself is `editorPayload(for:)`
+    /// (StructuralUndoController+EditorPayload.swift), which also builds the payload of rows the
+    /// table does not hold yet.
     func fetchFullBlocksWithIds(db: ProjectDatabase, pid: String) -> ContentView.BlockFetchResult? {
         do {
-            let allBlocks = try db.fetchBlocks(projectId: pid)
-            let sorted = allBlocks.sorted { a, b in
-                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-                return aKey < bKey
-            }
-            let markdown = BlockParser.assembleMarkdownForEditor(from: sorted)
-            let pairs = BlockParser.alignmentPairs(sorted)
-            let ids = pairs.map { $0.id }
-            let expectedBlocks = pairs.map { $0.meta }
-            let imageMeta = sorted
-                .filter { $0.blockType == .image }
-                .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
-            let bibBoundaryIndex = BlockParser.firstBibliographyNodeIndex(sorted)
-            let bibBoundaryEndIndex = BlockParser.lastBibliographyNodeIndex(sorted)
-            let managedBlockIds = Set(sorted.filter { $0.isBibliography || $0.isNotes }.map { $0.id })
-            return ContentView.BlockFetchResult(
-                markdown: markdown, blockIds: ids, imageMeta: imageMeta,
-                bibBoundaryIndex: bibBoundaryIndex, bibBoundaryEndIndex: bibBoundaryEndIndex,
-                expectedBlocks: expectedBlocks, managedBlockIds: managedBlockIds
-            )
+            return Self.editorPayload(for: try db.fetchBlocks(projectId: pid))
         } catch {
             DebugLog.log(.undo, "[StructuralUndoController] fetchFullBlocksWithIds failed: \(error)")
             return nil

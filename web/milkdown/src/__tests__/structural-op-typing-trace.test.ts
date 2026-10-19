@@ -641,8 +641,13 @@ describe('[STRUCT-TRACE] silence on ordinary typing (structural-operation diagno
     const lines = structTraceLines(h);
     expect(lines, 'exactly one line, and it is not a registry-advance').toHaveLength(1);
     expect(lines[0]).toMatch(/registry-rebase .* result=rebased/);
+    // Round F3 of t-18b7fa48 deliberately added `historyStep=false user=[...] chain=[...]` to this line (index ranges and
+    // node TYPES where the saved copy differs from the live document and what the chain changed; never text).
     expect(lines[0]).toMatch(
-      /^\[STRUCT-TRACE\] registry-rebase opId=[0-9a-f]{8} result=rebased userRanges=\d+ chainRanges=\d+ cells=\d+ ms=\d+\.\d children=\d+->\d+$/
+      /^\[STRUCT-TRACE\] registry-rebase opId=[0-9a-f]{8} result=rebased userRanges=\d+ chainRanges=\d+ cells=\d+ ms=\d+\.\d children=\d+->\d+ historyStep=false user=\[[^\]]*\] chain=\[[^\]]*\]$/
+    );
+    expect(lines[0], 'the new fields name index ranges and node types only').toMatch(
+      /user=\[1 range: a\[\d+,\d+\)b\[\d+,\d+\) paragraph>paragraph\] chain=\[1 range: a\[\d+,\d+\)b\[\d+,\d+\) paragraph>paragraph\]$/
     );
     for (const forbidden of ['TYPEDWORD', '?', 'Paragraph', 'Alpha', 'Beta', 'Gamma']) {
       expect(lines[0], `a trace line carries document text: ${forbidden}`).not.toContain(forbidden);

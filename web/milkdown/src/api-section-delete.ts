@@ -10,46 +10,20 @@
 // of pending edits it consumed on EVERY path -- success, refusal and failure alike -- and Swift always applies a returned batch,
 // because the consumed edits are gone from the editor's queue.
 //
-// What it does, in order (plan D1 step 3 (a)-(j), addendum A6/A12):
-//   (a) flush the 100 ms detection debounce, so an edit typed a moment ago is a pending change now;
-//   (b) consume everything pending (`getBlockChanges`) as the batch Swift applies BEFORE the delete job;
-//   (c) pause block-sync, so the removal below is not read back as a wave of deletes;
-//   (d) begin a structural op (pre-op checkpoint into the undo registry) and keep copies of the block-id maps beside it;
+// What it does, in order (plan D1 step 3 (a)-(j), addendum A6/A12): the skeleton -- flush, take the batch, pause block-sync, begin the
+// structural op, copy the id maps, re-baseline, resume, finalize, and the put-back if anything throws after the dispatch -- is
+// `runEditorFirstChange` (editor-first-op.ts, shared with every other editor-first operation; its header lists the steps and says
+// what protects the editor while the change is dispatched). This file supplies the one part that is the delete's own:
 //   (e) find the range (see `findSectionRange`);
-//   (f) dispatch ONE removal transaction, tagged `structuralRemoval`, not added to the text history;
-//   (g) re-baseline block-sync on the document after the removal;
-//   (h) resume block-sync;
-//   (i) finalize the op (`finalizeStructuralOpPostOpDoc`: saves `postOpDoc` AND clears the registry entry's `midOp` marker; the
-//       post-op document is never assigned directly, because a left-over `midOp` makes the registry skip every entry);
-//   (j) return the batch and the facts Swift needs.
-// If anything throws after (f), the `finally` puts the section back BEFORE block-sync resumes: it swaps the checkpoint in,
-// restores the block-id maps, re-baselines, and only then unpauses; the reply is `ok: false` with the batch, so Swift's failure
-// alert is true (the section is on screen and block-sync queued no deletes).
+//   (f) dispatch ONE removal transaction, tagged `structuralRemoval`, not added to the text history.
+// The reply is `ok: false` with the batch on a refusal or a failure, so Swift's failure alert is true (the section is on screen and
+// block-sync queued no deletes).
 
-import { editorViewCtx } from '@milkdown/kit/core';
 import type { Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
-import type { EditorState } from '@milkdown/kit/prose/state';
-import type { EditorView } from '@milkdown/kit/prose/view';
-import { getAllBlockIds, getAllBlockTypes, isTempBlockId, restoreBlockIdMaps } from './block-id-plugin';
-import {
-  type BlockChanges,
-  flushPendingBlockChanges,
-  getBlockChanges,
-  rebindCurrentStateFromView,
-  resetAndSnapshot,
-  setSyncPaused,
-} from './block-sync-plugin';
-import { getEditorInstance } from './editor-state';
+import type { BlockChanges } from './block-sync-plugin';
+import { runEditorFirstChange } from './editor-first-op';
 import { noteRemovalForPaint } from './typing-trace';
-import {
-  beginStructuralOp,
-  cancelPendingInsertions,
-  clearFailedStructuralOpEntry,
-  closeEditingPopupsAndClearBoundaryState,
-  finalizeStructuralOpPostOpDoc,
-  getRegistry,
-  type UndoRegistryEntry,
-} from './undo-coordinator';
+import type { UndoRegistryEntry } from './undo-coordinator';
 
 /** One section leader the removal took out, for Swift's sidebar bookkeeping. */
 export interface RemovedSectionSnapshot {
@@ -80,7 +54,7 @@ export interface DeleteSectionResult {
 
 /** One top-level node of the document with the block id the block-id plugin holds for it (undefined for the marker atoms,
  * which sit outside the plugin's allowlist, and for any block that has no id yet). */
-interface TopLevelEntry {
+export interface TopLevelEntry {
   node: ProsemirrorNode;
   pos: number;
   id: string | undefined;
@@ -108,7 +82,7 @@ export function leaderLevel(node: ProsemirrorNode): number | undefined {
 
 /** Notes/Bibliography content: a block whose id Swift passed as managed, or one of the two bibliography marker atoms (they carry no
  * block id, so Swift's list cannot name them, and the opening marker sits directly before the Bibliography heading). */
-function isManagedEntry(entry: TopLevelEntry, managedIds: ReadonlySet<string>): boolean {
+export function isManagedEntry(entry: TopLevelEntry, managedIds: ReadonlySet<string>): boolean {
   const name = entry.node.type.name;
   if (name === 'auto_bibliography' || name === 'auto_bibliography_end') return true;
   return entry.id !== undefined && managedIds.has(entry.id);
@@ -173,100 +147,32 @@ export function setTestAfterRemovalHook(hook: (() => void) | null): void {
   afterRemovalHook = hook;
 }
 
-/** A diagnostic must never break the operation it observes. Counts and ids only, never document text. */
-function trace(message: string): void {
-  try {
-    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
-      type: 'debug',
-      message: `[STRUCT-TRACE] ${message}`,
-    });
-  } catch {
-    // Swallowed on purpose: see the comment above.
-  }
-}
-
-/** The steps of `deleteSectionEditorFirst` that get their own lap in the success trace line (plan round 13b, measurement only). */
-type StepName =
-  | 'flush' // (a) flushPendingBlockChanges
-  | 'changes' // (b) getBlockChanges
-  | 'begin' // (c)+(d) pause block-sync, beginStructuralOp, the checkpoint read
-  | 'maps' // the two block-id map copies
-  | 'range' // (e) findSectionRange
-  | 'collect' // the loop building removedIds / removedLeaderIds / removedSectionsSnapshot
-  | 'dispatch' // (f) view.dispatch (plugin state, node views, DOM mutation)
-  | 'snapshot' // (g) resetAndSnapshot (the removal-paint note and the test hook, both negligible, fall in here)
-  | 'finalize'; // (h)+(i) resume block-sync, finalizeStructuralOpPostOpDoc
-
-/**
- * Wall-clock laps of one `deleteSectionEditorFirst` call. `lap(step)` records the time since the previous lap (or since
- * construction) under `step`; `summary()` renders every lap and the time since construction as whole milliseconds. One small
- * object per call, no allocation per lap. Counts of time only, never document text.
- */
-class StepTimer {
-  private readonly start = performance.now();
-  private last = this.start;
-  private readonly ms: Record<StepName, number> = {
-    flush: 0,
-    changes: 0,
-    begin: 0,
-    maps: 0,
-    range: 0,
-    collect: 0,
-    dispatch: 0,
-    snapshot: 0,
-    finalize: 0,
-  };
-
-  lap(step: StepName): void {
-    const now = performance.now();
-    this.ms[step] = now - this.last;
-    this.last = now;
-  }
-
-  /** ` jsMs total=<n> flush=<n> ...`, appended to the success trace line. A step that was never reached reads 0. */
-  summary(): string {
-    const total = performance.now() - this.start;
-    const m = this.ms;
-    return (
-      ` jsMs total=${Math.round(total)} flush=${Math.round(m.flush)} changes=${Math.round(m.changes)} ` +
-      `begin=${Math.round(m.begin)} maps=${Math.round(m.maps)} range=${Math.round(m.range)} ` +
-      `collect=${Math.round(m.collect)} dispatch=${Math.round(m.dispatch)} snapshot=${Math.round(m.snapshot)} ` +
-      `finalize=${Math.round(m.finalize)}`
-    );
-  }
-}
-
-/** Puts the document, the block-id maps and block-sync's baseline back to what they were at `beginStructuralOp`. */
-function restoreBeforeRemoval(
-  view: EditorView,
-  checkpoint: EditorState,
-  ids: ReadonlyMap<number, string>,
-  types: ReadonlyMap<number, string>
-): void {
-  view.updateState(checkpoint);
-  rebindCurrentStateFromView(view);
-  restoreBlockIdMaps(ids, types);
-  resetAndSnapshot(view.state.doc);
-}
-
 /** How `removeSectionInEditor` is being used. */
 export interface RemoveSectionOptions {
   /** 'delete' is the click (the trace line reads `delete-editor-first`); 'redo' is the quick redo of a quick-undone delete
    * (`redo-editor-first`), which removes the section again from the CURRENT document under the same opId. */
   label: 'delete' | 'redo';
-  /** The quick redo only (api-section-undo.ts): the registry entry this opId already has. It is deleted from the registry right
-   * before `beginStructuralOp(opId)`, so the redone entry becomes the NEWEST key (the saved-copy rebase targets the last key,
-   * undo-coordinator.ts `advanceRegistryEntries`; plan v3 D8), and it is put back untouched if the removal does not complete: a
-   * failed redo leaves the op undone with the entry it had, so a later press still routes. */
+  /** The quick redo only (api-section-undo.ts): the registry entry this opId already has. `runEditorFirstChange` deletes it from
+   * the registry right before `beginStructuralOp(opId)`, so the redone entry becomes the NEWEST key (the saved-copy rebase targets
+   * the last key, undo-coordinator.ts `advanceRegistryEntries`; plan v3 D8), and puts it back untouched if the removal does not
+   * complete: a failed redo leaves the op undone with the entry it had, so a later press still routes. */
   previousEntry?: UndoRegistryEntry;
+}
+
+/** What the delete's mutator hands back through `runEditorFirstChange` on success. */
+interface RemovalFacts {
+  removedIds: string[];
+  removedLeaderIds: string[];
+  predecessorId: string | null;
+  removedSectionsSnapshot: RemovedSectionSnapshot[];
 }
 
 /**
  * The one editor-side removal, shared by `deleteSectionEditorFirst` (the click) and `redoSectionDeleteEditorFirst` (the quick
- * redo of an undone delete): steps (a)-(j) of the header. A redo is a fresh delete of the document as it stands now, so it
- * re-captures `checkpoint`, `preOpDoc`, `postOpDoc` and the block-id maps for the opId and starts a fresh confirmation log;
- * nothing stored at the undo is swapped in (a stored state would put back labels and Notes the automatic rewrites have since
- * changed).
+ * redo of an undone delete): the shared turn is `runEditorFirstChange` (editor-first-op.ts); the delete's own part, steps (e) and
+ * (f) of the header, is the mutator below. A redo is a fresh delete of the document as it stands now, so it re-captures
+ * `checkpoint`, `preOpDoc`, `postOpDoc` and the block-id maps for the opId and starts a fresh confirmation log; nothing stored at
+ * the undo is swapped in (a stored state would put back labels and Notes the automatic rewrites have since changed).
  */
 export function removeSectionInEditor(
   opId: string,
@@ -275,65 +181,10 @@ export function removeSectionInEditor(
   options: RemoveSectionOptions
 ): DeleteSectionResult {
   const { label, previousEntry } = options;
-  // Boundary hygiene first, like every structural op (Swift's slow paths call the same two): an open popup, a Find session or a pending
-  // paste position must not act on offsets this removal is about to invalidate. A popup edit committed here lands BEFORE the checkpoint.
-  closeEditingPopupsAndClearBoundaryState();
-  cancelPendingInsertions();
-  let batch: BlockChanges = { updates: [], inserts: [], deletes: [] };
-  const failure = (reason: string): DeleteSectionResult => ({
-    batch,
-    ok: false,
-    reason,
-    removedIds: [],
-    removedLeaderIds: [],
-    predecessorId: null,
-    removedSectionsSnapshot: [],
-  });
-
-  const editorInstance = getEditorInstance();
-  if (!editorInstance) return failure('noEditor');
-
-  let paused = false;
-  let begun = false;
-  let replaced = false;
-  let dispatched = false;
-  let completed = false;
-  let checkpoint: EditorState | undefined;
-  let savedIds: Map<number, string> = new Map();
-  let savedTypes: Map<number, string> = new Map();
-  const view = editorInstance.ctx.get(editorViewCtx);
-  const timer = new StepTimer();
-
-  try {
-    flushPendingBlockChanges(); // (a)
-    timer.lap('flush');
-    batch = getBlockChanges(); // (b)
-    timer.lap('changes');
-    setSyncPaused(true); // (c)
-    paused = true;
-    if (previousEntry) {
-      getRegistry().delete(opId);
-      replaced = true;
-    }
-    begun = beginStructuralOp(opId); // (d)
-    if (!begun) return failure('beginFailed');
-    const fresh = getRegistry().get(opId);
-    checkpoint = fresh?.checkpoint;
-    timer.lap('begin');
-    savedIds = getAllBlockIds();
-    savedTypes = getAllBlockTypes();
-    if (fresh) {
-      // The maps the quick undo puts back, beside the checkpoint they belong to (api-section-undo.ts), with an empty log of the
-      // temp ids Swift confirms from here on (undo-coordinator.ts `recordConfirmationsInRegistry`).
-      const tempIds = new Set<string>();
-      for (const id of savedIds.values()) if (isTempBlockId(id)) tempIds.add(id);
-      getRegistry().set(opId, { ...fresh, idMap: savedIds, typeMap: savedTypes, confirmLog: [], tempIds });
-    }
-    timer.lap('maps');
-
+  const result = runEditorFirstChange<RemovalFacts>(opId, label, previousEntry, (view, savedIds, ctx) => {
     const range = findSectionRange(view.state.doc, savedIds, rootBlockId, new Set(managedIds)); // (e)
-    if (!range.ok) return failure(range.reason);
-    timer.lap('range');
+    if (!range.ok) return { ok: false, reason: range.reason };
+    ctx.lap('range');
 
     const removedIds: string[] = [];
     const removedLeaderIds: string[] = [];
@@ -352,59 +203,44 @@ export function removeSectionInEditor(
       }
     }
 
-    timer.lap('collect');
+    ctx.lap('collect');
 
-    dispatched = true;
+    ctx.markDispatching();
+    // The `structuralRemoval` tag protects nothing: it is a label for the tests and the trace, and no production code reads it
+    // (plan D16). What protects the editor is `setSyncPaused` + `resetAndSnapshot` + the `midOp` guard in `runEditorFirstChange`.
     view.dispatch(
       view.state.tr.delete(range.from, range.to).setMeta('structuralRemoval', true).setMeta('addToHistory', false)
     ); // (f)
-    timer.lap('dispatch');
+    ctx.lap('dispatch');
     noteRemovalForPaint(opId);
     afterRemovalHook?.();
 
-    resetAndSnapshot(view.state.doc); // (g)
-    timer.lap('snapshot');
-    setSyncPaused(false); // (h)
-    paused = false;
-    finalizeStructuralOpPostOpDoc(opId); // (i)
-    timer.lap('finalize');
-
-    completed = true;
-    trace(
-      `${label}-editor-first opId=${opId.slice(0, 8)} ok=true removed=${removedIds.length} leaders=${removedLeaderIds.length} ` +
-        `batchUpdates=${batch.updates.length} batchInserts=${batch.inserts.length} batchDeletes=${batch.deletes.length}` +
-        timer.summary()
-    );
     return {
-      batch,
       ok: true,
-      removedIds,
-      removedLeaderIds,
-      predecessorId: range.predecessorId,
-      removedSectionsSnapshot,
-    }; // (j)
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    trace(
-      `${label}-editor-first opId=${opId.slice(0, 8)} threw after dispatch=${dispatched}: ${message.slice(0, 200)}`
-    );
-    return failure(`exception: ${message}`);
-  } finally {
-    if (!completed) {
-      if (dispatched && checkpoint) {
-        try {
-          restoreBeforeRemoval(view, checkpoint, savedIds, savedTypes);
-        } catch (e) {
-          trace(
-            `${label}-editor-first opId=${opId.slice(0, 8)} could not restore the section: ${String(e).slice(0, 200)}`
-          );
-        }
-      }
-      if (replaced && previousEntry) getRegistry().set(opId, previousEntry);
-      else if (begun) clearFailedStructuralOpEntry(opId);
-    }
-    if (paused) setSyncPaused(false);
+      value: { removedIds, removedLeaderIds, predecessorId: range.predecessorId, removedSectionsSnapshot },
+      traceDetail: `removed=${removedIds.length} leaders=${removedLeaderIds.length}`,
+    };
+  });
+
+  if (!result.ok) {
+    return {
+      batch: result.batch,
+      ok: false,
+      reason: result.reason,
+      removedIds: [],
+      removedLeaderIds: [],
+      predecessorId: null,
+      removedSectionsSnapshot: [],
+    };
   }
+  return {
+    batch: result.batch,
+    ok: true,
+    removedIds: result.value.removedIds,
+    removedLeaderIds: result.value.removedLeaderIds,
+    predecessorId: result.value.predecessorId,
+    removedSectionsSnapshot: result.value.removedSectionsSnapshot,
+  };
 }
 
 /**

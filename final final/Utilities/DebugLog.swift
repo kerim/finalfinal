@@ -135,8 +135,10 @@ enum DebugLog {
         // load-bearing.
         alwaysSinkLock.lock()
         let sink = _alwaysSink
+        let observers = Array(_alwaysObservers.values)
         alwaysSinkLock.unlock()
         sink?(text)
+        for observer in observers { observer(text) }
         #endif
     }
 
@@ -166,6 +168,26 @@ enum DebugLog {
     static var alwaysSink: ((String) -> Void)? {
         get { alwaysSinkLock.lock(); defer { alwaysSinkLock.unlock() }; return _alwaysSink }
         set { alwaysSinkLock.lock(); defer { alwaysSinkLock.unlock() }; _alwaysSink = newValue }
+    }
+
+    /// Additional test observers of every always(...) line (t-18b7fa48 Phase 4b slice 2, round 2d-i). Unlike `alwaysSink` there can
+    /// be any number of them, installed and removed independently, so suites that run in parallel cannot replace each other's capture:
+    /// the test rig of the editor-first restore tests registers one that keeps only the lines carrying ITS project id. Guarded by the
+    /// same lock. The observer is called on whatever thread logged the line.
+    nonisolated(unsafe) private static var _alwaysObservers: [UUID: (String) -> Void] = [:]
+
+    static func addAlwaysObserver(_ observer: @escaping (String) -> Void) -> UUID {
+        let token = UUID()
+        alwaysSinkLock.lock()
+        _alwaysObservers[token] = observer
+        alwaysSinkLock.unlock()
+        return token
+    }
+
+    static func removeAlwaysObserver(_ token: UUID) {
+        alwaysSinkLock.lock()
+        _alwaysObservers[token] = nil
+        alwaysSinkLock.unlock()
     }
     #endif
 }
