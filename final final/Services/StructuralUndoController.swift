@@ -98,7 +98,9 @@ final class StructuralUndoController {
     var efJobKeys: [UUID: [UUID]] = [:]
 
     /// The value of `EditorViewState.structuralOutOfQueueGeneration` when the entry was recorded and at each quick redo: the quick undo
-    /// is eligible only while it is unchanged (plan-v3-addendum A1).
+    /// is eligible only while it is unchanged (plan-v3-addendum A1). Only the OLD whole-document sequences (Markdown mode, zoomed, a
+    /// fallback: `performStructuralOpUngated` step 5) and the old slow undo and redo bump it; the editor-first duplicate, restores and
+    /// reorder (t-0b70d1e9) are queued system writes that never do, so a drag leaves an earlier editor-first delete quick-undoable.
     var efRecordedStructGeneration: [UUID: Int] = [:]
 
     /// An editor-first Duplicate Section entry's `copies` (t-18b7fa48 Phase 4b slice 3; StructuralUndoController+EditorFirstDuplicate.swift),
@@ -174,6 +176,11 @@ final class StructuralUndoController {
     /// Test-only: held first thing in the queued delete job's body (see `SectionDeleteJob.bodyHold`). Blocks the writer's thread
     /// until it returns, so a test can act while the job is still pending.
     var testEFJobBodyHold: (@Sendable () -> Void)?
+
+    /// Test-only (t-0b70d1e9): the same hold for the queued REORDER job's body, except that it may throw. A reorder deletes and inserts
+    /// nothing, so unlike a duplicate (whose root a test can remove while the job is held) it has no natural way to fail, and the
+    /// put-back test needs a job that does. Wins over `testEFJobBodyHold` for a reorder job.
+    var testEFReorderJobBodyHold: (@Sendable () throws -> Void)?
 
     /// Test-only: awaited when an APPLIED delete's follow-up work starts (`editorFirstJobSettled`), before the footnote and
     /// bibliography resyncs. Holds the settle open after the job has ended and its rows are gone, so a test can start a close, quit
@@ -1097,35 +1104,128 @@ final class StructuralUndoController {
     /// Sidebar drag-reorder -- single-section or subtree drag (Phase 7, plan §7). Promotes
     /// what used to be `ContentView+SectionManagement.swift`'s `finalizeSectionReorder` (a
     /// synchronous call that unconditionally invalidated the whole unified-undo timeline) into
-    /// a sixth tracked `StructuralEntry.Kind`, sharing the same audited `performStructuralOp`
-    /// sequence as the other five. Called directly from `ContentView`'s own
+    /// a sixth tracked `StructuralEntry.Kind`. Called directly from `ContentView`'s own
     /// `dispatchSectionReorder` (invoked by `reorderSection` after `SectionReorderPlanner.plan`
-    /// computes the target array; same window/project as `editorState`), so --
-    /// like `performSectionDelete`/`performSectionDuplicate` -- there's no separate-window
-    /// `requestingProjectId` to check. Refuses outright while zoomed (`.refuseIfZoomed`),
-    /// matching the existing rule for delete/duplicate: the zoom range is itself a DB
-    /// structural concept, and reconciling it against a concurrent reorder is out of scope.
+    /// has said the drop is neither a no-op nor a failure; same window/project as
+    /// `editorState`), so -- like `performSectionDelete`/`performSectionDuplicate` -- there's no
+    /// separate-window `requestingProjectId` to check.
     ///
-    /// `sections` is the ALREADY-COMPUTED target order that `SectionReorderPlanner.plan`
-    /// builds today (array splice + orphaned-child promotion via `planSingleSection`/
-    /// `planSubtree`, unchanged by this phase) -- this op absorbs everything downstream of
-    /// that (sort-order/offset recompute, the in-memory hierarchy fixup, and the single DB
-    /// write) that
-    /// `finalizeSectionReorder` used to do synchronously and outside any audited sequence. The
-    /// existing forced-snapshot + `restoreEntireProject`-on-undo mechanism already round-trips
-    /// section order faithfully (`Section` rows carry `sortOrder`) -- no new inverse logic is
-    /// needed here, same as every other op.
+    /// t-0b70d1e9: the plan is worked out HERE, under the structural gate, from the sidebar list as it is when this command's turn
+    /// comes (a drag held behind a slow Cmd-Z is planned against the list the undo leaves, not the one the drop saw), in this order:
+    ///   1. wait for a quick undo's sidebar paint window (`pendingSidebarRestoreCount`, at most about 300 ms; bounded at 1 s);
+    ///   2. re-plan from `request` (`SectionReorderPlanner.plan`) against `editorState.sections`; without a request, `sections` IS the
+    ///      plan (the tests, which hand over a ready-made target order);
+    ///   3. enforce the heading hierarchy; 4. clamp Notes and Bibliography last; 5. renumber the sort orders;
+    ///   6. work out which HEADINGS the plan changed the level of (`changedLevels`).
+    /// A no-op or unchanged plan is `.performed` with no entry and no job; a failed plan is `.refused`. Then Rich Text, not zoomed:
+    /// the editor-first path (StructuralUndoController+EditorFirstReorder.swift), which never touches `structuralOutOfQueueGeneration`.
+    /// Anything it hands back (Markdown mode, zoomed, no writer turn, the UI-test legacy flag, an editor that refuses) continues in
+    /// this same gate turn with the whole-document sequence below, on the same plan.
     ///
-    /// MF-1 (review round): `.allowWhileZoomed`, not `.refuseIfZoomed` -- see that policy
+    /// MF-1 (review round): `.allowWhileZoomed`, not `.refuseIfZoomed` for that old sequence -- see that policy
     /// case's own doc comment for why. `sections` here is always `editorState.sections`'
     /// full, never zoom-filtered contents (`OutlineSidebar`'s zoom filter is a separate
     /// display-only `filteredSections` computed property -- see its doc comment -- the drag
     /// delegates and `ContentView+SectionManagement.swift`'s reorder helpers all read/write
-    /// the unfiltered array), so this op's DB write is whole-document correct regardless of
+    /// the unfiltered array), so the old sequence's DB write is whole-document correct regardless of
     /// the current zoom state.
     @discardableResult
-    func performSectionReorder(sections: [SectionViewModel]) async -> StructuralOpOutcome {
-        await performStructuralOp(
+    func performSectionReorder(sections: [SectionViewModel], request: SectionReorderRequest? = nil) async -> StructuralOpOutcome {
+        await performSectionReorderDetailed(sections: sections, request: request).outcome
+    }
+
+    /// `performSectionReorder` and which road it took: `editorFirst` is true when the editor-first path carried the reorder out.
+    /// `ContentView.dispatchSectionReorder` reads it to decide whether the legacy `section`-table persist still runs (it does for the
+    /// old sequence only: the editor-first path leaves the `section` table to its settle's `syncNow`). Returned with the outcome rather
+    /// than kept in a flag, so a second reorder queued behind this one cannot overwrite it before the caller reads it.
+    func performSectionReorderDetailed(
+        sections: [SectionViewModel], request: SectionReorderRequest?
+    ) async -> (outcome: StructuralOpOutcome, editorFirst: Bool) {
+        await runStructuralCommand(
+            label: "sectionReorder", waitsForRebuilds: false, cancelled: (outcome: StructuralOpOutcome.refused, editorFirst: false)
+        ) {
+            guard let editorState else { return (.refused, false) }
+            await waitForSidebarPaintWindow(editorState)
+
+            // 2. Re-plan against the list as it is now.
+            var plan = sections
+            if let request {
+                if let sectionSyncService {
+                    switch SectionReorderPlanner.plan(request: request, in: editorState.sections, syncService: sectionSyncService) {
+                    case .plan(let fresh): plan = fresh
+                    case .noOp: return (.performed, false)
+                    case .failed: return (.refused, false)
+                    }
+                } else {
+                    DebugLog.log(
+                        .undo,
+                        "[StructuralUndoController] performSectionReorder: sectionSyncService is nil -- using the plan the caller made"
+                    )
+                }
+            }
+            // 3. Hierarchy, 4. managed sections last, 5. sort orders.
+            if let sectionSyncService {
+                ContentView.enforceHierarchyConstraintsStatic(sections: &plan, syncService: sectionSyncService)
+            }
+            plan = SectionReorderPlanner.clampingManagedLeadersLast(plan)
+            plan = Self.recalculateSortOrders(plan)
+            // 6. The headings whose level the plan changed (a section break, Notes or Bibliography never has its level written).
+            let levelsBefore = Dictionary(editorState.sections.map { ($0.id, $0.headerLevel) }, uniquingKeysWith: { first, _ in first })
+            let changedLevels = Self.changedHeadingLevels(plan: plan, levelsBefore: levelsBefore)
+            if changedLevels.isEmpty, plan.map(\.id) == editorState.sections.map(\.id) {
+                DebugLog.log(.undo, "[StructuralUndoController] performSectionReorder: the plan changes nothing -- no entry, no job")
+                return (.performed, false)
+            }
+
+            let rootId = request?.sectionId ?? Self.draggedRootId(plan: plan, current: editorState.sections, changedLevels: changedLevels)
+            if let rootId, let outcome = await performEditorFirstReorder(plan: plan, changedLevels: changedLevels, rootId: rootId) {
+                return (outcome, true)
+            }
+            await editorState.awaitNoRunningRebuilds(label: "before sectionReorder (old path)")
+            return (await performReorderOldSequence(sections: plan, levelsBefore: levelsBefore), false)
+        }
+    }
+
+    /// Step 6 of `performSectionReorder`: the headings whose level `plan` changed against `levelsBefore` (id -> heading level as the
+    /// sidebar showed it). A section break, Notes or Bibliography never has its level written, so they are left out.
+    private static func changedHeadingLevels(plan: [SectionViewModel], levelsBefore: [String: Int]) -> [String: Int] {
+        var changedLevels: [String: Int] = [:]
+        for section in plan where !section.isPseudoSection && !section.isNotes && !section.isBibliography {
+            if let before = levelsBefore[section.id], before != section.headerLevel { changedLevels[section.id] = section.headerLevel }
+        }
+        return changedLevels
+    }
+
+    /// The section a reorder moved, when the caller did not say (`performSectionReorder(sections:)` without a request): the first place
+    /// where the plan's order differs from the current one (the card the plan has there), else the first heading whose level changed.
+    /// Either end of a single move is a valid root for the editor (it finds the moved run from it and checks that the rest agree).
+    private static func draggedRootId(plan: [SectionViewModel], current: [SectionViewModel], changedLevels: [String: Int]) -> String? {
+        if let pair = zip(plan, current).first(where: { $0.id != $1.id }) { return pair.0.id }
+        return plan.first { changedLevels[$0.id] != nil }?.id
+    }
+
+    /// Step 1 of `performSectionReorder`: a quick undo's restored section reaches the sidebar only after the editor's next paint (up to
+    /// about 300 ms, `pendingSidebarRestoreCount`); a drag planned before that would be planned against a list that lacks it. Held, never
+    /// refused (floor item 2); bounded so a count that never comes down cannot hold the press for ever.
+    private func waitForSidebarPaintWindow(_ editorState: EditorViewState) async {
+        guard editorState.pendingSidebarRestoreCount > 0 else { return }
+        let clock = ContinuousClock()
+        let end = clock.now.advanced(by: .seconds(1))
+        while editorState.pendingSidebarRestoreCount > 0 {
+            if clock.now >= end {
+                DebugLog.log(.undo, "[StructuralUndoController] performSectionReorder: the sidebar paint window did not close within 1 s -- going on")
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    /// The whole-document reorder (Markdown mode, zoomed, and whatever the editor-first path hands back), under the gate the caller
+    /// already holds. `sections` is the finished plan; `levelsBefore` is what the sidebar showed (id -> heading level) when the plan was
+    /// made, under the gate and BEFORE this sequence's flush (G10): the levels the plan changed are compared against that, not against
+    /// whatever the sidebar shows after the flush.
+    private func performReorderOldSequence(sections: [SectionViewModel], levelsBefore: [String: Int]) async -> StructuralOpOutcome {
+        await performStructuralOpUngated(
             kind: .sectionReorder, title: "Reorder Sections",
             zoomPolicy: .allowWhileZoomed, mutationSpyName: "reorderAllBlocks",
             // Judge round 2 fix (must-fix 1 / must-fix 6): `persistReorder`'s
@@ -1143,20 +1243,12 @@ final class StructuralUndoController {
         ) { _, db, pid in
             guard let editorState else { throw StructuralOpError.refused }
 
-            // MF-6 (review round), diagnosability only -- not a fix: `sections` is the target
-            // order `dispatchSectionReorder` (ContentView+SectionManagement.swift) computed
-            // and captured BEFORE this op's `performStructuralOp` await points (mode-aware
-            // flush, `beginStructuralOp`'s JS round trip, `createUndoPointSnapshot`) ran --
-            // it is never re-read live against `editorState.sections` as of THIS point in the
-            // sequence. If something else mutated `editorState.sections` during those awaits
-            // (there is no known such mutator today with a single in-flight reorder, given the
-            // `isPerforming` latch and MF-2/MF-3's drop-in-flight guarding), this recompute
-            // would silently persist against a stale base. Believed narrow/acceptable for now:
-            // MF-3's stash-and-retry already re-derives a fresh target order from the CURRENT
-            // `editorState.sections` for the one known concurrent-drop case, and applying that
-            // same "derive from a fresh request, not a pre-computed array" restructure HERE
-            // too would duplicate that work for no currently-known additional exposure. Left
-            // as a documented assumption for whoever next touches this, not deferred silently.
+            // `sections` is the finished plan `performSectionReorder` worked out under the gate, from the live sidebar list at
+            // the start of this command's turn (re-planned from the request, hierarchy-enforced, managed sections last,
+            // renumbered; t-0b70d1e9 replaced the old MF-6 assumption that a plan made before the gate is still current). The
+            // sort-order, offset and hierarchy steps below therefore repeat work on an already-valid plan; they are left as the
+            // old sequence always had them (the offsets are needed here, and the repeats change nothing).
+            // t-0b70d1e9 (A14, G10): `levelsBefore` (the parameter) lets `persistReorder` write only the levels the plan changed.
             var mutableSections = Self.recalculateSortOrders(sections)
             mutableSections = self.applyComputedOffsets(to: mutableSections, db: db, pid: pid)
             editorState.sections = mutableSections
@@ -1189,7 +1281,7 @@ final class StructuralUndoController {
                 )
             }
 
-            try self.persistReorder(sections: editorState.sections, db: db, pid: pid)
+            try self.persistReorder(sections: editorState.sections, levelsBefore: levelsBefore, db: db, pid: pid)
         }
     }
 
@@ -1260,10 +1352,14 @@ final class StructuralUndoController {
     /// logging-and-swallowing so a failure here correctly aborts this op's `mutate` closure
     /// (matching every other op's `mutate` contract) rather than silently recording an entry
     /// for a reorder that never actually persisted.
-    private func persistReorder(sections: [SectionViewModel], db: ProjectDatabase, pid: String) throws {
+    ///
+    /// t-0b70d1e9 (A14): only the levels the plan CHANGED are handed on (`levelsBefore` is what the sidebar showed before the plan), and
+    /// the row's fragment is rebuilt from the row itself. This used to write every card's `markdownContent` over its row, which put a
+    /// stale title back over a heading the user had renamed a moment before the drag.
+    private func persistReorder(sections: [SectionViewModel], levelsBefore: [String: Int], db: ProjectDatabase, pid: String) throws {
         var headingUpdates: [String: HeadingUpdate] = [:]
-        for vm in sections {
-            headingUpdates[vm.id] = HeadingUpdate(markdownFragment: vm.markdownContent, headingLevel: vm.headerLevel)
+        for vm in sections where levelsBefore[vm.id] != vm.headerLevel {
+            headingUpdates[vm.id] = HeadingUpdate(markdownFragment: nil, headingLevel: vm.headerLevel)
         }
         try db.reorderAllBlocks(sections: sections, projectId: pid, headingUpdates: headingUpdates)
     }

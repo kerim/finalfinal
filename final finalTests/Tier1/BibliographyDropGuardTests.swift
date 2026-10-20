@@ -52,21 +52,18 @@ struct BibliographyDropGuardTests {
         let blocksAfter = try TestFixtureFactory.fetchBlocks(from: db)
         let headingsAfter = TestFixtureFactory.headingBlocks(blocksAfter)
 
-        // Document the current behavior: reorderAllBlocks does NOT guard
-        // bibliography position — it applies whatever order it receives.
-        // This test documents that the regular section now appears after bibliography.
+        // t-0b70d1e9 (C1) closed the gap this test used to document: reorderAllBlocks now resolves
+        // Notes and Bibliography from the LIVE rows and puts them last, whatever order it receives.
         let bibIdx = headingsAfter.firstIndex { $0.isBibliography }
         let movedIdx = headingsAfter.firstIndex { $0.id == regularHeading!.id }
 
         #expect(bibIdx != nil, "Bibliography heading should still exist")
         #expect(movedIdx != nil, "Moved heading should still exist")
 
-        // Document the gap: bibliography is no longer last
-        // When a guard is added, change this to verify bibliography IS last
+        // The guard: bibliography IS last, the moved section lands before it (the test's own title).
         if let bIdx = bibIdx, let mIdx = movedIdx {
-            // Current behavior: the moved section IS after bibliography (no guard)
-            #expect(mIdx > bIdx,
-                    "Without guard: moved section appears after bibliography (known gap)")
+            #expect(mIdx < bIdx,
+                    "With the guard: the moved section is placed before bibliography, which stays at the end")
         }
     }
 

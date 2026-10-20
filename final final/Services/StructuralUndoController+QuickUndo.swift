@@ -106,9 +106,12 @@ extension StructuralUndoController {
 
     /// Whether Cmd-Z of this editor-first delete may put the section back on the screen at once: Rich Text, not zoomed; the entry's
     /// slot and payload holder exist and the delete job has not failed; the slot is `reserved` or `applied` (the entry is on the undo
-    /// stack); and no STRUCTURAL out-of-queue write (a duplicate, a version restore, a reorder, the slow undo or redo of one) has
-    /// touched the project since the entry was recorded. The idle backup, Save Version and export do not count: the reinsert makes the
-    /// rows equal the saved pre-delete rows whatever they wrote. NOT `outOfQueueWriteGeneration`.
+    /// stack); and no STRUCTURAL out-of-queue write (the old whole-document duplicate, restore or reorder of Markdown mode, zoomed
+    /// and fallbacks, or the old slow undo or redo) has touched the project since the entry was recorded. An editor-first duplicate,
+    /// restore or reorder is a queued system write and does not count (t-0b70d1e9: a drag after a delete leaves the delete quick
+    /// undoable). The idle backup, Save Version and export do not count either: the reinsert makes the
+    /// rows equal the saved pre-delete rows whatever they wrote. NOT `outOfQueueWriteGeneration`. A reorder entry itself has no quick
+    /// undo (`quickPathPossible` refuses the kind).
     func quickUndoEligible(_ entry: StructuralEntry) -> Bool {
         quickPathPossible(entry, redo: false)
     }
@@ -119,6 +122,9 @@ extension StructuralUndoController {
     }
 
     private func quickPathPossible(_ entry: StructuralEntry, redo: Bool) -> Bool {
+        // A reorder (t-0b70d1e9) has no quick undo or redo: it deletes and inserts nothing, so there is nothing for a reinsert to put
+        // back. Its undo and redo are the queued slow ones, from the snapshot its job wrote (the slot's). Checked first, redo included.
+        guard entry.kind != .sectionReorder else { return false }
         guard entry.isEditorFirst, let editorState else { return false }
         guard editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil else { return false }
         guard let slot = efSlots.slot(entry.id), let holder = efHolders[entry.id], holder.outcome != .failed else { return false }

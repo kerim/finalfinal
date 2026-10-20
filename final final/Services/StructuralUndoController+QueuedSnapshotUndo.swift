@@ -61,14 +61,16 @@
 //  swap removes the entry's recorded value (`efRecordedStructGeneration[opId] = nil`, an Optional that never equals an Int), and nothing
 //  sets it again for that entry. The redo is closed on its own: it needs slot state `quickUndone` or `reinserted`, which only a quick
 //  undo sets. (The old body bumped `structuralOutOfQueueGeneration` itself, which closed the path for EVERY entry; no new path bumps it,
-//  D1, and a swap's job reinserts nothing the other entries' quick undos depend on.)
+//  D1, and a swap's job reinserts nothing the other entries' quick undos depend on.) A reorder entry (t-0b70d1e9) never had a quick path
+//  to close: `quickPathPossible` refuses the kind, so its first undo and its redo always come through here.
 //
 //  THE SIDEBAR. The leaders the document stops showing and the ones it now shows are the PLAN's (`plan.previousLeaders`,
 //  `plan.newLeaders`: the rows the job writes and the rows it replaces), through the overlay the restores use (`showRestoreInSidebar` ->
-//  `swapSidebarLeaders`, anchored at the start of the outline). The editor's reply lists the leaders of its own document, which also
-//  include the Notes and Bibliography headings that the sidebar does not list, so it is not compared. `editorFirstJobSettled` lifts the
-//  overlay once an outline read after the job's commit shows the real rows, and only while the entry's epoch has not moved and this is
-//  still the entry's latest job (rules A4/A5 of slice 1).
+//  `swapSidebarLeaders`, anchored at the start of the outline; it also clears a reorder's order overlay, `pendingReorder`, which referred
+//  to the document before the swap). The editor's reply lists the leaders of its own document; the sidebar lists the Notes and
+//  Bibliography headings too (`fetchOutlineBlocks`), but the plan's leaders leave them out, so the reply is not compared.
+//  `editorFirstJobSettled` lifts the overlay once an outline read after the job's commit shows the real rows, and only while the
+//  entry's epoch has not moved and this is still the entry's latest job (rules A4/A5 of slice 1).
 //
 
 import SwiftUI

@@ -353,11 +353,26 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
     /// toggle (applied at `EditorViewState.filteredTotalWordCount`) is the single
     /// policy lever that drops the bibliography from the displayed total.
     mutating func recalculateWordCount() {
+        recalculateWordCount(counting: textContent)
+    }
+
+    /// The same count, taken from the block's MARKDOWN instead of its `textContent`, for a block the EDITOR just updated or
+    /// inserted (t-0b70d1e9). The editor's `textContent` is ProseMirror's `node.textContent`, which leaves out inline atom nodes
+    /// (citations, footnote references, annotations): counting it loses the two words a citation renders as (`MarkdownUtils.wordCount`
+    /// counts `[@key]` as "name year"), and the paragraphs a footnote renumber sends back as updates came out two words short per
+    /// citation until the project was reopened. The importer's `textContent` is stripped markdown that still holds the citation
+    /// syntax, so counting the fragment (which `stripForWordCount` strips itself) gives the importer's number. Same exclusions as
+    /// `recalculateWordCount()`. `textContent` itself is not touched.
+    mutating func recalculateWordCount(fromMarkdown markdown: String) {
+        recalculateWordCount(counting: markdown)
+    }
+
+    private mutating func recalculateWordCount(counting text: String) {
         switch blockType {
         case .codeBlock, .horizontalRule, .sectionBreak, .image, .mathDisplay:
             wordCount = 0
         default:
-            wordCount = MarkdownUtils.wordCount(for: textContent)
+            wordCount = MarkdownUtils.wordCount(for: text)
         }
     }
 

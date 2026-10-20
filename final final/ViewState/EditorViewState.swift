@@ -314,6 +314,13 @@ class EditorViewState {
     @ObservationIgnored
     var pendingSidebarRestoreCount = 0
 
+    /// The order an editor-first drag-reorder has already put on the screen whose job has not renumbered the rows yet (t-0b70d1e9; the
+    /// rule and the merge are in `SidebarReorderOverlay`). Every outline result is put into this order until the job's settle lifts it
+    /// (`liftPendingReorder(opId:)`). ONE slot: only the newest reorder's order applies, a later reorder replaces an earlier one's, and
+    /// a later slow undo or redo clears it when it records its own sidebar state (`swapSidebarLeaders`).
+    @ObservationIgnored
+    var pendingReorder: PendingReorder?
+
     /// Waits for every editor-first delete job to end (applied, failed, refused or abandoned), and for nothing else: never
     /// `writer.awaitSettled()`, so an unrelated queued bibliography job is not waited for (plan D7, addendum A1/A2). Called FIRST by
     /// every direct writer that cannot run while a delete job is pending: zoom in, zoom out, the flush before Save Version and
@@ -604,20 +611,6 @@ class EditorViewState {
     }
     var statusFilter: SectionStatus?
     var headerLevelFilter: Int?
-
-    /// MF-2 (Phase 7 review round, plan §7): true from the moment a sidebar drop delegate's
-    /// `performDrop` accepts a drop through to the moment `dispatchSectionReorder`'s Task body
-    /// finishes (success, refusal, or failure) -- see `ContentView.swift`'s `onDragEnded`
-    /// closure doc comment for the race this closes. `isPerforming` alone can't cover the gap:
-    /// it only goes true once `StructuralUndoController.performSectionReorder`'s Task actually
-    /// starts running, but the drag SOURCE's own `endedAt:` callback
-    /// (`DraggableCardView.swift`'s `draggingSession(_:endedAt:operation:)`) fires almost
-    /// immediately once `performDrop` returns `true` -- fully decoupled from the drop TARGET's
-    /// own async `loadTransferable` completion that actually spawns the reorder Task. This
-    /// flag is set synchronously in `performDrop`, before that race window opens, and is
-    /// exposed as a `@Binding` to both drop delegates (`OutlineSidebar+DropDelegates.swift`)
-    /// alongside their existing `pendingDropId`/`isDragging` bindings.
-    var sectionDropInFlight: Bool = false
 
     /// MF-3 (Phase 7 review round): a reorder request refused because another one was already
     /// in flight (`StructuralUndoController.isPerforming`), stashed here so `dispatchSectionReorder`
@@ -1056,16 +1049,22 @@ class EditorViewState {
                     // An editor-first section delete's job has not applied yet: the sections it removed from the screen must not
                     // reappear from this result (plan D1.6, Q10). Filtered BEFORE the word counts, the equality check, the merge
                     // and `onSectionsUpdated`, so none of them ever sees a removed section.
-                    let visibleBlocks = self.withoutPendingRemovals(outlineBlocks)
+                    let blocksForCounts = self.withoutPendingRemovals(outlineBlocks)
 
                     // Batch word counts in a single DB read off the main thread.
-                    let blockIds = visibleBlocks.map(\.id)
-                    let needsAggregate = Set(visibleBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
+                    let blockIds = blocksForCounts.map(\.id)
+                    let needsAggregate = Set(blocksForCounts.filter { $0.aggregateGoal != nil }.map(\.id))
                     let counts = await Self.fetchBatchWordCounts(
                         database: database,
                         blockIds: blockIds,
                         needsAggregate: needsAggregate
                     )
+
+                    // t-0b70d1e9 (C2b): the filters and overlays are applied AGAIN after the await. The word counts take a while, and an
+                    // editor-first click sets its overlay (a reorder's order, a delete's removals, a duplicate's copy) in ONE main-actor
+                    // turn that can land inside that wait; a result filtered before it would put the old order back over the new one.
+                    // A card with no count yet just shows none until the next tick.
+                    let visibleBlocks = self.withoutPendingRemovals(outlineBlocks)
 
                     // Fix 1: skip the merge entirely when nothing actually changed since the
                     // last applied tick -- both blocks AND counts, never blocks alone.
@@ -1095,9 +1094,15 @@ class EditorViewState {
 
     /// `blocks` without the leaders of sections an editor-first delete has removed from the screen but whose job has not applied
     /// yet (`pendingRemovalIds`). Returns `blocks` itself when there are none (the normal case: no allocation).
+    ///
+    /// Order of work (t-0b70d1e9): (1) the pending removals filter first and always win; (2) the restore overlays merge in; (3) the
+    /// reorder overlay puts the whole result into the order the editor already shows (`pendingReorder`). The reorder overlay never adds
+    /// an id the earlier steps left out, so a section deleted after the drag stays gone; it works out each unlisted leader's anchor on
+    /// the UNFILTERED `blocks`, so a removed leader still anchors the leaders that hung after it (G1).
     func withoutPendingRemovals(_ blocks: [Block]) -> [Block] {
-        guard !pendingRemovalIds.isEmpty || !pendingRestoreSections.isEmpty else { return blocks }
-        return mergingPendingRestores(into: blocks.filter { !pendingRemovalIds.contains($0.id) })
+        guard !pendingRemovalIds.isEmpty || !pendingRestoreSections.isEmpty || pendingReorder != nil else { return blocks }
+        let merged = mergingPendingRestores(into: blocks.filter { !pendingRemovalIds.contains($0.id) })
+        return mergingPendingReorder(into: merged, unfiltered: blocks)
     }
 
     /// Re-fetch outline blocks from database and update sections.

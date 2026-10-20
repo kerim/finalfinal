@@ -65,6 +65,9 @@ enum EditorFirstOpKind {
     case snapshotUndo
     /// t-18b7fa48 round 3c: the slow REDO of any entry in Rich Text (the same call and job, the other direction).
     case snapshotRedo
+    /// t-0b70d1e9: a drag-reorder in the Outline sidebar in Rich Text (StructuralUndoController+EditorFirstReorder.swift, queued job
+    /// `SectionReorderJob`). The editor moves the section(s) as one range move; there is no quick undo (its undo is the slow one).
+    case sectionReorder
 
     /// The word the shared log lines use: "editor-first <name>: ...".
     var logName: String {
@@ -76,6 +79,7 @@ enum EditorFirstOpKind {
         case .restoreSectionDuplicate: return "restoreSectionDuplicate"
         case .snapshotUndo: return "snapshotUndo"
         case .snapshotRedo: return "snapshotRedo"
+        case .sectionReorder: return "reorder"
         }
     }
 
@@ -84,7 +88,7 @@ enum EditorFirstOpKind {
     /// restore (D7).
     var isVersionRestore: Bool {
         switch self {
-        case .sectionDelete, .sectionDuplicate, .snapshotUndo, .snapshotRedo: return false
+        case .sectionDelete, .sectionDuplicate, .snapshotUndo, .snapshotRedo, .sectionReorder: return false
         case .restoreProject, .restoreSectionReplace, .restoreSectionDuplicate: return true
         }
     }
@@ -92,9 +96,11 @@ enum EditorFirstOpKind {
     /// The slow undo or redo (round 3c): the editor swaps its saved state in and the job makes the whole table equal to a snapshot.
     var isSnapshotSwap: Bool { self == .snapshotUndo || self == .snapshotRedo }
 
-    /// Whether the operation replaces document TEXT (a restore, or a snapshot swap): its settle adopts the editor's own text before it
-    /// derives anything from `content` (D14), because `content` may still be the text from before the change.
-    var replacesDocumentText: Bool { isVersionRestore || isSnapshotSwap }
+    /// Whether the operation replaces or rearranges document TEXT (a restore, a snapshot swap, or a reorder that moves whole sections of
+    /// it): its settle adopts the editor's own text before it derives anything from `content` (D14), because `content` may still be the
+    /// text from before the change. A reorder needs it as much as a restore does: the footnote resync numbers the references in TEXT
+    /// order, and `content` (the editor's own push, about 50 ms behind) can still be the order from before the move (t-0b70d1e9, A9).
+    var replacesDocumentText: Bool { isVersionRestore || isSnapshotSwap || self == .sectionReorder }
 
     /// D7: whether an editor that REFUSES the click (`ok:false`) hands the press to the old whole-document body in the same gate turn
     /// instead of refusing it. A restore does for every reason: the old restore is a complete, working restore, and "Restore failed.
@@ -104,10 +110,13 @@ enum EditorFirstOpKind {
     /// The slow undo and redo (round 3c) fall back for every reason EXCEPT the two it answers itself: `docChanged` (the user typed while
     /// the press waited: the press is refused with the notice and the typing stays, D13) and `noCheckpoint` (handed back to the
     /// caller, `handsBackToCaller`).
+    ///
+    /// A reorder (t-0b70d1e9) falls back for every reason too: the old whole-document reorder is a complete, working reorder, and it
+    /// runs in the same gate turn, as a restore's does (`planMismatch`, `managedMoved`, `rootNotFound`, `noEditor`, a failed begin).
     func refusalFallsBackToLegacy(reason: String?) -> Bool {
         switch self {
         case .sectionDelete, .sectionDuplicate: return false
-        case .restoreProject, .restoreSectionReplace, .restoreSectionDuplicate: return true
+        case .restoreProject, .restoreSectionReplace, .restoreSectionDuplicate, .sectionReorder: return true
         case .snapshotUndo, .snapshotRedo: return reason != "docChanged" && reason != "noCheckpoint"
         }
     }
@@ -121,7 +130,8 @@ enum EditorFirstOpKind {
     /// once an outline read after the job's commit shows the real rows. Delete only removes leaders, so it has none.
     var usesSidebarOverlay: Bool {
         switch self {
-        case .sectionDelete: return false
+        // A reorder has its own overlay (`EditorViewState.pendingReorder`, lifted by `liftPendingReorder(opId:)`), not this one.
+        case .sectionDelete, .sectionReorder: return false
         case .sectionDuplicate, .restoreProject, .restoreSectionReplace, .restoreSectionDuplicate, .snapshotUndo, .snapshotRedo: return true
         }
     }
@@ -178,6 +188,15 @@ enum EditorFirstOpKind {
                 title: "Couldn't Redo",
                 message: "The redo couldn't be saved, so the document is back as it was before you pressed Redo. "
                     + "Anything you typed in the text the redo brought back was removed with it."
+            )
+        case .sectionReorder:
+            // t-0b70d1e9 (approved wording, UX contract 4.3). "Move" matches the existing bail-out toast ("Couldn't move the section").
+            // Delete's sentence about the last moments' typing, not the duplicate's: the put-back gives the document back from the
+            // database, and a block typed in the last poll window can be older than that read.
+            return SectionOperationAlert(
+                title: "Couldn't Move Section",
+                message: "The move couldn't be saved, so the sections are back in their earlier order. "
+                    + "If you typed in the last moments, check that your text is still there."
             )
         }
     }
@@ -440,12 +459,17 @@ extension StructuralUndoController {
             efRecordedGeneration[opId] = nil
             forgetQuickUndoState(opId)   // slice 2b: the holder (a pending reinsert keeps its own reference), the job keys, the generation
             editorState.pendingRestoreSections[opId] = nil
+            // t-0b70d1e9: a failed reorder's overlay goes on every way out, the closed-gate return included
+            editorState.liftPendingReorder(opId: opId)
         }
         unifiedUndoService.removeEntry(opId: opId)
         // Round 1g-A, review A8: the sidebar overlay that showed the copy before its rows existed goes FIRST, before anything below
         // suspends or asks for an outline refresh: the job failed, so the copy's rows never come, and an outline result computed from
         // here on must not merge its leaders back in. (The `defer` still clears it on the early exits.)
         editorState.pendingRestoreSections[opId] = nil
+        // t-0b70d1e9: the same for a failed reorder, for the same reason: its rows never moved, so an outline result computed from here
+        // on must show the database's (earlier) order, not the moved one.
+        editorState.liftPendingReorder(opId: opId)
         // Remembered so that a Cmd-Z for this entry that was already on its way (held on the gate while this ran) is answered
         // `failed`, not `fallback`: the change was put back, and a plain text undo now would remove the user's last typing
         // (fix round 2a, item 12; see `resolveOutcome`).

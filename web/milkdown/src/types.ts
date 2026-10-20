@@ -2,6 +2,7 @@
 
 import type { DeleteSectionResult } from './api-section-delete';
 import type { DuplicatedBlock, DuplicateSectionResult } from './api-section-duplicate';
+import type { ReorderOrderEntry, ReorderSectionsResult } from './api-section-reorder';
 import type { QuickResumeResult, QuickUndoResult } from './api-section-undo';
 import type { ReplaceRangePayload, ReplaceRangeResult } from './api-structural-replace';
 import type { StructuralSwapPayload, StructuralSwapResult } from './api-structural-swap';
@@ -328,6 +329,17 @@ declare global {
         managedIds: string[],
         copies?: DuplicatedBlock[]
       ) => DuplicateSectionResult;
+      // Phase 4b, reorder job (api-section-reorder.ts, t-0b70d1e9): the editor moves the dragged section (or, for the Option drag, a
+      // section with its sub-sections) first, in one synchronous turn, as ONE range move that keeps every block's id, the caret and
+      // the scroll position, and returns the pending-edit batch it consumed on every path (Swift always applies it). `order` is every
+      // section leader in FINAL order with a `level` on the headings whose level the plan changed. A refusal (`ok: false`, e.g.
+      // 'planMismatch', 'rootNotFound') leaves the document untouched; `skippedIds` are ids in `order` the editor has no node for.
+      reorderSectionsEditorFirst: (
+        opId: string,
+        rootId: string,
+        managedIds: string[],
+        order: ReorderOrderEntry[]
+      ) => ReorderSectionsResult;
       // Phase 4b slice 2, round 2c (api-structural-replace.ts): the three Version History restores. The editor replaces the document
       // ('whole'), the target heading's flat section ('section') or inserts a fragment after an anchor ('insertAfter') first, in one
       // synchronous turn, giving the new top-level blocks the payload's ids, and returns the pending-edit batch it consumed on every

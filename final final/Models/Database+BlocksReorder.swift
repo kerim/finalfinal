@@ -35,48 +35,89 @@ extension ProjectDatabase {
     /// 3. Collect orphan body blocks before the first heading (preamble)
     /// 4. Re-assign sequential sort orders: preamble first, then for each heading in section
     ///    order → heading + its body blocks
-    /// 5. Apply heading updates (markdownFragment, headingLevel) if provided
+    /// 5. Apply heading level changes (headingLevel, and the markdownFragment's `#` prefix rebuilt from the LIVE row) if provided
+    ///
+    /// The old whole-document reorder (Markdown mode, zoomed, an editor-first refusal) lands here. It is a thin wrapper around the
+    /// static `reorderAllBlocks(db:leaderIds:projectId:levels:)`, which the queued reorder job (`SectionReorderJob`) runs inside its own
+    /// transaction. Only the `headingLevel` of each update is read now: the fragment is rebuilt from the row as it is in the table, so
+    /// a heading renamed a moment ago keeps its new title (t-0b70d1e9, A14; the sidebar's `markdownContent` can be a moment stale).
     func reorderAllBlocks(
         sections: [SectionViewModel],
         projectId: String,
         headingUpdates: [String: HeadingUpdate] = [:]
     ) throws {
+        let leaderIds = sections.map(\.id)
+        let levels = headingUpdates.compactMapValues(\.headingLevel)
         try write { db in
-            // 1. Fetch all blocks in current sort order
-            let allBlocks = try Block
-                .filter(Block.Columns.projectId == projectId)
-                .order(Block.Columns.sortOrder)
-                .fetchAll(db)
-
-            // 2. Group blocks: each "group leader" (heading, pseudo-section, bibliography)
-            //    owns subsequent non-leader blocks until the next leader (see groupBlocksBySections)
-            let sectionIds = Set(sections.map { $0.id })
-            let (groups, preamble) = groupBlocksBySections(allBlocks, sectionIds: sectionIds)
-
-            // 3. Build new order: preamble, then sections in new order with their body blocks
-            var sortCounter: Double = 1.0
-            let now = Date()
-
-            // Preamble blocks first
-            for var block in preamble {
-                if block.sortOrder != sortCounter {
-                    block.sortOrder = sortCounter
-                    block.updatedAt = now
-                    try block.update(db)
-                }
-                sortCounter += 1.0
-            }
-
-            // Sections in the order specified by the sections array (see reorderSection)
-            let context: SectionReorderContext = (groups: groups, headingUpdates: headingUpdates)
-            for section in sections {
-                sortCounter = try reorderSection(section, context: context, startingAt: sortCounter, now: now, db: db)
-            }
-
-            // Reordering can change which heading precedes which -- re-persist
-            // sectionParentId to match. See Database+BlockParents.swift.
-            try Self.recomputeSectionParents(db: db, projectId: projectId)
+            try Self.reorderAllBlocks(db: db, leaderIds: leaderIds, projectId: projectId, levels: levels)
         }
+    }
+
+    /// The reorder itself, on an open transaction (t-0b70d1e9): the old instance method above wraps it in `write`, and the queued
+    /// `SectionReorderJob` runs it after its snapshot. `leaderIds` is every section leader in FINAL order; a block is a leader if and
+    /// only if its id is in the list, every other block belongs to the leader before it, and blocks before the first leader are the
+    /// preamble (the same rule `groupBlocksBySections` has always applied, and the one the editor's range move uses).
+    ///
+    /// Every block is renumbered 1, 2, 3... in the final order. Only a row whose id is in `levels` AND whose type is `heading` has its
+    /// level touched: `headingLevel` is set and `markdownFragment` rewritten with the `#` prefix of that level, computed from the row as
+    /// it is NOW (never from the sidebar's copy of the text). A section break, Notes or Bibliography row listed in `levels` is left
+    /// alone, and so is a heading the plan did not change. Ends with `recomputeSectionParents`. Plain `[String]` and `[String: Int]` so
+    /// the writer's thread can take them (`SectionViewModel` is not `Sendable`).
+    ///
+    /// NOTES AND BIBLIOGRAPHY ARE RESOLVED FROM THE LIVE ROWS, not from `leaderIds` (t-0b70d1e9, C1). Any listed id whose row is
+    /// flagged `isNotes` or `isBibliography` is dropped from the list, and the live Notes heading and then the live Bibliography
+    /// heading are appended last. Why: the bibliography rebuild deletes every `isBibliography` row and inserts new ones under FRESH ids;
+    /// if it commits between the plan and this job, the planned Bibliography id matches no row and the new Bibliography heading is
+    /// unlisted, so it would join the previous leader's group and travel with the last chapter. The document always ends with Notes
+    /// then Bibliography, so this also holds for the old whole-document path, whose plan is clamped the same way.
+    static func reorderAllBlocks(
+        db: Database,
+        leaderIds: [String],
+        projectId: String,
+        levels: [String: Int]
+    ) throws {
+        // 1. Fetch all blocks in current sort order
+        let allBlocks = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .order(Block.Columns.sortOrder)
+            .fetchAll(db)
+        let leaderRows = Dictionary(allBlocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // The list actually used: the listed ids minus whatever is Notes or Bibliography NOW, then the live Notes heading(s), then the
+        // live Bibliography heading(s). (A listed id with no row stays: its section is skipped below, as it always was.)
+        let managedHeadings = allBlocks.filter { $0.blockType == .heading && ($0.isNotes || $0.isBibliography) }
+        let orderedLeaderIds = leaderIds.filter { id in leaderRows[id].map { !($0.isNotes || $0.isBibliography) } ?? true }
+            + managedHeadings.filter(\.isNotes).map(\.id)
+            + managedHeadings.filter { !$0.isNotes && $0.isBibliography }.map(\.id)
+
+        // 2. Group blocks: each "group leader" (heading, pseudo-section, bibliography)
+        //    owns subsequent non-leader blocks until the next leader (see groupBlocksBySections)
+        let (groups, preamble) = groupBlocksBySections(allBlocks, sectionIds: Set(orderedLeaderIds))
+
+        // 3. Build new order: preamble, then sections in new order with their body blocks
+        var sortCounter: Double = 1.0
+        let now = Date()
+
+        // Preamble blocks first
+        for var block in preamble {
+            if block.sortOrder != sortCounter {
+                block.sortOrder = sortCounter
+                block.updatedAt = now
+                try block.update(db)
+            }
+            sortCounter += 1.0
+        }
+
+        // Sections in the order of `orderedLeaderIds` (see reorderSection)
+        for leaderId in orderedLeaderIds {
+            sortCounter = try reorderSection(
+                leader: leaderRows[leaderId], body: groups[leaderId], level: levels[leaderId],
+                startingAt: sortCounter, now: now, db: db)
+        }
+
+        // Reordering can change which heading precedes which -- re-persist
+        // sectionParentId to match. See Database+BlockParents.swift.
+        try recomputeSectionParents(db: db, projectId: projectId)
     }
 
     // MARK: - Sort Order Operations
@@ -170,11 +211,8 @@ private extension ProjectDatabase {
 
     // MARK: Reorder all blocks
 
-    /// leaderId->body-blocks map + pending heading updates, bundled to keep reorderSection's param count under the limit.
-    typealias SectionReorderContext = (groups: [String: [Block]], headingUpdates: [String: HeadingUpdate])
-
     /// Partitions `allBlocks` into a leaderId -> body-blocks map plus a preamble. Extraction of `reorderAllBlocks` step 2.
-    func groupBlocksBySections(
+    static func groupBlocksBySections(
         _ allBlocks: [Block],
         sectionIds: Set<String>
     ) -> (groups: [String: [Block]], preamble: [Block]) {
@@ -198,26 +236,29 @@ private extension ProjectDatabase {
     }
 
     /// Reorders one section (heading + body); extracted from `reorderAllBlocks` step 4 — a missing heading silently skips the section, as before.
-    func reorderSection(
-        _ section: SectionViewModel,
-        context: SectionReorderContext,
+    /// `level` is the plan's new level for this leader, if it has one: it is applied only to a `heading` row, and the fragment's `#`
+    /// prefix is rebuilt from the row's own fragment as it is now (see the static `reorderAllBlocks`).
+    static func reorderSection(
+        leader: Block?,
+        body bodyBlocks: [Block]?,
+        level: Int?,
         startingAt initialSortCounter: Double,
         now: Date,
         db: Database
     ) throws -> Double {
-        guard var headingBlock = try Block.fetchOne(db, key: section.id) else {
+        guard var headingBlock = leader else {
             return initialSortCounter
         }
         var sortCounter = initialSortCounter
         headingBlock.sortOrder = sortCounter
         headingBlock.updatedAt = now
-        if let update = context.headingUpdates[section.id] {
-            if let fragment = update.markdownFragment { headingBlock.markdownFragment = fragment }
-            if let level = update.headingLevel { headingBlock.headingLevel = level }
+        if let level, headingBlock.blockType == .heading {
+            headingBlock.headingLevel = level
+            headingBlock.markdownFragment = SectionSyncService.updateHeaderLevel(in: headingBlock.markdownFragment, to: level)
         }
         try headingBlock.update(db)
         sortCounter += 1.0
-        if let bodyBlocks = context.groups[section.id] {
+        if let bodyBlocks {
             for var bodyBlock in bodyBlocks {
                 if bodyBlock.sortOrder != sortCounter {
                     bodyBlock.sortOrder = sortCounter

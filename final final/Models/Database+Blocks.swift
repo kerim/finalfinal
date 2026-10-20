@@ -409,10 +409,20 @@ extension ProjectDatabase {
         if let headingLevel = update.headingLevel {
             block.headingLevel = headingLevel
         }
+        // LAST, so it wins over the textContent-based recounts above (t-0b70d1e9): the update's markdown still holds the citations
+        // that the editor's `textContent` leaves out. An update with no fragment keeps the count taken from its text.
+        if let markdownFragment = update.markdownFragment { recountWordsFromFragment(&block, markdownFragment) }
 
         block.updatedAt = Date()
         try block.update(db)
         return true
+    }
+
+    /// Counts `block`'s words from the update's markdown (`Block.recalculateWordCount(fromMarkdown:)`) and logs the change.
+    func recountWordsFromFragment(_ block: inout Block, _ markdownFragment: String) {
+        let oldWC = block.wordCount
+        block.recalculateWordCount(fromMarkdown: markdownFragment)
+        logWordCountChange(block: block, oldWordCount: oldWC, tag: "fragment")
     }
 
     /// Applies the block-type transition implied by an updated fragment (new heading/section
@@ -613,6 +623,8 @@ extension ProjectDatabase {
         if let headingLevel = update.headingLevel {
             existingBlock.headingLevel = headingLevel
         }
+        // LAST, as in the primary path: the fragment's count wins over the textContent-based one (citations; t-0b70d1e9).
+        if let markdownFragment = update.markdownFragment { recountWordsFromFragment(&existingBlock, markdownFragment) }
         existingBlock.updatedAt = Date()
         try existingBlock.update(db)
         DebugLog.log(.data, "[Database+Blocks] Merged temp update into insert: \(update.id) → \(permanentId)")
@@ -637,6 +649,8 @@ extension ProjectDatabase {
         if let headingLevel = update.headingLevel {
             existingBlock.headingLevel = headingLevel
         }
+        // LAST, as in the primary path (t-0b70d1e9).
+        if let markdownFragment = update.markdownFragment { recountWordsFromFragment(&existingBlock, markdownFragment) }
         existingBlock.updatedAt = Date()
         try existingBlock.update(db)
     }

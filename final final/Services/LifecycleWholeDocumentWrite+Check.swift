@@ -8,13 +8,13 @@
 //
 //  The question it answers: are the rows already stored the rows FB would write? If so FB writes nothing
 //  and bumps no epoch. It compares what a REOPEN reads, row by row, in the order a reopen reads them, plus the
-//  text the sidebar's word counts come from:
+//  stored text that search and the heading titles read:
 //    - `blockType`;
 //    - `headingLevel`, for headings only;
 //    - `markdownFragment`, trimmed of whitespace and newlines on BOTH sides (the parser trims both ends;
 //      per-edit fragments are untrimmed);
-//    - `textContent`, trimmed on both sides exactly like the fragment (code review X1: `wordCount` and the
-//      section goal progress are derived from it, see below);
+//    - `textContent`, trimmed on both sides exactly like the fragment (code review X1: the stored text must equal
+//      what FB would write; word counts no longer come from it on the per-edit path, see below);
 //    - `isBibliography`, `isNotes`, `isPseudoSection`.
 //  Rows whose fragment is empty after trimming are dropped on both sides (the parser never emits one and
 //  a reopen skips them). Ids and the `sortOrder` NUMBERS are not compared, with one exception that is a
@@ -31,18 +31,21 @@
 //  quotes and citeproc bibliography text). After a session that touched any of those, the rows differ and FB
 //  runs exactly as before. The check must NOT be loosened to tolerate them.
 //
-//  Why `textContent` is compared (code review X1; it replaces plan-v2 D8's "a skip leaves textContent and
-//  wordCount as the editor wrote them"): the per-edit path stores ProseMirror's `node.textContent`, which
-//  drops inline atoms (citations, footnote references, inline math) and joins table and quote child text with
-//  no separator, while FB re-derives the text from the whole-document parse (`BlockParser.extractTextContent`).
-//  A skip that ignored it would leave LOWER section word counts and goal progress for anyone who cites or
-//  uses tables. Comparing it means FB runs whenever the editor's text differs from what FB would write, so
-//  the counts stay what they were before this phase; `wordCount` is derived from `textContent`
-//  (`Block.recalculateWordCount`), so it is covered too. The open-time maintenance pass
-//  (`recomputeStoredBlockWordCounts`) recomputes counts from the STORED `textContent`, so it would not repair
-//  what a skip left. The narrowed scope, stated plainly: a paragraph containing a citation, footnote
-//  reference or inline math still rebuilds at close, as today. Plain-text paragraphs and headings are the
-//  ones that skip.
+//  Why `textContent` is compared (code review X1; it replaces plan-v2 D8's "a skip leaves textContent as the
+//  editor wrote it"): the per-edit path stores ProseMirror's `node.textContent`, which leaves out inline atoms
+//  (a citation, inline math) and joins table and quote child text with no separator, while FB re-derives the
+//  text from the whole-document parse (`BlockParser.extractTextContent`, which keeps the citation syntax and
+//  the math). A skip that ignored it would leave the stored `textContent` (what search and the heading titles
+//  read) different from what FB writes. Comparing it means FB runs whenever the editor's text differs from
+//  what FB would write, so the stored text stays what it was before this phase.
+//
+//  Word counts are NOT the reason for comparing the text any more. A per-edit update counts its words from its
+//  markdown fragment (`Block.recalculateWordCount(fromMarkdown:)`, t-0b70d1e9), so the words a citation renders
+//  as are already in the stored count, and the count no longer comes from the stored `textContent`. (The
+//  open-time pass, `recomputeStoredBlockWordCounts`, does recompute from the STORED `textContent`; rows whose
+//  text differs from FB's are rebuilt at close, so it reads the parse's text.) The narrowed scope, stated
+//  plainly: a paragraph containing a citation or inline math still rebuilds at close, as today. Plain-text
+//  paragraphs and headings skip.
 //
 
 import Foundation
@@ -65,7 +68,8 @@ extension LifecycleWholeDocumentWrite {
         let blockType: BlockType
         let headingLevel: Int?
         let markdownFragment: String
-        /// The text the word counts derive from (code review X1), trimmed like the fragment.
+        /// The stored text, which must equal what FB would write (code review X1), trimmed like the fragment. Word counts no longer
+        /// come from it on the per-edit path.
         let textContent: String
         let isBibliography: Bool
         let isNotes: Bool

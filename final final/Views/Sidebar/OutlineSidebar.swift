@@ -50,10 +50,6 @@ struct OutlineSidebar: View {
     var onDragStarted: (() -> Void)?
     /// Called when drag operation ends - use to resume sync
     var onDragEnded: (() -> Void)?
-    /// MF-2 (Phase 7 review round, plan §7): bound through to both drop delegates
-    /// (`OutlineSidebar+DropDelegates.swift`) as their `dropInFlight` binding -- see
-    /// `EditorViewState.sectionDropInFlight`'s doc comment.
-    @Binding var sectionDropInFlight: Bool
     /// Sidebar context-menu section operations: duplicate/delete a section's full subtree
     /// (see docs/architecture/unified-undo.md's unified-timeline-concept section for the
     /// `.sectionDelete`/`.sectionDuplicate` timeline entries this drives). Nil-defaulted so
@@ -66,7 +62,7 @@ struct OutlineSidebar: View {
     @State private var pendingDropId: UUID?  // Guards against race conditions in async drop handling
     @State private var lastDropLocation: CGPoint?  // Deduplicates simultaneous delegate fires
     @State private var sidebarWidth: CGFloat = 300  // Track actual width for zone calculations
-    @State private var isDragging: Bool = false  // Track drag state for suppression
+    @State private var isDragging: Bool = false  // Track drag state (hover/ghost handling in this view; it suppresses no sync)
     @State private var hoveredCardId: String?
     @State private var cardFrames: [String: CGRect] = [:]  // Frames in scroll coordinate space for tooltip
 
@@ -361,7 +357,6 @@ struct OutlineSidebar: View {
                             pendingDropId: $pendingDropId,
                             lastDropLocation: $lastDropLocation,
                             isDragging: $isDragging,
-                            dropInFlight: $sectionDropInFlight,
                             onDrop: { transfer, position in
                                 handleDropAtEnd(dropped: transfer, position: position)
                             },
@@ -530,7 +525,6 @@ struct OutlineSidebar: View {
             pendingDropId: $pendingDropId,
             lastDropLocation: $lastDropLocation,
             isDragging: $isDragging,
-            dropInFlight: $sectionDropInFlight,
             onDrop: { transfer, position in
                 handleDrop(dropped: transfer, position: position, targetSection: section)
             },
@@ -813,7 +807,6 @@ struct SectionTitleTooltip: View {
     @Previewable @State var docGoal: Int? = 1000
     @Previewable @State var docGoalType: GoalType = .approx
     @Previewable @State var excludeBib: Bool = false
-    @Previewable @State var dropInFlight: Bool = false
 
     OutlineSidebar(
         sections: $sections,
@@ -849,8 +842,7 @@ struct SectionTitleTooltip: View {
         },
         canZoomOut: true,
         onDragStarted: { print("Drag started") },
-        onDragEnded: { print("Drag ended") },
-        sectionDropInFlight: $dropInFlight
+        onDragEnded: { DebugLog.log(.outline, "[OutlineSidebar preview] Drag ended") }
     )
     .frame(width: 300, height: 500)
     .environment(ThemeManager.shared)

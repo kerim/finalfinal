@@ -329,6 +329,9 @@ extension StructuralUndoController {
     /// lists: it leaves the sidebar through the removal filter and comes back through the overlay with the restored title and level.
     func swapSidebarLeaders(opId: UUID, removing: [Block], showing: [Block], anchor: RestoreAnchor? = .documentStart) {
         guard let editorState else { return }
+        // t-0b70d1e9: this call records the sidebar state of a LATER operation (a slow undo or redo, a restore): it supersedes the
+        // order an earlier editor-first reorder was still showing ahead of its job, which referred to the document before this swap.
+        editorState.pendingReorder = nil
         let removingIds = Set(removing.map(\.id))
         let showingIds = Set(showing.map(\.id))
         // The document being put back first leaves the removal filter (the ids only it had), the one being replaced enters it.

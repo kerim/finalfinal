@@ -132,7 +132,9 @@ struct SystemWriteBody<R: Sendable>: Sendable {
 /// `.structuralReplace` (t-18b7fa48 Phase 4b slice 2: the queued job behind an editor-first Version History restore,
 /// `StructuralReplaceJob`; same rules, and in particular it NEVER bumps the epoch or restamps rows: it writes the project's rows with
 /// `ProjectDatabase.replaceProjectRows`, not `replaceBlocks`, because the text typed after the click is typed into the restored
-/// document and a bump would make the writer refuse that batch whole).
+/// document and a bump would make the writer refuse that batch whole), and `.sectionReorder` (t-0b70d1e9: the queued job behind an
+/// editor-first drag-reorder in the Outline sidebar, `SectionReorderJob`; same rules -- it renumbers the rows in place and stamps
+/// and bumps nothing, so text typed into the moved section after the click still applies).
 enum SystemWriteKind: Sendable, Equatable {
     case bibliographyUpdate
     case bibliographyRemoval
@@ -146,6 +148,7 @@ enum SystemWriteKind: Sendable, Equatable {
     case sectionReinsert
     case sectionDuplicate
     case structuralReplace
+    case sectionReorder
 }
 
 // MARK: - No nesting (§1.3)

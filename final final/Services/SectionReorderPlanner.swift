@@ -21,6 +21,11 @@
 //  aliasing change). `ContentView.reorderSection(_:)` is now a thin wrapper around
 //  `plan(request:in:syncService:)` + the untouched `dispatchSectionReorder`.
 //
+//  t-0b70d1e9: `ContentView.reorderSection` plans here only to learn whether the drop is a no-op or a failure (the cheap pre-gate check
+//  and its toast). The plan that is carried out is worked out AGAIN inside the structural gate, from the live sidebar list
+//  (`StructuralUndoController.performSectionReorder`: this planner, hierarchy enforcement, `clampingManagedLeadersLast`, renumbering),
+//  because a drag held behind a slow Cmd-Z must be planned against the list the undo leaves, not the one the drop saw.
+//
 
 import Foundation
 
@@ -93,6 +98,18 @@ enum SectionReorderPlanner {
             }
             return .plan(result)
         }
+    }
+
+    /// Notes and Bibliography always end the document (t-0b70d1e9, B31). `plan(request:in:syncService:)` places a section dropped below the
+    /// last card AFTER the last card in the list, and when the book has footnotes (or a bibliography) the last cards are Notes and
+    /// Bibliography: the dragged section would land after them, which the editor never accepts (`managedMoved`) and which the document
+    /// never has. This keeps every other section in its planned relative order and puts the managed ones (`isNotes`,
+    /// `isBibliography`) last, in their original relative order, so such a drop lands just before Notes and stays an editor-first move.
+    /// Pure: the same instances, rearranged. Returns `sections` unchanged when it has no managed card.
+    static func clampingManagedLeadersLast(_ sections: [SectionViewModel]) -> [SectionViewModel] {
+        let managed = sections.filter { $0.isNotes || $0.isBibliography }
+        guard !managed.isEmpty else { return sections }
+        return sections.filter { !($0.isNotes || $0.isBibliography) } + managed
     }
 
     /// Reorder a single section (original behavior, promotes orphaned children)

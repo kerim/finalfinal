@@ -151,15 +151,11 @@ extension ContentView {
         // planSingleSection itself rather than in plan(), but surfaces here as `.failed` too.
         //
         // Fix (review round): this early return previously left `sectionReorderRetryAttempted`
-        // and `sectionDropInFlight` untouched and produced no toast/alert at all -- three bugs:
-        // (1) when this is the retry dispatched from `dispatchSectionReorder`'s `defer` (the
-        // `.refused` case below sets `sectionDropInFlight = true` right before calling back in
-        // here), dying here left it stuck `true` forever, permanently blocking
-        // `ContentView.onDragEnded` and the block-sync poll it re-arms; (2) it also left
-        // `sectionReorderRetryAttempted` stuck `true`, silently poisoning the NEXT, unrelated
-        // drag's first refusal into being misread as a second strike and giving up instead of
-        // retrying; (3) it is itself a genuine "drag-reorder bailed out" case (§4.3) that was
-        // completely silent -- the literal bug this task exists to fix.
+        // untouched and produced no toast/alert at all -- two bugs:
+        // (1) it left `sectionReorderRetryAttempted` stuck `true`, silently poisoning the NEXT,
+        // unrelated drag's first refusal into being misread as a second strike and giving up
+        // instead of retrying; (2) it is itself a genuine "drag-reorder bailed out" case (§4.3)
+        // that was completely silent -- the literal bug this task exists to fix.
         //
         // Fix (acceptance round): that same toast was firing on `.noOp` too -- dropping a
         // section back exactly where it started (see PlanResult.noOp) produced a spurious
@@ -167,26 +163,47 @@ extension ContentView {
         // resets the same per-drag state as `.failed` (it's still a terminal outcome for THIS
         // drag) but shows no toast, exactly mirroring how `dispatchSectionReorder`'s own
         // `sectionOrderUnchanged` no-op check below is already silent.
+        //
+        // t-0b70d1e9: a drag no longer sets `contentState` (`handleSectionDragStarted`), so there is no drag-time state to reset
+        // here any more, and the old `sectionDropInFlight` flag (which only guarded that reset) is gone.
+        //
+        // C4: this drop-time plan is made against the sidebar list AS IT IS NOW. While another structural command holds the gate or
+        // waits for it (an earlier drag, a delete, a slow undo), that list is the one from BEFORE it, so a `.noOp` or `.failed`
+        // judged here may be wrong by the time this drop's turn comes (a second drag judged against the pre-first-drag list would be
+        // swallowed silently, or toast "Couldn't move" for a move that is fine). The controller plans again under the gate and
+        // answers `.noOp` (performed, no entry) and `.failed` (refused: one silent retry, then the toast) on the right list, so a
+        // busy gate sends the request on instead of deciding here.
+        let gateBusy = structuralGateIsBusy
         switch SectionReorderPlanner.plan(
             request: request, in: editorState.sections, syncService: sectionSyncService
         ) {
         case .plan(let sections):
-            // Dispatch into the audited structural-op sequence (Phase 7, plan §7) instead of
-            // the old synchronous finalizeSectionReorder, which unconditionally invalidated the
-            // whole unified-undo timeline. StructuralUndoController.performSectionReorder now
-            // owns everything downstream: sort-order/offset recompute, hierarchy fixup, and the
-            // single DB write, all inside the same audited sequence the other five op kinds use.
+            // This plan only tells us the drop is real (neither a no-op nor a failure). The controller plans AGAIN under its
+            // structural gate, from the sidebar list as it is when its turn comes, and carries that plan out: editor-first in Rich
+            // Text, the old whole-document sequence otherwise (StructuralUndoController.performSectionReorder).
             dispatchSectionReorder(sections: sections, request: request)
         case .noOp:
-            editorState.sectionReorderRetryAttempted = false
-            editorState.sectionDropInFlight = false
-            editorState.contentState = .idle
+            if gateBusy {
+                dispatchSectionReorder(sections: editorState.sections, request: request)
+            } else {
+                editorState.sectionReorderRetryAttempted = false
+                rearmSectionSync()   // this exit runs no reorder: give back the sync `handleSectionDragStarted` and this method cancelled
+            }
         case .failed:
-            editorState.sectionReorderRetryAttempted = false
-            editorState.sectionDropInFlight = false
-            editorState.contentState = .idle
-            editorState.toastCenter.show(ToastFactory.sectionReorderBailedOut())
+            if gateBusy {
+                dispatchSectionReorder(sections: editorState.sections, request: request)
+            } else {
+                editorState.sectionReorderRetryAttempted = false
+                editorState.toastCenter.show(ToastFactory.sectionReorderBailedOut())
+                rearmSectionSync()
+            }
         }
+    }
+
+    /// Another structural command holds the gate or waits for it (`StructuralUndoController.isPerforming` reads the gate's held state;
+    /// the waiters are the commands queued behind it). The sidebar list is then not yet the list this drop's own turn will see.
+    var structuralGateIsBusy: Bool {
+        structuralUndoController.isPerforming || editorState.structuralGate.waiterCount > 0
     }
 
     /// Dispatch a completed drag-drop reorder into `StructuralUndoController`'s audited
@@ -198,34 +215,35 @@ extension ContentView {
     /// reorder is itself undoable rather than wiping whatever came before it (the gap this
     /// phase exists to close -- see plan §7's Phase 7 entry).
     ///
+    /// t-0b70d1e9: in Rich Text the controller carries the reorder out editor-first (the editor moves the section, a queued job
+    /// renumbers the rows); `request` goes along, because the controller plans again under its gate from the sidebar list as it is
+    /// then. `sections` (the plan made from the drop) is only the fallback for a caller without a request.
+    ///
     /// The legacy `Section`-table persist (`persistReorderedBlocks_legacySections`, non-critical,
     /// unrelated to the Block table `db.reorderAllBlocks` writes) still runs as a trailing
-    /// fire-and-forget task after the op completes, gated on success so it doesn't re-persist a
-    /// refused/failed reorder's stale ordering.
+    /// fire-and-forget task after the OLD sequence completes (Markdown mode, zoomed, a fallback), gated on success so it doesn't
+    /// re-persist a refused/failed reorder's stale ordering. The editor-first path does not call it: it writes nothing (it updates
+    /// `section` rows by a block id the table never holds), and the job's settle reconciles the `section` table from the live text.
     ///
-    /// `request` is the raw drop request `sections` was computed from -- kept alongside the
-    /// computed array only for MF-3's stash/retry below, not used for anything else here.
-    ///
-    /// Ownership of `editorState.sectionDropInFlight` transfers here from whichever drop
-    /// delegate's `onDrop` closure called this (MF-2, plan §7) -- every return path below
-    /// must eventually clear it (directly, or by handing it to a retried dispatch), or
-    /// ContentView's `onDragEnded` stays permanently guarded off and the block-sync poll never
-    /// re-arms.
+    /// `request` is also kept for MF-3's stash/retry below.
     func dispatchSectionReorder(sections: [SectionViewModel], request: SectionReorderRequest) {
         // MF-4 (review round): a no-op reorder (dropped back where it started) must not mint a
         // snapshot or undo entry. Compared against `editorState.sections` LIVE, at call time --
         // id sequence + headerLevel is what actually determines document order/structure (see
         // `OutlineSidebar.structuralSignature(of:)`'s identical criterion for "did anything
         // structural change"). No machinery touched: nothing is dispatched, no Task spawned.
-        if Self.sectionOrderUnchanged(sections, from: editorState.sections) {
+        //
+        // C4: not while another structural command holds the gate or waits for it. `editorState.sections` is then the list from before
+        // that command, so "unchanged" may be wrong by this reorder's turn; the controller re-plans under the gate and treats a plan
+        // that changes nothing as performed with no entry and no job.
+        if !structuralGateIsBusy, Self.sectionOrderUnchanged(sections, from: editorState.sections) {
             // Reset alongside the other terminal outcomes below (fix, review round): a no-op
             // reorder is benign -- the document already matches the target, so no toast is
             // needed here -- but it is still a terminal outcome for THIS drag, and must not
             // leave `sectionReorderRetryAttempted` set, or the NEXT, unrelated drag's first
             // refusal would be misread as a second strike.
             editorState.sectionReorderRetryAttempted = false
-            editorState.sectionDropInFlight = false
-            editorState.contentState = .idle
+            rearmSectionSync()   // G11: this exit runs no reorder, so give back the debounced section sync the drag cancelled
             return
         }
 
@@ -233,47 +251,37 @@ extension ContentView {
             defer {
                 // MF-3 (review round): if a concurrent drop got refused while THIS reorder (or
                 // an even earlier retry) was in flight, its request is stashed below. Retrying
-                // it here -- inside this Task's own exit, after ownership of dropInFlight would
-                // otherwise be released -- re-arms the flag instead of clearing it, since a
-                // retry is still "reorder work in flight" from the same guard's point of view
-                // (ContentView.swift's onDragEnded doc comment): there's no new AppKit drag
-                // session backing this retry, but a later UNRELATED drag's own Path A could
-                // still race it the same way MF-2 closed for the original drop otherwise.
-                // `reorderSection` (not SectionReorderPlanner.planSingleSection/planSubtree
-                // directly) re-runs
+                // it here -- inside this Task's own exit -- `reorderSection` (not
+                // SectionReorderPlanner.planSingleSection/planSubtree directly) re-runs
                 // the self-drop/same-position guards too, not just the recompute -- the same
                 // safety checks a genuine drop gets. The stash itself lives on `editorState`
                 // (a class), not a `ContentView` `@State` property -- see
                 // `EditorViewState.pendingSectionReorderRequest`'s doc comment for why.
                 if let stashed = editorState.pendingSectionReorderRequest {
                     editorState.pendingSectionReorderRequest = nil
-                    editorState.sectionDropInFlight = true
                     reorderSection(stashed)
-                } else {
-                    editorState.sectionDropInFlight = false
                 }
             }
 
-            let outcome = await structuralUndoController.performSectionReorder(sections: sections)
-            switch outcome {
+            let result = await structuralUndoController.performSectionReorderDetailed(sections: sections, request: request)
+            let tookEditorFirst: Bool = result.editorFirst
+            switch result.outcome {
             case .performed:
                 // A drag that eventually succeeds must not poison the NEXT, unrelated drag's
                 // first refusal into being misread as a second strike (see
                 // `sectionReorderRetryAttempted`'s own doc comment) -- reset on every terminal
                 // outcome, not only on the give-up path below.
                 editorState.sectionReorderRetryAttempted = false
-                // performStructuralOp's own success path already returns contentState to
-                // .idle as its last step -- nothing to do here.
-                await persistReorderedBlocks_legacySections()
+                // The old sequence's own success path already returns contentState to .idle as its last step, and the editor-first
+                // path never leaves .idle -- nothing to do here. The legacy `Section`-table persist runs for the old sequence only.
+                if !tookEditorFirst { await persistReorderedBlocks_legacySections() }
             case .refused:
                 // MF-2 point 4 (review round): performStructuralOp's refusal paths (already
                 // `isPerforming`, zoom refusal, precheck refusal) all refuse BEFORE the DB
-                // write, without ever touching contentState -- previously this was
-                // accidentally papered over by onDragEnded's un-gated .idle write, which
-                // MF-2's fix above now correctly suppresses while a drop is still in flight.
-                // Without this explicit reset nothing else would ever move contentState off
-                // .dragReorder for a refused reorder.
-                editorState.contentState = .idle
+                // write. Since t-0b70d1e9 nothing sets a drag-time state for a drag, and every old-sequence exit after it sets
+                // `.structuralUndo` puts it back to `.idle` itself, so there is no contentState to reset here.
+                // A refusal ran no reorder either: give back the debounced section sync the drag cancelled (G11; a retry cancels it again).
+                rearmSectionSync()
 
                 // t-94369a83 Phase 4b slice 2a (addendum A21): a reorder the lifecycle cancelled (a close, quit or project switch
                 // started) was never run and is not retried or reported: the window is going away.
@@ -315,7 +323,8 @@ extension ContentView {
                     "[ContentView] performSectionReorder: DB write committed but the op failed to finish recording "
                         + "-- not undoable via Cmd-Z; not retrying (the reorder already happened)"
                 )
-                editorState.contentState = .idle
+                // (No contentState reset: every `.failedAfterCommit` exit of the old sequence sets `.idle` itself, and the
+                // editor-first path never leaves it.)
                 // §4.3 "a section delete or duplicate was refused, or its undo point was lost"
                 // -> modal alert: the operative fact here is the lost undo point, not that this
                 // particular structural op was a drag -- same treatment (and same

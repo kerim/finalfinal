@@ -70,7 +70,6 @@ struct ContentStateMachineTests {
             .hierarchyEnforcement,
             .bibliographyUpdate,
             .editorTransition,
-            .dragReorder,
             .projectSwitch,
             .annotationEdit
         ]
@@ -183,7 +182,6 @@ struct ContentStateMachineTests {
         let allowedStates: [EditorContentState] = [
             .bibliographyUpdate,
             .hierarchyEnforcement,
-            .dragReorder,
             .annotationEdit
         ]
 

@@ -126,6 +126,12 @@ class SectionSyncService {
     /// Update header level in markdown content
     /// Used when section level changes during drag-drop
     func updateHeaderLevel(in markdown: String, to newLevel: Int) -> String {
+        Self.updateHeaderLevel(in: markdown, to: newLevel)
+    }
+
+    /// The pure body of `updateHeaderLevel(in:to:)`: no instance state, so the writer's thread (the queued reorder job, t-0b70d1e9) and
+    /// the sidebar overlay can call it without hopping onto the main actor. The instance method above forwards here.
+    nonisolated static func updateHeaderLevel(in markdown: String, to newLevel: Int) -> String {
         guard newLevel > 0 else { return markdown }  // Pseudo-sections don't have headers
 
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)

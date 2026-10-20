@@ -21,8 +21,9 @@
 //        project as the snapshot read them) and the ids of the rows inserted. The record is an after-commit hook, so a transaction
 //        that fails to commit leaves no slot and no pin behind.
 //
-//  A system write: it stamps no rows and bumps no epoch (D5; like `SectionDeleteJob`, and unlike today's duplicate, which writes the
-//  table outside the queue and bumps `structuralOutOfQueueGeneration`). Reservation order alone orders it behind every batch
+//  A system write: it stamps no rows and bumps no epoch (D5; like `SectionDeleteJob` and `SectionReorderJob`, and unlike the old
+//  whole-document duplicate of Markdown mode, zoomed and fallbacks, which writes the table outside the queue and bumps
+//  `structuralOutOfQueueGeneration`). Reservation order alone orders it behind every batch
 //  reserved earlier and ahead of every later one. It never nests another system write: the resyncs that follow are queued
 //  separately by the wiring.
 //

@@ -73,8 +73,12 @@ struct StructuralEntry: Identifiable, Equatable {
     /// A Version History restore of the WHOLE project (t-18b7fa48 Phase 4b slice 2, round 2d-i) is the third kind: recorded the moment
     /// the editor replaced its document, snapshot id nil here, the snapshot its job wrote on the slot, the quick undo's payload in the
     /// holder. The two section restores (replace a section, restore as duplicate; round 2d-ii) are the fourth and fifth.
+    ///
+    /// An editor-first drag-reorder (t-0b70d1e9) is the sixth: recorded the moment the editor moved the section(s), snapshot id nil here,
+    /// the snapshot its job wrote on the slot. It has NO quick undo (nothing to reinsert; `quickPathPossible` refuses the kind), so
+    /// it takes the slow undo and redo from the slot's snapshot, like a duplicate or restore after a reorder does today.
     var isEditorFirst: Bool {
-        (kind == .sectionDelete || kind == .sectionDuplicate || isVersionRestore) && undoSnapshotId == nil
+        (kind == .sectionDelete || kind == .sectionDuplicate || kind == .sectionReorder || isVersionRestore) && undoSnapshotId == nil
     }
 
     /// One of the three Version History restores (whatever path recorded it).

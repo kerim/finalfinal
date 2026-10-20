@@ -185,7 +185,9 @@ struct LifecycleFBCheckTests {
     // Code review X1: the sidebar's word counts and goal progress come from `textContent` (`wordCount` is derived from
     // it). The per-edit path stores ProseMirror's `node.textContent`, which drops inline atoms (citations, footnote
     // references, inline math) and joins table / quote child text with no separator; FB used to re-derive it from the
-    // whole-document parse. A skip that ignored it would leave LOWER counts, so it is part of the comparison.
+    // whole-document parse. A skip that ignored it would leave a different stored text (and, before t-0b70d1e9, LOWER
+    // counts: the per-edit update now counts its words from its markdown fragment, so the counts agree), so the text is
+    // part of the comparison.
     @Test("(o) X1: the same fragment with a different textContent does NOT match (the editor's text dropped an inline atom)")
     func differentTextContentDoesNotMatch() {
         let stored = [row(.paragraph, "Cited[@key] here.", sort: 0, text: "Cited here.")]

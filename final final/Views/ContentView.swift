@@ -439,55 +439,10 @@ struct ContentView: View {
                 performUserZoomOut(reason: "user zoomed out (breadcrumb)")
             },
             onDragStarted: {
-                // MF-2 point 7 (Phase 7 review round): guard the contentState write the
-                // same way onDragEnded below is guarded -- if a PRIOR reorder's audited
-                // sequence is still mid-flight (isPerforming) when a NEW drag starts,
-                // don't stomp that sequence's own .structuralUndo contentState with
-                // .dragReorder. cancelPendingSync() stays unconditional: it's a cheap,
-                // idempotent debounce cancel with no ordering hazard either way.
-                if !structuralUndoController.isPerforming {
-                    editorState.contentState = .dragReorder
-                }
-                sectionSyncService.cancelPendingSync()
+                handleSectionDragStarted()
             },
             onDragEnded: {
-                // MF-2 (Phase 7 review round, plan §7 -- corrects the prior round's factually
-                // wrong claim that onDrop and onDragEnded "run synchronously with no await
-                // between them"): this closure is ContentView's REAL onDragEnded target, but
-                // it is reached through exactly ONE of two decoupled paths per drag, and they
-                // are NOT interchangeable:
-                //
-                // Path A -- the drag SOURCE's own completion, `DraggableCardView.swift`'s
-                // `draggingSession(_:endedAt:operation:)`, wired above via
-                // `onDragEnded: { clearDragState(); onDragEnded?() }`. AppKit fires this
-                // almost immediately once a drop delegate's `performDrop` returns `true` --
-                // it does NOT wait for the drop target's own async `loadTransferable` work.
-                // Both `SectionDropDelegate` and `EndDropDelegate` (OutlineSidebar.swift's
-                // `sectionCard`/`sectionsList`) now wire their OWN `onDragEnded` parameter to
-                // a no-op ("already handled by DraggableCardView") specifically so Path A is
-                // the single source that ever reaches this closure -- see those call sites'
-                // comments; a prior asymmetry where EndDropDelegate wired the real closure
-                // directly meant an end-of-list drop invoked this guarded body TWICE.
-                //
-                // Path B -- the drop TARGET's async completion (`loadTransferable` ->
-                // `onDrop` -> `dispatchSectionReorder`'s `Task`), which is what actually
-                // spawns `StructuralUndoController.performSectionReorder`'s audited sequence.
-                // Path A is fully decoupled from Path B's timing: for the common case, Path A
-                // fires while `isPerforming` is STILL `false` (the reorder Task hasn't even
-                // started), so an isPerforming-only guard here does nothing and this closure
-                // would set contentState = .idle prematurely, re-arming the block-sync poll
-                // mid-reorder -- the normal case, not an edge case.
-                //
-                // `editorState.sectionDropInFlight` (set synchronously in `performDrop`,
-                // before AppKit can fire Path A -- see its own doc comment) closes exactly
-                // that gap: it's the "a reorder is about to start, or already stashed for
-                // retry" flag; `isPerforming` covers "a reorder's audited sequence already
-                // claimed the latch". Both are needed -- neither alone spans the whole window
-                // from drop-accepted to the reorder Task's own `defer` clearing the flag
-                // (`dispatchSectionReorder`, ContentView+SectionManagement.swift).
-                if !structuralUndoController.isPerforming && !editorState.sectionDropInFlight {
-                    editorState.contentState = .idle
-                }
+                handleSectionDragEnded()
             },
             onDuplicateSection: { sectionId in
                 duplicateSectionFromSidebar(sectionId)
@@ -496,6 +451,34 @@ struct ContentView: View {
                 deleteSectionFromSidebar(sectionId)
             }
         )
+    }
+}
+
+extension ContentView {
+    /// A sidebar card drag began (t-0b70d1e9). Only the debounced section sync is cancelled (cheap, idempotent, no ordering hazard).
+    /// `contentState` is deliberately NOT touched: the drag-time state it used to set (a `contentState` case, now removed) bumped
+    /// `contentGeneration`, which discards a batch a routine poll had already fetched (finding M1: type, then drag at once, and the
+    /// typing is lost), and the editor-first reorder it precedes needs no such state. Testable on its own: after it, `contentState`
+    /// is still `.idle` and `contentGeneration` unchanged.
+    func handleSectionDragStarted() {
+        sectionSyncService.cancelPendingSync()
+    }
+
+    /// A sidebar card drag ended (t-0b70d1e9, G11): dropped on a target, or abandoned. It is reached from the drag SOURCE's own completion
+    /// (`DraggableCardView.draggingSession(_:endedAt:operation:)`), which fires for every drag; the reorder itself runs later, from the
+    /// drop TARGET's async completion (`dispatchSectionReorder`). The guarded `.idle` write that used to sit here (MF-2) went with
+    /// the drag-time state. What it does now is give back what `handleSectionDragStarted` took: the debounced section sync is re-armed, so an
+    /// abandoned drag does not leave the section table without the sync the user's last typing had scheduled. When a reorder does
+    /// follow, the move's own content change replaces this debounce (and the old sequence and the settle sync again), so it is harmless.
+    func handleSectionDragEnded() {
+        rearmSectionSync()
+    }
+
+    /// Schedules the debounced section sync again for the editor's current text (`SectionSyncService.contentChanged`, which does nothing
+    /// when that text is what was last synced). Called when a drag ends and by every drop exit that runs no reorder (a no-op, a failed
+    /// plan, an unchanged order), because `handleSectionDragStarted` cancelled the one that was pending.
+    func rearmSectionSync() {
+        sectionSyncService.contentChanged(editorState.content, zoomedIds: editorState.zoomedSectionIds)
     }
 }
 

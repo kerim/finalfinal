@@ -174,6 +174,7 @@ import { cancelAnnotationEditFromLadder, isAnnotationEditPopupOpen } from './ann
 import { insertEquation, insertEquationDialog } from './api-math';
 import { deleteSectionEditorFirst } from './api-section-delete';
 import { duplicateSectionEditorFirst, redoSectionDuplicateEditorFirst } from './api-section-duplicate';
+import { reorderSectionsEditorFirst } from './api-section-reorder';
 import {
   quickUndoLiveDiffersFromRestored,
   redoSectionDeleteEditorFirst,
@@ -777,6 +778,8 @@ window.FinalFinal = {
   // `undoSectionDeleteEditorFirst` below (the generic checkpoint swap; its reply names the leaders it removed in `removedLeaderIds`).
   duplicateSectionEditorFirst,
   redoSectionDuplicateEditorFirst,
+  // Phase 4b, reorder job (api-section-reorder.ts): editor-first section reorder, one range move in one synchronous JavaScript turn.
+  reorderSectionsEditorFirst,
   // Phase 4b slice 2, round 2c (api-structural-replace.ts): the editor-first Version History restores (whole document, flat section,
   // insert after an anchor) and the quick redo. The quick UNDO of any of them is `undoSectionDeleteEditorFirst` below.
   replaceRangeEditorFirst,

@@ -101,6 +101,17 @@ export interface UndoRegistryEntry {
   confirmLog?: Array<[string, string]>;
   /** The temp ids still in `idMap` that no confirmation has been logged for yet (what the listener looks for). */
   tempIds?: Set<string>;
+  /** Set by the editor-first section reorder (api-section-reorder.ts) once it has finished. While this entry is the newest and not
+   * undone, the automatic footnote renumber that follows the move is NOT a text-undo step (footnote-plugin.ts `renumberFootnotes`
+   * reads `newestEntryAbsorbsFootnoteRenumber`): the saved copy absorbs it (`advanceRegistryEntries`, the rebase), exactly as it
+   * does the Notes rebuild. A moved chapter's renumber is a permutation of the labels; taken back as text on its own it leaves the
+   * moved order with the old numbers while the rebuilt Notes keep the new ones, so every label is defined twice and Cmd-Z can
+   * never reach the structural undo again. */
+  absorbsFootnoteRenumber?: boolean;
+  /** True from the structural undo (`captureRedoCheckpoint`) until the structural redo swaps the document back in. While it holds,
+   * the live document is the one BEFORE the operation and a renumber that lands is that document's own, so the entry does not
+   * absorb it. `redoCheckpoint` is not the switch: it stays set after the redo, where redo routing reads it. */
+  undone?: boolean;
 }
 
 /** Swift-pushed pointer to the top of each stack (see docs/architecture/unified-undo.md's
@@ -193,6 +204,35 @@ export function getRegistry(): Map<string, UndoRegistryEntry> {
 }
 export function setRegistryEntry(opId: string, entry: UndoRegistryEntry): void {
   registry.set(opId, entry);
+}
+
+/** The editor-first reorder says its entry takes in the footnote renumber that follows it (see `absorbsFootnoteRenumber`). */
+export function markFootnoteRenumberAbsorbed(opId: string): void {
+  const entry = registry.get(opId);
+  if (entry) registry.set(opId, { ...entry, absorbsFootnoteRenumber: true });
+}
+
+/** The labels of the footnote references of `doc`, in document order. */
+function footnoteReferenceLabels(doc: Node): string[] {
+  const labels: string[] = [];
+  doc.descendants((node) => {
+    if (node.type.name === 'footnote_ref') labels.push(String(node.attrs.label));
+  });
+  return labels;
+}
+
+/** True when the newest registry entry is one that takes in the footnote renumber, is not undone, and the live document `liveDoc`
+ * still reads the same reference labels in the same order as that entry's saved copy (no reference added, removed or moved since):
+ * the renumber is then an automatic rewrite of the saved copy, not a step of the user's text history. A footnote added or a
+ * footnoted paragraph cut and pasted since keeps its renumber as a text step. "Newest" is the same entry `advanceRegistryEntries`
+ * rebases onto. */
+export function newestEntryAbsorbsFootnoteRenumber(liveDoc: Node): boolean {
+  let newest: UndoRegistryEntry | undefined;
+  for (const entry of registry.values()) newest = entry;
+  if (newest?.absorbsFootnoteRenumber !== true || newest.midOp === true || newest.undone === true) return false;
+  const live = footnoteReferenceLabels(liveDoc);
+  const saved = footnoteReferenceLabels(newest.postOpDoc);
+  return live.length === saved.length && live.every((label, index) => label === saved[index]);
 }
 export function deleteRegistryEntry(opId: string): void {
   registry.delete(opId);
@@ -1069,7 +1109,7 @@ export function runUndoTrackedDispatch(
 function captureRedoCheckpoint(opId: string, view: EditorView): void {
   const entry = registry.get(opId);
   if (!entry) return;
-  registry.set(opId, { ...entry, redoCheckpoint: view.state });
+  registry.set(opId, { ...entry, redoCheckpoint: view.state, undone: true });
 }
 
 /**
@@ -1113,7 +1153,7 @@ export function performStructuralSwap(opId: string, direction: 'undo' | 'redo'):
     // Anchor the entry's undo target to the document that is live now, so exact equality holds again
     // and the next automatic rewrite is absorbed by the chain, instead of leaving every later Cmd-Z
     // dependent on the fallback comparison.
-    registry.set(opId, { ...entry, postOpDoc: view.state.doc });
+    registry.set(opId, { ...entry, postOpDoc: view.state.doc, undone: false });
   }
   rebindCurrentStateFromView(view);
   clearBlockIds();

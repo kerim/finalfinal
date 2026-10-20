@@ -423,6 +423,7 @@ extension StructuralUndoController {
             await putBackAfterFailedEditorFirstOp(kind: kind, opId: opId, removedLeaders: removedLeaders)
             return
         }
+        await settleReorderOverlay(kind: kind, editorState: editorState, opId: opId)
         // Not when a quick redo has queued a newer job for the entry: it has put the leaders back into the filter and its own settle
         // takes them out. And, for a kind that shows an overlay, not when a quick undo or redo has taken the entry since the job was
         // started (the epoch moved): the sidebar then belongs to that operation (a restore's quick undo shows the PREVIOUS document's
@@ -467,6 +468,29 @@ extension StructuralUndoController {
             restoreGeneration = generation
         }
         await resyncAfterEditorFirstDelete(editorState: editorState, opId: opId, epoch: epoch, restoreGeneration: restoreGeneration)
+    }
+
+    /// The first step of `editorFirstJobSettled` that only a reorder takes (t-0b70d1e9); nothing for any other kind.
+    ///
+    /// The job has renumbered the rows, so an outline read that follows its commit shows the new order by itself and the reorder overlay
+    /// (`pendingReorder`) is no longer needed. It is lifted for THIS operation's id only (a newer reorder, or a slow undo, that has taken
+    /// the slot keeps its own), and UNCONDITIONALLY: whatever the entry's epoch, latest job or discard state, nobody else will lift it (the
+    /// hierarchy check waits for it for ever). Called before the `replacesDocumentText` block of the settle, whose early return must not
+    /// skip it. The read lands BEFORE the lift so no result computed meanwhile shows the old order; the refresh after it is the one the
+    /// settle's resyncs expect.
+    private func settleReorderOverlay(kind: EditorFirstOpKind, editorState: EditorViewState, opId: UUID) async {
+        guard kind == .sectionReorder else { return }
+        await editorState.refreshSectionsAwaiting()
+        editorState.liftPendingReorder(opId: opId)
+        editorState.refreshSections()
+        // The footnote resync that follows in the settle must not be skipped as "already done". A move changes the ORDER of the
+        // references in the text but not which labels there are: the renumber the resync would make ends in 1..N, the same list
+        // the footnote service last committed, so `performFootnoteUpdate` returned at its `contentHash != lastRenumberedHash` guard
+        // (FootnoteSyncService.swift, "perform returned early: lastRenumberedHash guard" in the app log) and neither the references
+        // (10..18, 1..9, ...) nor the Notes were renumbered, for good. A delete or a duplicate changes the label list, so the hash
+        // differs and they never met this. Only the footnote hash is forgotten: the move rewrites no Notes or Bibliography rows, and
+        // the bibliography's own guard (the generated content) already differs when the citation order matters to the style.
+        footnoteSyncService?.forgetCommittedNotesState()
     }
 
     /// Plan D2.4: bibliography and footnote resyncs, section sync, annotation sync and a sidebar refresh, queued one after the

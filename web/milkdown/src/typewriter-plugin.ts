@@ -204,6 +204,9 @@ export function createTypewriterPlugin(): Plugin<TypewriterPluginState> {
         // The app-origin flag window. `state.apply` runs synchronously inside the same
         // `dispatch` the flag was raised for, so this cannot cover a later transaction.
         if (getIsSettingContent()) return IDLE;
+        // A section reorder moves text the user is not typing at; the caret keeps its screen position by the reorder's own restore
+        // (api-section-reorder.ts), so a glide here would only move the page.
+        if (tr.getMeta('structuralReorder')) return IDLE;
         return {
           docChanged: true,
           reason: classifyTypewriterReason(tr, oldState, newState),

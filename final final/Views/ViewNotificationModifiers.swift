@@ -570,7 +570,7 @@ extension View {
             editorState.holdModeToggleUntilStructuralWorkEnds()
             return
         default:
-            break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .dragReorder, .hierarchyEnforcement
+            break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .hierarchyEnforcement
         }
         // Handle cursor position restoration during mode switch
         if let position = notification.userInfo?["position"] as? CursorPosition {

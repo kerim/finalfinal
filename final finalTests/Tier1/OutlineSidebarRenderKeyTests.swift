@@ -112,7 +112,6 @@ struct OutlineSidebarRenderKeyTests {
             canZoomOut: canZoomOut,
             onDragStarted: nil,
             onDragEnded: nil,
-            sectionDropInFlight: .constant(false),
             onDuplicateSection: nil,
             onDeleteSection: onDeleteSection
         )

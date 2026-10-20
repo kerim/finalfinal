@@ -46,7 +46,9 @@ extension ProjectDatabase {
         let oldType = block.blockType
         let oldWC = block.wordCount
         block.blockType = editorType
-        block.recalculateWordCount()
+        // From the row's markdown (the same update's fragment was applied just before this call), so a citation keeps its two words
+        // (t-0b70d1e9); a code block still counts zero.
+        block.recalculateWordCount(fromMarkdown: block.markdownFragment)
         DebugLog.log(.data, "[Database+Blocks] editor type \(oldType.rawValue)→\(editorType.rawValue) block=\(block.id.prefix(8))")
         logWordCountChange(block: block, oldWordCount: oldWC, tag: "→\(editorType.rawValue)")
     }

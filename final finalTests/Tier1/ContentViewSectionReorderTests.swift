@@ -119,16 +119,16 @@ struct ContentViewSectionReorderTests {
     @Test("MF-4: dispatchSectionReorder is a true no-op when the target order matches the current order")
     func dispatchSectionReorderNoOpDoesNotDispatch() async throws {
         let fixture = try makeFixture()
-        fixture.view.editorState.contentState = .dragReorder
-        fixture.view.editorState.sectionDropInFlight = true
+        // t-0b70d1e9: a drag no longer sets `contentState` (the drag-time state and `sectionDropInFlight` are gone), so the no-op path has
+        // nothing to reset: the state is idle before and must still be idle after.
+        #expect(fixture.view.editorState.contentState == .idle)
 
         let current = fixture.view.editorState.sections
         let request = try makeRequest(sections: current, moveTitle: "Methodology", afterTitle: "Methodology")
         // Identical array (drop back where it started) -- must short-circuit synchronously.
         fixture.view.dispatchSectionReorder(sections: current, request: request)
 
-        #expect(!fixture.view.editorState.sectionDropInFlight, "the no-op path must release ownership of the drop-in-flight flag")
-        #expect(fixture.view.editorState.contentState == .idle, "the no-op path must return contentState to idle -- nothing else will")
+        #expect(fixture.view.editorState.contentState == .idle, "the no-op path must leave contentState idle")
         #expect(fixture.view.unifiedUndoService.undoStack.isEmpty, "a no-op reorder must not mint a snapshot or undo entry")
     }
 

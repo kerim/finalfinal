@@ -18,6 +18,7 @@ import { dispatchDerivedCorrection } from './redo-branch';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import { withSettingContent } from './typewriter-plugin';
+import { newestEntryAbsorbsFootnoteRenumber } from './undo-coordinator';
 
 // === Footnote Definitions State ===
 // Module-level map of label → definition text, populated by FootnoteSyncService via setFootnoteDefinitions()
@@ -914,6 +915,22 @@ export function focusFootnoteDefinition(label: string, blockId?: string): void {
   scrollToFootnoteDefinition(label);
 }
 
+/** True when `mapping` only hands the labels the references carry to one another: the references hold exactly the same labels
+ * afterwards, in another order. That is what a moved section does to the footnote numbers. */
+function permutesReferenceLabels(doc: Node, mapping: Record<string, string>): boolean {
+  const before: string[] = [];
+  const after: string[] = [];
+  doc.descendants((node: Node) => {
+    if (node.type.name !== 'footnote_ref') return;
+    const label = String(node.attrs.label);
+    before.push(label);
+    after.push(mapping[label] || label);
+  });
+  before.sort();
+  after.sort();
+  return before.every((label, index) => label === after[index]);
+}
+
 /**
  * Renumber footnote references in the document using a mapping of old → new labels.
  * Uses targeted ProseMirror transaction (setNodeMarkup) to preserve cursor position.
@@ -949,7 +966,7 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     // `derivedCorrection` (Phase 4b, Fault B): the renumber is an automatic rewrite, not typing.
     // Untagged, the undo coordinator counted it as a real user edit, so after a section delete it
     // moved the document away from the saved post-operation copy for good and Cmd-Z was refused.
-    // Deliberately NOT addToHistory:false -- the renumber stays its own text-undo step (the
+    // Normally NOT addToHistory:false (one exception below) -- the renumber stays its own text-undo step (the
     // footnote undo-checkpoint design relies on "undo the renumber" being a separate Cmd-Z).
     //
     // History boundary on BOTH sides, and the redo branch kept across the recorded step (the editor would otherwise lose
@@ -957,8 +974,21 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     // boundary matters here as it does for api-content.ts's overlapping heading-level corrections: the one Cmd-Z that should
     // take back only the typing must not take back the renumber with it (and the section's saved copy, which absorbed the
     // renumber, would then no longer match the document).
+    //
+    // The one exception: right after an editor-first section reorder (its entry says so, `newestEntryAbsorbsFootnoteRenumber`, which
+    // also requires that no reference has been added, removed or moved since the entry's saved copy) and only while the renumber
+    // merely PERMUTES the labels the references already carry (a moved chapter's footnotes are read in a new order; a footnote added
+    // or removed since changes the set of labels and keeps its own undo step). Its own Cmd-Z step would put
+    // the old numbers back on the references while the Notes rebuild keeps the new ones, which defines every label twice, so Cmd-Z
+    // could never reach the structural undo again (and the moved order would stand with the old footnote numbers). There the
+    // renumber is an automatic rewrite like the Notes rebuild: no history step, and the saved copy takes it in (undo-coordinator.ts
+    // `advanceRegistryEntries`).
     withSettingContent(() => {
-      dispatchDerivedCorrection(view, tr);
+      if (newestEntryAbsorbsFootnoteRenumber(view.state.doc) && permutesReferenceLabels(view.state.doc, mapping)) {
+        view.dispatch(tr.setMeta('derivedCorrection', true).setMeta('addToHistory', false));
+      } else {
+        dispatchDerivedCorrection(view, tr);
+      }
     });
   }
 

@@ -132,9 +132,10 @@ extension LifecycleFlushSequenceTests {
 
     @Test("""
         X1 (code review): a paragraph holding a citation and a footnote reference, edited as plain text, does NOT close \
-        `.unchanged`. The per-edit path stores ProseMirror's textContent (inline atoms contribute no text), so skipping \
-        FB would leave a LOWER word count than FB's re-derived text; FB runs instead and the stored textContent and \
-        wordCount become what FB derives (the citation counted, as at HEAD)
+        `.unchanged`. The per-edit path stores ProseMirror's textContent (inline atoms contribute no text), which differs \
+        from the text FB re-derives, so skipping FB would leave a different stored textContent; FB runs instead and the \
+        stored textContent becomes what FB derives (the citation kept). Since t-0b70d1e9 the per-edit update counts its \
+        words from its markdown fragment, so the word count is already the full one before FB runs and FB keeps it
         """)
     func editedParagraphWithCitationAndFootnoteRef_rebuildsAndKeepsTheFullWordCount() async throws {
         let key = "fbtextkey2026"
@@ -158,7 +159,11 @@ extension LifecycleFlushSequenceTests {
             BlockParser.parse(markdown: content, projectId: rig.pid).first { $0.markdownFragment == editedFragment },
             "precondition: FB's parse has the edited paragraph")
         #expect(derived.textContent != stored.textContent, "precondition: FB's text keeps the citation, the editor's does not")
-        #expect(derived.wordCount > stored.wordCount, "precondition: the per-edit count is lower (\(stored.wordCount) vs \(derived.wordCount))")
+        // t-0b70d1e9: the per-edit update carries its fragment and is counted from it, so its count already equals FB's (it used to be
+        // LOWER, two words per citation). What still forces FB to write is the differing textContent, asserted just above.
+        #expect(
+            derived.wordCount == stored.wordCount,
+            "precondition: the per-edit count comes from the fragment, citation included (\(stored.wordCount) vs \(derived.wordCount))")
         primeCheck(rig, fetch: content)
         rig.editorState.content = content
         let epochBefore = try epoch(rig)
@@ -169,7 +174,7 @@ extension LifecycleFlushSequenceTests {
         #expect(try epoch(rig) == epochBefore + 1)
         let after = try #require(try rig.blocks().first { $0.markdownFragment == editedFragment })
         #expect(after.textContent == derived.textContent, "the stored text is what FB derives, citation included")
-        #expect(after.wordCount == derived.wordCount, "so the word count is today's, not the lower per-edit one")
+        #expect(after.wordCount == derived.wordCount, "so the word count is the full one, FB's write kept it")
     }
 
     // MARK: - U-C4: the near-tie rule

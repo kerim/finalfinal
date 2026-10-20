@@ -92,14 +92,10 @@ extension ProjectDatabase {
             let permanentId = block.id
 
             // Within-batch dedup: skip duplicate image inserts in the same sync cycle
-            if block.blockType == .image {
-                if let src = block.imageSrc, !src.isEmpty {
-                    if let existingId = insertedImageSources[src] {
-                        idMapping[insert.tempId] = existingId
-                        DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(src)")
-                        continue
-                    }
-                }
+            if block.blockType == .image, let src = block.imageSrc, !src.isEmpty, let existingId = insertedImageSources[src] {
+                idMapping[insert.tempId] = existingId
+                DebugLog.log(.data, "[Blocks] Skipped duplicate image insert: \(src)")
+                continue
             }
 
             if wasReanchored { reanchored.append(insert.tempId) }
@@ -405,7 +401,9 @@ extension ProjectDatabase {
             // outline sidebar despite being correctly typed as .sectionBreak.
             isPseudoSection: blockType == .sectionBreak
         )
-        block.recalculateWordCount()
+        // From the insert's markdown, not its editor `textContent` (which leaves out citations; t-0b70d1e9). A heading's `textContent` was
+        // derived from the markdown above anyway, so the count agrees with the importer's.
+        block.recalculateWordCount(fromMarkdown: insert.markdownFragment)
 
         // isBibliography: containment resolved by the caller (resolveInsertPlacement) OR'd
         // with the independent case of the inserted fragment itself carrying the

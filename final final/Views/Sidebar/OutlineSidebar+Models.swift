@@ -144,13 +144,7 @@ struct SectionLevelInfo: Sendable {
 ///    own bindings, the empty-state branch, `isZoomed:` per card, ...), so a change to any one of
 ///    them can change what `body` would produce.
 ///
-/// NOT folded in, deliberately: `OutlineSidebar`'s EIGHTH `@Binding`, `sectionDropInFlight`, is
-/// never read inside `body` -- it is only ever forwarded downstream as `$sectionDropInFlight` to
-/// the drop delegates (`SectionDropDelegate`/`EndDropDelegate`). A `Binding`'s get/set closures
-/// stay live against their true underlying storage regardless of whether `OutlineSidebar.body`
-/// re-runs, so a drop delegate built in an earlier body pass keeps reading/writing the CURRENT
-/// value even while `body` is being skipped -- there is nothing here for a skipped `body` to make
-/// stale. Also not folded in: the two NON-optional closures, `onScrollToSection` and
+/// NOT folded in, deliberately: the two NON-optional closures, `onScrollToSection` and
 /// `onSectionUpdated` (compare `DraggableCardView`'s own doc comment, same file family, which
 /// enumerates every closure IT carries for the identical reason) -- closures aren't `Equatable`
 /// at all, and every closure `OutlineSidebar` holds captures only reference-backed `@State`/
@@ -162,9 +156,10 @@ struct SectionLevelInfo: Sendable {
 /// INSIDE `body` (a `.wrappedValue` read, not just forwarded onward as `$x`) must ALSO be added
 /// here -- both as a stored field and as a constructor parameter folded into the comparison -- or
 /// its updates will silently stop reaching the sidebar the moment `ContentView`'s `.equatable()`
-/// call decides nothing changed. A binding only ever forwarded downstream as `$x` (like
-/// `sectionDropInFlight` above) does not need to be added. There is no compiler check for this
-/// distinction; it is purely a discipline this doc comment exists to name.
+/// call decides nothing changed. A binding only ever forwarded downstream as `$x` does not need
+/// to be added (a `Binding`'s get/set closures stay live against their true storage whether or
+/// not `body` re-runs). There is no compiler check for this distinction; it is purely a
+/// discipline this doc comment exists to name.
 ///
 /// EXPLICIT INVARIANT: excluding `title`/`wordCount` here (via `renderSignature`'s own
 /// exclusions) is safe ONLY because `SectionCardView`, `FilteredWordCountLabel`, and

@@ -19,8 +19,13 @@ extension ContentView {
     /// overlay is set, the reinsert is still pending, or the sidebar update is still waiting for the editor's paint): `sections` is
     /// then partly overlay or not yet updated, and enforcement -- which writes the database and drops the redo branch -- must not act
     /// on it. The reinsert's settle refreshes the sections once the rows are back.
+    ///
+    /// t-0b70d1e9: also while an editor-first reorder's order is still being shown ahead of its job (`pendingReorder`): `sections` is
+    /// then the planned order, which the plan already enforced, and the database still holds the old order -- enforcement writing
+    /// heading levels against it would act on a mixture. The job's settle lifts the overlay and refreshes the sections.
     static func hierarchyEnforcementWaitsForQuickUndo(_ editorState: EditorViewState) -> Bool {
         !editorState.pendingRestoreSections.isEmpty || editorState.pendingReinsertCount > 0 || editorState.pendingSidebarRestoreCount > 0
+            || editorState.pendingReorder != nil
     }
 
     /// Static version for use in closures

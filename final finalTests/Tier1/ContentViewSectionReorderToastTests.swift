@@ -143,55 +143,55 @@ extension ContentViewSectionReorderTests {
     /// Regression test (review round): a retry that dies at `SectionReorderPlanner.plan() ==
     /// .failed` -- e.g. the stashed request has become genuinely invalid by the time the retry
     /// re-validates it against the live `editorState.sections` -- must still reset
-    /// `sectionReorderRetryAttempted` and release `sectionDropInFlight`, exactly like the
+    /// `sectionReorderRetryAttempted`, exactly like the
     /// `.performed`/give-up/`.failedAfterCommit` terminal outcomes in `dispatchSectionReorder`
-    /// already do. Before the fix, `reorderSection`'s `plan() == nil` guard left both untouched:
-    /// `sectionDropInFlight` stayed stuck `true` forever (permanently blocking
-    /// `ContentView.onDragEnded` and the block-sync poll it re-arms), and
+    /// already do. Before the fix, `reorderSection`'s `plan() == nil` guard left it (and the
+    /// since-removed `sectionDropInFlight` flag) untouched:
     /// `sectionReorderRetryAttempted` stayed stuck `true`, silently poisoning the NEXT,
     /// completely unrelated drag's first (and only) refusal into being misread as a SECOND
     /// consecutive strike -- firing the bail-out toast immediately instead of retrying it
     /// silently the way a genuine first refusal should.
     ///
-    /// Uses a self-parent request (`newParentId == sectionId`) to force `.failed`, NOT a
-    /// self-drop (`targetSectionId == sectionId`) as this test originally did -- a self-drop is
-    /// `.noOp` (acceptance-round fix: it must NOT toast, see
-    /// `SectionReorderPlannerTests.planRejectsSelfDropNoOp`), so it can no longer stand in for
-    /// "plan() produced a non-plan outcome" here; only a genuine `.failed` still should.
+    /// The retry is made to die at `.failed` the way it does in real use: the dragged section is
+    /// gone from the sidebar list by the time the stashed request is re-validated
+    /// (`plan()`'s "section not found"). Originally this test forced `.failed` with a self-parent
+    /// request (`newParentId == sectionId`) passed straight to `dispatchSectionReorder`, which
+    /// ignored the request on the first attempt. Since t-0b70d1e9 the controller plans AGAIN
+    /// from the request under its gate, so such a request is rejected on the FIRST attempt,
+    /// before `beginStructuralOp` is ever reached (a request that plans to `.failed` while a
+    /// `.plan` was handed over cannot occur through `reorderSection`, which plans first), and
+    /// the begin count this test makes would be 0. (A self-drop, `targetSectionId == sectionId`,
+    /// is `.noOp`, not `.failed`, so it cannot stand in either -- see
+    /// `SectionReorderPlannerTests.planRejectsSelfDropNoOp`.)
     @Test("A retry that dies at plan()==.failed resets state so a later drag's first refusal isn't misread as a second strike")
     func retryDyingAtPlanFailedDoesNotPoisonNextDrag() async throws {
         let fixture = try makeFixture()
         let isolatedToastCenter = ToastCenter()
         fixture.view.editorState.toastCenter = isolatedToastCenter
 
+        let before = fixture.view.editorState.sections
+        let swapped = try swapSections(before, "Methodology", "Results and Discussion")
+        let moved = try #require(before.first { $0.title == "Methodology" })
+        let request = try makeRequest(sections: before, moveTitle: "Methodology", afterTitle: "Results and Discussion")
+
         // First drag: refuse only the first attempt, forcing dispatchSectionReorder's
         // .refused branch to stash `request` and its defer to retry via reorderSection(_:).
+        // At that same moment the dragged section disappears from the sidebar list, so the
+        // STASHED request has become genuinely invalid by the time the retry re-validates it
+        // through reorderSection -> plan(), which answers `.failed` ("section not found") --
+        // precisely the case this test needs the retry to die at. The first attempt itself
+        // still plans fine and reaches `beginStructuralOp` (count 1).
         var firstDragBeginCount = 0
         fixture.view.structuralUndoController.testEvalBoolOverride = { js in
             if js.contains("beginStructuralOp") {
                 firstDragBeginCount += 1
                 if firstDragBeginCount == 1 {
+                    fixture.view.editorState.sections.removeAll { $0.id == moved.id }
                     return false
                 }
             }
             return StructuralUndoControllerTests.realisticEvalBoolDefault(js)
         }
-
-        let before = fixture.view.editorState.sections
-        let swapped = try swapSections(before, "Methodology", "Results and Discussion")
-        // A self-parent request (newParentId == sectionId): dispatchSectionReorder itself
-        // never calls SectionReorderPlanner.plan (it's invoked directly here with a
-        // pre-computed `sections`, matching every other test above), but the STASHED retry
-        // re-validates this exact request through reorderSection -> plan(), which rejects
-        // `newParentId == sectionId` with `.failed` -- precisely the case this test needs the
-        // retry to die at. (A self-drop, sectionId == targetSectionId, would land on `.noOp`
-        // instead -- benign, and must not toast -- so it can't be used here anymore.)
-        let moved = try #require(before.first { $0.title == "Methodology" })
-        let target = try #require(before.first { $0.title == "Results and Discussion" })
-        let request = SectionReorderRequest(
-            sectionId: moved.id, targetSectionId: target.id,
-            newLevel: moved.headerLevel, newParentId: moved.id
-        )
 
         fixture.view.dispatchSectionReorder(sections: swapped, request: request)
 
@@ -209,11 +209,12 @@ extension ContentViewSectionReorderTests {
         #expect(firstToastShown, "the retry dying at plan()==.failed is itself a genuine bail-out and must toast")
         #expect(firstDragBeginCount == 1, "plan()==.failed must die before ever reaching a second performSectionReorder dispatch")
         #expect(!fixture.view.editorState.sectionReorderRetryAttempted, "the retry flag must be reset even when the retry dies at plan()==.failed")
-        #expect(!fixture.view.editorState.sectionDropInFlight, "sectionDropInFlight must be released even when the retry dies at plan()==.failed")
 
         // Clear the first drag's own (correct) toast so it can't be mistaken for the second
-        // drag's toast below.
+        // drag's toast below, and put the section back: the second drag is "completely
+        // unrelated" and starts from the full list.
         isolatedToastCenter.dismissCurrent()
+        fixture.view.editorState.sections = before
 
         // Second, completely unrelated drag: refuse only its first attempt too. If the fix
         // above didn't reset sectionReorderRetryAttempted, this drag's first refusal would be
