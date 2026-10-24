@@ -105,6 +105,9 @@ final class MarkdownBlockWriter {
     private var lastApply: (token: Int, landed: Bool)?
     /// The last `[MdWrite]` timing line this writer produced (tests read it here; the e2e reads the log).
     private(set) var lastTimingLine: String?
+    /// t-4a8fd8af: the structural hold (count, held refire, waiters). Its type, its API and every write to it live in
+    /// MarkdownBlockWriter+StructuralHold.swift; it is a stored property here only because an extension cannot add one.
+    var structuralHoldState = StructuralHoldState()
 
     /// True when the UI-test flag `FF_UI_TESTING_MD_LEGACY_REPARSE` is set: every new piece is off.
     var isLegacyReparse: Bool
@@ -140,6 +143,16 @@ final class MarkdownBlockWriter {
         version += 1
     }
 
+    /// t-4a8fd8af (plan A.3): a structural job (Delete Section, ...) was queued after the click's typing batch was reserved.
+    /// The job changes the rows behind the batch, so the baseline goes back to `.rows` and the version moves: the batch's
+    /// completion (`version == versionAtReservation` fails) then leaves the baseline on `.rows` instead of installing a
+    /// `.text` baseline that names rows the job deleted.
+    func noteQueuedStructuralJob() {
+        guard isEnabled else { return }
+        baseline = .rows
+        version += 1
+    }
+
     /// The editor state is being reset (project switch or close), the editor mode changed, or a zoom started: nothing
     /// about the old document describes the new one. An in-flight write is NOT cancelled (a reserved sequence must
     /// settle); its completion sees the new version and leaves the baseline alone.
@@ -149,6 +162,7 @@ final class MarkdownBlockWriter {
         baseline = .rows
         consecutiveFailures = 0
         version += 1
+        structuralHoldState.pullOwed = false   // a pull owed to the old document must not act on the new one (O29)
     }
 
     // MARK: - Dispositions
@@ -171,6 +185,9 @@ final class MarkdownBlockWriter {
         case refused(MarkdownRefusal)
         /// The rows could not be read: rows mode, a retry is scheduled.
         case unreadable
+        /// Debounce fire only (t-4a8fd8af): a structural command's hold is up, so nothing was reserved and the fire's `refire`
+        /// closure was stored; releasing the hold (or `requestRefire()`) runs it. See MarkdownBlockWriter+StructuralHold.swift.
+        case heldForStructuralWork
     }
 
     /// What `writeNow` did, for the bibliography flush hook.
@@ -225,18 +242,23 @@ final class MarkdownBlockWriter {
     /// typing is still saved (judge R1, R2). A skip caused by a lifecycle drain therefore never writes directly. When no
     /// turn could be reserved at all (no writer, another project's writer, an unreadable epoch or rows, the open-fence
     /// guard) the guards held in the same main-actor turn, so the answer is `.fallBackToDirectWrite` at once.
+    ///
+    /// t-4a8fd8af (O22): while a structural command's hold is up (`isHeldForStructuralWork`) `writeNow` WAITS for the release
+    /// BEFORE it reserves anything, so it is never `inFlight` while it waits (step 8's `while let inFlight` loop-await would
+    /// otherwise deadlock on it) and it diffs against the rows the job left. `bypassingStructuralHold` is for the click's OWN
+    /// mismatch flush (plan B1), which runs while its own hold is up and before its job is reserved.
     func writeNow(
         overrideContent: String?,
         editorState: EditorViewState,
+        bypassingStructuralHold: Bool = false,
         guardsHold: @MainActor () -> Bool,
         refire: @escaping @MainActor () -> Void
     ) async -> WriteNowOutcome {
         // `flushContentToDatabase` cancels the pending debounce first; so does this.
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseTask = nil
-        while let pending = inFlight {
-            await pending.value
-        }
+        // Wait first (the hold, then the write in flight), then reserve; nothing suspends between the last check and `prepare`.
+        await awaitQuietWriter(bypassingStructuralHold: bypassingStructuralHold)
         // M5: the await above can span a lifecycle arming, a mode change, a zoom or a project switch.
         guard guardsHold() else {
             DebugLog.log(.lifecycle, "[MdWrite] writeNow: a guard failed after waiting for the write in flight; nothing written")
@@ -270,6 +292,10 @@ final class MarkdownBlockWriter {
         case .guardTripped, .noWriter, .refused, .unreadable:
             // Nothing was reserved or written, and every guard held in this same main-actor turn (`prepare` is synchronous).
             return .fallBackToDirectWrite
+        case .heldForStructuralWork:
+            // Not reachable: only a debounce fire is held, and the loop above ended with the hold down in this same turn.
+            refire()
+            return .abandoned
         }
     }
 
@@ -289,12 +315,17 @@ final class MarkdownBlockWriter {
 
 extension MarkdownBlockWriter {
 
-    fileprivate enum Trigger {
+    /// Internal (not fileprivate) so MarkdownBlockWriter+StructuralHold.swift can start the two bypass triggers through `prepare`.
+    enum Trigger {
         case debounceFire
         case writeNow
+        /// t-4a8fd8af: the structural click's typing batch (the text up to the click). Ignores the hold; never a whole-document write.
+        case structuralClick
+        /// t-4a8fd8af: step 8's post-apply flush of the live text. Ignores the hold; never a whole-document write.
+        case structuralFlush
     }
 
-    fileprivate struct Context {
+    struct Context {
         let trigger: Trigger
         let text: String
         let database: ProjectDatabase
@@ -325,9 +356,16 @@ extension MarkdownBlockWriter {
         var line: TimingLine
     }
 
-    fileprivate func prepare(_ context: Context) -> Disposition {
+    func prepare(_ context: Context) -> Disposition {
         let clock = ContinuousClock()
         let start = clock.now
+
+        // t-4a8fd8af: a debounce fire never reserves a diff while a structural command is unapplied (plan B4); it keeps its
+        // `refire` and the release runs it. `writeNow` waited for the hold before it got here; the structural triggers bypass it.
+        if context.trigger == .debounceFire, isHeldForStructuralWork {
+            holdFire(context.refire)
+            return .heldForStructuralWork
+        }
 
         guard let writer = context.service.writer else {
             DebugLog.log(.lifecycle, "[MdWrite] no writer: today's whole-document write")
@@ -428,7 +466,8 @@ extension MarkdownBlockWriter {
         }
         guard !baselineEndsOpen else { return (newEndsOpen, nil) }
         switch context.trigger {
-        case .debounceFire:
+        case .debounceFire, .structuralClick, .structuralFlush:
+            // The two structural triggers reserve nothing here either (A17): the post-apply save writes the typing.
             DebugLog.log(.lifecycle, "[MdWrite] skipped: text ends inside an open code fence or $$ block")
             return (newEndsOpen, .skippedOpenFence)
         case .writeNow:

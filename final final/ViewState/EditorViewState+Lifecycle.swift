@@ -559,8 +559,7 @@ extension EditorViewState {
 
     // MARK: Step 1
 
-    /// How many Cmd-Z / Cmd-Shift-Z presses the Rich Text editor holds in its own queue (0 in Markdown, with no web view, or when the
-    /// editor does not answer).
+    /// How many Cmd-Z / Cmd-Shift-Z presses the editor holds in its own queue (0 with no web view or when the editor does not answer).
     ///
     /// Asked ONLY while the structural gate is busy (fix round 5, after the first full run). The editor holds a press only while an
     /// earlier undo or redo request of ITS OWN is in flight (its latch), and a request is on the gate from the moment Swift takes it
@@ -569,9 +568,11 @@ extension EditorViewState {
     /// assumption the model makes (README, "Cmd-Z, Cmd-Z, Cmd-W"). This also keeps the save sequence's obligation N24 intact on every
     /// ordinary close: the editor is touched only after the guard has cleared (`captureForLifecycle`), and the one earlier look,
     /// taken only when something is in flight, sets a counter and never fetches from or polls the view.
-    private func heldUndoPressCountForLifecycle(host: LifecycleHost) async -> Int {
+    func heldUndoPressCountForLifecycle(host: LifecycleHost) async -> Int {   // internal: a unit test reads the Markdown branch
         guard !structuralGate.isIdle else { return 0 }
-        guard editorMode == .wysiwyg, let webView = host.activeWebView(), let blockSync = blockSyncService else { return 0 }
+        // Both editors hold presses in their own queue now (t-4a8fd8af round 7b: the Markdown page's undo coordinator does too), and both
+        // pages answer the same `heldUndoPressCount()`; the script returns 0 for a page without the function.
+        guard let webView = host.activeWebView(), let blockSync = blockSyncService else { return 0 }
         let count = await blockSync.heldUndoPressCount(webView: webView)
         if count > 0 {
             DebugLog.log(.lifecycle, "[LifecycleFlush] the editor holds \(count) undo/redo press(es): they count as made before the barrier")

@@ -4,7 +4,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { search } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { installEscapeLadder, registerWebPopupOpenCheck, setTestEscapeReportDelayMs } from '../../shared/escape-ladder';
 import { dismissMenu as dismissSpellcheckMenu, isMenuOpen as isSpellcheckMenuOpen } from '../../shared/spellcheck-menu';
@@ -66,6 +66,7 @@ import {
   setCursorPosition,
   setFocusMode,
   setPendingCMDropPos,
+  setStructuralSettleOpId,
   setTheme,
   toggleHighlight,
 } from './api';
@@ -81,6 +82,8 @@ import {
   toggleNumberList,
   toggleStrikethrough,
 } from './api-formatting';
+import { markdownReplaceManagedRegion } from './api-managed-region';
+import { markdownStructuralEditorFirst, markdownStructuralSwap } from './api-structural-markdown';
 import { caywRemapPlugin } from './cayw-remap-plugin';
 import { updateCitationAddButton } from './citations';
 import {
@@ -126,6 +129,7 @@ import {
   clearStructuralUndoState,
   finalizeStructuralOpPostOpDoc,
   handleGlobalUndoRedoKeydown,
+  heldUndoPressCount,
   maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
   noteUserTransaction,
@@ -139,15 +143,13 @@ import './styles.css';
 // Import types.ts for declare global side-effect
 import './types';
 
-function initEditor() {
-  const container = document.getElementById('editor');
-  if (!container) {
-    console.error('[CodeMirror] #editor container not found');
-    return;
-  }
-
-  // Store extensions at module level so resetForProjectSwitch can recreate EditorState
-  const extensions = [
+/**
+ * The editor's REAL extension set, with its real update listeners (the unified-undo registry advancement, the debounced
+ * `contentChanged` and `sectionChanged` posts, ...). Each call builds a fresh set with fresh listener state. `initEditor`
+ * uses it for the mounted editor; tests that need the real wiring build it too (web/codemirror/src/__tests__/).
+ */
+export function buildExtensions(): Extension[] {
+  return [
     EditorView.exceptionSink.of((e) => {
       console.error('[CM Plugin Error]', e);
       (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
@@ -516,7 +518,17 @@ function initEditor() {
     // app-origin transaction extender that api.ts's content pushes rely on.
     ...typewriterExtension,
   ];
+}
 
+function initEditor() {
+  const container = document.getElementById('editor');
+  if (!container) {
+    console.error('[CodeMirror] #editor container not found');
+    return;
+  }
+
+  // Store extensions at module level so resetForProjectSwitch can recreate EditorState
+  const extensions = buildExtensions();
   setEditorExtensions(extensions);
 
   const state = EditorState.create({
@@ -662,9 +674,8 @@ window.FinalFinal = {
   setUndoDescriptor,
   receiveUndoOutcome,
   receiveRedoOutcome,
-  // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift. Source
-  // mode never checkpoint-swaps (degraded undo path, plan §4.4 undo step 3b), so only
-  // registry population is exposed here -- see undo-coordinator.ts's header.
+  // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift: registry population for the old body's ops. The
+  // Markdown undo swaps the recorded checkpoint in through markdownStructuralSwap (below) -- see undo-coordinator.ts's header.
   beginStructuralOp,
   finalizeStructuralOpPostOpDoc,
   // N1 (Phase B remediation plan): cancels pending CAYW/image-drop insertions at every
@@ -685,6 +696,16 @@ window.FinalFinal = {
   // clearStructuralRegistry/clearEditorHistories closures.
   clearStructuralUndoRegistry,
   clearStructuralUndoState,
+
+  // Editor-first structural commands in Markdown mode (t-4a8fd8af) -- see api-structural-markdown.ts for the JSON contract.
+  markdownStructuralEditorFirst,
+  markdownStructuralSwap,
+  // The renumber flag of a structural settle (B5): while set, `renumberFootnotes` is not a text-history step.
+  setStructuralSettleOpId,
+  // Region-scoped replace of the Notes / bibliography text (O28): see api-managed-region.ts for the JSON contract.
+  markdownReplaceManagedRegion,
+  // How many Cmd-Z / Cmd-Shift-Z presses are held behind the in-flight structural request (O19); Swift reads it when a close starts.
+  heldUndoPressCount,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

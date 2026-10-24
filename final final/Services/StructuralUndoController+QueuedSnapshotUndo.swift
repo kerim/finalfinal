@@ -92,6 +92,8 @@ extension StructuralUndoController {
     /// `entry`, editor first. Called under the structural gate with `snapshotId` already resolved. Returns the reply for the editor's
     /// latch, or nil when this press has to take the old body (nothing has been changed that the old body would not do itself).
     func queuedSnapshotUndo(entry: StructuralEntry, direction: UndoDirection, snapshotId: String) async -> UndoResult? {
+        // Markdown (t-4a8fd8af round 7b): its own queued route, StructuralUndoController+MarkdownSlowUndo.swift; nil there = the old body.
+        if editorState?.editorMode == .source { return await markdownQueuedSnapshotUndo(entry: entry, direction: direction, snapshotId: snapshotId) }
         // (A sync service with no web view has no editor to swap: the click would find no writer turn and send the press to the old body
         // anyway, after reading the plan; this skips the read.)
         guard takesTheEditorFirstPath, let editorState, editorState.zoomedSectionId == nil, let unifiedUndoService,
@@ -166,7 +168,7 @@ extension StructuralUndoController {
 
     /// Reads the plan of a snapshot swap, or nil (logged) when the press has to take the old body: the snapshot has no blocks, or does not
     /// exist any more (the old body would meet the same and say so itself).
-    private func readSwapPlan(snapshotId: String, kind: EditorFirstOpKind, database: ProjectDatabase, projectId: String) -> RestorePlan? {
+    func readSwapPlan(snapshotId: String, kind: EditorFirstOpKind, database: ProjectDatabase, projectId: String) -> RestorePlan? {
         do {
             guard let plan = try SnapshotService.wholeRestorePlan(database: database, projectId: projectId, snapshotId: snapshotId) else {
                 DebugLog.log(.undo, "[StructuralUndoController] editor-first \(kind.logName): the snapshot has no blocks -- old path")
@@ -181,7 +183,7 @@ extension StructuralUndoController {
 
     /// The swap happened and the job holds its place: close the quick path for the entry, move it to the other stack, tell the editor.
     /// The snapshot the job writes is attached to the entry when the job has committed (`recordSnapshotOnTimeline`).
-    private func moveEntryAfterSwap(opId: UUID, kind: EditorFirstOpKind, timelineEpoch: Int, trace: StructTrace) async -> UndoResult {
+    func moveEntryAfterSwap(opId: UUID, kind: EditorFirstOpKind, timelineEpoch: Int, trace: StructTrace) async -> UndoResult {
         guard let editorState, let unifiedUndoService else { return .failed }
         efRecordedStructGeneration[opId] = nil   // the quick path is closed for this entry from here on (see the file header)
         var moved = false
@@ -229,14 +231,14 @@ extension StructuralUndoController {
     /// Save Version and export waits wait for its unsettled marker.
     @discardableResult
     func startSnapshotSwapJob( // swiftlint:disable:this function_parameter_count
-        opId: UUID, kind: EditorFirstOpKind, plan: RestorePlan, removedLeaders: Set<String>, database: ProjectDatabase, projectId: String
+        opId: UUID, kind: EditorFirstOpKind, plan: RestorePlan, removedLeaders: Set<String>, database: ProjectDatabase, projectId: String,
+        jobKey: UUID = UUID()   // a Markdown press (round 7b) makes the key first: its gate is keyed by it and exists before the job does
     ) -> Bool {
         guard let editorState, let blockSync = blockSyncService else {
             releasePendingEditorFirstJob()
             return false
         }
         let registry = editorState.efJobRegistry
-        let jobKey = UUID()
         registry.register(jobKey)
         efJobKeys[opId, default: []].append(jobKey)
         efLatestJobKey[opId] = jobKey
@@ -277,6 +279,7 @@ extension StructuralUndoController {
             }
             let result = await job.perform(reserved: reservation, on: blockSync, identity: identity, registry: registry)
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
+            self?.notifyMarkdownJobEnded(key: jobKey, outcome: JobOutcome(result.outcome))   // a Markdown press's hold continuation
             await self?.snapshotSwapJobSettled(
                 opId: opId, kind: kind, result: result, removedLeaders: removedLeaders, epoch: epochAtClick, jobKey: jobKey)
         }

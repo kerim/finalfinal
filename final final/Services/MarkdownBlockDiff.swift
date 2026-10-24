@@ -26,6 +26,24 @@
 //       parse flags `isBibliography` are dropped too (the bibliography is machine-managed; the database would
 //       put a block inside it into the bibliography and refuse its later edits and deletes).
 //
+//    4. MOVED NOTES DEFINITIONS (t-4a8fd8af). A footnote definition the editor shows in a different place than the
+//       database holds it is NOT a new definition. The editor's `renumberFootnotes` relabels the definitions in
+//       place and never re-sorts them, while the database keeps its Notes rows sorted by footnote number
+//       (`reconcileNotesBlocks`), so after a renumber whose map swaps runs of numbers (46..54 before 37..45) the
+//       alignment sees each moved definition as a removed row in one region and an inserted block in another and
+//       never pairs them. Sending that insert saves a second row with the same label on every fire. So a Notes
+//       paragraph the alignment calls new (an insert, or paired with a Notes row of ANOTHER slot, which the
+//       pre-filter drops anyway or which would write another footnote's text into the row) is PAIRED with the
+//       baseline Notes row in the same SLOT that nothing else claims (an unmatched row, or one in such a pairing).
+//       The slot of a definition is its footnote label; the slot of a continuation paragraph (the second, third ...
+//       paragraph of a footnote, each its own row, no label of its own) is its owner's label plus its ordinal
+//       under that owner. Same text, no change; different text, an update on that row's id (the label is
+//       unchanged, so the database accepts it, and an edit made inside the moved run is saved, not dropped). The
+//       row leaves the removed set, so it no longer counts as a filtered Notes delete. Each row is paired once, and
+//       a row the alignment matched by text is never paired: a definition with a NEW label, a second hand-typed
+//       copy of a label that is already matched, a continuation of a NEW footnote and an extra continuation (an
+//       ordinal no baseline row of that owner has) stay inserts (N3 below). See `pairMovedNotes`.
+//
 //  THE KEY. (BlockType, headingLevel for headings only, trimmed fragment), hashed once. Whitespace around a
 //  fragment and blank lines between blocks do not matter (a whitespace-only change is an empty diff); a
 //  change anywhere inside a fragment does.
@@ -46,7 +64,9 @@
 //  C4 (judge verdict 2): a diff that is empty ONLY because the filter dropped everything it found reports
 //  that fact (`Result.emptyOnlyBecauseFiltered`), so the caller keeps the baseline in rows mode and schedules
 //  nothing. A write that carried any filtered change likewise leaves the baseline in rows mode
-//  (`Result.baselineAfterWriteMustBeRows`): the baseline never claims text the database lacks.
+//  (`Result.baselineAfterWriteMustBeRows`): the baseline never claims text the database lacks. A moved Notes
+//  definition counts as filtered (`Filtered.notesMoves`): the database keeps its Notes rows in number order and the
+//  editor does not, so the two differ in order after the write and the baseline must be re-read from the rows.
 //
 
 import Foundation
@@ -272,8 +292,15 @@ enum MarkdownBlockDiff {
         var bibliographyInserts = 0
         var notesDeletes = 0
         var notesLabelChanges = 0
+        /// Notes paragraphs (definitions and continuation paragraphs) the editor shows in a different place than the
+        /// database holds them, paired with their row by slot (see "MOVED NOTES DEFINITIONS" above). Not a dropped
+        /// change: a text edit inside a moved paragraph is still sent as an update. Counted so the baseline stays in
+        /// rows mode.
+        var notesMoves = 0
 
-        var total: Int { bibliographyUpdates + bibliographyDeletes + bibliographyInserts + notesDeletes + notesLabelChanges }
+        var total: Int {
+            bibliographyUpdates + bibliographyDeletes + bibliographyInserts + notesDeletes + notesLabelChanges + notesMoves
+        }
     }
 
     struct Result: Sendable {
@@ -326,9 +353,14 @@ enum MarkdownBlockDiff {
     /// A dropped insert (bibliography-flagged) has no id, so it is never used as an anchor: a later insert
     /// chained onto a temp id that never mints would fall through to the end of the document too.
     ///
+    /// MOVED NOTES DEFINITIONS (t-4a8fd8af). Before anything is added, a Notes paragraph the alignment calls new is
+    /// paired with the baseline Notes row in the same slot (`pairMovedNotes`). The paired row is not a delete and
+    /// the paired block is not an insert.
+    ///
     /// - Parameter makeTempId: injectable so a test can assert the exact `BlockChanges`.
     static func diff(baseline: [Entry], new: [Block], makeTempId: () -> String = MarkdownBlockDiff.makeTempId) -> Result {
-        let alignment = align(baseline: baseline.map(\.key), new: new.map { Key($0) })
+        let (alignment, movedNotes) = pairMovedNotes(
+            alignment: align(baseline: baseline.map(\.key), new: new.map { Key($0) }), baseline: baseline, new: new)
         var builder = DiffBuilder()
         for index in alignment.removed {
             builder.addRemoved(baseline[index])
@@ -340,7 +372,11 @@ enum MarkdownBlockDiff {
             case .changed(let baselineIndex):
                 builder.addChanged(block, row: baseline[baselineIndex], makeTempId: makeTempId)
             case .inserted:
-                builder.addInserted(block, makeTempId: makeTempId)
+                if let rowIndex = movedNotes[index] {
+                    builder.addMovedNotes(block, row: baseline[rowIndex])
+                } else {
+                    builder.addInserted(block, makeTempId: makeTempId)
+                }
             }
         }
         return Result(
@@ -420,6 +456,35 @@ enum MarkdownBlockDiff {
             }
         }
 
+        /// A new Notes paragraph (a definition or a continuation) paired by slot with a baseline Notes row
+        /// (`pairMovedNotes`): the editor shows it elsewhere than the database holds it. Like `addChanged` without the
+        /// label-change branch (a definition's label is equal by construction): the same text is no change, different
+        /// text is an update on the row's id (the database accepts a Notes text edit with an unchanged label). Never
+        /// an insert.
+        mutating func addMovedNotes(_ block: Block, row: Entry) {
+            filtered.notesMoves += 1
+            guard let id = row.id else {
+                // The row's id is unknown, so it cannot be updated, but a row in this slot exists: sending an insert
+                // would save a second row (a Notes row is never deleted by the writer). Say so, so the caller re-reads
+                // the rows (rows mode) and the next fire has the id.
+                unaddressable += 1
+                passedAnUnknownBlock = true
+                entries.append(Entry(parsed: block, id: nil))
+                return
+            }
+            anchorId = id
+            passedAnUnknownBlock = false
+            if row.key == Key(block) {
+                entries.append(row)
+            } else {
+                updates.append(BlockUpdate(
+                    id: id, textContent: block.textContent, markdownFragment: block.markdownFragment,
+                    headingLevel: block.headingLevel, blockType: block.blockType.rawValue))
+                entries.append(Entry(
+                    id: id, key: Key(block), isBibliography: false, isNotes: true, notesLabel: row.notesLabel))
+            }
+        }
+
         /// A new block that matches nothing: an insert anchored on the nearest earlier id, dropped when the parse flags
         /// it bibliography.
         mutating func addInserted(_ block: Block, makeTempId: () -> String) {
@@ -443,5 +508,122 @@ enum MarkdownBlockDiff {
             entries.append(Entry(parsed: block, id: tempId))
             anchorId = tempId
         }
+    }
+}
+
+// MARK: - Moved Notes definitions (t-4a8fd8af)
+// In an extension so the enum body stays under the project's type-body-length limit.
+
+extension MarkdownBlockDiff {
+
+    /// Pairs each Notes paragraph of the new text that the alignment calls new with the baseline Notes row in the same
+    /// SLOT (`notesSlots`: a definition is its footnote label, a continuation paragraph is its owner's label plus its
+    /// ordinal under that owner). Returns the alignment with the paired rows taken out of the removed set, and new-block
+    /// index -> baseline index for the pairs.
+    ///
+    /// A paragraph is a candidate when the alignment made it an insert, or paired it with a Notes row of ANOTHER slot.
+    /// That second pairing is one the pre-filter would drop anyway (a definition: `addChanged`'s label change) or one
+    /// that would write another footnote's text into the row (a continuation: label-less, so `addChanged` cannot tell
+    /// them apart), and it happens whenever a removed row and an inserted block of different slots sit in the same
+    /// region (two neighbouring swaps; a swap next to a new footnote): the same-type pairing then eats the row a moved
+    /// paragraph needs. A row is a candidate when the alignment left it unmatched, or when it sits in such a pairing.
+    /// Rows are taken once each, in order, by the first candidate paragraph with their slot (a baseline that holds a
+    /// slot twice offers its rows in order). Rows and blocks the alignment matched by text (`.same`) or by a
+    /// slot-preserving `.changed` are never candidates: a second copy of a definition (typed by hand), a continuation
+    /// of a NEW footnote and an extra continuation (an ordinal no baseline row of that owner has) find no row and
+    /// stay inserts.
+    ///
+    /// A pairing of another slot with one side taken is dissolved: its block becomes an insert (or the pair), its row a
+    /// removed row (a filtered Notes delete) unless another paragraph took it. One with neither side taken stays as it
+    /// is (a filtered label change, or the update `addChanged` sends). A bibliography row never pairs, and neither does
+    /// a row or block without a slot.
+    private static func pairMovedNotes(
+        alignment: Alignment, baseline: [Entry], new: [Block]
+    ) -> (alignment: Alignment, moved: [Int: Int]) {
+        let rowSlots = notesSlots(baseline.map {
+            NotesItem(isNotes: $0.isNotes && !$0.isBibliography, isHeading: $0.key.blockType == .heading, label: $0.notesLabel)
+        })
+        guard rowSlots.contains(where: { $0 != nil }) else { return (alignment, [:]) }
+        let blockSlots = notesSlots(new.map {
+            NotesItem(
+                isNotes: $0.isNotes && !$0.isBibliography, isHeading: $0.blockType == .heading,
+                label: $0.isNotes ? notesLabel(of: $0.markdownFragment) : nil)
+        })
+        let otherSlotPairs = pairsInAnotherSlot(alignment: alignment, rowSlots: rowSlots, blockSlots: blockSlots)
+        var rowsBySlot: [String: [Int]] = [:]
+        for rowIndex in (alignment.removed + otherSlotPairs.keys).sorted() {
+            if let slot = rowSlots[rowIndex] { rowsBySlot[slot, default: []].append(rowIndex) }
+        }
+        let moved = claimRows(&rowsBySlot, alignment: alignment, blockSlots: blockSlots, otherSlotPairs: otherSlotPairs)
+        guard !moved.isEmpty else { return (alignment, [:]) }
+        var adjusted = alignment
+        let takenRows = Set(moved.values)
+        for (rowIndex, index) in otherSlotPairs where takenRows.contains(rowIndex) || moved[index] != nil {
+            adjusted.matches[index] = .inserted
+            if !takenRows.contains(rowIndex) { adjusted.removed.append(rowIndex) }
+        }
+        adjusted.removed = adjusted.removed.filter { !takenRows.contains($0) }.sorted()
+        return (adjusted, moved)
+    }
+
+    /// The slot of each paragraph of a sequence (a baseline or a parse), nil where there is none. Mirrors the ownership
+    /// walk of `FootnoteSyncService.notesOwnershipMap`, which is how the database sorts the Notes group: a Notes
+    /// definition (`[^N]:`) is slot `def:N`; a label-less Notes paragraph after it is a continuation of that footnote,
+    /// slot `cont:N:k` (k = 1, 2, ... under that owner; the footnote editor stores each paragraph of a multi-paragraph
+    /// footnote as its own row); a heading or a non-Notes block ends the run, and a label-less Notes paragraph before
+    /// any definition is the user's own prose (no slot).
+    private static func notesSlots(_ items: [NotesItem]) -> [String?] {
+        var owner: String?
+        var ordinal = 0
+        return items.map { item in
+            guard item.isNotes, !item.isHeading else {
+                owner = nil
+                return nil
+            }
+            if let label = item.label {
+                owner = label
+                ordinal = 0
+                return "def:\(label)"
+            }
+            guard let current = owner else { return nil }
+            ordinal += 1
+            return "cont:\(current):\(ordinal)"
+        }
+    }
+
+    /// What `notesSlots` needs to know about one paragraph.
+    private struct NotesItem {
+        let isNotes: Bool       // a Notes paragraph that is not bibliography
+        let isHeading: Bool
+        let label: String?      // the footnote label of its fragment (`[^N]:`), if it has one
+    }
+
+    /// The `.changed` pairs between a slotted Notes row and a block of ANOTHER slot (or none). Baseline index -> index
+    /// of the new block.
+    private static func pairsInAnotherSlot(alignment: Alignment, rowSlots: [String?], blockSlots: [String?]) -> [Int: Int] {
+        var pairs: [Int: Int] = [:]
+        for (index, match) in alignment.matches.enumerated() {
+            guard case .changed(let rowIndex) = match, let slot = rowSlots[rowIndex], blockSlots[index] != slot else { continue }
+            pairs[rowIndex] = index
+        }
+        return pairs
+    }
+
+    /// New-block index -> baseline index: each candidate Notes paragraph, in order, takes the first row of its slot.
+    private static func claimRows(
+        _ rowsBySlot: inout [String: [Int]], alignment: Alignment, blockSlots: [String?], otherSlotPairs: [Int: Int]
+    ) -> [Int: Int] {
+        var moved: [Int: Int] = [:]
+        for (index, blockSlot) in blockSlots.enumerated() {
+            switch alignment.matches[index] {
+            case .same: continue
+            case .changed(let rowIndex): if otherSlotPairs[rowIndex] != index { continue }
+            case .inserted: break
+            }
+            guard let slot = blockSlot, var rows = rowsBySlot[slot], !rows.isEmpty else { continue }
+            moved[index] = rows.removeFirst()
+            rowsBySlot[slot] = rows
+        }
+        return moved
     }
 }

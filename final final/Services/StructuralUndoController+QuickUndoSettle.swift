@@ -40,13 +40,16 @@ extension StructuralUndoController {
 
     func reinsertSettled( // swiftlint:disable:this function_parameter_count
         opId: UUID, key: UUID, epoch: Int, holder: SectionDeletePayloadHolder,
-        result: SystemWriteResult<SectionReinsertJob.Output>, trace: StructTrace
+        result: SystemWriteResult<SectionReinsertJob.Output>, trace: StructTrace, editorKind: EditorFirstEditorKind = .wysiwyg
     ) async {
         guard let editorState else { return }
         #if DEBUG
         await testReinsertSettleHold?()
         #endif
         await TestMode.holdReinsertSettle(opId: trace.opId)
+        // Markdown only (t-4a8fd8af round 7a; a no-op for a Rich Text reinsert, which has no gate): the reinsert's step 8 has flushed the
+        // typing and adopted the live text before anything of the settle starts (model `fq`). The gate is keyed by the reinsert's key.
+        await awaitMarkdownStep8(opId: opId, jobKey: key, keepsGateForPutBack: false)
         footnoteSyncService?.releaseUndoCheckpointHold(token: key)   // (a)
 
         // (b) What the reinsert did.
@@ -76,7 +79,7 @@ extension StructuralUndoController {
             if epochUnmoved, output.wroteRows, rootRowIsMissing(holder: holder, editorState: editorState) {
                 await reinsertFallback(
                     opId: opId, key: key, why: "rows applied but the section's root row is not there", epochUnmoved: epochUnmoved,
-                    editorState: editorState)
+                    editorState: editorState, editorKind: editorKind)
                 return
             }
             liftOverlay(of: opId, ifOwned: epochUnmoved, editorState: editorState)
@@ -86,21 +89,23 @@ extension StructuralUndoController {
             if editorState.activeLifecycle == nil {
                 await reinsertFallback(
                     opId: opId, key: key, why: "refused(\(reason)) and no lifecycle is armed", epochUnmoved: epochUnmoved,
-                    editorState: editorState)
+                    editorState: editorState, editorKind: editorKind)
                 return
             }
             DebugLog.log(.lifecycle, "[StructuralUndoController] reinsert \(opId): not applied (\(reason)) -- the closing save writes the editor")
             liftOverlay(of: opId, ifOwned: epochUnmoved, editorState: editorState)
             return
         case .refused(let reason):
-            await reinsertFallback(opId: opId, key: key, why: "refused(\(reason))", epochUnmoved: epochUnmoved, editorState: editorState)
+            await reinsertFallback(
+                opId: opId, key: key, why: "refused(\(reason))", epochUnmoved: epochUnmoved, editorState: editorState, editorKind: editorKind)
             return
         case .failed(let error):
-            await reinsertFallback(opId: opId, key: key, why: "failed(\(error))", epochUnmoved: epochUnmoved, editorState: editorState)
+            await reinsertFallback(
+                opId: opId, key: key, why: "failed(\(error))", epochUnmoved: epochUnmoved, editorState: editorState, editorKind: editorKind)
             return
         }
 
-        await settleDerivedContent(opId: opId, epoch: epoch, editorState: editorState, trace: trace)   // (c)-(e)
+        await settleDerivedContent(opId: opId, epoch: epoch, editorState: editorState, trace: trace, editorKind: editorKind)   // (c)-(e)
     }
 
     /// Lifts the sidebar overlay that shows entry `opId`'s section, but only while this undo still owns the entry. A redo (or a later
@@ -112,14 +117,16 @@ extension StructuralUndoController {
 
     /// (c)-(e) of the settle, only while this quick undo still owns the entry: the editor's own text is read, the resyncs run from it,
     /// and the database's Notes and Bibliography are pushed into the editor.
-    private func settleDerivedContent(opId: UUID, epoch: Int, editorState: EditorViewState, trace: StructTrace) async {
+    private func settleDerivedContent(
+        opId: UUID, epoch: Int, editorState: EditorViewState, trace: StructTrace, editorKind: EditorFirstEditorKind
+    ) async {
         guard (efOpEpoch[opId] ?? epoch) == epoch else {
             DebugLog.log(.undo, "[StructuralUndoController] reinsert \(opId): settle skipped (the epoch moved: a redo or a later undo took it)")
             trace.log("settle skipped (epoch moved)")
             editorState.refreshSections()
             return
         }
-        guard editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil, let blockSync = blockSyncService else {
+        guard editorState.editorMode == editorKind.mode, editorState.zoomedSectionId == nil, let blockSync = blockSyncService else {
             editorState.refreshSections()
             return
         }
@@ -172,7 +179,22 @@ extension StructuralUndoController {
     /// `fallback` (a later undo or redo of it is the old path or, for a quick-undone entry, a refusal with the notice), and the loss
     /// risk is logged. The unsettled marker is settled FIRST: the flush waits for pending structural jobs and would otherwise wait out
     /// its own entry's bound (verdict-v1 S10).
-    private func reinsertFallback(opId: UUID, key: UUID, why: String, epochUnmoved: Bool, editorState: EditorViewState) async {
+    private func reinsertFallback( // swiftlint:disable:this function_parameter_count
+        opId: UUID, key: UUID, why: String, epochUnmoved: Bool, editorState: EditorViewState, editorKind: EditorFirstEditorKind
+    ) async {
+        if editorKind == .markdown {
+            // Markdown: the reinsert's step 8 has already written the page's text into the rows (the flush diffs the live text against
+            // whatever the rows hold), so there is no whole-document write to make here; the slot only stops being quick-undoable.
+            DebugLog.alwaysPersisted(
+                "[StructuralUndoController] markdown quick undo \(opId): the reinsert did not put the rows back (\(why)); "
+                + "the flush wrote the page's text")
+            editorState.efJobRegistry.markSettled(key)
+            efSlots.markFallback(opId)
+            liftOverlay(of: opId, ifOwned: epochUnmoved, editorState: editorState)
+            forgetCommittedDerivedState()
+            editorState.refreshSections()
+            return
+        }
         DebugLog.alwaysPersisted(
             "[StructuralUndoController] quick undo \(opId): the reinsert did not put the rows back (\(why)) -- writing the editor's content "
             + "to the database and marking the entry's slot fallback")

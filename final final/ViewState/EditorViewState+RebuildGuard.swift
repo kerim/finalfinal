@@ -131,6 +131,7 @@ extension EditorViewState {
     /// text, which the view would otherwise push into the editor as a whole document).
     @discardableResult
     func adoptLiveEditorText(blockSync: BlockSyncService, why: String, requireUnchangedGeneration: Bool = true) async -> String {
+        if editorMode == .source { return await adoptLiveMarkdownText(why: why, requireUnchangedGeneration: requireUnchangedGeneration) }
         let generationBefore = editorRestoreGeneration
         let live: String? = await blockSync.fetchContentFromWebView()
         if requireUnchangedGeneration, editorRestoreGeneration != generationBefore { return content }

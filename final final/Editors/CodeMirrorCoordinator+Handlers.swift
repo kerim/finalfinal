@@ -583,12 +583,23 @@ extension CodeMirrorEditor.Coordinator {
     ///   suppress SectionSyncService's re-correction for content that was just undone.
     func handleContentPush(_ content: String, wasUndo: Bool = false) {
         guard !self.isCleanedUp, self.isEditorReady else { return }
-        guard !self.isResettingContentBinding.wrappedValue else { return }
-        guard self.contentState == .idle else { return }
+        // t-4a8fd8af (O29): each of the three drops below leaves typed text on screen that the content record never sees. A rebuild runs
+        // with `isResettingContent` up AND the content state busy, so the first guard is the one a rebuild hits.
+        guard !self.isResettingContentBinding.wrappedValue else {
+            if content != self.lastPushedContent { self.onContentPushDropped?() }
+            return
+        }
+        guard self.contentState == .idle else {
+            if content != self.lastPushedContent { self.onContentPushDropped?() }
+            return
+        }
 
         // Grace period: 150ms for push-based flow (reduced from 300ms polling)
         let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
-        if timeSincePush < 0.15 && content != self.lastPushedContent { return }
+        if timeSincePush < 0.15 && content != self.lastPushedContent {
+            self.onContentPushDropped?()
+            return
+        }
         guard content != self.lastPushedContent else { return }
 
         self.lastReceivedFromEditor = Date()
@@ -597,6 +608,22 @@ extension CodeMirrorEditor.Coordinator {
         // Update binding with raw content (includes anchors)
         self.contentBinding.wrappedValue = content
         self.onContentChange(content, wasUndo)
+    }
+
+    /// t-4a8fd8af (O25/O30): the page's own text (a region replace's reply, a pulled live text) becomes the content record, handled as a
+    /// page `contentChanged` that no guard drops: `shouldPushContent` has nothing to push afterwards, `sourceContent` takes the raw text and
+    /// `onContentChange` strips the anchors into `content`. The 150 ms push grace is deliberately NOT started: this text came from the page.
+    ///
+    /// It also cancels the deferred-recompute timer a settle-window-suppressed push armed (review F5, plan v2 B3 step 6): that timer
+    /// would fire up to 0.6 s later and re-derive `sourceContent` from the record and the overlay while the click's job has not applied.
+    /// The adopted text is the page's own, so there is nothing left to retry.
+    func adoptPageText(_ raw: String) {
+        deferredPushTimer?.invalidate()
+        deferredPushTimer = nil
+        lastReceivedFromEditor = Date()
+        lastPushedContent = raw
+        contentBinding.wrappedValue = raw
+        onContentChange(raw, false)
     }
 
     // MARK: - 3s Fallback Polling (stats + section title only)

@@ -625,3 +625,168 @@ extension MarkdownBlockDiffTests {
         #expect(resolved.map(\.id) == ["r1", "r2", "perm-1", "r3", nil, "r4"])
     }
 }
+
+// MARK: - (y) moved Notes definitions (t-4a8fd8af)
+//
+// The editor relabels Notes definitions in place and never re-sorts them; the database keeps its Notes rows in number order. After
+// a renumber that swaps runs of numbers the editor reads [1..36, 46..54, 37..45] and the rows read [1..54], so a moved definition
+// is a removed row in one region and an inserted block in another. The diff used to drop the rows but SEND the inserts: every fire
+// saved another copy (a real-app run: 573 rows, then 582, then 591). Now a moved definition is paired with its row by label.
+// Documents: "# Intro", "Body paragraph.", "# Notes", then the definitions: rows r1, r2, r3, then r4... in the OLD text order.
+
+extension MarkdownBlockDiffTests {
+
+    /// `[^label]: body`, with a default body that is different for every label.
+    private func definition(_ label: Int, _ body: String? = nil) -> String {
+        "[^\(label)]: \(body ?? "Body of note \(label).")"
+    }
+
+    private func notesDoc(_ definitions: [String]) -> String {
+        blocks(["# Intro", "Body paragraph.", "# Notes"] + definitions)
+    }
+
+    @Test("(y)(a) a Notes definition that only changed place is no insert, no delete and no update, and the baseline stays rows")
+    func movedNotesDefinitionIsPaired() throws {
+        let old = notesDoc([definition(1), definition(2), definition(3)])
+        let new = notesDoc([definition(1), definition(3), definition(2)])
+        let flagged = parse(new).suffix(3).allSatisfy { $0.isNotes }
+        try #require(flagged, "premise: the parse flags the three definitions as Notes")
+        let result = diff(old, new)
+        #expect(result.changes.inserts.isEmpty, "a moved definition must not be saved a second time")
+        #expect(result.changes.deletes.isEmpty && result.changes.updates.isEmpty)
+        #expect(result.filtered.notesMoves > 0)
+        #expect(result.filtered.notesDeletes == 0, "the row left the removed set when it was paired")
+        #expect(result.filtered.total == result.filtered.notesMoves)
+        #expect(result.baselineAfterWriteMustBeRows)
+        #expect(result.emptyOnlyBecauseFiltered)
+    }
+
+    @Test("(y)(b) an edit inside a moved Notes definition is one update on its row, and nothing is inserted")
+    func editInsideMovedNotesDefinitionIsUpdate() {
+        let edited = definition(2, "Body of note 2, edited.")
+        let result = diff(notesDoc([definition(1), definition(2), definition(3)]), notesDoc([definition(1), definition(3), edited]))
+        #expect(updates(result.changes) == ["r5|\(edited)|-|paragraph"])
+        let editedText = result.changes.updates.first?.textContent ?? ""
+        #expect(editedText.contains("edited"))
+        #expect(result.changes.inserts.isEmpty)
+        #expect(result.changes.deletes.isEmpty)
+        #expect(result.filtered.notesMoves > 0)
+        #expect(result.baselineAfterWriteMustBeRows)
+        #expect(!result.emptyOnlyBecauseFiltered, "there is an update to send")
+    }
+
+    /// The real shape: labels 1...36, then 46...54, then 37...45 in the editor; 1...54 in the rows.
+    private func expectSwappedRunsPair(repeatingBodies: Bool, sourceLocation: SourceLocation = #_sourceLocation) throws {
+        func body(_ label: Int) -> String {
+            repeatingBodies ? "Repeating body number \((label - 1) % 9)." : "Distinct body of note \(label)."
+        }
+        let old = notesDoc((1...54).map { definition($0, body($0)) })
+        let new = notesDoc((Array(1...36) + Array(46...54) + Array(37...45)).map { definition($0, body($0)) })
+        let flagged = parse(new).suffix(54).allSatisfy { $0.isNotes }
+        try #require(flagged, "premise: all 54 definitions are Notes", sourceLocation: sourceLocation)
+        let result = diff(old, new)
+        #expect(result.changes.inserts.isEmpty, "repeatingBodies: \(repeatingBodies)", sourceLocation: sourceLocation)
+        #expect(result.changes.deletes.isEmpty && result.changes.updates.isEmpty, sourceLocation: sourceLocation)
+        #expect(result.filtered.notesMoves > 0, sourceLocation: sourceLocation)
+        #expect(result.filtered.notesDeletes == 0, sourceLocation: sourceLocation)
+        #expect(result.baselineAfterWriteMustBeRows, sourceLocation: sourceLocation)
+    }
+
+    @Test("(y)(c) two runs of nine definitions swapped (37..45 and 46..54), all bodies different: nothing is inserted")
+    func swappedRunsOfNineWithDistinctBodies() throws {
+        try expectSwappedRunsPair(repeatingBodies: false)
+    }
+
+    @Test("(y)(c) the same swap with bodies that repeat every nine labels (the real fixture): nothing is inserted")
+    func swappedRunsOfNineWithRepeatingBodies() throws {
+        try expectSwappedRunsPair(repeatingBodies: true)
+    }
+
+    @Test("(y)(d) a move, and a move with an edit inside it, fired twice against the rows each write leaves: nothing is inserted or sent twice")
+    func movedNotesAreIdempotent() {
+        let old = notesDoc([definition(1), definition(2), definition(3)])
+        let edited = definition(2, "Body of note 2, edited.")
+        let scenarios = [(name: "pure move", new: notesDoc([definition(1), definition(3), definition(2)]), firstFireUpdates: 0),
+                         (name: "move with an edit", new: notesDoc([definition(1), definition(3), edited]), firstFireUpdates: 1)]
+        for scenario in scenarios {
+            var rows = storedRows(old)
+            let rowCount = rows.count
+            for fire in 1...2 {
+                let ids = TempIds()
+                let result = MarkdownBlockDiff.diff(rows: rows, new: parse(scenario.new), makeTempId: { ids.make() })
+                let label = "\(scenario.name), fire \(fire)"
+                #expect(result.changes.inserts.isEmpty, "\(label): the rows must not grow")
+                #expect(result.changes.deletes.isEmpty, "\(label)")
+                #expect(result.changes.updates.count == (fire == 1 ? scenario.firstFireUpdates : 0), "\(label): an edit is sent once")
+                #expect(result.changes.isEmpty == result.emptyOnlyBecauseFiltered, "\(label): nothing to send, the baseline stays rows")
+                rows = MarkdownDiffWriteSimulator.rowsAfter(result.changes, rows: rows)
+                #expect(rows.count == rowCount, "\(label): the write left the same number of rows")
+            }
+        }
+    }
+
+    @Test("(y) two neighbouring swaps of Notes definitions (2,1,4,3) are all moves: nothing is inserted, deleted or left as a label change")
+    func neighbouringSwapsArePaired() {
+        let result = diff(notesDoc((1...4).map { definition($0) }), notesDoc([2, 1, 4, 3].map { definition($0) }))
+        #expect(result.changes.isEmpty)
+        #expect(result.filtered.notesMoves > 0)
+        #expect(result.filtered.notesLabelChanges == 0, "a removed row and an inserted block of another label must not pair up")
+        #expect(result.filtered.notesDeletes == 0)
+        #expect(result.emptyOnlyBecauseFiltered)
+    }
+
+    @Test("(y) a NEW definition typed where a moved one used to be: it is sent, the moved one is a move, and no copy is saved")
+    func swapNextToNewDefinition() {
+        // [^2] moves to the end and [^9] takes its place: the only longest common run is 1,3,4,5, so the alignment pairs the removed
+        // [^2] row with the inserted [^9] (same type) in one region. Only dissolving that pairing sends [^9] and keeps [^2] a move.
+        let result = diff(notesDoc((1...5).map { definition($0) }), notesDoc([1, 9, 3, 4, 5, 2].map { definition($0) }))
+        #expect(inserts(result.changes) == ["temp-md-1|after:r4|\(definition(9))"])
+        #expect(result.changes.updates.isEmpty && result.changes.deletes.isEmpty)
+        #expect(result.filtered.notesMoves == 1)
+        #expect(result.filtered.notesLabelChanges == 0, "[^9] must not be dropped as a label change of the [^2] row")
+        #expect(result.filtered.notesDeletes == 0)
+    }
+
+    @Test("(y)(e) N3 still holds: a definition with a NEW label typed in Notes is sent as an insert")
+    func newLabelDefinitionIsStillInserted() {
+        let old = notesDoc([definition(1), definition(2), definition(3)])
+        let result = diff(old, notesDoc([definition(1), definition(2), definition(3), definition(4)]))
+        #expect(inserts(result.changes) == ["temp-md-1|after:r6|\(definition(4))"])
+        #expect(result.changes.updates.isEmpty && result.changes.deletes.isEmpty)
+        #expect(result.filtered.total == 0)
+        #expect(!result.baselineAfterWriteMustBeRows)
+    }
+
+    @Test("(y)(f) a hand-typed second copy of a label that is already matched is still an insert")
+    func duplicateOfAMatchedLabelIsStillInserted() {
+        // [^3] is deleted and a copy of [^1] is typed: the only unmatched Notes row has another label, so nothing pairs.
+        let old = notesDoc((1...4).map { definition($0) })
+        let copy = definition(1, "A different body.")
+        let result = diff(old, notesDoc([definition(1), copy, definition(2), definition(4)]))
+        #expect(inserts(result.changes) == ["temp-md-1|after:r4|\(copy)"])
+        #expect(result.changes.updates.isEmpty && result.changes.deletes.isEmpty)
+        #expect(result.filtered.notesMoves == 0)
+        #expect(result.filtered.notesDeletes == 1)
+    }
+
+    @Test("(y)(f) a second copy of a moved label is still an insert: the first takes the row, the second finds none")
+    func duplicateOfAMovedLabelIsStillInserted() {
+        let copy = definition(2, "A different body.")
+        let result = diff(notesDoc((1...5).map { definition($0) }),
+                          notesDoc([definition(1), definition(3), definition(4), definition(5), definition(2), copy]))
+        #expect(inserts(result.changes) == ["temp-md-1|after:r5|\(copy)"])
+        #expect(result.changes.updates.isEmpty && result.changes.deletes.isEmpty)
+        #expect(result.filtered.notesMoves == 1)
+    }
+
+    @Test("(y) a moved definition whose row has no known id is not inserted again: it is counted as unaddressable instead")
+    func movedNotesDefinitionWithUnknownRowIdIsNotInserted() {
+        var baseline = MarkdownBlockDiff.baselineEntries(rows: storedRows(notesDoc((1...5).map { definition($0) })))
+        baseline[4].id = nil   // r5, the row of [^2]
+        let result = MarkdownBlockDiff.diff(baseline: baseline, new: parse(notesDoc([1, 3, 4, 5, 2].map { definition($0) })))
+        #expect(result.changes.isEmpty, "a second row with the label would be saved if this were an insert")
+        #expect(result.filtered.notesMoves == 1)
+        #expect(result.unaddressable == 1)
+        #expect(result.emptyOnlyBecauseFiltered)
+    }
+}

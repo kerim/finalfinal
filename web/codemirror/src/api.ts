@@ -1198,8 +1198,40 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     // Untagged, the undo coordinator counted it as a real user edit, so after a section delete it
     // moved the document away from the saved post-operation copy for good and Cmd-Z was refused.
     // Deliberately NOT addToHistory:false -- the renumber stays in the text history.
-    withAppOrigin(() => view.dispatch({ changes, annotations: derivedCorrection.of(true) }));
+    //
+    // EXCEPT inside a structural settle (B5, t-4a8fd8af): Swift sets `setStructuralSettleOpId(opId)` around the footnote/Notes resyncs
+    // that follow an editor-first Markdown command. The renumber is then a consequence of the command, not an edit of its own, so it
+    // is applied outside the text history (`addToHistory:false`, which also keeps it a sync-origin change:
+    // `maybeAdvanceRegistryOnSyncOriginTx` advances the saved copies when the document equals them). The user's Cmd-Z count then
+    // matches Rich Text's absorbed renumber: one press undoes the typing, the next reaches the command.
+    const annotations = structuralSettleOpId !== null ? Transaction.addToHistory.of(false) : derivedCorrection.of(true);
+    withAppOrigin(() => view.dispatch({ changes, annotations }));
   }
+}
+
+// --- Structural-settle renumber flag (B5) ---
+
+/** The opId of the structural command whose settle is running, or null. Set and cleared by Swift through the same FIFO the renumber
+ * itself travels in (`setStructuralSettleOpId`), so a renumber posted by the settle's resync sees the flag set. */
+let structuralSettleOpId: string | null = null;
+
+/** Bridge target for `window.FinalFinal.setStructuralSettleOpId(opId | null, expecting?)`. A string sets the flag. `null` clears it;
+ * `null` with `expecting` clears it only while it still holds `expecting`. While non-null, `renumberFootnotes` dispatches outside the text
+ * history. Null (the steady state) leaves the renumber exactly as it has always been: a `derivedCorrection` that is its own undo step. */
+export function setStructuralSettleOpId(opId: string | null, expecting?: string): void {
+  if (typeof opId === 'string' && opId !== '') {
+    structuralSettleOpId = opId;
+    return;
+  }
+  // A clear. With `expecting` it is a compare-and-clear: two settles can overlap (Delete, then Delete again at once), and the
+  // earlier settle's clear must not drop the later settle's flag (F9/M-5).
+  if (typeof expecting === 'string' && structuralSettleOpId !== expecting) return;
+  structuralSettleOpId = null;
+}
+
+/** Test-only: the current flag. */
+export function getStructuralSettleOpId(): string | null {
+  return structuralSettleOpId;
 }
 
 // --- Image API ---
@@ -1650,6 +1682,7 @@ export function resetForProjectSwitch(): void {
   dismissImageCaptionPopup();
 
   // Clear transient module-level state
+  structuralSettleOpId = null;
   setPendingSlashUndo(false);
   setZoomFootnoteState(false, 0);
   clearPendingCAYWRequests();

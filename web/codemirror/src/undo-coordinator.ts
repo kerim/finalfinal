@@ -25,6 +25,7 @@ import { isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/co
 import { type EditorState, type Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { clearHistory } from './api';
+import type { MarkdownEntryExtras } from './api-structural-markdown';
 import { derivedCorrection } from './derived-correction';
 import { explainTextDifference } from './derived-equivalence';
 import { getEditorView } from './editor-state';
@@ -52,11 +53,10 @@ export function noteUserTransaction(tr: Transaction): void {
 /** One registered structural op's editor-side inverse material, populated by
  * `beginStructuralOp`/`finalizeStructuralOpPostOpDoc` for every real structural op. */
 export interface UndoRegistryEntry {
-  /** Full EditorState captured at op time. Source mode uses the DEGRADED undo path (see
-   * docs/architecture/unified-undo.md's Checkpoints section, "Source mode never
-   * checkpoint-swaps") -- regenerated sourceContent + minimal-diff setContent, never a
-   * checkpoint swap -- so this is captured for type-symmetry with Milkdown's registry and
-   * possible future use, but nothing reads it in v1. */
+  /** Full EditorState captured at op time. The Markdown undo (`markdownStructuralSwap`, api-structural-markdown.ts, t-4a8fd8af)
+   * swaps this whole state back in (`view.setState`) for EVERY entry it undoes -- the editor-first commands' own and the ones the
+   * old body recorded through `beginStructuralOp` -- so the section returns with its own text history, as Rich Text's quick undo
+   * does. The old body's own undo (regenerated sourceContent + minimal-diff setContent) never reads it. */
   checkpoint: EditorState;
   /** Document immediately after the op -- the equality target for structural undo (see the
    * doc's routing section). */
@@ -70,6 +70,10 @@ export interface UndoRegistryEntry {
    * a Document Note delete) needs this. Optional (not every test-constructed entry sets it)
    * -- `undefined` reads as `false` (not mid-op), the correct default for a finalized entry. */
   midOp?: boolean;
+  /** Set only by an editor-first Markdown command (api-structural-markdown.ts): the request it ran
+   * and the ChangeSet it applied. Its presence is what lets the quick redo re-run the command and
+   * the redo carry (round 2b) map the redo branch. Absent on entries made by the old body. */
+  markdown?: MarkdownEntryExtras;
 }
 
 /** Swift-pushed pointer to the top of each stack (see docs/architecture/unified-undo.md's
@@ -101,10 +105,18 @@ let latched = false;
  * misapplied to whatever happened to be latched afterward). Set by `requestStructural`,
  * cleared whenever the latch itself clears. */
 let inFlightOpId: string | null = null;
-/** Belt-and-braces timeout for the latch -- mirrors Milkdown's undo-coordinator.ts (see its
- * comment for the full rationale: a lost Swift reply must not swallow Cmd-Z forever). */
-const LATCH_TIMEOUT_MS = 3000;
+/** Belt-and-braces timeout for the latch -- mirrors Milkdown's undo-coordinator.ts, value included (see its comment for the full
+ * rationale: a lost Swift reply must not swallow Cmd-Z forever). It is only a hung-app safety net: Swift replies on every path, and a
+ * healthy slow undo (a drag's Cmd-Z or a footnoted delete's undo on a long book) can legitimately take several seconds. Since presses
+ * made during the latch are HELD (O19), an expiry drops them with the "could not be carried out" notice, so a timeout shorter than a
+ * healthy undo would drop a keypress although nothing is wrong. It was 3000 ms before held presses existed. Exported for tests. */
+export const LATCH_TIMEOUT_MS = 30000;
 let latchTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+/** Cmd-Z / Cmd-Shift-Z presses made while the in-flight latch was held (O19, mirrors Milkdown's undo-coordinator.ts), oldest first.
+ * Each one is routed afresh against the LIVE document when the latch clears -- structural presses and text presses alike, so the
+ * order the user pressed them in is kept -- instead of being dropped. */
+const queuedPresses: Array<{ direction: 'undo' | 'redo' }> = [];
 
 function clearLatchTimeout(): void {
   if (latchTimeoutId !== null) {
@@ -137,17 +149,20 @@ export function clearRegistry(): void {
 export function clearStructuralUndoRegistry(): void {
   clearRegistry();
   setUndoDescriptor({});
+  // The barrier replaces the timeline the latch and the queued presses belonged to (a project switch, close, mode switch): a request
+  // still in flight will never be answered for it, and a later reply is ignored (`handleUndoReplyFromSwift`'s `!latched` guard).
+  // Leaving the latch held would swallow every later press until the safety net fired.
+  releaseLatchAndQueue();
 }
 
 /** Eviction mini-barrier (see docs/architecture/unified-undo.md's Eviction section): the
  * oldest structural entry just fell off the undo
  * stack at capacity. Clears this editor's OWN text-undo history (`clearHistory`, `./api.ts`)
  * AND removes just that ONE evicted entry from the registry -- pre-boundary text steps must not
- * stay reachable past a boundary the timeline no longer guards against (H1/H2). Note: this
- * editor has no checkpoint-swap path (Source mode is always the degraded, non-checkpoint path,
- * see docs/architecture/unified-undo.md's Checkpoints section), so `clearHistory()`'s
- * full-`EditorState` rebuild (rather than a
- * scoped swap) is fine here -- it's the same technique `resetForProjectSwitch()` already uses.
+ * stay reachable past a boundary the timeline no longer guards against (H1/H2). Note: Markdown structural entries DO swap their
+ * `checkpoint` back in (api-structural-markdown.ts), so after this rebuild another entry's checkpoint still carries its own
+ * pre-boundary text history and the image widths are not carried (a known, rare gap: 50 structural operations). `clearHistory()`'s
+ * full-`EditorState` rebuild (rather than a scoped swap) is the same technique `resetForProjectSwitch()` already uses.
  *
  * Takes the evicted entry's `opId` and calls `deleteRegistryEntry(opId)` (MF-1, Phase 5 review
  * round) -- NOT `clearStructuralUndoRegistry()`/`clearRegistry()`, which wipe every entry. See
@@ -205,6 +220,7 @@ export function resetUndoCoordinatorState(): void {
   descriptor = {};
   latched = false;
   inFlightOpId = null;
+  queuedPresses.length = 0;
   lastEquivalence = null;
   clearLatchTimeout();
 }
@@ -228,10 +244,22 @@ export interface RoutingParams<TDoc> {
    * derived-equivalence.ts). Optional: absent means exact equality alone, exactly the behaviour before
    * this fallback existed. Mirrors Milkdown's undo-coordinator.ts. */
   docsEquivalent?: (a: TDoc, b: TDoc) => boolean;
+  /** The opId of the structural request THIS call is made on behalf of: set only by the swap that
+   * carries out a request the keydown/menu path already latched (api-structural-markdown.ts). The
+   * latch exists to swallow a SECOND press while the first is in flight; the in-flight request's own
+   * re-check is not a second press, so it must not be swallowed by its own latch. Absent for the
+   * keydown and menu paths, so for them the latch holds exactly as before. */
+  ownRequestOpId?: string;
+  /** The opId the latch is currently held for (module state `inFlightOpId`), supplied by the live
+   * wrapper so this function stays pure. Only read together with `ownRequestOpId`. */
+  inFlightOpId?: string | null;
 }
 
 function decideRouting<TDoc>(params: RoutingParams<TDoc>, direction: 'undo' | 'redo'): RoutingDecision {
-  if (params.latched) return { action: 'swallow' };
+  // The latch swallows every press but the in-flight request's own re-check (B-1): without the exception
+  // the swap's "may I still swap?" question could never be answered while the latch it depends on is up.
+  const isOwnRequest = params.ownRequestOpId !== undefined && params.ownRequestOpId === params.inFlightOpId;
+  if (params.latched && !isOwnRequest) return { action: 'swallow' };
 
   const opId = direction === 'undo' ? params.descriptor.undoTopOpId : params.descriptor.redoTopOpId;
   if (opId === undefined) return { action: 'fallthrough' };
@@ -285,7 +313,7 @@ function textsEquivalentTimed(a: Text, b: Text): boolean {
   return reason === null;
 }
 
-function liveRoutingParams(view: EditorView): RoutingParams<Text> {
+function liveRoutingParams(view: EditorView, ownRequestOpId?: string): RoutingParams<Text> {
   return {
     descriptor,
     registry,
@@ -294,6 +322,8 @@ function liveRoutingParams(view: EditorView): RoutingParams<Text> {
     currentDoc: view.state.doc,
     docsEqual,
     docsEquivalent: textsEquivalentTimed,
+    ownRequestOpId,
+    inFlightOpId,
   };
 }
 
@@ -326,11 +356,18 @@ function traceRoutingEquivalence(
 
 /** The ONE live routing decision for a Cmd-Z / Cmd-Shift-Z: the keydown path and the menu path
  * (`requestUnified`) both call it, so both use the fallback comparison and both log it. Runs only on
- * those key presses, never per keystroke. */
-function decideLiveRouting(view: EditorView, direction: 'undo' | 'redo'): RoutingDecision {
+ * those key presses, never per keystroke. The editor-first Markdown swap (api-structural-markdown.ts)
+ * calls it a third time, with its own opId, to re-check that the live document still equals the saved
+ * copy after Swift reserved its writer ticket: same function, same comparison, and only that call may
+ * pass `ownRequestOpId` (keydown and menu pass nothing, so the latch still holds their presses). */
+export function decideLiveRouting(
+  view: EditorView,
+  direction: 'undo' | 'redo',
+  ownRequestOpId?: string
+): RoutingDecision {
   const routingStart = performance.now();
   lastEquivalence = null;
-  const params = liveRoutingParams(view);
+  const params = liveRoutingParams(view, ownRequestOpId);
   const decision = direction === 'undo' ? decideUndoRouting(params) : decideRedoRouting(params);
   // The whole decision's time (what Cmd-Z pays per press, not only the fallback comparison), taken before
   // the trace line is built.
@@ -364,11 +401,12 @@ function maybeBeepOnRefusal(view: EditorView, direction: 'undo' | 'redo'): void 
 
 // === Structural op lifecycle (see docs/architecture/unified-undo.md's audited-sequences
 // section) ===
-// Mirrors Milkdown's undo-coordinator.ts. CodeMirror/Source mode never performs a checkpoint
-// swap (the degraded undo path, see the doc's Checkpoints section, regenerates sourceContent
-// from the restored DB instead) so there is no performStructuralSwap/finishStructuralSwapSettle
-// here -- only registry population for the equality-based routing decision (see the doc's
-// routing section), which is identical regardless of which editor performed the op.
+// Mirrors Milkdown's undo-coordinator.ts. The OLD Source-mode body's own undo never performs a checkpoint swap (it regenerates
+// sourceContent from the restored DB instead), so this file has no performStructuralSwap/finishStructuralSwapSettle: it holds the
+// registry population for the equality-based routing decision (see the doc's routing section), which is identical regardless of
+// which editor performed the op. The Markdown undo (`markdownStructuralSwap`, api-structural-markdown.ts, t-4a8fd8af) does swap
+// `entry.checkpoint` back in -- for the entries it records itself and for the ones the old body recorded through
+// `beginStructuralOp` -- using this module's registry, latch and `decideLiveRouting` unchanged.
 
 /** Op-sequence step 3: isolate the current history group (H3) and capture the pre-op
  * checkpoint + preOpDoc. `postOpDoc` starts equal to `preOpDoc` as a placeholder;
@@ -484,7 +522,87 @@ export function maybeAdvanceRegistryOnSyncOriginTx(tr: Transaction): void {
   }
 }
 
-function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
+/** Test-only: the directions of the presses queued behind the latch right now, oldest first. */
+export function getQueuedPressDirections(): Array<'undo' | 'redo'> {
+  return queuedPresses.map((press) => press.direction);
+}
+
+/** Tells Swift that `count` presses it may be counting as held (`heldUndoPressCount`) ended WITHOUT a request to Swift: they fell
+ * through to a plain text undo/redo, or were dropped. Same message name and payload as Milkdown's. A no-op for 0. */
+function postHeldPressesSettled(count: number): void {
+  if (count <= 0) return;
+  (window as any).webkit?.messageHandlers?.undoHeldPressSettled?.postMessage({ count });
+}
+
+/** Throws away the presses queued behind the latch and tells Swift ONCE, so it can show its one-line warning. Used by the latch
+ * timeout and by a failed reply; a no-op when nothing is queued. Messages: `undoQueueDropped {count}` and `undoHeldPressSettled
+ * {count}`, the names and payloads Milkdown posts. */
+function dropQueuedPresses(why: string): void {
+  const count = queuedPresses.length;
+  if (count === 0) return;
+  queuedPresses.length = 0;
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[undo-coordinator] dropped ${count} queued undo/redo press(es): ${why}`,
+  });
+  (window as any).webkit?.messageHandlers?.undoQueueDropped?.postMessage({ count });
+  postHeldPressesSettled(count);
+}
+
+/** How many Cmd-Z / Cmd-Shift-Z presses are being held behind the in-flight latch right now (0 when none). Bridge target for
+ * `window.FinalFinal.heldUndoPressCount`; Swift reads it at the moment a close starts. No side effects. */
+export function heldUndoPressCount(): number {
+  return queuedPresses.length;
+}
+
+/** Releases the latch and forgets the queue (barrier clear): the timeline the presses were meant for is gone, so no warning is shown
+ * for them. Swift is still told they ended (`undoHeldPressSettled`), so a close that counted them as held never waits for them. */
+function releaseLatchAndQueue(): void {
+  const held = queuedPresses.length;
+  latched = false;
+  inFlightOpId = null;
+  queuedPresses.length = 0;
+  clearLatchTimeout();
+  postHeldPressesSettled(held);
+}
+
+/** Holds a press made while the latch is held; it is routed when Swift's reply for the in-flight request arrives. */
+function queuePress(direction: 'undo' | 'redo'): void {
+  queuedPresses.push({ direction });
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[undo-coordinator] ${direction} press queued behind in-flight opId=${inFlightOpId} (queued=${queuedPresses.length})`,
+  });
+}
+
+/** Routes the queued presses, oldest first, each one deciding afresh against the LIVE document. A structural one takes the latch
+ * again and the rest wait for ITS reply; a press that falls through runs the editor's own text undo/redo right here (called
+ * directly, so the smart slash two-step is not applied to a held press -- as in Milkdown). */
+function drainQueuedPresses(): void {
+  while (!latched && queuedPresses.length > 0) {
+    const press = queuedPresses.shift();
+    const view = getEditorView();
+    if (!press || !view) {
+      const ended = (press ? 1 : 0) + queuedPresses.length;
+      queuedPresses.length = 0;
+      postHeldPressesSettled(ended);
+      return;
+    }
+    const decision = decideLiveRouting(view, press.direction);
+    if (decision.action === 'structural') {
+      requestStructural(decision.opId, press.direction, true); // a held press: the request carries `held: true`
+      return;
+    }
+    maybeBeepOnRefusal(view, press.direction);
+    if (press.direction === 'undo') undo(view);
+    else redo(view);
+    postHeldPressesSettled(1); // this held press ended here, as a text undo/redo, with no request to Swift
+  }
+}
+
+/** `held` is true only for a press that was queued behind the latch and is now being sent (drained): the request then carries
+ * `held: true`. A press sent directly omits the field. */
+function requestStructural(opId: string, direction: 'undo' | 'redo', held = false): void {
   latched = true;
   inFlightOpId = opId; // N5: track the specific request this latch is now held for
   clearLatchTimeout();
@@ -497,12 +615,13 @@ function requestStructural(opId: string, direction: 'undo' | 'redo'): void {
       type: 'debug',
       message: `[undo-coordinator] latch timeout: no reply from Swift for ${direction} opId=${opId} -- self-clearing`,
     });
+    dropQueuedPresses('latch timeout');
   }, LATCH_TIMEOUT_MS);
   const messageName = direction === 'undo' ? 'structuralUndoRequested' : 'structuralRedoRequested';
   // Safe no-op if Swift hasn't registered this handler yet (Phase 3+ wires it) -- same
   // optional-chaining pattern as every other Swift bridge postMessage call in this codebase
   // (e.g. contentChanged in main.ts).
-  (window as any).webkit?.messageHandlers?.[messageName]?.postMessage({ opId });
+  (window as any).webkit?.messageHandlers?.[messageName]?.postMessage(held ? { opId, held: true } : { opId });
 }
 
 /**
@@ -539,7 +658,14 @@ export function handleUnifiedUndoKeydown(e: KeyboardEvent, view: EditorView, dir
   e.preventDefault();
   e.stopPropagation();
 
-  if (decision.action === 'swallow') return true;
+  if (decision.action === 'swallow') {
+    // Latch held. A held-down key sends a stream of auto-repeat keydowns for as long as the undo takes; queueing them would undo that
+    // many steps. They are consumed (so the editor's own keymap does not run a text undo for them) but not queued and not counted; a
+    // separate tap (`repeat` false) still queues, in order. Mirrors Milkdown.
+    if (e.repeat) return true;
+    queuePress(direction); // keep the press, route it when Swift's reply arrives (O19)
+    return true;
+  }
 
   requestStructural(decision.opId, direction);
   return true;
@@ -581,7 +707,10 @@ function requestUnified(direction: 'undo' | 'redo'): void {
 
   const decision = decideLiveRouting(view, direction);
 
-  if (decision.action === 'swallow') return; // in-flight -- drop, matches the keydown path
+  if (decision.action === 'swallow') {
+    queuePress(direction); // in-flight -- hold the press, matches the keydown path
+    return;
+  }
 
   if (decision.action === 'fallthrough') {
     maybeBeepOnRefusal(view, direction);
@@ -647,6 +776,19 @@ export function handleUndoReplyFromSwift(
   latched = false;
   inFlightOpId = null;
   clearLatchTimeout();
+  if (reply.outcome === 'cancelled') {
+    // The project is closing or switching: the document is left exactly as it is, and the presses held behind the request are
+    // dropped WITHOUT a warning (the window is going away). Swift is still told they ended, so a close that counted them as held
+    // does not wait for them. Mirrors Milkdown.
+    const dropped = queuedPresses.length;
+    (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+      type: 'debug',
+      message: `[undo-coordinator] structural ${direction} cancelled at the lifecycle barrier (opId=${reply.opId}) -- document untouched, dropped ${dropped} held press(es) silently`,
+    });
+    queuedPresses.length = 0;
+    postHeldPressesSettled(dropped);
+    return;
+  }
   if (reply.outcome === 'failed') {
     // Post-commit failure (plan review round MF-4) -- mirrors Milkdown's undo-coordinator.ts.
     // The DB has already been restored, but the Source-mode settle (the `setContent` content
@@ -657,13 +799,20 @@ export function handleUndoReplyFromSwift(
       type: 'debug',
       message: `[undo-coordinator] structural ${direction} failed post-commit (opId=${reply.opId}) -- NOT replaying a text ${direction} on top of an already-restored DB`,
     });
+    // Same reasoning for the presses held behind it: routing them against an editor that disagrees with the database would write the
+    // disagreement back. Drop them, and tell Swift once.
+    dropQueuedPresses(`structural ${direction} failed post-commit`);
     return;
   }
-  if (reply.outcome !== 'fallback') return;
-  const view = getEditorView();
-  if (!view) return;
-  if (direction === 'undo') undo(view);
-  else redo(view);
+  if (reply.outcome === 'fallback') {
+    const view = getEditorView();
+    if (view) {
+      if (direction === 'undo') undo(view);
+      else redo(view);
+    }
+  }
+  // The latch is free: route what was pressed while it was held, in order (O19).
+  drainQueuedPresses();
 }
 
 export function receiveUndoOutcome(opId: string, outcome: UndoReplyOutcome): void {

@@ -260,6 +260,15 @@ extension ContentView {
                 return
             }
 
+            // t-4a8fd8af (O6): while a Markdown structural command is unapplied (the writer's hold is up) the editor text and the rows
+            // differ by that command, and the section list may still carry the removed section. Enforcement would write heading levels
+            // into the rows and rewrite the editor's text from the content record. Skip now; the release runs this handler again.
+            guard !editorState.markdownWriter.isHeldForStructuralWork else {
+                DebugLog.log(.outline, "[onSectionsUpdated] hierarchy check skipped: a Markdown structural command is unapplied")
+                editorState.markdownWriter.afterNextRelease { [weak editorState] in editorState?.onSectionsUpdated?() }
+                return
+            }
+
             // Skip hierarchy enforcement while zoomed to prevent feedback loop:
             // User adds headings → DB observation fires → enforcement modifies levels →
             // rebuilds content → content change triggers block reparse → loop.

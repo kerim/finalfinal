@@ -48,6 +48,10 @@ extension CodeMirrorEditor.Coordinator {
         controller.add(self, name: "structuralRedoRequested")
         controller.add(self, name: "historyEdited")
         controller.add(self, name: "structuralUndoRefused")
+        // t-4a8fd8af round 7b: the page's undo coordinator now holds presses made while an earlier undo is in flight (as the Rich Text
+        // editor does), and tells Swift when a held press ended without a request or the queue was dropped.
+        controller.add(self, name: "undoHeldPressSettled")
+        controller.add(self, name: "undoQueueDropped")
         // Esc-ladder bridge (UX contract §6) -- see EscapeLadder.swift.
         controller.add(self, name: "escapeLadder")
         controller.add(self, name: "escapeComposition")
@@ -148,6 +152,21 @@ extension CodeMirrorEditor.Coordinator {
             queue: .main
         ) { [weak self] _ in
             self?.triggerSpellcheck()
+        }
+    }
+
+    /// t-4a8fd8af (O25/O30): the page's own text becomes the content record. `queue: nil`: the handler runs synchronously on the posting
+    /// thread (the main actor), so the adoption is complete when `EditorViewState.adoptMarkdownPageText` returns. Window-scoped.
+    func subscribeToMarkdownAdoptNotifications() {
+        markdownAdoptObserver = NotificationCenter.default.addObserver(
+            forName: .markdownEditorFirstAdoptText,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let self,
+                  let token = notification.userInfo?["windowToken"] as? UUID, token == self.windowToken,
+                  let raw = notification.userInfo?["raw"] as? String else { return }
+            self.adoptPageText(raw)
         }
     }
 

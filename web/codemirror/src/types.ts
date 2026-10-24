@@ -174,6 +174,26 @@ declare global {
       clearStructuralUndoRegistry: () => void;
       // MF-1 (Phase 5 review round): scoped to one evicted opId, not a whole-registry clear.
       clearStructuralUndoState: (opId: string) => void;
+      // Editor-first structural commands in Markdown mode (t-4a8fd8af). The JSON contract is documented at the top of
+      // api-structural-markdown.ts; Swift reads each result as JSON.stringify(...).
+      markdownStructuralEditorFirst: (
+        request: string | object
+      ) => import('./api-structural-markdown').MarkdownStructuralResult;
+      markdownStructuralSwap: (
+        opId: string,
+        direction: 'undo' | 'redo',
+        requestJson?: string | object
+      ) => import('./api-structural-markdown').MarkdownStructuralResult;
+      // B5 (t-4a8fd8af): while non-null, renumberFootnotes is applied outside the text history (a structural settle's renumber).
+      // With opId === null and `expecting` given, clears ONLY if the current value === expecting (compare-and-clear, so an earlier
+      // settle's clear cannot drop a later, overlapping settle's flag); null without `expecting` clears unconditionally.
+      setStructuralSettleOpId: (opId: string | null, expecting?: string) => void;
+      // O28 (t-4a8fd8af): replaces only the Notes or bibliography region, if it still holds `expectedOld`. JSON contract: api-managed-region.ts.
+      markdownReplaceManagedRegion: (
+        request: string | object
+      ) => import('./api-managed-region').MarkdownManagedRegionResult;
+      // O19 (t-4a8fd8af): presses held behind the in-flight structural request.
+      heldUndoPressCount: () => number;
       // Combined poll data
       getPollData: () => string;
       // Test snapshot hook

@@ -127,9 +127,9 @@ class BlockSyncService {
         }
     }
 
-    /// The script the close/quit/switch step 1 asks the Rich Text editor how many Cmd-Z / Cmd-Shift-Z presses it holds in its own
-    /// queue (a press made while an earlier undo is in flight is held and only sent when that undo replies). An editor without the
-    /// function (Markdown mode, an older bundle) holds none.
+    /// The script the close/quit/switch step 1 asks the editor how many Cmd-Z / Cmd-Shift-Z presses it holds in its own queue (a press
+    /// made while an earlier undo is in flight is held and only sent when that undo replies). Both editors answer it (the Markdown
+    /// page since t-4a8fd8af); a page without the function (an older bundle) holds none.
     static let heldUndoPressCountScript =
         "(window.FinalFinal && typeof window.FinalFinal.heldUndoPressCount === 'function') ? window.FinalFinal.heldUndoPressCount() : 0"
 

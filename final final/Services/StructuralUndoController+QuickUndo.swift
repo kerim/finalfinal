@@ -97,6 +97,7 @@ extension StructuralUndoController {
         efDuplicateCopies[opId] = nil   // t-18b7fa48: a duplicate entry's copies
         efRestorePlans[opId] = nil   // t-18b7fa48 round 2d-i: a restore entry's plan
         efSnapshotJobKeys[opId] = nil   // t-18b7fa48 round 3c: the latest slow undo or redo job's key
+        efEditorKind[opId] = nil   // t-4a8fd8af round 7a: a Markdown entry's kind (only press-time routing reads it; no job or settle does)
         if let keys = efJobKeys.removeValue(forKey: opId) {
             for key in keys { editorState?.efJobRegistry.forget(key) }
         }
@@ -104,7 +105,8 @@ extension StructuralUndoController {
 
     // MARK: - Eligibility (plan-v1 C4 as amended by plan-v3-addendum A1)
 
-    /// Whether Cmd-Z of this editor-first delete may put the section back on the screen at once: Rich Text, not zoomed; the entry's
+    /// Whether Cmd-Z of this editor-first delete may put the section back on the screen at once: in the editor it was made in (Rich
+    /// Text unless `efEditorKind` says Markdown, t-4a8fd8af round 7a), not zoomed; the entry's
     /// slot and payload holder exist and the delete job has not failed; the slot is `reserved` or `applied` (the entry is on the undo
     /// stack); and no STRUCTURAL out-of-queue write (the old whole-document duplicate, restore or reorder of Markdown mode, zoomed
     /// and fallbacks, or the old slow undo or redo) has touched the project since the entry was recorded. An editor-first duplicate,
@@ -126,7 +128,7 @@ extension StructuralUndoController {
         // back. Its undo and redo are the queued slow ones, from the snapshot its job wrote (the slot's). Checked first, redo included.
         guard entry.kind != .sectionReorder else { return false }
         guard entry.isEditorFirst, let editorState else { return false }
-        guard editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil else { return false }
+        guard editorState.editorMode == (efEditorKind[entry.id]?.mode ?? .wysiwyg), editorState.zoomedSectionId == nil else { return false }
         guard let slot = efSlots.slot(entry.id), let holder = efHolders[entry.id], holder.outcome != .failed else { return false }
         guard efRecordedStructGeneration[entry.id] == editorState.structuralOutOfQueueGeneration else { return false }
         switch (redo, slot.state) {
@@ -146,6 +148,8 @@ extension StructuralUndoController {
         guard let entry = top(), entry.id == opId, quickPathPossible(entry, redo: redo) else { return nil }
         await editorState.awaitRunningLiveFlush()
         guard let fresh = top(), fresh.id == opId, quickPathPossible(fresh, redo: redo) else { return nil }
+        // A Markdown entry (t-4a8fd8af round 7a): its quick undo and redo live in StructuralUndoController+MarkdownQuickUndo.swift.
+        if efEditorKind[opId] == .markdown { return await resolveMarkdownQuickPath(fresh, redo: redo) }
         // The redo branches by the entry's kind (t-18b7fa48): a duplicate's redo is a fresh editor-first duplicate with the first
         // click's copy ids; a delete's is a fresh editor-first delete. Every editor-first entry, of either kind, can take the quick
         // path and meets the slow-undo test seams below [S13].
@@ -316,7 +320,7 @@ extension StructuralUndoController {
     /// The restore was refused (or its reply was lost): nothing changed on the screen. Puts back what the first stretch did, tells the
     /// user the press was not carried out (the existing notice: a command either does what it says or says why not), and starts the
     /// one fresh settle that restores the follow-up steps the epoch bump made a settle skip.
-    private func abandonQuickUndo(
+    func abandonQuickUndo(
         opId: UUID, reinsertKey: UUID, holder: SectionDeletePayloadHolder, reason: String, trace: StructTrace
     ) async -> UndoResult {
         guard let editorState else { return .failed }
@@ -344,9 +348,9 @@ extension StructuralUndoController {
     /// Reserves the reinsert behind everything reserved so far (the click's batch N, the delete job, the restore's N') and spawns it.
     /// The returned signal fires when the job holds its place (`didReserve` true) or when it came back without reserving. The task
     /// that runs the job also runs everything after it (`reinsertSettled`) and is what the unsettled marker `reinsertKey` stands for.
-    private func startReinsert( // swiftlint:disable:this function_parameter_count
+    func startReinsert( // swiftlint:disable:this function_parameter_count
         opId: UUID, reinsertKey: UUID, epoch: Int, holder: SectionDeletePayloadHolder, database: ProjectDatabase, projectId: String,
-        sidebarUpdate: Task<Void, Never>?, operationLabel: String
+        sidebarUpdate: Task<Void, Never>?, operationLabel: String, editorKind: EditorFirstEditorKind = .wysiwyg
     ) -> EFReservationSignal {
         let reserved = EFReservationSignal()
         guard let editorState, let blockSync = blockSyncService else {
@@ -372,6 +376,7 @@ extension StructuralUndoController {
             guard let blockSync = weakBlockSync else {
                 reserved.fire()
                 registry.resolve(reinsertKey, .abandoned)
+                self?.notifyMarkdownJobEnded(key: reinsertKey, outcome: .abandoned)
                 weakEditorState?.pendingReinsertCount = max(0, (weakEditorState?.pendingReinsertCount ?? 0) - 1)
                 return
             }
@@ -379,13 +384,14 @@ extension StructuralUndoController {
                 on: blockSync, identity: identity, registry: registry, key: reinsertKey,
                 onReserved: { reserved.fireReserved() })
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the press waiting
+            self?.notifyMarkdownJobEnded(key: reinsertKey, outcome: JobOutcome(result.outcome))   // a Markdown quick undo's hold continuation
             // The job's future has resolved: a rebuild that reads the database from here on reads the restored rows.
             weakEditorState?.pendingReinsertCount = max(0, (weakEditorState?.pendingReinsertCount ?? 0) - 1)
             // The sidebar update (it waits for the editor's paint) ends before the settle starts: the settle clears the overlay the
             // update sets, and this task is what the reinsert's unsettled marker stands for, so a close or a quit waits for both.
             await sidebarUpdate?.value
             await self?.reinsertSettled(
-                opId: opId, key: reinsertKey, epoch: epoch, holder: holder, result: result, trace: trace)
+                opId: opId, key: reinsertKey, epoch: epoch, holder: holder, result: result, trace: trace, editorKind: editorKind)
         }
         return reserved
     }

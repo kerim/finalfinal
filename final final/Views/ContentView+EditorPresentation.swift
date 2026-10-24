@@ -406,6 +406,10 @@ extension ContentView {
                         // stored rows from here. Never called for the user's own typing.
                         editorState.markdownWriter.noteLoaded(text: pushedText, pid: editorState.currentProjectId)
                     },
+                    onContentPushDropped: {
+                        // t-4a8fd8af (O29): typed text the content record will not see; the writer owes a pull of the live text.
+                        noteMarkdownContentPushDropped()
+                    },
                     isReconciliationPending: {
                         // P2 (undo-mode-switch-focus second timing gap): consulted by
                         // shouldPushContent to extend its settle window while a

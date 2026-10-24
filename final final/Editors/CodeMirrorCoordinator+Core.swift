@@ -126,6 +126,7 @@ extension CodeMirrorEditor {
         var proofingSettingsObserver: NSObjectProtocol?
         var insertFootnoteObserver: NSObjectProtocol?
         var renumberFootnotesObserver: NSObjectProtocol?
+        var markdownAdoptObserver: NSObjectProtocol?   // t-4a8fd8af: `.markdownEditorFirstAdoptText`
         var scrollToFootnoteDefObserver: NSObjectProtocol?
         var zoomFootnoteStateObserver: NSObjectProtocol?
         var insertImageObserver: NSObjectProtocol?
@@ -184,6 +185,10 @@ extension CodeMirrorEditor {
         /// rows. Never called for text the user typed (that arrives through `handleContentPush`).
         var onSwiftContentPushed: ((String) -> Void)?
 
+        /// t-4a8fd8af (O29): called when `handleContentPush` DROPS a `contentChanged` (a rebuild or transition is running, or the 150 ms
+        /// grace after a Swift push). The typed text is on screen but not in the content record: ContentView owes a pull of the live text.
+        var onContentPushDropped: (() -> Void)?
+
         /// P2 (undo-mode-switch-focus second timing gap): backing closure for
         /// CodeMirrorEditor's matching property -- see its doc comment.
         var isReconciliationPending: (() -> Bool)?
@@ -234,6 +239,7 @@ extension CodeMirrorEditor {
             subscribeToAnnotationNotifications()
             subscribeToProofingNotifications()
             subscribeToFootnoteNotifications()
+            subscribeToMarkdownAdoptNotifications()
             subscribeToMediaNotifications()
             subscribeToFormattingCommandNotifications()
         }
@@ -272,6 +278,9 @@ extension CodeMirrorEditor {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = renumberFootnotesObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = markdownAdoptObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             if let observer = scrollToFootnoteDefObserver {

@@ -109,9 +109,22 @@ extension ContentView {
             }
 
             let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
+            let sourceRead = markdownRegionRead()   // t-4a8fd8af O28: the editor's regions, on the stamp's line (nil: not Markdown)
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
+                return
+            }
+
+            if let sourceRead {
+                // Markdown: only the bibliography region is replaced, in place (O28); the record takes the page's text (O30).
+                await holdRebuildFlushWindowForUITesting()
+                await pushRebuildToMarkdownEditor(
+                    [.bibliography], result: result, read: sourceRead, stamp: rebuildStamp, kind: "bibliography")
+                editorState.isResettingContent = false
+                editorState.contentState = .idle
+                await sectionSyncService.syncNow(editorState.content)
+                await annotationSyncService.syncNow(editorState.content)
                 return
             }
 
@@ -400,9 +413,21 @@ extension ContentView {
             FootnoteDiag.log("notes rebuild: forced poll done after \(FootnoteDiag.nowMs() - diagStart)ms")
 
             let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
+            let sourceRead = markdownRegionRead()   // t-4a8fd8af O28: the editor's regions, on the stamp's line (nil: not Markdown)
             guard let result = fetchBlocksWithIds() else {
                 editorState.isResettingContent = false
                 editorState.contentState = .idle
+                return
+            }
+
+            if let sourceRead {
+                // Markdown: only the Notes region is replaced, in place (O28); the record takes the page's text (O30).
+                await holdRebuildFlushWindowForUITesting()
+                await pushRebuildToMarkdownEditor([.notes], result: result, read: sourceRead, stamp: rebuildStamp, kind: "notes")
+                editorState.isResettingContent = false
+                editorState.contentState = .idle
+                await sectionSyncService.syncNow(editorState.content)
+                await annotationSyncService.syncNow(editorState.content)
                 return
             }
 
@@ -465,6 +490,8 @@ extension ContentView {
             "[CV:stateChange] \(oldValue)→\(newValue) pendingBib=\(editorState.pendingBibliographyRebuild) "
                 + "pendingNotes=\(editorState.pendingNotesRebuild)")
         guard newValue == .idle else { return }
+        // t-4a8fd8af (O29): text the page holds that a dropped `contentChanged` kept out of the content record is pulled now.
+        Task { @MainActor in await runOwedMarkdownPull() }
         // Process ONE pending item per idle transition (if/else if chain).
         // Each rebuild sets contentState to non-idle; the next idle transition
         // picks up the next pending item.

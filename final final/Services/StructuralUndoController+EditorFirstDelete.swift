@@ -348,6 +348,7 @@ extension StructuralUndoController {
             guard let blockSync = weakBlockSync else {
                 reserved.fire()
                 registry.resolve(registryKey, .abandoned)
+                self?.notifyMarkdownJobEnded(key: registryKey, outcome: .abandoned)
                 return
             }
             let result = await job.perform(
@@ -358,6 +359,7 @@ extension StructuralUndoController {
                 })
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
+            self?.notifyMarkdownJobEnded(key: registryKey, outcome: JobOutcome(result.outcome))   // a Markdown job's hold continuation
             if case .applied(let output) = result.outcome, let mismatch = output.removedIdsMismatch {
                 // The editor and the database disagree about which rows belong to the section (fix round 2a, item 10): the rules are
                 // meant to be identical, so this means the screen and the saved copy are drifting apart. Log only: no behaviour change.
@@ -416,11 +418,13 @@ extension StructuralUndoController {
         guard let editorState else { return }
         let epoch = epoch ?? (efOpEpoch[opId] ?? 0)
         spy("efJobSettled")
+        // Markdown only (t-4a8fd8af round 6; a no-op for any other entry): nothing of the settle starts before step 8 has flushed the typing.
+        await awaitMarkdownStep8(opId: opId, jobKey: jobKey, keepsGateForPutBack: !outcome.isApplied)
         // (Round 2d-i, review A15: the registry's `.abandoned` outcome never arrives here -- both callers pass `JobOutcome(result.outcome)`
         // of the system write, which is applied, failed or refused -- so there is no arm for it.)
         guard outcome.isApplied else {
             DebugLog.alwaysPersisted("[StructuralUndoController] editor-first \(kind.logName) \(opId): the job did not apply (\(outcome))")
-            await putBackAfterFailedEditorFirstOp(kind: kind, opId: opId, removedLeaders: removedLeaders)
+            await putBackAfterFailedEditorFirstOp(kind: kind, opId: opId, removedLeaders: removedLeaders, jobKey: jobKey)
             return
         }
         await settleReorderOverlay(kind: kind, editorState: editorState, opId: opId)
@@ -536,6 +540,8 @@ extension StructuralUndoController {
             } else { skipped("bibliography resync") }
             if wanted() {
                 let content = editorState.content
+                markMarkdownSettle(opId: opId)   // Markdown only (B5/O10): the page's settle flag around the renumber this resync posts
+                defer { unmarkMarkdownSettle(opId: opId) }
                 await footnoteSyncService?.resyncNow(
                     footnoteRefs: FootnoteSyncService.extractFootnoteRefs(from: content), projectId: pid, fullContent: content,
                     stillWanted: wanted)
@@ -562,7 +568,8 @@ extension StructuralUndoController {
     /// handlers that normally carry them into the editor are deferred (`ContentView.handleNotesSectionChanged` and its bibliography
     /// twin return early while `activeLifecycle != nil`), so push them here with the same merge-guarded push the slow undo's settle
     /// uses (addendum A20): the regions and their ids come from the database, typing in user blocks survives. Nothing to do outside a
-    /// lifecycle (the normal rebuild runs), in Markdown (no delete is editor-first there), while zoomed, or when the project is
+    /// lifecycle (the normal rebuild runs), in Markdown (the Markdown settle has its own tail, `settleMarkdownManagedRegions`, and a
+    /// lifecycle there saves the page's live text itself), while zoomed, or when the project is
     /// no longer the one the resync ran for.
     ///
     /// It does what the normal Notes rebuild (`ContentView.handleNotesSectionChanged`) does, in the same order (fix round 6; the VM's

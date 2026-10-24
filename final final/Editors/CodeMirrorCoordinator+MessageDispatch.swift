@@ -42,17 +42,33 @@ extension CodeMirrorEditor.Coordinator {
         switch message.name {
         case "structuralUndoRequested":
             guard let body = message.body as? [String: Any], let opId = body["opId"] as? String else { return true }
+            // `held`: the editor sent this request out of its own press queue (a press made while an earlier undo was in flight), not
+            // straight from the key. A close or quit that counted such presses at its barrier lets exactly that many through the gate.
+            let held = (body["held"] as? Bool) ?? false
             let requestingWebView = message.webView
             Task { @MainActor in
-                await routeStructuralRequest(opId: opId, direction: .undo, from: requestingWebView, editorLabel: "CodeMirrorEditor")
+                await routeStructuralRequest(
+                    opId: opId, direction: .undo, held: held, from: requestingWebView, editorLabel: "CodeMirrorEditor")
             }
             return true
 
         case "structuralRedoRequested":
             guard let body = message.body as? [String: Any], let opId = body["opId"] as? String else { return true }
+            let held = (body["held"] as? Bool) ?? false
             let requestingWebView = message.webView
             Task { @MainActor in
-                await routeStructuralRequest(opId: opId, direction: .redo, from: requestingWebView, editorLabel: "CodeMirrorEditor")
+                await routeStructuralRequest(
+                    opId: opId, direction: .redo, held: held, from: requestingWebView, editorLabel: "CodeMirrorEditor")
+            }
+            return true
+
+        case "undoHeldPressSettled":
+            // A press the editor held ended without a request to Swift (a plain text undo took it, or it was dropped): the lifecycle's
+            // wait for presses made before the barrier stops counting it (`StructuralCommandGate.settleHeldPresses`).
+            guard let body = message.body as? [String: Any], let count = body["count"] as? Int else { return true }
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                routeUndoHeldPressSettled(count: count, from: requestingWebView, editorLabel: "CodeMirrorEditor")
             }
             return true
 
@@ -168,6 +184,16 @@ extension CodeMirrorEditor.Coordinator {
     }
 
     nonisolated func handleDiagnosticMessage(_ message: WKScriptMessage) -> Bool {
+        if message.name == "undoQueueDropped" {
+            // The page's undo coordinator's 30 s safety net gave up on queued presses: one warning notice, routed to the controller of
+            // the window that posted it (the same identity guard as `historyEdited`). The page also posts `undoHeldPressSettled` with
+            // the same count, so this handler settles nothing itself.
+            let requestingWebView = message.webView
+            Task { @MainActor in
+                routeUndoQueueDropped(from: requestingWebView, editorLabel: "CodeMirrorEditor")
+            }
+            return true
+        }
         guard message.name == "errorHandler" else { return false }
         guard let body = message.body as? [String: Any] else { return true }
         // errorHandler runs synchronously today — do not wrap this in a Task.

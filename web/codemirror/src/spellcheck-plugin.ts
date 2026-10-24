@@ -85,6 +85,19 @@ export function triggerSpellcheck(): void {
   triggerCheck();
 }
 
+/** After a wholesale EditorState swap (`view.setState`, the Markdown quick undo in api-structural-markdown.ts) the stored
+ * results' positions belong to the document that was just replaced -- the plugin remaps them only through transactions, and
+ * a swap has none. Drops them (no underline lands on the wrong word for even one frame) and starts a fresh check. A no-op
+ * while spellcheck is off. */
+export function resetSpellcheckAfterStateSwap(): void {
+  if (!enabled) return;
+  spellcheckResults = [];
+  resultsVersion++;
+  const view = getEditorView();
+  if (view) view.dispatch({});
+  triggerCheck();
+}
+
 export function disableSpellcheck(): void {
   enabled = false;
   spellcheckResults = [];

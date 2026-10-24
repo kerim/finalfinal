@@ -140,6 +140,7 @@ extension ContentView {
             // identity to the wrong (blank) node. Pushing result.markdown directly (the
             // same pattern rebuildDocumentContent already uses) eliminates that mismatch.
             let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
+            let sourceRead = markdownRegionRead()   // t-4a8fd8af O28: the editor's regions on the stamp's line (nil: not Markdown)
             guard let result = fetchBlocksWithIds() else {
                 DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: aborting " +
                     "label=\(label) reason=fetchBlocksWithIds-returned-nil")
@@ -149,48 +150,55 @@ extension ContentView {
                 return
             }
 
-            editorState.content = result.markdown
-            editorState.pendingImageMeta = result.imageMeta
-            // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
-            // action (footnote insertion) synthesizes new content, so a case could be made
-            // for INTENTIONAL, but this is exactly the call site the comment below already
-            // documents as a KNOWN residual data-loss window -- leaving it DERIVED means the
-            // new settle-window guard actively helps this pre-existing issue rather than
-            // bypassing it.
-            updateSourceContentIfNeeded()
-
-            // Formerly a "known residual limitation": a keystroke typed in the window between
-            // the flush above and setContentWithBlockIds below used to be lost the same way the
-            // bibliography/Notes rebuilds could lose one (t-6a0d195d) -- that push replaced
-            // every block that differed from the freshly-read DB content, including a user edit
-            // the DB hadn't caught up with yet. Fixed the same way: `preserveUserBlocks: true`
-            // below merges the push instead of replacing wholesale, so a block the user is
-            // still typing in keeps its live-editor identity and content. See
-            // mergeManagedBlocks's doc comment (api-content.ts) for the merge algorithm.
-
-            await holdRebuildFlushWindowForUITesting()
-
-            // Push fresh content with real block IDs atomically
-            // (same pattern as bibliography — prevents temp ID race)
-            let merged = await blockSyncService.setContentWithBlockIds(
-                markdown: result.markdown, blockIds: result.blockIds,
-                imageMeta: result.imageMeta,
-                cursorBoundary: result.bibBoundaryIndex,
-                cursorBoundaryEnd: result.bibBoundaryEndIndex,
-                expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds,
-                preserveUserBlocks: true,
-                traceKind: .footnote,
-                stillWanted: { editorState.rebuildPushStillWanted(rebuildStamp) })
-            // t-6a0d195d: see handleBibliographySectionChanged's matching comment -- the merged
-            // push's actual markdown can differ from result.markdown. pendingImageMeta (set just
-            // above) is kept regardless -- image metadata isn't affected by which markdown wins.
-            // Slice 2b: when a quick undo or redo started since the read, the editor's own text is `content` instead.
-            if await editorState.skipStaleRebuildTail(rebuildStamp, kind: "footnote", blockSync: blockSyncService) {
+            if let sourceRead {
+                // Markdown: only the Notes region is replaced, in place (O28); the record takes the page's text (O30).
+                editorState.pendingImageMeta = result.imageMeta
+                await holdRebuildFlushWindowForUITesting()
+                await pushRebuildToMarkdownEditor([.notes], result: result, read: sourceRead, stamp: rebuildStamp, kind: "footnote")
+            } else {
+                editorState.content = result.markdown
+                editorState.pendingImageMeta = result.imageMeta
+                // DERIVED REFRESH (default, genuinely ambiguous -- flagged): a deliberate user
+                // action (footnote insertion) synthesizes new content, so a case could be made
+                // for INTENTIONAL, but this is exactly the call site the comment below already
+                // documents as a KNOWN residual data-loss window -- leaving it DERIVED means the
+                // new settle-window guard actively helps this pre-existing issue rather than
+                // bypassing it.
                 updateSourceContentIfNeeded()
-            } else if let merged, merged != result.markdown {
-                editorState.content = merged
-                updateSourceContentIfNeeded() // #12: keep the Markdown-mode source copy in sync
+
+                // Formerly a "known residual limitation": a keystroke typed in the window between
+                // the flush above and setContentWithBlockIds below used to be lost the same way the
+                // bibliography/Notes rebuilds could lose one (t-6a0d195d) -- that push replaced
+                // every block that differed from the freshly-read DB content, including a user edit
+                // the DB hadn't caught up with yet. Fixed the same way: `preserveUserBlocks: true`
+                // below merges the push instead of replacing wholesale, so a block the user is
+                // still typing in keeps its live-editor identity and content. See
+                // mergeManagedBlocks's doc comment (api-content.ts) for the merge algorithm.
+
+                await holdRebuildFlushWindowForUITesting()
+
+                // Push fresh content with real block IDs atomically
+                // (same pattern as bibliography — prevents temp ID race)
+                let merged = await blockSyncService.setContentWithBlockIds(
+                    markdown: result.markdown, blockIds: result.blockIds,
+                    imageMeta: result.imageMeta,
+                    cursorBoundary: result.bibBoundaryIndex,
+                    cursorBoundaryEnd: result.bibBoundaryEndIndex,
+                    expectedBlocks: result.expectedBlocks,
+                    managedBlockIds: result.managedBlockIds,
+                    preserveUserBlocks: true,
+                    traceKind: .footnote,
+                    stillWanted: { editorState.rebuildPushStillWanted(rebuildStamp) })
+                // t-6a0d195d: see handleBibliographySectionChanged's matching comment -- the merged
+                // push's actual markdown can differ from result.markdown. pendingImageMeta (set just
+                // above) is kept regardless -- image metadata isn't affected by which markdown wins.
+                // Slice 2b: when a quick undo or redo started since the read, the editor's own text is `content` instead.
+                if await editorState.skipStaleRebuildTail(rebuildStamp, kind: "footnote", blockSync: blockSyncService) {
+                    updateSourceContentIfNeeded()
+                } else if let merged, merged != result.markdown {
+                    editorState.content = merged
+                    updateSourceContentIfNeeded() // #12: keep the Markdown-mode source copy in sync
+                }
             }
 
             editorState.isResettingContent = false

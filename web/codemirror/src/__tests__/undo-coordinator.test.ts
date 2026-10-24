@@ -30,6 +30,7 @@ import {
   handleUndoReplyFromSwift,
   handleUnifiedUndoKeydown,
   isLatched,
+  LATCH_TIMEOUT_MS,
   maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
   noteUserTransaction,
@@ -929,7 +930,7 @@ describe('undo-coordinator live wiring (real CodeMirror EditorView, always-empty
   });
 });
 
-// === N8 (Phase B remediation plan): the 3s latch self-clear timeout ===
+// === N8 (Phase B remediation plan): the latch self-clear timeout (LATCH_TIMEOUT_MS) ===
 // Zero test coverage previously existed for this belt-and-braces mechanism (a lost Swift
 // reply must not swallow every future Cmd-Z/Cmd-Shift-Z for the rest of the session).
 // Mirrors Milkdown's undo-coordinator.test.ts N8 block.
@@ -962,7 +963,14 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     return v;
   }
 
-  it('self-clears the latch after 3s with no reply from Swift, so a later Cmd-Z is not swallowed forever', async () => {
+  // Pins the VALUE the tests below are written in terms of (t-4a8fd8af, round 2c): the safety net is 30 s, the same as Milkdown's. A
+  // shorter one would drop a held press (with the "could not be carried out" notice) during a healthy slow undo on a long book.
+  // Break patch: set `LATCH_TIMEOUT_MS` in undo-coordinator.ts back to 3000.
+  it('the latch safety net is 30 s, the value Milkdown uses', () => {
+    expect(LATCH_TIMEOUT_MS).toBe(30000);
+  });
+
+  it('self-clears the latch after LATCH_TIMEOUT_MS with no reply from Swift, so a later Cmd-Z is not swallowed forever', async () => {
     const v = makeEditor('Paragraph one.');
     setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: v.state.doc, preOpDoc: v.state.doc });
     setUndoDescriptor({ undoTopOpId: 'op-1' });
@@ -973,13 +981,13 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     handleUnifiedUndoKeydown(event, v, 'undo');
     expect(isLatched()).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(LATCH_TIMEOUT_MS);
 
     expect(isLatched()).toBe(false);
     expect(getInFlightOpId()).toBe(null);
   });
 
-  it('does NOT self-clear before 3s -- a reply that genuinely takes a while is not preempted', async () => {
+  it('does NOT self-clear before LATCH_TIMEOUT_MS -- a reply that genuinely takes a while is not preempted', async () => {
     const v = makeEditor('Paragraph one.');
     setRegistryEntry('op-1', { checkpoint: v.state as any, postOpDoc: v.state.doc, preOpDoc: v.state.doc });
     setUndoDescriptor({ undoTopOpId: 'op-1' });
@@ -989,7 +997,7 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     const event = new KeyboardEvent('keydown', { key: 'z', metaKey: true, cancelable: true });
     handleUnifiedUndoKeydown(event, v, 'undo');
 
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(LATCH_TIMEOUT_MS - 1);
 
     expect(isLatched()).toBe(true);
   });
@@ -1016,9 +1024,9 @@ describe('undo-coordinator latch self-clear timeout (N8)', () => {
     handleUnifiedUndoKeydown(event2, v, 'undo');
     expect(getInFlightOpId()).toBe('op-2');
 
-    // t=3000ms overall: when the first request's original timer would have fired, but 1s
-    // before the second request's own fresh 3s window elapses.
-    await vi.advanceTimersByTimeAsync(2000);
+    // t=LATCH_TIMEOUT_MS overall: when the first request's original timer would have fired, but 1s
+    // before the second request's own fresh window elapses.
+    await vi.advanceTimersByTimeAsync(LATCH_TIMEOUT_MS - 1000);
 
     expect(isLatched()).toBe(true);
     expect(getInFlightOpId()).toBe('op-2');

@@ -54,6 +54,14 @@ const imageMetaField = StateField.define<Map<string, number>>({
   },
 });
 
+/** The image widths (by src) `state` currently holds, in `setImageMeta`'s own shape. Read before a wholesale state swap
+ * (`view.setState`) so the swap can put the live values back: the field lives IN the EditorState, so installing an older
+ * state would otherwise bring back the widths of that older moment (api-structural-markdown.ts). */
+export function readImageMeta(state: EditorState): Array<{ src: string; width: number }> {
+  const meta = state.field(imageMetaField, false);
+  return meta ? [...meta].map(([src, width]) => ({ src, width })) : [];
+}
+
 /** Push image metadata (widths by src) into the editor state */
 export function setImageMeta(meta: Array<{ src: string; width?: number | null }>): void {
   const view = getEditorView();

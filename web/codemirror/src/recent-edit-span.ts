@@ -86,6 +86,12 @@ export function getRecentUserEditSpan(): { from: number; to: number } | null {
   return { from: currentSpan.from, to: currentSpan.to };
 }
 
+/** Forgets the tracked span. Called after a wholesale state swap (`view.setState`, api-structural-markdown.ts): the span's positions
+ * belong to the document that was replaced and are never remapped through a swap. */
+export function clearRecentUserEditSpan(): void {
+  currentSpan = null;
+}
+
 /** Test-only reset -- not part of the window.FinalFinal bridge. */
 export function resetRecentUserEditSpanForTests(): void {
   currentSpan = null;

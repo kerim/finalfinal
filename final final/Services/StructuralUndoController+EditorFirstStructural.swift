@@ -433,6 +433,7 @@ extension StructuralUndoController {
     /// Nothing is pushed otherwise: the flag is the only reason, so a settle with no skipped rebuild behind it does exactly what it did
     /// before this tail existed.
     func settleManagedRegionsAtEndOfEditorFirstSettle(editorState: EditorViewState, projectId: String?) async {
+        if editorState.editorMode == .source { settleMarkdownManagedRegions(editorState: editorState); return }   // Markdown: re-post the rebuilds
         if editorState.activeLifecycle != nil {
             if await pushManagedRegionsWhileClosing(editorState: editorState, projectId: projectId) {
                 editorState.managedRegionsNeedRepush = false
@@ -450,7 +451,11 @@ extension StructuralUndoController {
     /// slot and its pin, and tell the user (UX contract 4.3: a modal alert for an operation that did not happen; the wording is
     /// per kind, `EditorFirstOpKind.putBackAlert`). A put-back can overwrite typing from the last poll window (parked as rare, plan
     /// section 7, P9). The caller has already brought `pendingEditorFirstJobs` down, so the push's stamp is current.
-    func putBackAfterFailedEditorFirstOp(kind: EditorFirstOpKind, opId: UUID, removedLeaders: Set<String>) async {
+    func putBackAfterFailedEditorFirstOp(kind: EditorFirstOpKind, opId: UUID, removedLeaders: Set<String>, jobKey: UUID? = nil) async {
+        if hasMarkdownGate(opId: opId, jobKey: jobKey) {   // B8: a Markdown job's put-back is its own
+            await putBackMarkdownDelete(opId: opId, jobKey: jobKey, kind: kind, removedLeaders: removedLeaders)
+            return
+        }
         guard let editorState, let unifiedUndoService else { return }
         defer {
             editorState.pendingRemovalIds.subtract(removedLeaders)

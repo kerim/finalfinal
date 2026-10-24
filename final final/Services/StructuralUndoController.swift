@@ -103,6 +103,10 @@ final class StructuralUndoController {
     /// reorder (t-0b70d1e9) are queued system writes that never do, so a drag leaves an earlier editor-first delete quick-undoable.
     var efRecordedStructGeneration: [UUID: Int] = [:]
 
+    /// Which editor an editor-first entry was made in (t-4a8fd8af round 5; set by `performMarkdownEditorFirstDelete`, StructuralUndoController+
+    /// MarkdownEditorFirst.swift). An entry with no value here was made in Rich Text. The undo routes (round 7) compare it with the editor mode.
+    var efEditorKind: [UUID: EditorFirstEditorKind] = [:]
+
     /// An editor-first Duplicate Section entry's `copies` (t-18b7fa48 Phase 4b slice 3; StructuralUndoController+EditorFirstDuplicate.swift),
     /// by the entry's id: the editor's answer at its latest click or redo, one per copied top-level block. The quick redo hands them
     /// back so the new copy takes the SAME ids (S9). Removed with the rest of the entry's state (`forgetQuickUndoState`).
@@ -191,6 +195,14 @@ final class StructuralUndoController {
     /// has by then waited for the delete's job and settle) and BEFORE the undo's last wait for running rebuilds. A test starts a
     /// stand-in rebuild here to prove that the last wait exists (fix round 8, F1).
     var testAfterUndoSnapshotResolved: (() async -> Void)?
+
+    /// Test-only (t-4a8fd8af review F2): awaited at the very start of `prepareMarkdownPageForStructuralCommand`, BEFORE it cancels the
+    /// pending Markdown re-parse. A test types into the page and arms a re-parse here, which is the window a refused press can lose.
+    var testBeforeMarkdownPagePrepare: (() async -> Void)?
+
+    /// Test-only: how the page call of the last Markdown slow REDO came out (the page's reply reason, or why no request could be built),
+    /// so a failing test says why the press was refused.
+    var testLastMarkdownSlowSwapNote: String?
 
     /// Test-only (slice 2b): an undo of an editor-first section delete never takes the quick path (the old slow undo runs), the way
     /// `FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N` does in a UI run. Since t-18b7fa48 round 1e-i it covers every editor-first entry, a
@@ -1040,6 +1052,7 @@ final class StructuralUndoController {
         // sequence it falls back to does, below, exactly as every other command that reads and rewrites the whole document.
         await runStructuralCommand(label: "sectionDelete", waitsForRebuilds: false, cancelled: StructuralOpOutcome.refused) {
             if let outcome = await performEditorFirstDelete(rootId: rootId) { return outcome }
+            if let outcome = await performMarkdownEditorFirstDelete(rootId: rootId) { return outcome }   // t-4a8fd8af: nil while the switch is off
             await editorState?.awaitNoRunningRebuilds(label: "before sectionDelete (old path)")
             return await performStructuralOpUngated(
                 kind: .sectionDelete, title: "Delete Section",

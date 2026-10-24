@@ -220,7 +220,17 @@ struct ContentSyncObserverHost<Content: View>: View {
             }
             guard editorState.contentState == .idle,
                   editorState.editorMode == .source,
-                  editorState.zoomedSectionId == nil else { return }
+                  editorState.zoomedSectionId == nil else {
+                // t-4a8fd8af (O31): a fire discarded ONLY because the content state is busy owes the pull of the live text (the next
+                // idle reads it, adopts it and re-arms this re-parse). Leaving Markdown mode and zoom owe nothing; every other exit
+                // above (lifecycle, project change, cancel, newer generation) never reaches this guard.
+                if MarkdownOwedPull.discardedFireOwesPull(
+                    contentIsIdle: editorState.contentState == .idle, isSourceMode: editorState.editorMode == .source,
+                    isZoomed: editorState.zoomedSectionId != nil) {
+                    editorState.markdownWriter.notePullOwed("a re-parse fire was discarded: the content state was busy")
+                }
+                return
+            }
             runMarkdownReparseFire(newValue: newValue, db: db, pid: pid, editorState: editorState, services: services)
         }
     }
