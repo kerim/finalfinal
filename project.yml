@@ -364,12 +364,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final.quicklook
         PRODUCT_NAME: QuickLook Extension
-        # Feeds NSExtensionPointIdentifier below. macOS registers every app
-        # copy Xcode builds, and each copy's extension showed up as another
-        # "FINAL|FINAL Quick Look" in System Settings — and could win the
-        # election over the installed app's. Debug builds name an extension
-        # point that doesn't exist, so macOS never registers their copy.
-        FF_QUICKLOOK_EXTENSION_POINT: com.apple.quicklook.preview
         PRODUCT_MODULE_NAME: QuickLook_Extension
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
@@ -386,14 +380,12 @@ targets:
         Debug:
           CODE_SIGN_IDENTITY: "-"
           CODE_SIGN_STYLE: Manual
-          FF_QUICKLOOK_EXTENSION_POINT: com.kerim.final-final.debug-build-not-registered
         DebugTest:
           # Embedded-extension IDs must be prefixed by the host app's ID, and
           # the Test action's host app is …final-final.testhost.
           PRODUCT_BUNDLE_IDENTIFIER: com.kerim.final-final.testhost.quicklook
           CODE_SIGN_IDENTITY: "-"
           CODE_SIGN_STYLE: Manual
-          FF_QUICKLOOK_EXTENSION_POINT: com.kerim.final-final.debug-build-not-registered
         Release:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           CODE_SIGN_STYLE: Manual
@@ -405,7 +397,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
-          NSExtensionPointIdentifier: $(FF_QUICKLOOK_EXTENSION_POINT)
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
           NSExtensionPrincipalClass: QuickLook_Extension.PreviewViewController
           NSExtensionAttributes:
             QLSupportedContentTypes:

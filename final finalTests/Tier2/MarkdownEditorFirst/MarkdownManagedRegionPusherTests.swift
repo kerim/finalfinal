@@ -30,6 +30,24 @@
 //          BREAK: in `pushRebuild`, remove the `guard stillWanted() else { ... }` block in front of `report.wholeTextFallback = true`.
 //          FAILS with: "the whole-text path ran on a stale stamp".
 //
+//   t-4a8fd8af slice 2 (the Notes left unsorted after a Markdown drag): the record `read` comes from can LAG the page (the page relabels the
+//   footnotes in place; its contentChanged can be dropped while a rebuild runs). When two chapters carry the same footnote texts the
+//   stale old Notes text equals the new sorted one, and `pushRebuild` used to skip the region (`expectedOld == newText`) without asking
+//   the page. Now only a document with no such region at all is skipped.
+//   A  equal texts still ask the page; a page that answers `regionChanged` owes a re-push.
+//      BREAK: in `pushRebuild` put back `if expectedOld == newText { continue }` instead of the nil/nil line.
+//      FAILS with: "evaluate was not called" (0 != 1).
+//   B  no Notes and no Bibliography anywhere: nothing is sent and the whole-text path does not run.
+//      BREAK: delete the `if expectedOld == nil && newText == nil { continue }` line.
+//      FAILS with: "wholeTextFallback true for a document with no Notes".
+//   C  equal texts and a page that already holds them (`changed: false`): nothing is owed and nothing is adopted (review R5: BREAK for
+//      the adopt half: in `push` drop the `changed` condition, `if changed, let postRaw = ...` -> `if let postRaw = ...`; FAILS with:
+//      "adopt called on an unchanged push").
+//      BREAK: in `pushRebuild` replace `case .pushed:` / `break` with `case .pushed(let changed): if !changed { report.repushOwed = true }`.
+//      FAILS with: "repushOwed true on an unchanged region".
+//   D  (the real page) a lagging record whose old Notes text equals the sorted one while the page holds the relabelled-but-unsorted
+//      Notes: nothing is overwritten, a re-push is owed. BREAK: as A. FAILS with: "evaluate was not called".
+//
 //  The ContentView wiring (the stamp line, the idle hook, the coordinator drop callback) is thin and is shown by the VM run only.
 //
 //  Needs `cd web && pnpm build` first (the host tests load the built bundle). XCTest, because WKWebView requires a run loop.
@@ -253,5 +271,91 @@ final class MarkdownManagedRegionPusherTests: XCTestCase {
         XCTAssertFalse(after.contains("# Notes"), "the Notes region was not removed")
         XCTAssertTrue(after.contains("# Chapter two"), "the body stays")
         XCTAssertTrue(after.contains("Smith, J. (2020). A book."), "the bibliography stays")
+    }
+
+    // MARK: - Equal texts on the record and the rows (the record can lag the page)
+
+    /// A pusher whose page is a fake: every script is counted and answered with `answer` (nil: the page does not answer).
+    private func fakePusher(answering answer: String?) -> MarkdownManagedRegionPusher {
+        MarkdownManagedRegionPusher(
+            evaluate: { [weak self] _ in
+                self?.evaluations += 1
+                return answer
+            },
+            adopt: { [weak self] raw in self?.adopted.append(raw) })
+    }
+
+    // A: the record and the rows say the same Notes text (the swapped chapters carry identical footnote texts), so the old shortcut
+    // skipped the region without asking. The page is asked now and says its region is not what the record holds: a re-push is owed.
+    func testEqualRecordAndRowsTextStillAsksThePageAndAChangedPageOwesARepush() async throws {
+        let read = snapshot(Self.record)
+        let fresh = snapshot(Self.record)
+        XCTAssertNotNil(read.notes, "premise: the record has a Notes region")
+        XCTAssertEqual(read.notes, fresh.notes, "premise: the record and the rows hold the same Notes text")
+
+        let report = await fakePusher(answering: #"{"ok":false,"reason":"regionChanged"}"#)
+            .pushRebuild(regions: [.notes], read: read, fresh: fresh, stillWanted: { true })
+
+        XCTAssertEqual(evaluations, 1, "evaluate was not called: equal texts were skipped without asking the page")
+        XCTAssertTrue(report.repushOwed, "a page whose Notes are not what the record holds must owe a re-push")
+        XCTAssertFalse(report.wholeTextFallback, "the whole-text path ran")
+        XCTAssertFalse(report.staleSkipped, "the stamp was current")
+        XCTAssertTrue(adopted.isEmpty, "a rejected push adopts nothing")
+    }
+
+    // B: a document with no footnotes and no citations has no region on either side: nothing to send, and above all not the whole-text
+    // path (it would replace the page with the rows' text).
+    func testNoNotesAndNoBibliographyOnEitherSideSendsNothingAndTakesNoFallback() async throws {
+        let bare = "# Chapter one\n\nChapter one.\n\n"
+        let read = snapshot(bare)
+        let fresh = snapshot(bare)
+        XCTAssertNil(read.notes, "premise: no Notes region")
+        XCTAssertNil(read.bibliography, "premise: no Bibliography region")
+
+        let report = await fakePusher(answering: #"{"ok":true,"changed":false,"postRaw":"unexpected"}"#)
+            .pushRebuild(regions: [.notes, .bibliography], read: read, fresh: fresh, stillWanted: { true })
+
+        XCTAssertEqual(evaluations, 0, "the page was asked about a region neither side has")
+        XCTAssertFalse(report.wholeTextFallback, "wholeTextFallback true for a document with no Notes")
+        XCTAssertEqual(report, MarkdownManagedRegionPusher.RebuildReport(), "nothing was owed or skipped")
+        XCTAssertTrue(adopted.isEmpty, "nothing was pushed, so nothing is adopted")
+    }
+
+    // C: equal texts and a page that already holds them: `ok, changed: false` is a no-op. Nothing is owed and nothing is adopted: an
+    // unchanged region changed nothing the record has to take over, and the adopt is a whole-document round trip (review R5: it ran
+    // once or twice for every rebuild). Before R5 the page's text was adopted after every answered push; a CHANGED push still adopts
+    // (T-U28 above).
+    func testEqualTextsOnAPageThatAlreadyHoldsThemAreANoOpAndNothingIsOwed() async throws {
+        let read = snapshot(Self.record)
+        let fresh = snapshot(Self.record)
+
+        let report = await fakePusher(answering: #"{"ok":true,"changed":false,"postRaw":"the page's raw text"}"#)
+            .pushRebuild(regions: [.notes], read: read, fresh: fresh, stillWanted: { true })
+
+        XCTAssertEqual(evaluations, 1, "the page was not asked")
+        XCTAssertFalse(report.repushOwed, "repushOwed true on an unchanged region")
+        XCTAssertEqual(report, MarkdownManagedRegionPusher.RebuildReport(), "an unchanged region reports nothing")
+        XCTAssertTrue(adopted.isEmpty, "adopt called on an unchanged push: \(adopted)")
+    }
+
+    // D: the real page. After a drag the page relabelled its footnotes in place, so its Notes read [^2] before [^1]; the record it was
+    // read from is behind (still the sorted old Notes) and the rows' Notes are the same sorted text. Nothing is written over the page,
+    // and the re-push is owed (the settle posts the rebuild again once the record is current).
+    func testALaggingRecordWhosePageHoldsAnotherNotesOrderIsLeftAloneAndOwesARepush() async throws {
+        let unsortedPage = Self.page.replacingOccurrences(of: Self.notes, with: "# Notes\n\n[^2]: Note two.\n\n[^1]: Note one.\n\n")
+        XCTAssertNotEqual(unsortedPage, Self.page, "premise: the page's Notes are out of order")
+        try await helper.setContent(unsortedPage)
+        let read = snapshot(Self.record)
+        let fresh = snapshot(Self.record)
+        XCTAssertEqual(read.notes, fresh.notes, "premise: the record and the rows hold the same Notes text")
+
+        let report = await pusher().pushRebuild(regions: [.notes], read: read, fresh: fresh, stillWanted: { true })
+
+        XCTAssertEqual(evaluations, 1, "evaluate was not called: equal texts were skipped without asking the page")
+        XCTAssertTrue(report.repushOwed, "the page's Notes are not what the record holds: a re-push must be owed")
+        XCTAssertFalse(report.wholeTextFallback, "the whole-text path ran")
+        let after = try await pageText()
+        XCTAssertEqual(after, unsortedPage, "the page was written although its region is not what the rebuild read")
+        XCTAssertTrue(adopted.isEmpty, "a rejected push adopts nothing")
     }
 }

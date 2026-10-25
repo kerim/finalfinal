@@ -8,47 +8,72 @@
 import SwiftUI
 
 extension ContentView {
+    /// Where CodeMirror should scroll to for the section `sectionId`, read from the page's own text: the UTF-16 offset of the section's
+    /// anchor `<!-- @sid:ID -->` (CodeMirror positions are UTF-16 code units, not Swift Characters; a character outside the BMP
+    /// before the anchor counts 2). nil when the text has no such anchor (the caller falls back to the rows).
+    static func markdownScrollOffset(forSectionId sectionId: String, inSourceText text: String) -> Int? {
+        let range = (text as NSString).range(of: "<!-- @sid:\(sectionId) -->")
+        return range.location == NSNotFound ? nil : range.location
+    }
+
+    /// The Markdown scroll target for a section card. The live page text (`sourceContent`: what the page holds, anchors included; a
+    /// structural click adopts it in its own turn) is the truth about where a section is NOW, while the rows can still be in the old order
+    /// for the second or two a queued reorder or delete job needs. The rows' arithmetic (`rowsOffset`) is the fallback for a text without
+    /// the section's anchor.
+    static func markdownScrollTarget(forSectionId sectionId: String, sourceContent: String, rowsOffset: () -> Int?) -> Int? {
+        markdownScrollOffset(forSectionId: sectionId, inSourceText: sourceContent) ?? rowsOffset()
+    }
+
     func scrollToSection(_ sectionId: String) {
         if editorState.editorMode == .wysiwyg {
             // Milkdown: use block-ID-based scrolling (character offsets are wrong
             // when atom nodes like figures are present — nodeSize=1 vs markdown length)
             editorState.scrollToBlockId = sectionId
-        } else {
-            // CodeMirror: character offsets map correctly to positions
-            guard let db = documentManager.projectDatabase,
-                  let pid = documentManager.projectId else { return }
+        } else if let offset = Self.markdownScrollTarget(
+            forSectionId: sectionId, sourceContent: editorState.sourceContent,
+            rowsOffset: { rowsBasedMarkdownScrollOffset(for: sectionId) }
+        ) {
+            editorState.scrollTo(offset: offset)
+        }
+    }
 
-            do {
-                let allBlocks = try db.fetchBlocks(projectId: pid)
-                let blocks: [Block]
-                if let zoomedIds = editorState.zoomedSectionIds {
-                    blocks = filterBlocksForZoom(allBlocks, zoomedIds: zoomedIds,
-                                                 zoomedBlockRange: editorState.zoomedBlockRange)
-                } else {
-                    blocks = allBlocks
-                }
-                // MUST stay in sync with BlockParser.assembleMarkdown filtering
-                let nonEmpty = blocks.sorted { $0.sortOrder < $1.sortOrder }
-                    .filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
-                var offset = 0
-                for block in nonEmpty {
-                    if block.id == sectionId {
-                        break
-                    }
-                    // In CodeMirror sourceContent, heading blocks are prefixed with
-                    // section anchors: <!-- @sid:UUID -->
-                    // These add characters not counted in markdownFragment
-                    if block.blockType == .heading {
-                        // "<!-- @sid:" (10) + id + " -->" (4) = 14 + id.count
-                        offset += 14 + block.id.count
-                    }
-                    offset += block.markdownFragment.count
-                    offset += 2  // Account for "\n\n" separator in assembleMarkdown
-                }
-                editorState.scrollTo(offset: offset)
-            } catch {
-                DebugLog.log(.outline, "[ContentView] Error computing scroll offset: \(error)")
+    /// The offset of a section in the text assembled from the database rows (the CodeMirror text before the first structural click).
+    private func rowsBasedMarkdownScrollOffset(for sectionId: String) -> Int? {
+        // CodeMirror: character offsets map correctly to positions
+        guard let db = documentManager.projectDatabase,
+              let pid = documentManager.projectId else { return nil }
+
+        do {
+            let allBlocks = try db.fetchBlocks(projectId: pid)
+            let blocks: [Block]
+            if let zoomedIds = editorState.zoomedSectionIds {
+                blocks = filterBlocksForZoom(allBlocks, zoomedIds: zoomedIds,
+                                             zoomedBlockRange: editorState.zoomedBlockRange)
+            } else {
+                blocks = allBlocks
             }
+            // MUST stay in sync with BlockParser.assembleMarkdown filtering
+            let nonEmpty = blocks.sorted { $0.sortOrder < $1.sortOrder }
+                .filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
+            var offset = 0
+            for block in nonEmpty {
+                if block.id == sectionId {
+                    break
+                }
+                // In CodeMirror sourceContent, heading blocks are prefixed with
+                // section anchors: <!-- @sid:UUID -->
+                // These add characters not counted in markdownFragment
+                if block.blockType == .heading {
+                    // "<!-- @sid:" (10) + id + " -->" (4) = 14 + id.count
+                    offset += 14 + block.id.count
+                }
+                offset += block.markdownFragment.count
+                offset += 2  // Account for "\n\n" separator in assembleMarkdown
+            }
+            return offset
+        } catch {
+            DebugLog.log(.outline, "[ContentView] Error computing scroll offset: \(error)")
+            return nil
         }
     }
 

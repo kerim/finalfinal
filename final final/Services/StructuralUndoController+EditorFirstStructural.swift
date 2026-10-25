@@ -453,7 +453,7 @@ extension StructuralUndoController {
     /// section 7, P9). The caller has already brought `pendingEditorFirstJobs` down, so the push's stamp is current.
     func putBackAfterFailedEditorFirstOp(kind: EditorFirstOpKind, opId: UUID, removedLeaders: Set<String>, jobKey: UUID? = nil) async {
         if hasMarkdownGate(opId: opId, jobKey: jobKey) {   // B8: a Markdown job's put-back is its own
-            await putBackMarkdownDelete(opId: opId, jobKey: jobKey, kind: kind, removedLeaders: removedLeaders)
+            await putBackMarkdownJob(opId: opId, jobKey: jobKey, kind: kind, removedLeaders: removedLeaders)
             return
         }
         guard let editorState, let unifiedUndoService else { return }

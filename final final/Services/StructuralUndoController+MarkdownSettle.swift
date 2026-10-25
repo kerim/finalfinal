@@ -23,11 +23,12 @@
 //  THE MARKDOWN BRANCHES OF THE SETTLE live here too (the Rich Text code only gains one `if` at each site):
 //    - `settleMarkdownManagedRegions`: when a rebuild's push was skipped for an editor-first reason the Notes and Bibliography rebuilds
 //      are re-posted; they run the round-4 region-scoped push (a rebuild that reads after the job applied pushes a region replace);
-//    - `putBackMarkdownDelete`: a failed job (B8). The editor swapped back only if the document had not been typed in, then the alert;
+//    - `putBackMarkdownJob`: a failed job (B8). The editor swapped back only if the document had not been typed in, then the alert;
 //    - `markMarkdownSettle` / `unmarkMarkdownSettle` (B5/O10): the page's structural-settle flag around the footnote resync.
 //
 
 import Foundation
+import GRDB
 import WebKit
 
 extension StructuralUndoController {
@@ -97,7 +98,7 @@ extension StructuralUndoController {
     }
 
     /// What the settle calls first for a Markdown entry: waits (bounded) until step 8 has finished. The gate is dropped afterwards unless
-    /// the job failed: the put-back (`putBackMarkdownDelete`) reads whether step 8 swapped the editor back and drops it itself.
+    /// the job failed: the put-back (`putBackMarkdownJob`) reads whether step 8 swapped the editor back and drops it itself.
     ///
     /// A job is a Markdown job exactly when it has a gate (made before the job starts, under the job's key: `jobKey`, or the entry's id
     /// for the click), so this is a no-op for every Rich Text settle, and it does not depend on the entry's `efEditorKind`, which a
@@ -137,11 +138,14 @@ extension StructuralUndoController {
         return true
     }
 
-    /// The Markdown counterpart of `putBackAfterFailedEditorFirstOp` for a delete (plan B8). The editor was already swapped back by step 8
-    /// when the document was unchanged, and then the UX contract 4.3 alert shows; when the user had typed since, the command stands (the
-    /// flush wrote the editor's text) and NO alert shows. The entry, its slot, its job record and its undo-timeline entry go either way,
-    /// exactly as the Rich Text put-back drops them.
-    func putBackMarkdownDelete(opId: UUID, jobKey: UUID? = nil, kind: EditorFirstOpKind = .sectionDelete, removedLeaders: Set<String>) async {
+    /// The Markdown counterpart of `putBackAfterFailedEditorFirstOp` for a Markdown job that did not apply (plan B8): a delete, and since
+    /// slice 2 a drag-reorder (`.sectionReorder`) (slice 1 called it `putBackMarkdownDelete`). The editor was already swapped back by step 8 when
+    /// the document was unchanged (for a job that never held its place in the queue there is no step 8: the swap is tried here, for a
+    /// delete and a reorder alike), and then the UX contract 4.3 alert of the entry's KIND shows ("Couldn't Delete Section", "Couldn't
+    /// Move Section"); when the user had typed since, the command stands (the flush wrote the editor's text) and NO alert shows. The
+    /// entry, its slot, its job record and its undo-timeline entry go either way, exactly as the Rich Text put-back drops them; a
+    /// reorder's sidebar overlay (`pendingReorder`) goes first, so an outline read from here on shows the rows' (earlier) order.
+    func putBackMarkdownJob(opId: UUID, jobKey: UUID? = nil, kind: EditorFirstOpKind = .sectionDelete, removedLeaders: Set<String>) async {
         guard let editorState, let unifiedUndoService else { return }
         let gateKey = jobKey ?? opId
         let gate = editorState.markdownWriter.structuralHoldState.step8Gates[gateKey]
@@ -153,8 +157,10 @@ extension StructuralUndoController {
             efRecordedGeneration[opId] = nil
             forgetQuickUndoState(opId)
             efEditorKind[opId] = nil
+            editorState.liftPendingReorder(opId: opId)   // a failed reorder's overlay goes on every way out, the closed-gate return included
         }
         unifiedUndoService.removeEntry(opId: opId)
+        editorState.liftPendingReorder(opId: opId)   // and before anything below suspends: its rows never moved (no-op for any other kind)
         efPutBackOpIds.insert(opId)   // a Cmd-Z already on its way for this entry is answered `failed` (as Rich Text does)
         guard !editorState.structuralGate.isClosedToNewWork else {
             DebugLog.log(.lifecycle, "[StructuralUndoController] markdown put-back skipped: the project is closing or switching")
@@ -166,7 +172,7 @@ extension StructuralUndoController {
         // swapped-in document, and its step 8 flush has written that text into the rows, so the editor and the rows agree; the entry
         // goes off the timeline (below) and the user is not told the press failed, because it did what it said.
         var swappedBack = gate?.swappedBack ?? false
-        if kind == .sectionDelete, let gate, !gate.swapAttempted {
+        if kind == .sectionDelete || kind == .sectionReorder, let gate, !gate.swapAttempted {
             swappedBack = await swapBackFailedMarkdownDelete(opId: opId, gateKey: gateKey)
         }
         await evalVoid("window.FinalFinal.clearFailedStructuralOpEntry?.('\(opId.uuidString)')")
@@ -174,7 +180,7 @@ extension StructuralUndoController {
         editorState.pendingRemovalIds.subtract(removedLeaders)
         editorState.refreshSections()
         guard swappedBack else { return }
-        let alert = EditorFirstOpKind.sectionDelete.putBackAlert
+        let alert = kind.putBackAlert
         #if DEBUG
         testShownAlerts.append(alert.title)
         #endif
@@ -205,7 +211,27 @@ extension StructuralUndoController {
         #if DEBUG
         editorState?.markdownWriter.structuralHoldState.settleFlagLog.append(opId.uuidString)
         #endif
-        activeWebView.evaluateJavaScript("window.FinalFinal.setStructuralSettleOpId('\(opId.uuidString)')") { _, _ in }
+        // The second argument is the Notes heading's line as the ROWS have it (the same snapshot the Notes region push takes its
+        // `headingLine` from): with it the page's footnote renumber also sorts the Notes definitions, in the same transaction, so a
+        // Save Version or a close straight after a drag cannot save relabelled-but-unsorted Notes. null: relabel only.
+        let headingLiteral = notesHeadingLineForTheSettle().flatMap { Self.jsLiteral($0) } ?? "null"
+        activeWebView.evaluateJavaScript("window.FinalFinal.setStructuralSettleOpId('\(opId.uuidString)', \(headingLiteral))") { _, _ in }
+    }
+
+    /// The Notes heading's line from the rows ("## Notes", or the user's own title), taken the way the Notes region push takes it
+    /// (`MarkdownManagedRegions.snapshot`'s `notesHeadingLine`); nil when the project has no Notes heading.
+    private func notesHeadingLineForTheSettle() -> String? {
+        guard let editorState, let db = editorState.projectDatabase, let pid = editorState.currentProjectId else { return nil }
+        // The first Notes heading row, by the rule `fetchNotesHeadingTitle` uses (the first in document order).
+        guard let heading = try? db.read({ database in
+            try Block
+                .filter(Block.Columns.projectId == pid)
+                .filter(Block.Columns.blockType == BlockType.heading.rawValue)
+                .filter(Block.Columns.isNotes == true)
+                .order(Block.Columns.sortOrder)
+                .fetchOne(database)
+        }) else { return nil }
+        return MarkdownManagedRegions.snapshot(blocks: [heading]).notesHeadingLine
     }
 
     /// Clears the flag, from the `defer` that follows the footnote resync. The renumber that resync posts reaches the page through the

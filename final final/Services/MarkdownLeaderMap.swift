@@ -39,7 +39,8 @@ struct MarkdownLeaderMap: Equatable {
         }
     }
 
-    /// The request the page takes (any `kind` other than delete is a later slice).
+    /// The DELETE request the page takes (`ReorderRequest`, below, is the drag-reorder's). Its JSON is pinned byte for byte by
+    /// MarkdownLeaderMapRequestJSONTests: do not change a key, a value or a null here without changing the page's reader with it.
     struct Request: Equatable {
         let opId: UUID
         let rootId: String
@@ -57,6 +58,37 @@ struct MarkdownLeaderMap: Equatable {
                 "leaders": leaders.map(\.jsonObject),
                 "stopLine": stopLine ?? NSNull(),
                 "endLeaderId": endLeaderId ?? NSNull()
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+    }
+
+    /// The request `window.FinalFinal.markdownStructuralReorder` takes (t-4a8fd8af slice 2, round 3a; web/codemirror/src/
+    /// api-structural-markdown-reorder.ts, "THE JSON CONTRACT"). The leaders are the same as the delete's, built from the rows AFTER the
+    /// typing was flushed; `order` is the plan (every section leader in final order, Notes and Bibliography last); a `level` is present
+    /// only on the headings whose level the drop changed.
+    struct ReorderRequest: Equatable {
+        let opId: UUID
+        let rootId: String
+        let leaders: [Leader]
+        let order: [ReorderOrderEntry]
+        let stopLine: String?
+
+        /// The JSON text of the request. `stopLine` is an explicit null when there is no Notes or Bibliography row. An order entry
+        /// without a changed level carries no `level` key at all.
+        var json: String? {
+            let object: [String: Any] = [
+                "kind": "reorder",
+                "opId": opId.uuidString,
+                "rootId": rootId,
+                "leaders": leaders.map(\.jsonObject),
+                "order": order.map { entry -> [String: Any] in
+                    var item: [String: Any] = ["id": entry.id]
+                    if let level = entry.level { item["level"] = level }
+                    return item
+                },
+                "stopLine": stopLine ?? NSNull()
             ]
             guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
             return String(data: data, encoding: .utf8)
@@ -115,6 +147,18 @@ struct MarkdownLeaderMap: Equatable {
         let stopLine = ordered[(rootRow + 1)...].first { $0.isNotes || $0.isBibliography }
             .map { Self.firstLine(of: $0.markdownFragment) }
         return Request(opId: opId, rootId: rootId, leaders: leaders, stopLine: stopLine, endLeaderId: endLeader?.id)
+    }
+
+    /// The request for a drag-reorder whose dragged card is `rootId`. `order` is the plan's ids (every section leader in final order,
+    /// Notes and Bibliography last); `changedLevels` is id -> new level for the headings the drop re-levelled. `stopLine` is the first
+    /// line of the FIRST Notes or Bibliography row of the whole document (a consistency check on the page's side only). nil when
+    /// `rootId` is no leader, or is the Notes or Bibliography heading (neither can be dragged).
+    func reorderRequest(opId: UUID, rootId: String, order: [String], changedLevels: [String: Int]) -> ReorderRequest? {
+        guard let root = leaders.first(where: { $0.id == rootId }), root.managed == nil else { return nil }
+        let stopLine = ordered.first { $0.isNotes || $0.isBibliography }.map { Self.firstLine(of: $0.markdownFragment) }
+        return ReorderRequest(
+            opId: opId, rootId: rootId, leaders: leaders,
+            order: order.map { ReorderOrderEntry(id: $0, level: changedLevels[$0]) }, stopLine: stopLine)
     }
 
     /// The leaders the section rooted at `rootId` takes with it: the root and every following leader that is deeper, up to the first

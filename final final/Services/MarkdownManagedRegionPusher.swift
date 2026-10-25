@@ -16,8 +16,9 @@
 //      .snapshot` of `editorState.content`). The record is kept in step with the page by O25/O29/O30, and typing inside the region while
 //      the rebuild runs never reaches it, so a page whose region moved is told apart from one that did not.
 //    - `newText` is the same region of the text the rebuild assembled from the rows.
-//    - `.pushed` carries the page's own text back (`postRaw`): the pusher hands it to `adopt` (O30: the record only ever takes the page's
-//      text, never the rows'), in the same synchronous turn as the reply.
+//    - `.pushed` carries the page's own text back (`postRaw`): when the region CHANGED the pusher hands it to `adopt` (O30: the record only
+//      ever takes the page's text, never the rows'), in the same synchronous turn as the reply. A reply with `changed: false` (the page
+//      already held the text) adopts nothing.
 //    - `.stale`: the page's region differs from `expectedOld` (the user typed in it, or a structural command changed it). Nothing was
 //      written. The caller raises `managedRegionsNeedRepush` (the settle re-posts once the pending write has applied).
 //    - `.noRegion`: the page has no such region. The caller falls back to the whole-text path ONLY when the region truly does not
@@ -77,8 +78,9 @@ struct MarkdownManagedRegionPusher {
         var wholeTextFallback = false
     }
 
-    /// The Markdown tail of a rebuild: pushes each of `regions` that differs between what the editor held at the read (`read`) and what
-    /// the rows now say (`fresh`). Only decisions and page calls; the caller applies the report.
+    /// The Markdown tail of a rebuild: pushes each of `regions` that exists in what the editor held at the read (`read`) or in what the
+    /// rows now say (`fresh`). A region whose two texts are equal is still sent: the record `read` comes from can lag the page, and the
+    /// page answers for itself (see the comment in the loop). Only decisions and page calls; the caller applies the report.
     func pushRebuild(
         regions: [MarkdownManagedRegion],
         read: MarkdownRegionSnapshot,
@@ -89,7 +91,13 @@ struct MarkdownManagedRegionPusher {
         for region in regions {
             let expectedOld = read.text(region)
             let newText = fresh.text(region)
-            if expectedOld == newText { continue }
+            // Only a document with NO such region at all (no footnotes, no citations) has nothing to push. Equal texts are NOT skipped:
+            // `expectedOld` comes from the content RECORD, which can lag the page (the page relabels the footnotes in place and its
+            // contentChanged can be dropped while a rebuild is running), so "old equals new" can hold on the record while the page
+            // still holds the old order (books whose chapters repeat the same footnote texts). The page compares against its OWN region:
+            // it already holds the text -> `ok, changed: false`; it differs from `expectedOld` -> `regionChanged` -> `.stale` -> a
+            // re-push is owed and the settle posts the rebuild again after the owed pull has brought the record up to date.
+            if expectedOld == nil && newText == nil { continue }
             guard let expectedOld else {
                 // The whole-text path replaces the page with the rows' text, so it takes the same stamp check as a region push
                 // (review F1): a Delete's job that is still unapplied would otherwise put the deleted section and its Notes back,
@@ -135,8 +143,11 @@ struct MarkdownManagedRegionPusher {
             return .failed("the page did not answer")
         }
         if object["ok"] as? Bool == true {
-            if let postRaw = object["postRaw"] as? String { adopt(postRaw) }
-            return .pushed(changed: object["changed"] as? Bool ?? true)
+            let changed = object["changed"] as? Bool ?? true
+            // An unchanged region (the page already held the text) changed nothing, so the record has nothing to take over: the adopt is a
+            // whole-document round trip (anchor strip on the main actor, a content-change callback) that every rebuild would pay twice.
+            if changed, let postRaw = object["postRaw"] as? String { adopt(postRaw) }
+            return .pushed(changed: changed)
         }
         let reason = object["reason"] as? String ?? "unknown"
         switch reason {

@@ -33,7 +33,7 @@
 //  FLATTENED COPIES (a drag needs two neighbouring cards on screen; the sidebar's visible band is about 585 pt and XCUITest cannot scroll
 //  during a drag, and "Delete, then Delete at once" needs both cards on screen too): the sub-headings of some chapters are turned into plain
 //  lines (`flattening`: words, citations and footnotes unchanged, only the `##` / `###` marks go). THE TESTS THAT USE A FLATTENED COPY:
-//    testMdOldPathDragThenDeleteThenUndo_book6    chapters 1, 3, 5 and 6 flat
+//    testMdDragThenDeleteThenUndo_book6           chapters 1, 3, 5 and 6 flat (was testMdOldPathDragThenDeleteThenUndo_book6)
 //    testMdDeleteThenDelete_book6                 chapters 1, 3, 5 and 6 flat
 //    testMdDeleteThenDeleteHeld_book6             chapters 1, 3, 5 and 6 flat
 //    testMdDeleteThenDelete_book12                chapters 1, 3, 5, 6, 7 and 8 flat
@@ -45,7 +45,7 @@
 //    testMdFootnotedDeleteTypeKeep_{article,book6} T-E3  a footnoted section: Notes gapless, one definition each, both phrases kept, Cmd-Z
 //    testMdLastChapterBeforeBibliography_{book6,book12}  T-E4  the last chapter before Notes and Bibliography
 //    testMdRenamedHeadingThenDelete_{article,book6}      T-E5  rename a heading word, Delete at once, Cmd-Z brings it back with the new title
-// testMdOldPathDragThenDeleteThenUndo_book6     T-E6  (FLATTENED) old-path drag, Delete, Cmd-Z quick, Cmd-Z undoes the drag; footnote observation
+//    testMdDragThenDeleteThenUndo_book6            T-E6  (FLATTENED) editor-first drag, Delete, Cmd-Z quick, Cmd-Z undoes the drag
 //    testMdCloseWithJobQueued_{article,book6}      T-E7  type, Delete, Cmd-W at once, reopen
 //    testMdRichTextPass_{article,book6}            T-E8  Delete + at once switch to Rich Text; Rich Text Delete + Cmd-Z unchanged
 //    testMdTiming_book12                           T-E9a the editor turn, the Outline, the quick undo and redo, with the counts
@@ -200,7 +200,8 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     /// Begins the method, seeds (flattened when `flat` is not empty) and launches the document with the given seams, reads the saved document,
     /// logs the fixture counts, and switches to Markdown (View > Switch to Markdown). False after a reported failure.
     func startScenario(
-        _ size: Phase4bDelSize, method: String, env: [String: String] = [:], flat: [Int] = [], markdown: Bool = true
+        _ size: Phase4bDelSize, method: String, env: [String: String] = [:], flat: [Int] = [], markdown: Bool = true,
+        seed: ((Phase4bDoc) -> Phase4bDoc)? = nil
     ) -> Bool {
         begin(method: method, size: size)
         if !flat.isEmpty, let generated = doc {
@@ -209,6 +210,12 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
             note("SEED: a FLATTENED COPY, chapters \(flat) have no sub-headings; \(flattened.counts.reportLine)")
         } else {
             note("SEED: the generated document, NOT flattened (the full outline)")
+        }
+        // `seed` (the drag tests' E-D3 tags every footnote definition with a unique word) runs on the document as flattened above.
+        if let seed, let current = doc {
+            let seeded = seed(current)
+            doc = seeded
+            note("SEED: a seed hook was applied to it; \(seeded.counts.reportLine)")
         }
         for (key, value) in env.sorted(by: { $0.key < $1.key }) {
             app.launchEnvironment[key] = value
@@ -1577,7 +1584,7 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     }
 }
 
-// MARK: - T-E6 An old-path drag, then Delete, then Cmd-Z at once (FLATTENED book6)
+// MARK: - T-E6 (E-D4) An editor-first drag, then Delete, then Cmd-Z at once (FLATTENED book6)
 
 extension WriteQueuePhase4bMarkdownEFE2ETests {
     /// A Cmd-Z or Cmd-Shift-Z press; when the key reached no editor (no `[UnifiedUndo] keydown` line), the test records that as a FINDING and
@@ -1696,13 +1703,17 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
             + "numbering problems: \(walk.problems.isEmpty ? "none" : walk.problems.joined(separator: " | "))\n  all numbers: \(walk.refs)"
     }
 
-    /// Hand-test steps 8 and 9. A chapter card is dragged above its neighbour (in Markdown the CLICK of a drag is still the old one: the
-    /// reorder sequence begins a plain `start` and no `reorder-editor-first` line is written), then another chapter is deleted and Cmd-Z is
-    /// pressed AT ONCE: the chapter returns with no "Undoing..." message (the quick undo after an old-path drag, plan v2 A13); a second Cmd-Z
-    /// undoes the drag (the queued slow route; a notice MAY show) and the heading order and every row are those of the document before.
-    /// ALSO OBSERVED, NOT ASSERTED (board t-8dc76a0b: Markdown was never checked): whether the footnote reference numbers of the two dragged
-    /// chapters are renumbered after the Markdown drag. The reference numbers in text order are recorded before the drag, right after the
-    /// drag's `performed` line, and after the settle (attachment `footnote-observation-<method>.txt`, and `result` lines).
+    /// Hand-test steps 9 and 10. FLIPPED in t-4a8fd8af slice 2 (it was `testMdOldPathDragThenDeleteThenUndo_book6`, which asserted the OLD
+    /// road: a plain `start` and no `reorder-editor-first` line). A chapter card is dragged above its neighbour: in Markdown the drag is now
+    /// EDITOR FIRST (the sequence begins `start (editor-first) mode=markdown`, the page's reply `reorder-editor-first ... ok=true
+    /// mode=markdown` is in the log, and NO plain `start` is written), then another chapter is deleted and Cmd-Z is pressed AT ONCE: the
+    /// chapter returns with no "Undoing..." message (the QUICK undo, and it stays quick because the new drag raises no structural-generation
+    /// bump: the old body's drag is what used to close it, plan v2 A13); a second Cmd-Z undoes the drag (the queued slow route; a notice MAY
+    /// show) and the heading order and every row are those of the document before.
+    /// NOW ASSERTED (board t-8dc76a0b, which this slice closes for Markdown): the footnote reference numbers of the document right after
+    /// the drag has settled read 1...N in text order with no jump back, and the Notes are numbered 1...N once each. The numbers right after
+    /// the drag's `performed` line (the job may not have applied yet) and the ones after the drag was undone are still recorded in
+    /// `footnote-observation-<method>.txt` and `result` lines; the last ones are asserted equal to the document before.
     /// FIX ROUND 3 (the judge's extra checks, after an independent diagnosis found a real app defect: duplicate footnote-definition rows
     /// saved after Markdown drag + Delete + Cmd-Z, 573 rows became 591): (i) the Delete ALONE, settled and before any Cmd-Z, saves exactly the
     /// document right after the drag minus the chapter and its notes (the row count, the other rows, the remaining definitions' words) and no
@@ -1712,7 +1723,7 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     /// total minus the chapter's and its notes' words, and in every settled state it equals the sum of the saved blocks' word counts.
     /// The test ends with the screen-equals-database check.
     /// USES A FLATTENED COPY (chapters 1, 3, 5, 6 have no sub-headings).
-    func testMdOldPathDragThenDeleteThenUndo_book6() {
+    func testMdDragThenDeleteThenUndo_book6() {
         let size = Phase4bDelSize.book6
         let moved = Self.chapter(6)
         let target = Self.chapter(5)
@@ -1751,15 +1762,28 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
             + "as loaded, \(totalDragged.map(String.init) ?? "n/a") after the drag")
         guard let removedIndexes = rowIndexesDeleting(deleted, in: settledRows) else {
             soft.check(false, "TEST-SETUP: \"\(deleted)\" is no section of the document right after the drag")
-            assertAll(soft, "Markdown: old-path drag, Delete, Cmd-Z, on book6 (flattened)")
+            assertAll(soft, "Markdown: editor-first drag, Delete, Cmd-Z, on book6 (flattened); \(countsLine)")
             return
         }
+        // THE FLIP: the drag took the editor-first road (and NOT the old body's plain `start`), and the footnotes follow the text.
         let starts = traceLines(from: dragFrom).filter { $0.family == .sequence && $0.label == "sectionReorder" && $0.isOpStart }
-        soft.check(starts.count == 1 && starts[0].step == "start",
-            "the Markdown drag's sequence began \(starts.map(\.step)), expected one plain `start` (the old click)")
-        soft.check(logLines(containing: "[STRUCT-TRACE] reorder-editor-first", from: dragFrom).isEmpty,
-            "a `reorder-editor-first` line was written in Markdown mode")
-        shot("md-old-path-drag-1-after-the-drag")
+        soft.check(starts.count == 1 && starts[0].step == "start (editor-first) mode=markdown",
+            "the Markdown drag's sequence began \(starts.map(\.step)), expected one `start (editor-first) mode=markdown` (the old body logs a "
+            + "plain `start`)")
+        soft.check(!starts.contains { $0.step == "start" }, "a plain `start` of the old body was written for the Markdown drag")
+        let replies = logLines(containing: "[STRUCT-TRACE] reorder-editor-first opId=", from: dragFrom)
+            .filter { $0.text.contains(" ok=true") && $0.text.contains("mode=markdown") }
+        soft.check(replies.count == 1, "\(replies.count) `reorder-editor-first ... ok=true mode=markdown` line(s) for the drag, expected 1")
+        let settledWalk = Phase4bFlowWalk(rows: settledRows)
+        let footnotesBefore = Phase4bFlowWalk(rows: pre).refs.count
+        let oneToN = Array(stride(from: 1, through: footnotesBefore, by: 1))
+        soft.check(settledWalk.refs == oneToN,
+            "after the drag has settled the footnote references read [\(Self.ascendingRuns(settledWalk.refs))] in text order, "
+            + "expected 1...\(footnotesBefore) with no jump back (t-8dc76a0b); \(countsLine)")
+        soft.check(settledWalk.definitions.map(\.number) == oneToN,
+            "after the drag has settled the Notes are numbered [\(Self.ascendingRuns(settledWalk.definitions.map(\.number)))], "
+            + "expected 1...\(footnotesBefore) once each")
+        shot("md-drag-then-delete-1-after-the-drag")
 
         // Delete another chapter, and Cmd-Z at once.
         guard let card = bringSidebarCardIntoView(deleted) else { return }
@@ -1768,7 +1792,7 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         soft.check(undo.decision == "structural" && undo.structural,
             "Cmd-Z was decided \(undo.decision) (structural ran: \(undo.structural)), not a quick undo of the delete")
         let runs = quickRuns(from: deleteFrom, label: "undo")
-        result("CMD-Z after the old-path drag: runs \(runs.map { "\($0.label) \($0.quick ? "quick" : "slow")" }); key to performed"
+        result("CMD-Z after the editor-first drag: runs \(runs.map { "\($0.label) \($0.quick ? "quick" : "slow")" }); key to performed"
             + " \(runs.first?.keyToPerformedMs.map { "\($0) ms" } ?? "n/a")")
         soft.check(runs.first?.quick == true,
             "the Cmd-Z after drag + Delete was not the quick undo (\(runs.map { $0.quick ? "quick" : "slow" }))")
@@ -1786,7 +1810,7 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         soft.check(totalBack != nil && totalBack == totalDragged,
             "the word total changed with no edit: \(totalDragged.map(String.init) ?? "n/a") after the "
             + "drag, \(totalBack.map(String.init) ?? "n/a") after the Delete and its Cmd-Z")
-        shot("md-old-path-drag-2-after-the-first-cmd-z")
+        shot("md-drag-then-delete-2-after-the-first-cmd-z")
 
         // THE DELETE ALONE, settled (the judge's extra checks): Delete the same chapter again, wait for the settle, and check what was
         // saved BEFORE any Cmd-Z: the document the editor holds is the one right after the drag minus the chapter and its notes, so the
@@ -1822,7 +1846,7 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         soft.check(totalBack2 != nil && totalBack2 == totalDragged,
             "the word total changed with no edit: \(totalDragged.map(String.init) ?? "n/a") after "
             + "the drag, \(totalBack2.map(String.init) ?? "n/a") after the settled Delete and its Cmd-Z")
-        shot("md-old-path-drag-2b-after-the-settled-delete-and-cmd-z")
+        shot("md-drag-then-delete-2b-after-the-settled-delete-and-cmd-z")
 
         // Cmd-Z once more: the drag is undone (the slow, queued road).
         let secondFrom = traceLinesCount()
@@ -1830,8 +1854,11 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         soft.check(second.decision == "structural" && second.structural,
             "the Cmd-Z that undoes the drag was decided \(second.decision) (structural ran: \(second.structural)), the drag was not undone")
         let secondRuns = quickRuns(from: secondFrom, label: "undo")
-        result("CMD-Z #2 (the drag's undo): runs \(secondRuns.map { $0.quick ? "quick" : "slow" }); \"Undoing...\" notice(s) in the log:"
-            + " \(undoingToastCount(from: secondFrom)) (allowed); toasts in the first 1.2 s \(second.toasts)")
+        let secondStart = traceLines(from: secondFrom).first { $0.family == .sequence && $0.label == "undo" && $0.isOpStart }
+        result("CMD-Z #2 (the drag's undo): runs \(secondRuns.map { $0.quick ? "quick" : "slow" }); sequence began `\(secondStart?.step ?? "none")`; "
+            + "\"Undoing...\" notice(s) in the log: \(undoingToastCount(from: secondFrom)) (allowed); toasts in the first 1.2 s \(second.toasts)")
+        soft.check(secondStart?.step.hasPrefix("start (markdown queued undo") == true,
+            "the Cmd-Z that undoes the drag began `\(secondStart?.step ?? "none")`, expected the queued slow route `start (markdown queued undo)`")
         soft.check(waitForHeadingOrder(original, timeout: appWait(size.operationTimeout * 2, before: "the order is restored")),
             "after the second Cmd-Z the heading order is not the original (\(firstDifference(original, headingFragmentsInDatabase())))")
         settle()
@@ -1843,15 +1870,20 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         soft.check(totalEnd != nil && totalEnd == totalLoaded,
             "the word total changed with no edit: \(totalLoaded.map(String.init) ?? "n/a") as loaded, "
             + "\(totalEnd.map(String.init) ?? "n/a") after the drag was undone")
-        // Two Deletes, their Cmd-Z, and the slow Cmd-Z of the drag each raise one hold (a Delete and a quick undo twice, the queued undo once).
-        addMarkdownMechanismChecks(from: deleteFrom, commands: 5, to: &soft)
+        // The drag, two Deletes, their Cmd-Z, and the slow Cmd-Z of the drag each raise one hold (the drag once, a Delete and a quick undo
+        // twice, the queued undo once). Nothing may have wiped the undo timeline (`invalidateAll`) since the drag: that is what closed the
+        // quick road of an earlier Delete in the old body.
+        addMarkdownMechanismChecks(from: dragFrom, commands: 6, to: &soft)
+        let wiped = logLines(containing: "[UnifiedUndoService] invalidateAll:", from: dragFrom).map(\.text)
+        soft.check(wiped.isEmpty, "the undo timeline was wiped (`invalidateAll`) since the drag began: \(wiped.prefix(2))")
         let beeps = beepLines(from: dragFrom)
         soft.check(beeps.isEmpty, "the editor beeped \(beeps.count) time(s): \(beeps)")
         addScreenEqualsDatabaseCheck(before: finalRows, what: "at the end", to: &soft)
         attachText("footnote-observation-\(methodName).txt", observation.joined(separator: "\n\n"))
-        for line in observation { result("FOOTNOTE OBSERVATION (not asserted): " + line.replacingOccurrences(of: "\n", with: " ")) }
-        shot("md-old-path-drag-3-after-the-drag-was-undone")
-        assertAll(soft, "Markdown: old-path drag, Delete, Cmd-Z at once, the Delete alone and Cmd-Z, the drag's Cmd-Z, on book6 (flattened)")
+        for line in observation { result("FOOTNOTE OBSERVATION (recorded): " + line.replacingOccurrences(of: "\n", with: " ")) }
+        shot("md-drag-then-delete-3-after-the-drag-was-undone")
+        assertAll(soft, "Markdown: editor-first drag, Delete, Cmd-Z at once, the Delete alone and Cmd-Z, the drag's Cmd-Z, on book6 (flattened); "
+            + countsLine)
     }
 }
 

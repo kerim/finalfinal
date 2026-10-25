@@ -25,7 +25,7 @@
 //
 //  The continuation's work (plan v2.1 addendum section 2: loop-await `inFlight`, the live read, `reserveStructuralFlush` and the release
 //  in one turn, `await flush`, then the settle's resyncs) is `runMarkdownStep8` (StructuralUndoController+MarkdownSettle.swift). A FAILED
-//  job's put-back is `putBackMarkdownDelete` there, and the Cmd-Z and Cmd-Shift-Z of a Markdown entry are the quick route
+//  job's put-back is `putBackMarkdownJob` there, and the Cmd-Z and Cmd-Shift-Z of a Markdown entry are the quick route
 //  (+MarkdownQuickUndo.swift) and the queued slow route (+MarkdownSlowUndo.swift).
 //
 
@@ -45,6 +45,8 @@ struct MarkdownStructuralReply: Decodable, Equatable {
     let detail: String?
     let preRaw: String?
     let postRaw: String?
+    /// A reorder's reply only (`markdownStructuralReorder`): the order ids the page had no leader for. Absent in every other reply.
+    let skippedIds: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case succeeded = "ok"
@@ -52,6 +54,7 @@ struct MarkdownStructuralReply: Decodable, Equatable {
         case detail
         case preRaw
         case postRaw
+        case skippedIds
     }
 }
 
@@ -110,6 +113,8 @@ extension StructuralUndoController {
             DebugLog.log(
                 .undo, "[StructuralUndoController] markdown editor-first delete: the page refused or failed "
                 + "(\(attempt?.reply.reason ?? "no answer")) -- old path for this press")
+            // The old body flushes the content record, which lags the page by its debounce: take the page's live text first.
+            await adoptPageTextForTheOldBody(editorState)
             return nil
         }
 
@@ -277,7 +282,7 @@ extension StructuralUndoController {
     /// B1: a leader the page found does not match the rows (a heading typed or renamed a moment ago). The page's LIVE text is read and
     /// adopted into the content record (O25: the writer's baseline moves to it), then written through the queue with the hold's bypass (this
     /// is the click's own flush, so it must not wait for the click's own hold). True when the text is in the rows.
-    private func flushTypingForMarkdownRetry(projectId: String) async -> Bool {
+    func flushTypingForMarkdownRetry(projectId: String) async -> Bool {   // internal: the drag-reorder click retries the same way
         guard let editorState, let raw = await evalString("window.FinalFinal.getContentRaw()") else { return false }
         editorState.adoptMarkdownPageText(raw)
         let outcome = await editorState.markdownWriter.writeNow(

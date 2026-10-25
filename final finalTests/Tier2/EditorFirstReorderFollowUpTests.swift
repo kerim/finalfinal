@@ -261,8 +261,15 @@ struct EditorFirstReorderFollowUpTests: QuickUndoFixtures {
     // the sequence's start instead, `levelsBefore` would already say 2 and the plan's 1 would be written over it.
     // The seam that lands the refresh between the plan and the sequence: a rebuild task registered with the editor state
     // (`registerRebuildTask`), which the old body waits for after its plan.
+    //
+    // t-4a8fd8af slice 2 (Markdown drag, round 3a): a Markdown drag now goes editor-first when `MarkdownEditorFirstSwitch` is on (the
+    // default). This test is about the OLD body (what it writes when a level changed between the plan and the sequence), which the
+    // switch still gives, so it turns the switch off for its body.
     @Test("aLevelChangedBetweenThePlanAndTheOldBodyIsKept")
     func aLevelChangedBetweenThePlanAndTheOldBodyIsKept() async throws {
+        let previousSwitch = MarkdownEditorFirstSwitch.enabled
+        MarkdownEditorFirstSwitch.enabled = false
+        defer { MarkdownEditorFirstSwitch.enabled = previousSwitch }
         let r = try await makeRig()
         defer { unpinSnapshots(r.rig) }
         let bravo = try r.rig.heading("Bravo")

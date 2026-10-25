@@ -38,7 +38,7 @@
 //    testReorderEFFootnoteChapterTypeDuringJob_book6 E4 a footnoted chapter above Chapter 1, typing during the job, Cmd-Z
 //    testReorderEFDuplicateDragUndoTwice_article    E5  duplicate, Option-drag the copy, Cmd-Z twice
 //    testReorderEFTwiceThenUndo_book6               E6  two drags, then Cmd-Z twice
-//    testReorderEFMarkdownOldPath_article           E7  a drag in Markdown mode keeps the old road
+//    testReorderEFMarkdown_article                  E7  a drag in Markdown mode is editor first (was testReorderEFMarkdownOldPath_article)
 //    testReorderEFToBottomStaysBeforeNotes_book6    E8  a chapter dragged under the last card stays before Notes and Bibliography
 //    testReorderEFFootnoteInsertThenDrag_book6      E9  insert a footnote, drag its chapter at once
 //    testReorderEFBook12CJKTiming                   E10 CJK paragraph, Option-drag on the twelve-chapter book, `jsMs` recorded
@@ -1095,7 +1095,7 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
     }
 }
 
-// MARK: - E7 A drag in Markdown mode keeps the old road
+// MARK: - E7 A drag in Markdown mode is editor first (flipped by t-4a8fd8af slice 2)
 
 extension WriteQueuePhase4bStructuralQueueE2ETests {
     /// Switches to Markdown mode (the status-bar badge reads "Markdown") with Cmd-/ and waits until the app's log is quiet (the editor swap).
@@ -1115,11 +1115,18 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         return true
     }
 
-    /// User step 9: "Switch to Markdown, drag a section card, press Cmd-Z." Markdown mode keeps today's road (t-4a8fd8af): the drag reorders
-    /// the document, its sequence began with a plain `start` (never `start (editor-first)`) and no `reorder-editor-first` line was
-    /// written. Cmd-Z then brings the original heading order back (ASSERTED, in the block table, the sidebar and the editor's visible
-    /// lines). Afterwards the content state is idle: a word typed after the undo has settled reaches the database.
-    func testReorderEFMarkdownOldPath_article() {
+    /// User step 9: "Switch to Markdown, drag a section card, press Cmd-Z." FLIPPED by t-4a8fd8af slice 2: it was
+    /// `testReorderEFMarkdownOldPath_article` and asserted that Markdown mode keeps the OLD road (a plain `start`, no `reorder-editor-first`
+    /// line). Now Markdown mode takes the editor-first road: the drag's sequence began `start (editor-first) mode=markdown` and ZERO plain
+    /// `start` lines were written for it, the page's reply `reorder-editor-first opId=.. ok=true mode=markdown` is in the log exactly once,
+    /// the Markdown writer's hold was raised and released, and no `fell back` / `refused` step or fallback line was written. The same settled
+    /// checks as before: the heading order is the hand-worked one in the block table, the sidebar and the editor's visible lines. Cmd-Z
+    /// then brings the original heading order back (ASSERTED in the three places): it is pressed WITHOUT a click back into the line first
+    /// (the old body rebuilt the editor and needed one; the editor-first drag leaves the keyboard focus where it was; a key that reaches no
+    /// editor is recorded as a finding and the test then clicks back, as a person would), it is decided `structural`, and it takes the
+    /// queued slow route (`start (markdown queued undo)`). Afterwards the content state is idle: a word typed after the undo has settled
+    /// reaches the database.
+    func testReorderEFMarkdown_article() {
         let size = Phase4bDelSize.article
         let moved = "1.6 Conclusion"
         let target = "1.5 Lanterns After Dark"
@@ -1135,19 +1142,42 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         let traces = traceLines(from: dragFrom).filter { $0.family == .sequence && $0.label == "sectionReorder" }
         let starts = traces.filter { $0.isOpStart }
         let editorFirst = editorFirstOkLines("reorder", from: dragFrom)
-        result("MARKDOWN MECHANISM: sectionReorder start line(s) \(starts.map(\.step)); `reorder-editor-first` lines \(editorFirst.count)")
-        soft.check(starts.count == 1 && starts[0].step == "start",
-                   "the Markdown drag's sequence began \(starts.map(\.step)), expected one plain `start` (the old road)")
-        soft.check(!starts.contains { $0.step.contains("editor-first") }, "a Markdown-mode drag took the editor-first road")
-        soft.check(editorFirst.isEmpty, "\(editorFirst.count) `reorder-editor-first` line(s) in Markdown mode")
+        let fellBack = traces.filter { $0.step.hasPrefix("fell back") || $0.step.hasPrefix("refused") }
+        tail.poll()
+        let holdLines = tail.lines[min(dragFrom, tail.lines.count)...].map(\.text)
+        let raised = holdLines.filter { $0.contains("[MdWrite] structural hold raised") }.count
+        let released = holdLines.filter { $0.contains("[MdWrite] structural hold released") }.count
+        result("MARKDOWN MECHANISM: sectionReorder start line(s) \(starts.map(\.step)); `reorder-editor-first` lines \(editorFirst.count); "
+               + "fell-back/refused steps \(fellBack.count); Markdown holds raised \(raised), released \(released)")
+        soft.check(starts.count == 1 && starts[0].step == "start (editor-first) mode=markdown",
+                   "the Markdown drag's sequence began \(starts.map(\.step)), expected one `start (editor-first) mode=markdown` "
+                       + "(the old body logs a plain `start`)")
+        soft.check(!starts.contains { $0.step == "start" }, "a plain `start` of the old body was written for the Markdown drag")
+        soft.check(editorFirst.count == 1 && editorFirst[0].contains("mode=markdown"),
+                   "\(editorFirst.count) `reorder-editor-first ... ok=true mode=markdown` line(s) in Markdown mode, expected exactly 1")
+        soft.check(fellBack.isEmpty, "\(fellBack.count) `fell back` / `refused` step(s): \(fellBack.map(\.step))")
+        soft.check(raised >= 1 && released == raised, "\(raised) Markdown hold(s) raised but \(released) released by the drag's job")
         attachEvidenceScreenshot(app.screenshot(), name: "reorder-ef-markdown-article-1-after-the-drag")
 
-        // User step 9's Cmd-Z, ASSERTED: the old road records a structural entry with a snapshot, and the Markdown editor's Cmd-Z hands it to
-        // the degraded (non-checkpoint) undo (docs/architecture/unified-undo.md "Source mode never checkpoint-swaps"; the CodeMirror
-        // coordinator logs the same `[UnifiedUndo] keydown` line). A click back into the line first, as a person does after the old road
-        // rebuilt the editor, so the key reaches the editor.
-        clickBackIntoAnchor()
-        let press = rqPressStep(redo: false, number: 1)
+        // User step 9's Cmd-Z, ASSERTED: the editor-first drag records a structural entry whose Cmd-Z is the queued slow route (docs/
+        // architecture/document-writer.md, "Markdown editor-first section reorder"; the CodeMirror coordinator logs the same `[UnifiedUndo]
+        // keydown` line). NO click back into the line first: the old road rebuilt the editor and needed one, this one does not. A key that
+        // reached no editor is recorded as a finding, and then the test clicks back and presses again so the rest still runs.
+        tail.poll()
+        let undoFrom = tail.lines.count
+        var press = rqPressStep(redo: false, number: 1)
+        if press.decision == "none" {
+            soft.check(false, "FINDING: the Cmd-Z right after the Markdown drag reached no editor (no `[UnifiedUndo] keydown` line): the keyboard "
+                           + "focus did not survive the drag")
+            clickBackIntoAnchor()
+            press = rqPressStep(redo: false, number: 2)
+        }
+        let undoStart = traceLines(from: undoFrom).first { $0.family == .sequence && $0.label == "undo" && $0.isOpStart }
+        result("MARKDOWN CMD-Z: the editor decided \(press.decision); a structural undo ran: \(Self.yesNo(press.structural)); sequence began "
+               + "`\(undoStart?.step ?? "none")`")
+        soft.check(press.decision == "structural" && press.structural && undoStart?.step.hasPrefix("start (markdown queued undo") == true,
+                   "the Cmd-Z of the Markdown drag was decided \(press.decision) (structural ran: \(Self.yesNo(press.structural))) and began "
+                       + "`\(undoStart?.step ?? "none")`, expected a structural undo on the queued slow route `start (markdown queued undo)`")
         _ = settle()
         let afterUndo = rqRecordState("Cmd-Z in Markdown mode (the editor decided \(press.decision))", original: preHeadingFragments,
                                       moved: rqHeadings(rows), marker: Self.rqFirst)
@@ -1166,7 +1196,7 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         attachEvidenceScreenshot(app.screenshot(), name: "reorder-ef-markdown-article-3-after-the-typing")
         soft.check(landed, "a word typed after the Markdown reorder never reached the database: the content state was not idle again")
         soft.check(blocksContaining(Self.rqFirst) == 1, "the typed word is in \(blocksContaining(Self.rqFirst)) row(s), expected exactly 1")
-        assertSoft(soft, "a drag in Markdown mode keeps the old road, on the article")
+        assertSoft(soft, "a drag in Markdown mode is editor first, on the article")
     }
 }
 

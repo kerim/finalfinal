@@ -9,8 +9,10 @@
 //  (StructuralUndoController+EditorFirstDuplicate.swift) and stands on the same shared click (`runEditorFirstStructuralClick`).
 //
 //    1. `performEditorFirstReorder(plan:changedLevels:rootId:)`: the click. Returns nil when this press must take today's whole
-//       sequence instead (Markdown mode, zoomed, no writer turn, the UI-test legacy flag, an editor that refuses: `planMismatch`,
-//       `managedMoved`, `rootNotFound`, no document yet).
+//       sequence instead (zoomed, no writer turn, the UI-test legacy flag, an editor that refuses: `planMismatch`, `managedMoved`,
+//       `rootNotFound`, no document yet). In Markdown mode it hands the press to `performMarkdownEditorFirstReorder`
+//       (StructuralUndoController+MarkdownEditorFirstReorder.swift, t-4a8fd8af slice 2), which uses `showReorderInSidebar` and
+//       `startEditorFirstReorderJob` below as they are.
 //    2. `showReorderInSidebar(...)`: what the sidebar shows at once, before the rows move: the planned list, and the order overlay
 //       (`EditorViewState.pendingReorder`) every outline result is put into until the job's settle lifts it.
 //    3. `startEditorFirstReorderJob(...)`: reserves the job and keeps the task that runs it and the work after it.
@@ -92,11 +94,15 @@ extension StructuralUndoController {
         #if DEBUG
         if testForceLegacyStructural { return nil }
         #endif
-        // Rich Text and not zoomed (a zoomed reorder keeps the whole-document body: t-b371d77a). A rootId the editor has no node for
-        // is answered by the editor itself (`rootNotFound`), and falls back below.
+        // Not zoomed (a zoomed reorder keeps the whole-document body: t-b371d77a). A rootId the editor has no node for is answered by
+        // the editor itself (`rootNotFound`), and falls back below.
         let guardStartMs = StructTrace.nowMs()
-        guard !TestMode.isUITestingLegacyStructural,
-              editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil else { return nil }
+        guard !TestMode.isUITestingLegacyStructural, editorState.zoomedSectionId == nil else { return nil }
+        // Markdown mode (t-4a8fd8af slice 2): the same drop, carried out by the CodeMirror page (a text move) instead of the Milkdown
+        // editor; its own file. A nil from there (the switch is off, the page declined) continues in this gate turn with the old body.
+        if editorState.editorMode == .source {
+            return await performMarkdownEditorFirstReorder(plan: plan, changedLevels: changedLevels, rootId: rootId)
+        }
         let guardMs = StructTrace.nowMs() - guardStartMs
 
         // Every id that goes in is an outline row the editor can carry: a heading, a section break, Notes or the Bibliography heading
@@ -246,6 +252,7 @@ extension StructuralUndoController {
             guard let blockSync = weakBlockSync else {
                 reserved.fire()
                 registry.resolve(opId, .abandoned)
+                self?.notifyMarkdownJobEnded(key: opId, outcome: .abandoned)   // a Markdown reorder's hold continuation (no-op in Rich Text)
                 return
             }
             let result = await job.perform(
@@ -256,6 +263,9 @@ extension StructuralUndoController {
                 })
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
+            // A Markdown reorder's hold continuation waits on this (a no-op for a job without a step-8 gate, i.e. every Rich Text job).
+            // WITHOUT it the Markdown writer's hold would stay up for good (t-4a8fd8af slice 2).
+            self?.notifyMarkdownJobEnded(key: opId, outcome: JobOutcome(result.outcome))
             await self?.editorFirstJobSettled(
                 opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: [], epoch: epochAtClick, jobKey: nil,
                 kind: .sectionReorder)

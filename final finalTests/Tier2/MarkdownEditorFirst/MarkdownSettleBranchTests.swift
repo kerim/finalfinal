@@ -276,7 +276,8 @@ final class MarkdownSettleBranchTests: XCTestCase {
               window.__expecting = [];
               ff.setStructuralSettleOpId = (id, expecting) => {
                 window.__calls.push('set:' + id);
-                if (expecting !== undefined) window.__expecting.push(expecting);
+                // The second argument is `expecting` on a CLEAR and the Notes heading line on a SET (review V1): only a clear's is recorded.
+                if (id === null && expecting !== undefined) window.__expecting.push(expecting);
                 return setFlag(id, expecting);
               };
               const renumber = ff.renumberFootnotes.bind(ff);

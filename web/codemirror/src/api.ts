@@ -40,6 +40,7 @@ import {
 import { setFocusModeEffect, setFocusModeEnabled } from './focus-mode-plugin';
 import { commitAndCloseImageCaptionPopup, dismissImageCaptionPopup } from './image-caption-popup';
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
+import { renumberWithSortedNotes } from './notes-region-sort';
 import { getRecentUserEditSpan } from './recent-edit-span';
 import { formatTableCommand, insertTableCommand } from './table-format';
 import { computeMinimalChanges } from './text-diff';
@@ -1205,7 +1206,14 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     // `maybeAdvanceRegistryOnSyncOriginTx` advances the saved copies when the document equals them). The user's Cmd-Z count then
     // matches Rich Text's absorbed renumber: one press undoes the typing, the next reaches the command.
     const annotations = structuralSettleOpId !== null ? Transaction.addToHistory.of(false) : derivedCorrection.of(true);
-    withAppOrigin(() => view.dispatch({ changes, annotations }));
+    // A settle that was given the Notes heading line also SORTS the Notes definitions, in this same transaction (V1): the page never
+    // holds relabelled-but-unsorted Notes for a Save Version or a Cmd-W to write into the rows. Anything the sort does not apply to
+    // (no heading line, heading not found, anything but definitions in the region) is the relabel alone, as it has always been.
+    const sorted =
+      structuralSettleOpId !== null && structuralSettleNotesHeading !== null
+        ? renumberWithSortedNotes(view.state.doc, changes, structuralSettleNotesHeading)
+        : null;
+    withAppOrigin(() => view.dispatch({ changes: sorted ?? changes, annotations }));
   }
 }
 
@@ -1214,19 +1222,30 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
 /** The opId of the structural command whose settle is running, or null. Set and cleared by Swift through the same FIFO the renumber
  * itself travels in (`setStructuralSettleOpId`), so a renumber posted by the settle's resync sees the flag set. */
 let structuralSettleOpId: string | null = null;
+/** The Notes heading line Swift supplied with the flag (its rows' text, e.g. "## Notes"), or null. It lives and dies with the flag. */
+let structuralSettleNotesHeading: string | null = null;
 
-/** Bridge target for `window.FinalFinal.setStructuralSettleOpId(opId | null, expecting?)`. A string sets the flag. `null` clears it;
- * `null` with `expecting` clears it only while it still holds `expecting`. While non-null, `renumberFootnotes` dispatches outside the text
- * history. Null (the steady state) leaves the renumber exactly as it has always been: a `derivedCorrection` that is its own undo step. */
-export function setStructuralSettleOpId(opId: string | null, expecting?: string): void {
+/** Bridge target for `window.FinalFinal.setStructuralSettleOpId`. Two shapes:
+ *   * `setStructuralSettleOpId(opId, notesHeadingLine?)` SETS the flag. `notesHeadingLine` (optional, `string | null`) is the Notes
+ *     heading's line exactly as Swift's rows have it ("## Notes", or the user's own title); when given, the settle's footnote renumber
+ *     also sorts the Notes definitions in the same transaction (notes-region-sort.ts). Absent or null: relabel only, as before.
+ *   * `setStructuralSettleOpId(null, expecting?)` CLEARS it (and the heading line with it); with `expecting` only while the flag still
+ *     holds `expecting` (compare-and-clear). The second argument therefore means `notesHeadingLine` when setting and `expecting` when
+ *     clearing, so every earlier call keeps working.
+ * While non-null, `renumberFootnotes` dispatches outside the text history. Null (the steady state) leaves the renumber exactly as it has
+ * always been: a `derivedCorrection` that is its own undo step, no sort. */
+export function setStructuralSettleOpId(opId: string | null, secondArgument?: string | null): void {
   if (typeof opId === 'string' && opId !== '') {
     structuralSettleOpId = opId;
+    structuralSettleNotesHeading =
+      typeof secondArgument === 'string' && secondArgument.trim() !== '' ? secondArgument : null;
     return;
   }
   // A clear. With `expecting` it is a compare-and-clear: two settles can overlap (Delete, then Delete again at once), and the
   // earlier settle's clear must not drop the later settle's flag (F9/M-5).
-  if (typeof expecting === 'string' && structuralSettleOpId !== expecting) return;
+  if (typeof secondArgument === 'string' && structuralSettleOpId !== secondArgument) return;
   structuralSettleOpId = null;
+  structuralSettleNotesHeading = null;
 }
 
 /** Test-only: the current flag. */
@@ -1683,6 +1702,7 @@ export function resetForProjectSwitch(): void {
 
   // Clear transient module-level state
   structuralSettleOpId = null;
+  structuralSettleNotesHeading = null;
   setPendingSlashUndo(false);
   setZoomFootnoteState(false, 0);
   clearPendingCAYWRequests();

@@ -440,8 +440,16 @@ extension EditorFirstReorderTests {
     // Binding extras 8: in Markdown mode the drop keeps the old whole-document body (the editor is never asked), it still counts as an
     // out-of-queue write, the entry carries its own snapshot id, and the content state is idle afterwards so typing straight after is
     // polled and saved.
+    //
+    // t-4a8fd8af slice 2 (Markdown drag, round 3a): a Markdown drag now goes editor-first when `MarkdownEditorFirstSwitch` is on (the
+    // default). This test is about the OLD body, which the switch still gives (the kill switch, and a refused or twice-mismatched press),
+    // so it turns the switch off for its body and drives the old body on purpose. With the switch off a Markdown drag must still count
+    // as an out-of-queue write (the generation bump the old body makes), which is why the assertion below stays.
     @Test("markdownModeReorderTakesTheOldRoadAndLeavesTheContentStateIdle")
     func markdownModeReorderTakesTheOldRoadAndLeavesTheContentStateIdle() async throws {
+        let previousSwitch = MarkdownEditorFirstSwitch.enabled
+        MarkdownEditorFirstSwitch.enabled = false
+        defer { MarkdownEditorFirstSwitch.enabled = previousSwitch }
         let r = try await makeRig()
         defer { unpinSnapshots(r.rig) }
         r.rig.editorState.editorMode = .source

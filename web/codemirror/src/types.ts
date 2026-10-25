@@ -184,10 +184,18 @@ declare global {
         direction: 'undo' | 'redo',
         requestJson?: string | object
       ) => import('./api-structural-markdown').MarkdownStructuralResult;
+      // The sidebar drag-reorder of a section, editor-first (Phase 4b, Markdown slice 2). The JSON contract is documented at the top of
+      // api-structural-markdown-reorder.ts; Swift reads the result as JSON.stringify(...).
+      markdownStructuralReorder: (
+        request: string | object
+      ) => import('./api-structural-markdown-reorder').MarkdownReorderResult;
       // B5 (t-4a8fd8af): while non-null, renumberFootnotes is applied outside the text history (a structural settle's renumber).
-      // With opId === null and `expecting` given, clears ONLY if the current value === expecting (compare-and-clear, so an earlier
-      // settle's clear cannot drop a later, overlapping settle's flag); null without `expecting` clears unconditionally.
-      setStructuralSettleOpId: (opId: string | null, expecting?: string) => void;
+      // SET: setStructuralSettleOpId(opId, notesHeadingLine?). `notesHeadingLine` is the Notes heading's line as Swift's rows have it
+      // ("## Notes"); when given, the settle's renumber also sorts the Notes definitions in the same transaction (notes-region-sort.ts).
+      // CLEAR: setStructuralSettleOpId(null, expecting?). With `expecting` given, clears ONLY if the current value === expecting
+      // (compare-and-clear, so an earlier settle's clear cannot drop a later, overlapping settle's flag); null without `expecting`
+      // clears unconditionally. A clear also forgets the heading line.
+      setStructuralSettleOpId: (opId: string | null, secondArgument?: string | null) => void;
       // O28 (t-4a8fd8af): replaces only the Notes or bibliography region, if it still holds `expectedOld`. JSON contract: api-managed-region.ts.
       markdownReplaceManagedRegion: (
         request: string | object

@@ -78,13 +78,14 @@
 //   `isolateHistory('full')`, so typing before the command and typing after it never merge into one undo step.
 
 import { isolateHistory } from '@codemirror/commands';
-import { ChangeSet, type EditorState, type Text, Transaction } from '@codemirror/state';
+import { ChangeSet, type EditorSelection, type EditorState, type Text, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import type { MarkdownReorderRequest } from './api-structural-markdown-reorder';
 import { getEditorExtensions, getEditorView } from './editor-state';
 import { readImageMeta, setImageMeta } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { clearRecentUserEditSpan } from './recent-edit-span';
-import { carryRedoBranch } from './redo-branch';
+import { carryRedoBranch, type MovedRange } from './redo-branch';
 import { resetSpellcheckAfterStateSwap } from './spellcheck-plugin';
 import { computeMinimalChanges } from './text-diff';
 import { withAppOrigin } from './typewriter-plugin';
@@ -134,18 +135,36 @@ export interface MarkdownStructuralResult {
   postRaw?: string;
 }
 
-/** What an editor-first Markdown command stores on its registry entry (`UndoRegistryEntry.markdown`). */
-export interface MarkdownEntryExtras {
+/** What an editor-first Markdown DELETE stores on its registry entry (`UndoRegistryEntry.markdown`). */
+export interface MarkdownDeleteEntryExtras {
+  kind: 'delete';
   /** The request the command ran. The quick redo re-runs it (unless Swift passes a fresher one). */
   request: MarkdownStructuralRequest;
   /** The change set the command applied (pre-op document to post-op document). Round 2b's redo carry maps the redo branch with it. */
   opChanges: ChangeSet;
 }
 
+/** What an editor-first Markdown REORDER stores (api-structural-markdown-reorder.ts). It has no quick re-run: its redo is the composed
+ * redo (`composedReorderRedo` below). */
+export interface MarkdownReorderEntryExtras {
+  kind: 'reorder';
+  request: MarkdownReorderRequest;
+  /** The ONE change set the move applied (pre-op document to post-op document): the move, the separators and the level rewrites. */
+  opChanges: ChangeSet;
+  /** The moved text (the run, with the blank line that follows it) in the POST-op document; null when nothing moved (a level-only
+   * drop). The undo carry drops the redo events that touch it (redo-branch.ts). */
+  moved: MovedRange | null;
+  /** The selection the move left in the post-op document (the caret goes with its text). The composed redo puts it back. */
+  postSelection: EditorSelection;
+}
+
+/** What an editor-first Markdown command stores on its registry entry (`UndoRegistryEntry.markdown`), tagged by `kind`. */
+export type MarkdownEntryExtras = MarkdownDeleteEntryExtras | MarkdownReorderEntryExtras;
+
 // === Diagnostics ===
 
 /** A diagnostic must never break the operation it observes. Counts, ids and timings only, never document text. */
-function trace(message: string): void {
+export function trace(message: string): void {
   try {
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
       type: 'debug',
@@ -169,8 +188,8 @@ const LEADING_HIDDEN =
 // places (it has U+FEFF, it lacks U+0085), so the class is spelled out instead of using `\s`.
 export const ATX_HEADING = /^#{1,6}[\t\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\](?!:)/g;
-const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:/;
-const FOOTNOTE_CONTINUATION = /^(?: {2,}|\t)\S/;
+export const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:/;
+export const FOOTNOTE_CONTINUATION = /^(?: {2,}|\t)\S/;
 
 /** `line` with every leading hidden marker (section anchor, bibliography opening or end marker) removed, then trimmed. */
 export function stripLeadingHidden(line: string): string {
@@ -287,8 +306,42 @@ export function scanDocument(doc: Text, stopLine: string | null | undefined): Do
 
 // === Request parsing ===
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The leaders of a request, each checked for shape; `badIndex` names the first one that is malformed. Shared with the reorder request. */
+export function parseLeaders(items: unknown[]): { leaders: MarkdownLeader[] } | { badIndex: number } {
+  const leaders: MarkdownLeader[] = [];
+  for (const [index, item] of items.entries()) {
+    const valid =
+      isRecord(item) &&
+      typeof item.id === 'string' &&
+      typeof item.line === 'string' &&
+      typeof item.level === 'number' &&
+      Number.isInteger(item.level) &&
+      item.level >= 1 &&
+      item.level <= 6 &&
+      (item.managed === undefined || item.managed === 'notes' || item.managed === 'bibliography');
+    if (!valid) return { badIndex: index };
+    const leader = item as unknown as MarkdownLeader;
+    leaders.push({ id: leader.id, line: leader.line, level: leader.level, managed: leader.managed });
+  }
+  return { leaders };
+}
+
+/**
+ * THE LEADER MATCH: null when the live candidates equal `leaders` one for one (same count, same line text), otherwise the detail of
+ * the first difference (counts and indexes only, never document text). A mismatch changes nothing: Swift flushes the typing and retries.
+ */
+export function leaderMismatchDetail(scan: DocumentScan, leaders: MarkdownLeader[]): string | null {
+  if (scan.candidates.length !== leaders.length) {
+    return `leaderCount editor=${scan.candidates.length} database=${leaders.length}`;
+  }
+  for (let i = 0; i < leaders.length; i++) {
+    if (scan.candidates[i].text !== stripLeadingHidden(leaders[i].line)) return `leaderLine index=${i}`;
+  }
+  return null;
 }
 
 /** The request, or the failure to answer. Never throws. */
@@ -312,21 +365,11 @@ function parseRequest(input: unknown): { request: MarkdownStructuralRequest } | 
     return { failure: { ok: false, reason: 'badRequest', detail: 'rootId' } };
   }
   if (!Array.isArray(raw.leaders)) return { failure: { ok: false, reason: 'badRequest', detail: 'leaders' } };
-  const leaders: MarkdownLeader[] = [];
-  for (const [index, item] of raw.leaders.entries()) {
-    const valid =
-      isRecord(item) &&
-      typeof item.id === 'string' &&
-      typeof item.line === 'string' &&
-      typeof item.level === 'number' &&
-      Number.isInteger(item.level) &&
-      item.level >= 1 &&
-      item.level <= 6 &&
-      (item.managed === undefined || item.managed === 'notes' || item.managed === 'bibliography');
-    if (!valid) return { failure: { ok: false, reason: 'badRequest', detail: `leader ${index}` } };
-    const leader = item as unknown as MarkdownLeader;
-    leaders.push({ id: leader.id, line: leader.line, level: leader.level, managed: leader.managed });
+  const parsedLeaders = parseLeaders(raw.leaders);
+  if ('badIndex' in parsedLeaders) {
+    return { failure: { ok: false, reason: 'badRequest', detail: `leader ${parsedLeaders.badIndex}` } };
   }
+  const leaders = parsedLeaders.leaders;
   const stopLine = raw.stopLine;
   if (stopLine !== undefined && stopLine !== null && typeof stopLine !== 'string') {
     return { failure: { ok: false, reason: 'badRequest', detail: 'stopLine' } };
@@ -430,12 +473,8 @@ function planDelete(doc: Text, request: MarkdownStructuralRequest): RangeOutcome
     return { ok: false, failure: { ok: false, reason: 'badRequest', detail: 'rootIsManaged' } };
 
   const scan = scanDocument(doc, request.stopLine);
-  if (scan.candidates.length !== leaders.length) {
-    return mismatch(`leaderCount editor=${scan.candidates.length} database=${leaders.length}`);
-  }
-  for (let i = 0; i < leaders.length; i++) {
-    if (scan.candidates[i].text !== stripLeadingHidden(leaders[i].line)) return mismatch(`leaderLine index=${i}`);
-  }
+  const mismatchDetail = leaderMismatchDetail(scan, leaders);
+  if (mismatchDetail !== null) return mismatch(mismatchDetail);
 
   // The first later leader that ends the section: a Notes/Bibliography leader whatever its level, or one whose level is not deeper.
   let stopIdx = -1;
@@ -503,7 +542,7 @@ function runDelete(view: EditorView, request: MarkdownStructuralRequest): Markdo
     preOpDoc: doc,
     postOpDoc: doc, // placeholder until the dispatch has landed
     midOp: true,
-    markdown: { request, opChanges: plan.changes },
+    markdown: { kind: 'delete', request, opChanges: plan.changes },
   });
 
   // 3. One dispatch. addToHistory:false drops the history events inside the removed range (as in Rich Text); isolateHistory('full')
@@ -588,13 +627,14 @@ const CARRIED_STATE: CarriedState[] = [
  * redone. A carry that cannot be built falls back to the plain checkpoint (the redo branch is lost, nothing else), with a trace line.
  */
 function buildSwappedState(entry: UndoRegistryEntry, live: EditorState): EditorState {
-  const carry = carryRedoBranch(live, entry.checkpoint, entry.markdown?.opChanges, getEditorExtensions());
+  const moved = entry.markdown?.kind === 'reorder' ? entry.markdown.moved : null;
+  const carry = carryRedoBranch(live, entry.checkpoint, entry.markdown?.opChanges, getEditorExtensions(), moved);
   if (carry === null) return entry.checkpoint;
   if (!carry.carried) {
     trace(`markdown-swap redo carry skipped: ${carry.reason}`);
     return entry.checkpoint;
   }
-  trace(`markdown-swap redo carry events=${carry.events}`);
+  trace(`markdown-swap redo carry events=${carry.events} dropped=${carry.dropped}`);
   return carry.state;
 }
 
@@ -635,6 +675,40 @@ function swapRedoFromSavedCopy(view: EditorView, entry: UndoRegistryEntry): Mark
 }
 
 /**
+ * The redo of a REORDER entry (decision (a), judge ruling M10): the recorded move is applied to the checkpoint document and then the
+ * small difference to the SETTLED post-op document (`entry.postOpDoc`, which has followed the rebuild's anchors and the footnote
+ * renumber since the click) is composed onto it, as ONE change outside the text history. The redo therefore lands exactly on
+ * `postOpDoc` (so a Cmd-Z pressed at once is still routed structural, and the footnotes are never seen out of order), and the history is
+ * mapped through the real move, not through a line diff that would treat a shorter chapter's text as removed and re-inserted.
+ *
+ * Only for a live document equal to the CHECKPOINT document, the one `opChanges` was built on. Returns null otherwise (the document
+ * changed since: an automatic rewrite moved `preOpDoc`, the user typed), and the caller uses the saved-copy swap.
+ * Runs inside the midOp-guarded block of `markdownStructuralSwap`: its own dispatch is a sync-origin change and must not advance the
+ * entry's saved copies (`maybeAdvanceRegistryOnSyncOriginTx` skips while any entry is mid-op).
+ */
+function composedReorderRedo(view: EditorView, entry: UndoRegistryEntry): MarkdownStructuralResult | null {
+  const extras = entry.markdown;
+  if (extras?.kind !== 'reorder') return null;
+  if (!view.state.doc.eq(entry.checkpoint.doc)) return null;
+  const preRaw = view.state.doc.toString();
+  const moved = extras.opChanges.apply(entry.checkpoint.doc).toString();
+  const settle = ChangeSet.of(computeMinimalChanges(moved, entry.postOpDoc.toString()), extras.opChanges.newLength);
+  const changes = settle.empty ? extras.opChanges : extras.opChanges.compose(settle);
+  // The caret goes with its text, as it did at the click -- unless the user moved it since the Cmd-Z (the swap-back left the
+  // checkpoint's selection in place), in which case their caret is simply mapped through the change.
+  const selection = view.state.selection.eq(entry.checkpoint.selection) ? extras.postSelection.map(settle) : undefined;
+  // isolateHistory('full'), as for the click: typing after the redo never joins typing from before the command.
+  withAppOrigin(() =>
+    view.dispatch({
+      changes,
+      selection,
+      annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')],
+    })
+  );
+  return { ok: true, preRaw, postRaw: view.state.doc.toString() };
+}
+
+/**
  * window.FinalFinal.markdownStructuralSwap: the undo/redo turn of the registry entry `opId`. Never throws.
  *
  * It re-checks first that the live document still equals the entry's saved copy -- the same routing function and comparison the key
@@ -659,8 +733,10 @@ export function markdownStructuralSwap(
     return { ok: false, reason: 'changed', detail: `decision=${decision.action}` };
   }
 
-  // A quick redo re-runs the command on the document as it stands, under the same opId. It brings its own midOp handling.
-  if (direction === 'redo' && entry.markdown) {
+  // A quick redo re-runs the command on the document as it stands, under the same opId. It brings its own midOp handling. Only a DELETE
+  // has a quick re-run; a reorder entry (api-structural-markdown-reorder.ts) goes on to the shared midOp-guarded block below, where its
+  // composed redo runs beside the saved-copy swap (an early return here would let its own dispatch advance `preOpDoc`).
+  if (direction === 'redo' && entry.markdown?.kind === 'delete') {
     let request = entry.markdown.request;
     if (requestJson !== undefined) {
       const parsed = parseRequest(requestJson);
@@ -673,7 +749,12 @@ export function markdownStructuralSwap(
 
   registry.set(opId, { ...entry, midOp: true });
   try {
-    return direction === 'undo' ? swapUndo(view, entry) : swapRedoFromSavedCopy(view, entry);
+    if (direction === 'undo') return swapUndo(view, entry);
+    const composed = composedReorderRedo(view, entry);
+    if (composed !== null) return composed;
+    if (entry.markdown?.kind === 'reorder')
+      trace('markdown-swap reorder redo: the document is not the checkpoint, saved-copy swap');
+    return swapRedoFromSavedCopy(view, entry);
   } catch (error) {
     trace(`markdown-swap ${direction} threw: ${error instanceof Error ? error.message : String(error)}`);
     return { ok: false, reason: 'swapThrew' };
