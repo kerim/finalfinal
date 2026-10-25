@@ -32,7 +32,7 @@
 			<true/>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.quicklook.preview</string>
+		<string>$(FF_QUICKLOOK_EXTENSION_POINT)</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>QuickLook_Extension.PreviewViewController</string>
 	</dict>

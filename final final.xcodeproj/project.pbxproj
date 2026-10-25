@@ -4113,6 +4113,7 @@
 					"@loader_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final-tests";
+				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FINAL|FINAL.app/Contents/MacOS/FINAL|FINAL";
@@ -4196,6 +4197,7 @@
 				PRODUCT_MODULE_NAME = final_final;
 				PRODUCT_NAME = "FINAL|FINAL";
 				SDKROOT = macosx;
+				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
 				SWIFT_COMPILATION_MODE = singlefile;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.9;
@@ -4256,6 +4258,7 @@
 				MARKETING_VERSION = 1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final";
 				PRODUCT_MODULE_NAME = final_final;
+				FF_QUICKLOOK_EXTENSION_POINT = com.apple.quicklook.preview;
 				PRODUCT_NAME = "FINAL|FINAL";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;

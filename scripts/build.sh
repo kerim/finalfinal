@@ -206,8 +206,9 @@ echo ""
 # the top of this file now (on_exit) — it reads $NEW_VERSION/$CURRENT_VERSION
 # defensively since they aren't assigned yet on a failure before this point.
 
-# Step 1b: Clean stale QuickLook extension registrations (DerivedData leftovers)
-# Each xcodegen run creates a new project hash → new DerivedData dir → new .appex copy.
+# Step 1b: Remove stale DerivedData directories. (Debug builds no longer
+# register a Quick Look extension at all — see FF_QUICKLOOK_EXTENSION_POINT in
+# project.yml — so this is now just disk cleanup.)
 # Safe: build.sh uses its own -derivedDataPath "$PROJECT_DIR/build", not these.
 echo "  Removing stale DerivedData directories..."
 rm -rf ~/Library/Developer/Xcode/DerivedData/final_final-*
@@ -320,7 +321,11 @@ echo -e "${GREEN}  Developer ID signed and verified${NC}"
 echo ""
 
 # Step 4b: Register QuickLook extension
+# Xcode registered the build/ staging copy with Launch Services when it built
+# it; left there, its extension is a second "FINAL|FINAL Quick Look" in System
+# Settings. Forget it so only the installed copy remains.
 echo -e "${YELLOW}Step 4b: Registering QuickLook extension...${NC}"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$BUILD_PATH" || true
 pluginkit -a "$APPEX_PATH"
 echo -e "${GREEN}  QuickLook extension registered${NC}"
 echo ""
