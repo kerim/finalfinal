@@ -1905,14 +1905,6 @@
 			path = ViewState;
 			sourceTree = "<group>";
 		};
-		4A19C3A362CD5730DCBA0447 /* .claude */ = {
-			isa = PBXGroup;
-			children = (
-				C42E60B31A797D2D346D40FB /* .cc-writes */,
-			);
-			path = .claude;
-			sourceTree = "<group>";
-		};
 		5D30D849AC613F46C575C190 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -1950,13 +1942,6 @@
 				374D7FF771D6B32ACD8C031A /* FullScreenTransitionModel.swift */,
 			);
 			path = Utilities;
-			sourceTree = "<group>";
-		};
-		85EF6A757D2356C0BA5CDEBA /* .cc-writes */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = ".cc-writes";
 			sourceTree = "<group>";
 		};
 		863FDB9EBD7F0987C81E6ECA /* Models */ = {
@@ -2169,7 +2154,6 @@
 				D46C64FA43C1A9398AE726AF /* ZoteroService+GroupLibraryScopes.swift */,
 				A11494CC55A4FAB9439A3369 /* ZoteroService+ItemCache.swift */,
 				02CDB83D28B7518059FF9704 /* ZoteroService+LibraryScope.swift */,
-				4A19C3A362CD5730DCBA0447 /* .claude */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -2351,13 +2335,6 @@
 			path = Sidebar;
 			sourceTree = "<group>";
 		};
-		C42E60B31A797D2D346D40FB /* .cc-writes */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = ".cc-writes";
-			sourceTree = "<group>";
-		};
 		D3BE699FAB889E1DDB06A3F5 /* Tier3 */ = {
 			isa = PBXGroup;
 			children = (
@@ -2533,7 +2510,6 @@
 				0B3B350642682426E11BF1A0 /* ZoomWordCountSyncZoomedTests.swift */,
 				6704317B174DD3C1DB07E710 /* ZoteroServiceConnectionTests.swift */,
 				0EB49643B46DE3ADD069F04E /* MarkdownEditorFirst */,
-				F13D93C2891D7C09B22F64C4 /* .claude */,
 			);
 			path = Tier2;
 			sourceTree = "<group>";
@@ -2787,14 +2763,6 @@
 				45FDCE8CF47C69A854217FB7 /* ProofingPreferencesPane.swift */,
 			);
 			path = Preferences;
-			sourceTree = "<group>";
-		};
-		F13D93C2891D7C09B22F64C4 /* .claude */ = {
-			isa = PBXGroup;
-			children = (
-				85EF6A757D2356C0BA5CDEBA /* .cc-writes */,
-			);
-			path = .claude;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -4113,7 +4081,6 @@
 					"@loader_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final-tests";
-				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FINAL|FINAL.app/Contents/MacOS/FINAL|FINAL";
@@ -4130,6 +4097,7 @@
 				CURRENT_PROJECT_VERSION = 0.2.135;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
+				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4197,7 +4165,6 @@
 				PRODUCT_MODULE_NAME = final_final;
 				PRODUCT_NAME = "FINAL|FINAL";
 				SDKROOT = macosx;
-				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
 				SWIFT_COMPILATION_MODE = singlefile;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.9;
@@ -4214,6 +4181,7 @@
 				CURRENT_PROJECT_VERSION = 0.2.135;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
+				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4258,7 +4226,6 @@
 				MARKETING_VERSION = 1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kerim.final-final";
 				PRODUCT_MODULE_NAME = final_final;
-				FF_QUICKLOOK_EXTENSION_POINT = com.apple.quicklook.preview;
 				PRODUCT_NAME = "FINAL|FINAL";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
@@ -4275,6 +4242,7 @@
 				CURRENT_PROJECT_VERSION = 0.2.135;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
+				FF_QUICKLOOK_EXTENSION_POINT = com.apple.quicklook.preview;
 				INFOPLIST_FILE = "QuickLook Extension/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
