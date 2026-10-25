@@ -12,8 +12,9 @@
 #
 # Each `xcodegen generate` run produces a new project file hash, so Xcode
 # gives it a new `final_final-<hash>` DerivedData directory. Left alone,
-# these accumulate and each one's copy of the QuickLook .appex gets
-# registered, causing duplicate QL extensions. This script runs on every
+# these accumulate. (They used to register duplicate QuickLook extensions
+# too; Debug builds no longer can — see FF_QUICKLOOK_EXTENSION_POINT in
+# project.yml — so this is now disk cleanup.) This script runs on every
 # build, deleting every `final_final-*` directory except the one the
 # current build is using.
 #
