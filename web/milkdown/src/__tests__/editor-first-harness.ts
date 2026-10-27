@@ -22,6 +22,7 @@ import { blockIdPlugin, getAllBlockIds, resetBlockIdState, setBlockIdZoomMode } 
 import { blockSyncPlugin, resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
 import { setContentHasBeenSet, setEditorInstance } from '../editor-state';
 import { highlightPlugin } from '../highlight-plugin';
+import { resetSetAsideRedo } from '../redo-branch';
 import { sectionBreakPlugin } from '../section-break-plugin';
 import { setTraceTyping } from '../typing-trace';
 import {
@@ -72,6 +73,7 @@ afterEach(async () => {
   setBlockIdZoomMode(false);
   setSyncPaused(false);
   resetUndoCoordinatorState();
+  resetSetAsideRedo(); // a record the quick undo kept aside must not outlive its test (the tests share one operation id)
   delete (window as any).webkit;
 });
 

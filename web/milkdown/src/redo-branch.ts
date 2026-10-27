@@ -10,6 +10,16 @@
 //     undo checkpoints need "undo the renumber" to be its own Cmd-Z) and puts the branch back, mapped through the step.
 // Real typing still empties the branch: nothing else calls these.
 //
+// A third piece (t-14f908b4) fixes what the first one still loses. The carry maps the live redo branch onto the PRE-operation
+// document, and for the operations that ADD text (Duplicate Section, Insert as New Section, Replace Current Section, Restore Entire
+// Project) every redo step the user made inside that text lies in a range the carry removes, so prosemirror-history drops it when
+// the branch is mapped: undo the typing, undo the operation, redo the operation, and the typing could not be redone. So the quick
+// undo also keeps the live redo branch ASIDE, untouched and in post-operation coordinates (`setAsideRedoBranch`, one record per
+// operation id, held here and not on the registry entry: the entry is replaced by spread copies many times between an undo and its
+// redo), and the quick redo, once it has run the operation again, puts it back (`putBackSetAsideRedo`), mapped through the small
+// difference between the document it belongs to and the document the redo produced (none, when they are equal). The carry stays
+// as it is: it is the redo list while the operation is undone, and the fall-back when the put-back refuses.
+//
 // The history plugin is reached the way `clearEditorHistory` (api-content.ts) reaches it: through `pluginsByKey.history$`. A new
 // history state is handed to it through its own meta protocol: a transaction carrying `{ historyState }` under the plugin's key
 // makes it adopt that state as it is (`applyTransaction` returns `historyTr.historyState`).
@@ -132,9 +142,11 @@ function anchorPairs(live: Block[], restored: Block[]): Array<[number, number]> 
   return pairs;
 }
 
-/** Edits that turn `a` (at `pos` in the live document) into `b` while keeping every position inside `a` that `b` still has: an
- * attribute-only difference (a footnote label, a heading slug) is an attribute change on that node, and only a node whose content
- * really differs is replaced. */
+/** Edits that turn `a` (at `pos` in the live document) into `b`. A node that has content and differs from `b` only in its own
+ * attributes (a heading slug) becomes an attribute change on that node (`setNodeMarkup`), which keeps every position inside it,
+ * and the same goes for each of its children in turn. A text node or a leaf node that differs (a changed run of text, a
+ * `footnote_ref` with another label) is replaced as a whole: a position strictly inside it collapses, a position at its edge (the
+ * caret right after a footnote reference) is kept. So is a node whose type or child count differs. */
 function syncNode(a: Node, b: Node, pos: number, edits: Edit[]): void {
   if (a === b || a.eq(b)) return;
   if (a.type !== b.type || a.isLeaf || a.childCount !== b.childCount) {
@@ -233,4 +245,99 @@ export function carryRedoBranch(
 /** The transaction meta that makes the history plugin adopt a carried history state. */
 export function setCarriedHistory(tr: Transaction, carry: Extract<RedoCarry, { carried: true }>): Transaction {
   return tr.setMeta(carry.plugin, { redo: false, historyState: carry.historyState });
+}
+
+// === The redo branch set aside across a quick undo, and put back after the quick redo (t-14f908b4) ===
+
+/** What the quick undo keeps aside for the quick redo of the same operation. */
+export interface SetAsideRedo {
+  /** The live redo branch at the undo, untouched: its steps are in POST-OPERATION coordinates (the document the operation left). */
+  branch: HistoryBranch;
+  /** The live document that branch belongs to. */
+  doc: Node;
+  /** That document's block-id map (offset to id). */
+  ids: ReadonlyMap<number, string>;
+  /** How many redo events the live state is expected to hold when the put-back runs: right after the quick undo it is the carried
+   * branch's count. The put-back only runs when the redo finds that count: a text undo and a text redo done in between push and
+   * pop one event and leave it equal. It is a count check, and it suffices: real typing in between empties the list and refuses
+   * the structural redo before it can run. */
+  depthAfterUndo: number;
+}
+
+/** What `putBackSetAsideRedo` did: the put-back happened (with the redo events it restored), or why it did not. */
+export type RedoPutBack = { putBack: true; events: number } | { putBack: false; reason: string };
+
+// One record per operation id. Held here, not on the registry entry (undo-coordinator.ts is not touched by this fix): the entry is
+// replaced by spread copies many times between an undo and its redo, and the id stays.
+const setAside = new Map<string, SetAsideRedo>();
+
+/**
+ * Keeps `record` aside for the redo of `opId`, replacing whatever was kept for it before; `null` (nothing to set aside: the live
+ * redo list is empty) deletes the old record, so a redo can never take a record from an earlier undo. Also drops every record whose
+ * operation id is no longer in `liveOpIds` (the registry's keys), so a record for an entry that is gone does not stay. The quick
+ * undo of a section delete stores one too, which its redo never takes: it costs memory only and is pruned by the next store.
+ */
+export function setAsideRedoBranch(opId: string, record: SetAsideRedo | null, liveOpIds: Iterable<string>): void {
+  const live = new Set(liveOpIds);
+  for (const key of Array.from(setAside.keys())) {
+    if (!live.has(key)) setAside.delete(key);
+  }
+  if (record) setAside.set(opId, record);
+  else setAside.delete(opId);
+}
+
+/** The record kept for `opId`, or undefined. Read-only; tests use it to break a record on purpose. */
+export function setAsideRedoOf(opId: string): SetAsideRedo | undefined {
+  return setAside.get(opId);
+}
+
+/** Forgets every record. The test harness calls it after each test; production calls it from the barrier clear
+ * (`clearStructuralUndoRegistryAndRedoRecords`, api-section-undo.ts), whose timeline the records belonged to. */
+export function resetSetAsideRedo(): void {
+  setAside.clear();
+}
+
+/**
+ * Puts the redo branch that `setAsideRedoBranch` kept for `opId` back, after the quick redo has run the operation again, so the
+ * Cmd-Shift-Z that follows redoes the typing the user did inside the operation's text. Returns null when there is no record. The
+ * branch is in the coordinates of `record.doc`; `view.state.doc` is the document the redo produced: when the two
+ * are equal (the everyday case) the branch goes back as it is, otherwise it is mapped through the id-matched steps that turn one
+ * into the other (`stepsToRestoredDocument`: a block both documents hold keeps its position, and so does every position inside it,
+ * except inside a text or leaf node that differs, which is replaced as a whole and takes the positions strictly inside it with it
+ * (see `syncNode`); typing inside a block the redone document does not hold is not redone, and nothing is misplaced). `idsNow` is
+ * the live block-id map. Delivered the way
+ * `reattachRedoBranch` delivers a kept branch: one meta-only transaction, so block-sync, the registry and the content push see
+ * nothing. Never throws; every refusal comes back as `putBack: false` and leaves the live redo list as the redo left it. The record
+ * is taken and deleted, whatever the result.
+ */
+export function putBackSetAsideRedo(
+  view: EditorView,
+  opId: string,
+  idsNow: ReadonlyMap<number, string>
+): RedoPutBack | null {
+  const record = setAside.get(opId);
+  if (!record) return null;
+  try {
+    const depthNow = historyOf(view.state)?.history.undone.eventCount ?? 0;
+    if (depthNow !== record.depthAfterUndo) {
+      return {
+        putBack: false,
+        reason: `the redo list changed since the undo (${depthNow} events, ${record.depthAfterUndo} then)`,
+      };
+    }
+    let maps: readonly StepMap[] = [];
+    if (!record.doc.eq(view.state.doc)) {
+      const transform = stepsToRestoredDocument(record.doc, record.ids, view.state.doc, idsNow);
+      // Defensive only: `stepsToRestoredDocument` always builds the target document, so this cannot be false short of a throw.
+      if (!transform.doc.eq(view.state.doc))
+        return { putBack: false, reason: 'the steps do not produce the redone document' };
+      maps = transform.mapping.maps;
+    }
+    if (!reattachRedoBranch(view, record.branch, maps)) return { putBack: false, reason: 'no history plugin' };
+    return { putBack: true, events: record.branch.eventCount };
+  } catch (e) {
+    return { putBack: false, reason: `exception: ${e instanceof Error ? e.message : String(e)}` };
+  } finally {
+    setAside.delete(opId);
+  }
 }

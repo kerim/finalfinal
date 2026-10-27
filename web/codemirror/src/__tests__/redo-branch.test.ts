@@ -146,6 +146,38 @@ describe('carryRedoBranch', () => {
     expect(redoOnce(carry.state).doc.toString()).toBe('first\n\nsecond\n\nthird!\n');
   });
 
+  // MR5 (t-14f908b4). An entry the OLD body recorded has no stored change set: the carry maps the live redo branch through the line diff
+  // live -> checkpoint, and an insertion inside a span that diff removes would land at the removal point -- the middle of the NEXT
+  // heading line. The carry therefore drops the redo events inside the spans the diff removes.
+  // Break patch (MR5.patch): in `carryRedoBranch` compute no spans for an old-body entry (`spans = removedSpans(toCheckpoint);` -> `spans = [];`).
+  // Predicted failure: `heading line changed by a redo`.
+  it('MR5: an old-body entry: a redo event inside the copy the line diff removes is dropped, so redoing the carried state changes no heading line', () => {
+    const before = '# One\n\nfirst\n\n';
+    const checkpoint = make(`${before}# Two\n\nsecond\n`);
+    // live: the copy of chapter one inserted by the old body (history-neutral), then typing at the end of the copy's text, taken back
+    let live = checkpoint.update({
+      changes: { from: before.length, insert: '# One copy\n\nfirst\n\n' },
+      annotations: Transaction.addToHistory.of(false),
+    }).state;
+    const typedAt = live.doc.toString().indexOf('first', before.length) + 'first'.length;
+    live = type(live, typedAt, '!');
+    live = undoOnce(live);
+    expect(redoDepth(live), 'PREMISE: the typing waits in the redo list').toBe(1);
+
+    const carry = carryRedoBranch(live, checkpoint, undefined, extensions);
+
+    expect(carry?.carried, JSON.stringify(carry)).toBe(true);
+    if (!carry?.carried) return;
+    const headingLines = (text: string): string[] => text.split('\n').filter((line) => line.startsWith('#'));
+    const redone = redoOnce(carry.state);
+    expect(headingLines(redone.doc.toString()), 'heading line changed by a redo').toEqual(
+      headingLines(checkpoint.doc.toString())
+    );
+    expect(redone.doc.toString()).toBe(checkpoint.doc.toString());
+    // The event was left out of the carried list (the full list is set aside separately), and the carry says so.
+    expect(carry, 'the event inside the copy was not dropped').toMatchObject({ dropped: 1, events: 0 });
+  });
+
   it('reports a failure (here: a change set of the wrong length) instead of installing a wrong redo branch', () => {
     const checkpoint = make('first\n\nsecond\n\nthird\n');
     let live = checkpoint.update({

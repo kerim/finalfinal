@@ -148,7 +148,6 @@ import {
   beginStructuralOp,
   cancelPendingInsertions,
   clearFailedStructuralOpEntry,
-  clearStructuralUndoRegistry,
   clearStructuralUndoState,
   closeEditingPopupsAndClearBoundaryState,
   finalizeStructuralOpPostOpDoc,
@@ -176,6 +175,7 @@ import { deleteSectionEditorFirst } from './api-section-delete';
 import { duplicateSectionEditorFirst, redoSectionDuplicateEditorFirst } from './api-section-duplicate';
 import { reorderSectionsEditorFirst } from './api-section-reorder';
 import {
+  clearStructuralUndoRegistryAndRedoRecords,
   quickUndoLiveDiffersFromRestored,
   redoSectionDeleteEditorFirst,
   resumeSyncAfterQuickUndo,
@@ -804,7 +804,8 @@ window.FinalFinal = {
   // Barrier/eviction JS-side clears (Phase 5, plan §4.1/§4.5/§5 backlog) -- called by
   // UnifiedUndoService.invalidateAll()/record()'s eviction path via ContentView's
   // clearStructuralRegistry/clearEditorHistories closures.
-  clearStructuralUndoRegistry,
+  // The registry clear AND the set-aside redo records (a barrier replaces the timeline both belong to).
+  clearStructuralUndoRegistry: clearStructuralUndoRegistryAndRedoRecords,
   clearStructuralUndoState,
 
   // Combined poll data for batched 3s fallback polling

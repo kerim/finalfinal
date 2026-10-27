@@ -74,10 +74,14 @@
 // THE DESCRIPTOR: when the click succeeds it also sets `{ undoTopOpId: opId }` itself (`setUndoDescriptor`), because Swift's push of
 //   the same value comes later (docs/architecture/unified-undo.md, "The registry/descriptor bridge protocol"). A refused click sets
 //   nothing; the quick redo (`runDelete` via the swap) sets nothing.
-// THE HISTORY: the dispatch is `addToHistory: false` (this drops history events inside the removed range, as in Rich Text) with
-//   `isolateHistory('full')`, so typing before the command and typing after it never merge into one undo step.
+// THE HISTORY: the dispatch is `addToHistory: false` with `isolateHistory('full')`, so typing before the command and typing after it
+//   never merge into one undo step. `addToHistory: false` maps BOTH history branches through the removal. In the DONE branch an event
+//   inside the removed range maps away (the removed text has nothing left to undo; Rich Text's delete does the same,
+//   quick-undo-redo-history.test.ts QU19). In the REDO branch an INSERTION inside the removed range survives at the removal point, the
+//   start of the next heading line, so the click first takes such events out of the redo list (`withoutRedoEventsTouching`, step 1b).
 
-import { isolateHistory } from '@codemirror/commands';
+import { historyField, isolateHistory, redoDepth } from '@codemirror/commands';
+import { getSearchQuery, type SearchQuery, setSearchQuery } from '@codemirror/search';
 import { ChangeSet, type EditorSelection, type EditorState, type Text, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { MarkdownReorderRequest } from './api-structural-markdown-reorder';
@@ -85,7 +89,15 @@ import { getEditorExtensions, getEditorView } from './editor-state';
 import { readImageMeta, setImageMeta } from './image-preview-plugin';
 import { installLineHeightFix } from './line-height-fix';
 import { clearRecentUserEditSpan } from './recent-edit-span';
-import { carryRedoBranch, type MovedRange } from './redo-branch';
+import {
+  carryRedoBranch,
+  clearSetAsideRedo,
+  type MovedRange,
+  putBackRedo,
+  removedSpans,
+  setAsideRedo,
+  withoutRedoEventsTouching,
+} from './redo-branch';
 import { resetSpellcheckAfterStateSwap } from './spellcheck-plugin';
 import { computeMinimalChanges } from './text-diff';
 import { withAppOrigin } from './typewriter-plugin';
@@ -531,6 +543,20 @@ function runDelete(view: EditorView, request: MarkdownStructuralRequest): Markdo
   }
   if (!plan.ok) return plan.failure;
 
+  // 1b. A redo event that is already waiting (typing taken back with Cmd-Z before the Delete) and lies inside the section this removes
+  // would be mapped to the removal point by the dispatch below -- the start of the next chapter's heading line -- and a later
+  // Cmd-Shift-Z would type it there. Such events leave the redo list first (the first one and every later one, as in the reorder
+  // click, api-structural-markdown-reorder.ts). The quick redo re-runs this too; there nothing in the carried list lies in the range.
+  const trimmed = withoutRedoEventsTouching(view.state, removedSpans(plan.changes), getEditorExtensions());
+  if (trimmed) {
+    try {
+      installState(view, trimmed.state, { label: 'delete-trim', keepScroll: true });
+      trace(`markdown-delete redo list trimmed dropped=${trimmed.dropped}`);
+    } catch (error) {
+      trace(`markdown-delete redo trim threw: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   // 2. Record the entry BEFORE the dispatch, mid-op, as beginStructuralOp does: the dispatch below is a sync-origin change, and the
   // saved copies must not follow the page's own change (B-2). The checkpoint is the pre-op state with its text history, isolated
   // so typing after a swap-back does not merge into the typing before the command.
@@ -539,14 +565,15 @@ function runDelete(view: EditorView, request: MarkdownStructuralRequest): Markdo
   const checkpoint = view.state.update({ annotations: isolateHistory.of('full') }).state;
   setRegistryEntry(request.opId, {
     checkpoint,
-    preOpDoc: doc,
+    preOpDoc: view.state.doc, // the state after the trim of step 1b (equal text; the routing compares with .eq)
     postOpDoc: doc, // placeholder until the dispatch has landed
     midOp: true,
     markdown: { kind: 'delete', request, opChanges: plan.changes },
   });
 
-  // 3. One dispatch. addToHistory:false drops the history events inside the removed range (as in Rich Text); isolateHistory('full')
-  // closes the typing group on both sides of the command.
+  // 3. One dispatch. addToHistory:false maps both history branches through the removal: a DONE event inside the removed range maps away
+  // (Rich Text's delete does the same, QU19), a REDO insertion inside it would survive at the removal point (hence step 1b above);
+  // isolateHistory('full') closes the typing group on both sides of the command.
   let dispatched = false;
   try {
     withAppOrigin(() =>
@@ -605,7 +632,9 @@ interface CarriedState {
  * brings back at the VALUE it had when the checkpoint was taken. What really needs help:
  *   * the image widths (a StateField, pushed by Swift as images are resized after the checkpoint);
  *   * the spellcheck results (module state, but their positions belong to the document just replaced);
- *   * the line-height patch (installed on the view's DocView, which `setState` replaces).
+ *   * the line-height patch (installed on the view's DocView, which `setState` replaces);
+ *   * the search query (a library StateField that the new state initialises empty, while api.ts keeps its own module copy of the query:
+ *     without this, Find Next / Find Previous after an install would find nothing).
  */
 const CARRIED_STATE: CarriedState[] = [
   // First: it patches the view's NEW DocView, which every dispatch below measures with.
@@ -619,6 +648,14 @@ const CARRIED_STATE: CarriedState[] = [
   // The span the user last typed in was never remapped through the swap (a swap has no transaction): left alone, a Swift-derived
   // `setContent` landing in the next 2.5 s can be classed as overlapping the typing and become its own undo step (L-1).
   { name: 'recentEditSpan', capture: () => null, reapply: () => clearRecentUserEditSpan() },
+  {
+    name: 'searchQuery',
+    capture: (state) => getSearchQuery(state),
+    reapply: (view, captured) => {
+      const query = captured as SearchQuery;
+      if (query.search !== '') view.dispatch({ effects: setSearchQuery.of(query) });
+    },
+  },
 ];
 
 /**
@@ -626,40 +663,101 @@ const CARRIED_STATE: CarriedState[] = [
  * mapped onto the checkpoint document (redo-branch.ts), so what the user typed after the command and then took back can still be
  * redone. A carry that cannot be built falls back to the plain checkpoint (the redo branch is lost, nothing else), with a trace line.
  */
-function buildSwappedState(entry: UndoRegistryEntry, live: EditorState): EditorState {
+function buildSwappedState(entry: UndoRegistryEntry, live: EditorState, setAsideCount: number): EditorState {
   const moved = entry.markdown?.kind === 'reorder' ? entry.markdown.moved : null;
   const carry = carryRedoBranch(live, entry.checkpoint, entry.markdown?.opChanges, getEditorExtensions(), moved);
   if (carry === null) return entry.checkpoint;
   if (!carry.carried) {
-    trace(`markdown-swap redo carry skipped: ${carry.reason}`);
+    trace(`markdown-swap redo carry skipped: ${carry.reason} setAside=${setAsideCount}`);
     return entry.checkpoint;
   }
-  trace(`markdown-swap redo carry events=${carry.events} dropped=${carry.dropped}`);
+  trace(`markdown-swap redo carry events=${carry.events} dropped=${carry.dropped} setAside=${setAsideCount}`);
   return carry.state;
 }
 
-function swapUndo(view: EditorView, entry: UndoRegistryEntry): MarkdownStructuralResult {
-  const live = view.state;
-  const preRaw = live.doc.toString();
-  const captured = CARRIED_STATE.map((item) => ({ item, value: item.capture(live) }));
+export interface InstallOptions {
+  /** Which caller installs: 'swap' | 'put-back' | 'renumber-keep' | 'drag-trim' | 'delete-trim'. Only for the trace. */
+  label: string;
+  /** Keep the scroll position instead of scrolling the caret into view. For installs that keep the document. */
+  keepScroll?: boolean;
+}
+
+/**
+ * Puts `state` on the view in place of the current one, the way every swap here does: the wholesale `setState` (CodeMirror refuses it
+ * during an update, and it throws before it changes anything), then the carried pieces of the old state that a swap would lose
+ * (`CARRIED_STATE`), then the scroll. From the `setState` on nothing below may turn the swap into a failure.
+ *
+ * Every state install is EVERYDAY with benign effects: the height map is re-estimated, spellcheck underlines are reset and re-requested,
+ * the status bar's selection count and the floating toolbar are cleared until the next selection change, and the typewriter reserve is
+ * rebuilt. Callers (named in the trace by `label`): the structural undo ('swap'), the redo's put-back ('put-back'), the footnote renumber
+ * that keeps a waiting redo list (api.ts, 'renumber-keep'), and the two clicks that first trim the redo list, the reorder
+ * ('drag-trim', api-structural-markdown-reorder.ts) and the Delete ('delete-trim').
+ *
+ * The scroll. The swaps bring back another document (or the checkpoint's view of it), so they scroll the caret into view ('nearest').
+ * An install that KEEPS the document (`keepScroll`: the put-back, the renumber-keep, the two trims) must not move the page: it takes
+ * `scrollSnapshot()` before the `setState` (which rebuilds the DocView and loses the scroll position) and dispatches it afterwards. The
+ * renumber-keep is triggered by Swift's timer, not by the user, who may have scrolled away to look at the copy.
+ *
+ * Measured in the real app (VM, books of six and twelve chapters; a user who had scrolled away from the caret presses Cmd-Shift-Z to redo
+ * a Duplicate): with the put-back install the page ends about 130 pt (about 6 lines) from where it was, and stays there; without the
+ * put-back the structural redo alone moves the page off the screen, because the redo restores the selection and CodeMirror scrolls it
+ * into view. So the install already keeps the page much closer than the redo does. Two attempts to remove the remaining 130 pt were
+ * measured and dropped: a correction that puts a reference line a third of the way down the page back where it was made it worse (the
+ * lines between the reference and the text being read keep changing height after the install), and parsing the new state up to the end
+ * of the old viewport before the install changed nothing. An install with nothing else moving (the renumber-keep, triggered by Swift's
+ * timer) has not been measured in the real app: the renumber is too rarely on time for the test to meet it.
+ */
+export function installState(view: EditorView, state: EditorState, options: InstallOptions): void {
+  const { label, keepScroll = false } = options;
+  const captured = CARRIED_STATE.map((item) => ({ item, value: item.capture(view.state) }));
+  let scroll: ReturnType<EditorView['scrollSnapshot']> | null = null;
+  if (keepScroll) {
+    try {
+      scroll = view.scrollSnapshot();
+    } catch (error) {
+      trace(
+        `markdown-install[${label}] scroll snapshot threw: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 
   // The only step that can throw, and it throws before it changes anything (CodeMirror refuses a swap during an update).
-  view.setState(buildSwappedState(entry, live));
+  view.setState(state);
 
-  // From here the swap has happened: nothing below may turn it into a failure.
   for (const { item, value } of captured) {
     try {
       item.reapply(view, value);
     } catch (error) {
-      trace(`markdown-swap re-apply ${item.name} threw: ${error instanceof Error ? error.message : String(error)}`);
+      trace(
+        `markdown-install[${label}] re-apply ${item.name} threw: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
   try {
     view.dispatch({
-      effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest', yMargin: 50 }),
+      effects: scroll ?? EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest', yMargin: 50 }),
     });
   } catch (error) {
-    trace(`markdown-swap scroll threw: ${error instanceof Error ? error.message : String(error)}`);
+    trace(`markdown-install[${label}] scroll threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function swapUndo(view: EditorView, entry: UndoRegistryEntry, opId: string): MarkdownStructuralResult {
+  const live = view.state;
+  const preRaw = live.doc.toString();
+  // The live redo branch is also kept aside untouched (not for a delete: its quick redo re-runs the command and a delete loses no
+  // typing); `putBackRedo` brings it back after the redo has landed. A record is always replaced or removed, never left from an
+  // earlier undo of the same opId (C1).
+  const setAside =
+    entry.markdown?.kind !== 'delete' && redoDepth(live) > 0
+      ? { undone: live.toJSON({ history: historyField }).history.undone as unknown[], doc: live.doc }
+      : null;
+  if (!setAside) clearSetAsideRedo(opId);
+
+  installState(view, buildSwappedState(entry, live, setAside ? redoDepth(live) : 0), { label: 'swap' });
+
+  if (setAside) {
+    setAsideRedo(opId, { ...setAside, depthAfterUndo: redoDepth(view.state) }, getRegistry().keys());
   }
   return { ok: true, preRaw, postRaw: view.state.doc.toString() };
 }
@@ -709,6 +807,29 @@ function composedReorderRedo(view: EditorView, entry: UndoRegistryEntry): Markdo
 }
 
 /**
+ * After the redo has landed: puts the redo steps the undo set aside back, so the next Cmd-Shift-Z brings back what was typed inside the
+ * copied / restored / dragged text (redo-branch.ts `putBackRedo`). The document is not touched. A refusal or a failure leaves the
+ * carried list the redo found, with a trace line, and never turns the (already done) redo into a failure.
+ */
+function putBackSetAsideRedo(view: EditorView, opId: string, depthBeforeRedo: number): void {
+  const started = performance.now();
+  try {
+    const back = putBackRedo(view, opId, depthBeforeRedo, getEditorExtensions());
+    if (back === null) return;
+    if (!back.carried) {
+      trace(`markdown-swap redo put-back skipped: ${back.reason}`);
+      return;
+    }
+    installState(view, back.state, { label: 'put-back', keepScroll: true });
+    trace(
+      `markdown-swap redo put-back events=${back.events} dropped=${back.dropped} ms=${Math.round(performance.now() - started)}`
+    );
+  } catch (error) {
+    trace(`markdown-swap redo put-back threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
  * window.FinalFinal.markdownStructuralSwap: the undo/redo turn of the registry entry `opId`. Never throws.
  *
  * It re-checks first that the live document still equals the entry's saved copy -- the same routing function and comparison the key
@@ -749,12 +870,17 @@ export function markdownStructuralSwap(
 
   registry.set(opId, { ...entry, midOp: true });
   try {
-    if (direction === 'undo') return swapUndo(view, entry);
-    const composed = composedReorderRedo(view, entry);
-    if (composed !== null) return composed;
-    if (entry.markdown?.kind === 'reorder')
-      trace('markdown-swap reorder redo: the document is not the checkpoint, saved-copy swap');
-    return swapRedoFromSavedCopy(view, entry);
+    if (direction === 'undo') return swapUndo(view, entry, opId);
+    // The redo list as it stands BEFORE the redo's own dispatch: the put-back needs it unchanged since the undo (redo-branch.ts).
+    const depthBeforeRedo = redoDepth(view.state);
+    let redone = composedReorderRedo(view, entry);
+    if (redone === null) {
+      if (entry.markdown?.kind === 'reorder')
+        trace('markdown-swap reorder redo: the document is not the checkpoint, saved-copy swap');
+      redone = swapRedoFromSavedCopy(view, entry);
+    }
+    putBackSetAsideRedo(view, opId, depthBeforeRedo);
+    return redone;
   } catch (error) {
     trace(`markdown-swap ${direction} threw: ${error instanceof Error ? error.message : String(error)}`);
     return { ok: false, reason: 'swapThrew' };

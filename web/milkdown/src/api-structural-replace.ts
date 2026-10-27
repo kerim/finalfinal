@@ -44,7 +44,7 @@ import {
   type SectionRange,
   type TopLevelEntry,
 } from './api-section-delete';
-import { checkQuickRedoAllowed } from './api-section-undo';
+import { checkQuickRedoAllowed, putBackAfterQuickRedo } from './api-section-undo';
 import {
   alignTopLevelIds,
   clearBlockIds,
@@ -542,5 +542,8 @@ export function redoReplaceRangeEditorFirst(opId: string, payload: ReplaceRangeP
     trace(`replace-quick-redo mode=${payload.mode} opId=${opId.slice(0, 8)} refused reason=${gate.reason}`);
     return failureReply(emptyBatch(), gate.reason);
   }
-  return replaceInEditor(opId, payload, { label: 'replace-redo', previousEntry: gate.entry });
+  const result = replaceInEditor(opId, payload, { label: 'replace-redo', previousEntry: gate.entry });
+  // The redo steps the quick undo kept aside (typing done inside the restored text) go back now that the text is back (t-14f908b4).
+  if (result.ok) putBackAfterQuickRedo(opId, 'replace-quick-redo');
+  return result;
 }

@@ -29,6 +29,7 @@ import type { MarkdownEntryExtras } from './api-structural-markdown';
 import { derivedCorrection } from './derived-correction';
 import { explainTextDifference } from './derived-equivalence';
 import { getEditorView } from './editor-state';
+import { resetSetAsideRedo } from './redo-branch';
 
 // Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
 // (undo-mode-switch-focus investigation legacy -- kept because it proved genuinely useful
@@ -148,6 +149,7 @@ export function clearRegistry(): void {
  * `UnifiedUndoService.invalidateAll()`. */
 export function clearStructuralUndoRegistry(): void {
   clearRegistry();
+  resetSetAsideRedo(); // the redo steps the quick undo set aside belong to entries that are gone (redo-branch.ts)
   setUndoDescriptor({});
   // The barrier replaces the timeline the latch and the queued presses belonged to (a project switch, close, mode switch): a request
   // still in flight will never be answered for it, and a later reply is ignored (`handleUndoReplyFromSwift`'s `!latched` guard).

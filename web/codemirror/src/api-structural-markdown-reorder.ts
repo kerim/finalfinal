@@ -81,8 +81,11 @@
 //   BEFORE the dispatch with `midOp: true` (the page's own change must not advance the saved copies); `finally` clears `midOp` and sets
 //   `postOpDoc`. A throwing dispatch removes the entry. The checkpoint is the pre-op state with its text history, already isolated.
 // THE DESCRIPTOR: on success the page sets `{ undoTopOpId: opId }` itself (Swift's push comes later); a refusal sets nothing.
-// THE HISTORY: one ChangeSet, `addToHistory: false` (history events inside the moved range are mapped away, as in Rich Text) and
-//   `isolateHistory('full')`, so typing before and after the command never merges into one undo step.
+// THE HISTORY: one ChangeSet, `addToHistory: false` (it maps both history branches through the move: a deletion inside the moved range
+//   maps away, an insertion lands at the removal point; see redo-branch.ts for how the undo and redo handle the redo branch) and
+//   `isolateHistory('full')`, so typing before and after the command never merges into one undo step. A redo event already waiting
+//   when the click comes and lying inside the moved range would land at that removal point (the start of the next chapter's heading
+//   line), so the click first drops it from the redo list (`withoutRedoEventsTouching`).
 
 import { isolateHistory } from '@codemirror/commands';
 import { ChangeSet, EditorSelection, Text, Transaction } from '@codemirror/state';
@@ -90,6 +93,7 @@ import type { EditorView } from '@codemirror/view';
 import {
   ATX_HEADING,
   type DocumentScan,
+  installState,
   isRecord,
   type LeaderCandidate,
   leaderMismatchDetail,
@@ -101,8 +105,8 @@ import {
   stripLeadingHidden,
   trace,
 } from './api-structural-markdown';
-import { getEditorView } from './editor-state';
-import type { MovedRange } from './redo-branch';
+import { getEditorExtensions, getEditorView } from './editor-state';
+import { type MovedRange, removedSpans, withoutRedoEventsTouching } from './redo-branch';
 import { withAppOrigin } from './typewriter-plugin';
 import { deleteRegistryEntry, getRegistry, setRegistryEntry, setUndoDescriptor } from './undo-coordinator';
 
@@ -448,6 +452,19 @@ function runReorder(view: EditorView, request: MarkdownReorderRequest): Markdown
   }
   if (!plan.ok) return plan.failure;
 
+  // 1b. A redo event that is already waiting (typing taken back with Cmd-Z before the drag) and lies inside the text this move removes
+  // would be mapped to the removal point by the dispatch below -- the start of the next chapter's heading line -- and a later
+  // Cmd-Shift-Z would type it there. Such events leave the redo list first (the first one and every later one, as in the undo's carry).
+  const trimmed = withoutRedoEventsTouching(view.state, removedSpans(plan.changes), getEditorExtensions());
+  if (trimmed) {
+    try {
+      installState(view, trimmed.state, { label: 'drag-trim', keepScroll: true });
+      trace(`markdown-reorder redo list trimmed dropped=${trimmed.dropped}`);
+    } catch (error) {
+      trace(`markdown-reorder redo trim threw: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   // 2. Record the entry BEFORE the dispatch, mid-op, so the page's own change does not advance the saved copies. The checkpoint is the
   // pre-op state with its text history, isolated so typing after a swap-back does not merge into the typing before the command.
   const preRaw = doc.toString();
@@ -455,14 +472,15 @@ function runReorder(view: EditorView, request: MarkdownReorderRequest): Markdown
   const checkpoint = view.state.update({ annotations: isolateHistory.of('full') }).state;
   setRegistryEntry(request.opId, {
     checkpoint,
-    preOpDoc: doc,
+    preOpDoc: view.state.doc,
     postOpDoc: doc, // placeholder until the dispatch has landed
     midOp: true,
     markdown: { kind: 'reorder', request, opChanges: plan.changes, moved: plan.moved, postSelection: plan.selection },
   });
 
-  // 3. One dispatch: the move, the separators, the level rewrites and the selection in ONE transaction. addToHistory:false maps the
-  // history events inside the moved range away (as in Rich Text); isolateHistory('full') closes the typing group on both sides.
+  // 3. One dispatch: the move, the separators, the level rewrites and the selection in ONE transaction. addToHistory:false maps both
+  // history branches through the move (a deletion inside the moved range maps away, an insertion lands at the removal point; see
+  // redo-branch.ts for how the undo and redo handle the redo branch); isolateHistory('full') closes the typing group on both sides.
   let dispatched = false;
   try {
     withAppOrigin(() =>

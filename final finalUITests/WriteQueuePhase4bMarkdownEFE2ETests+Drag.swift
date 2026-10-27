@@ -28,8 +28,8 @@
 //                                                              drop): Notes and Bibliography stay last, no heading glued, footnotes 1..N
 //    testMdDragChangesHeadingLevel_book6                E-D8  a drop that changes the heading level: `#` marks in page and rows, Cmd-Z
 //                                                              restores it, Cmd-Shift-Z and a reopen keep it
-//    testMdUndoOrderAfterTypingFollowingDrop_book6      E-D10 drag, type in the moved chapter, Cmd-Z x2, Cmd-Shift-Z x2 (pins the DESIGNED
-//                                                              limit t-14f908b4: that typing is not redone)
+//    testMdUndoOrderAfterTypingFollowingDrop_book6      E-D10 drag, type in the moved chapter, Cmd-Z x2, Cmd-Shift-Z x2 (since t-14f908b4 the
+//                                                              typing comes back inside the moved chapter, once; it pinned the old limit)
 //    testMdLevelOnlyAndOptionDropWithTyping_book6       E-D11 a level-only drop in place and an Option-drag with its sub-sections, each
 //                                                              after typing in the moved chapter
 //  BATCH 3 (judge items on the repeated-footnote book6; NO tagged notes, on purpose):
@@ -1372,21 +1372,22 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
 // MARK: - E-D10 Drag, type in the moved chapter, then Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z
 
 extension WriteQueuePhase4bMarkdownEFE2ETests {
-    /// Hand-test steps 6 and 7, with the DESIGNED LIMIT of plan v2.1 addendum A1. On the FLATTENED book6 copy the caret is put at the end of a
-    /// seeded line ("Move06 line ...") of Chapter 6, Chapter 6 is dragged above Chapter 5, and " KEPTMDONE" is typed WITHOUT a click (the
-    /// caret travelled with the moved text). Then Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z, each after the one before has finished:
+    /// Hand-test steps 6 and 7. On the FLATTENED book6 copy the caret is put at the end of a seeded line ("Move06 line ...") of Chapter 6,
+    /// Chapter 6 is dragged above Chapter 5, and " KEPTMDONE" is typed WITHOUT a click (the caret travelled with the moved text). Then
+    /// Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z, each after the one before has finished:
     ///   Cmd-Z #1  a TEXT step: it takes the sentence away and only the sentence (typing can split into a few undo groups under load, so
     ///             up to four text presses are allowed and counted; the structural undo must not run before the line is back);
     ///   Cmd-Z #2  undoes the DRAG, the queued slow route (`start (markdown queued undo`; "Undoing..." may show): the original order, rows
     ///             equal the document as loaded;
     ///   Cmd-Shift-Z #1 redoes the DRAG (the queued slow route again): the dragged order, the references read 1..N after the settle;
-    ///   Cmd-Shift-Z #2 changes NOTHING visible.
-    /// THIS PINS THE KNOWN LIMIT (board t-14f908b4, plan v2.1 addendum A1): typing done inside a dragged chapter cannot be redone after the
-    /// drag was undone, because the undo's carry drops redo events inside the moved range (the alternative put " KEPTMDONE" at the start of
-    /// the hopped-over chapter's heading line and turned "# Chapter 5" into a text line). So the test asserts that the sentence is NOT back
-    /// (not in the rows and, by the Save Version round trip, not in the editor), that every heading row equals its expected text (no
-    /// heading line was damaged), that the order is the dragged one and that the rows equal the page. The last press may beep (nothing to
-    /// redo): beeps are not asserted in this test.
+    ///   Cmd-Shift-Z #2 is a TEXT step: it brings the sentence back, once, at the end of the Move06 line inside the moved chapter.
+    /// FLIPPED by t-14f908b4 (the redo after a structural operation): this test used to pin the old limit, that typing done inside a
+    /// dragged chapter could not be redone after the drag was undone (the undo's carry dropped the redo events inside the moved range, and
+    /// the alternative put " KEPTMDONE" at the start of the hopped-over chapter's heading line). The editor now sets the redo steps aside at
+    /// the undo and puts them back after the redo, so the last press brings the sentence back. The test asserts that the sentence is back
+    /// exactly once (in the rows, at the end of the Move06 line, and, by the Save Version round trip, in the editor), that every heading row
+    /// equals its expected text (the hopped-over heading "# Chapter 5" and every other heading line is intact), that the order is the
+    /// dragged one and that the rows equal the page. The last press must not beep.
     func testMdUndoOrderAfterTypingFollowingDrop_book6() {
         let size = Phase4bDelSize.book6
         let pair = Self.dragPair(size)
@@ -1470,27 +1471,32 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         let afterRedo = addDragChecks("after Cmd-Shift-Z #1 (settled)", arrangement: arrangement, bibliographyExact: true, to: &soft)
         addFootnoteOrderCheck("after Cmd-Shift-Z #1 (settled)", rows: afterRedo, count: total, to: &soft)
 
-        // Cmd-Shift-Z #2: THE KNOWN LIMIT. Nothing visible changes; the sentence does not come back.
+        // Cmd-Shift-Z #2: a TEXT step. The sentence comes back, once, at the end of the Move06 line of the moved chapter (t-14f908b4).
         let fourthFrom = traceLinesCount()
         let fourth = pressStepRefocusing(redo: true, number: textPresses + 3, watchToasts: false, what: "Cmd-Shift-Z #2 (the sentence)", soft: &soft)
-        result("CMD-SHIFT-Z #2 (the designed limit, t-14f908b4): decided \(fourth.decision); structural undo/redo sequences begun "
-            + "\(structuralStartCount(from: fourthFrom)); the sentence in the block table: \(blocksContaining(Self.phraseOne)) row(s)")
+        let sentenceBack = waitForLine(moveLine + " " + Self.phraseOne, startingWith: "Move06", timeout: 90)
+        result("CMD-SHIFT-Z #2 (the redo after a structural operation, t-14f908b4): decided \(fourth.decision); structural undo/redo sequences "
+            + "begun \(structuralStartCount(from: fourthFrom)); the sentence in the block table: \(blocksContaining(Self.phraseOne)) row(s)")
         _ = waitForLogQuiet(quiet: 3, cap: capped(30))
         settle()
-        soft.check(structuralStartCount(from: fourthFrom) == 0, "Cmd-Shift-Z #2 began a structural sequence: it must change nothing")
-        soft.check(blocksContaining(Self.phraseOne) == 0,
-            "the sentence \"\(Self.phraseOne)\" is back in the saved rows after Cmd-Shift-Z #2 (\(blocksContaining(Self.phraseOne)) row(s)): "
-            + "the designed limit is that typing inside a dragged chapter cannot be redone after undoing the drag")
+        soft.check(structuralStartCount(from: fourthFrom) == 0, "Cmd-Shift-Z #2 began a structural sequence: it must be a plain text step")
+        soft.check(sentenceBack,
+            "the sentence \"\(Self.phraseOne)\" is not back at the end of the Move06 line after Cmd-Shift-Z #2 (the line reads "
+            + "\"\(lineInDatabase(startingWith: "Move06") ?? "nothing")\"): typing done inside a dragged chapter must be redone after "
+            + "undoing and redoing the drag")
+        soft.check(blocksContaining(Self.phraseOne) == 1,
+            "the sentence \"\(Self.phraseOne)\" is in \(blocksContaining(Self.phraseOne)) saved row(s) after Cmd-Shift-Z #2, expected exactly 1")
         soft.check(headingFragmentsInDatabase() == movedHeadings,
             "after Cmd-Shift-Z #2 the heading lines are not exactly the expected ones, a heading line may have been damaged "
             + "(\(orderDifference(movedHeadings)))")
-        let end = addDragChecks("after Cmd-Shift-Z #2 (settled)", arrangement: arrangement, bibliographyExact: true, to: &soft)
+        let end = addDragChecks("after Cmd-Shift-Z #2 (settled)", arrangement: arrangement, typed: [moveRow: moveLine + " " + Self.phraseOne],
+                                bibliographyExact: true, to: &soft)
         addFootnoteOrderCheck("after Cmd-Shift-Z #2 (settled)", rows: end, count: total, to: &soft)
         addMarkdownMechanismChecks(from: dragFrom, commands: 3, to: &soft)
-        addLogChecks(from: dragFrom, checkBeeps: false, to: &soft)
-        addScreenEqualsDatabaseCheck(before: end, what: "at the end (the sentence is not on screen either)", to: &soft)
+        addLogChecks(from: dragFrom, checkBeeps: true, to: &soft)
+        addScreenEqualsDatabaseCheck(before: end, what: "at the end (the sentence is on screen too)", to: &soft)
         shot("md-undo-order-after-typing-end")
-        assertAll(soft, "Markdown: drag, type in the moved chapter with no click, Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z (pins the known limit "
+        assertAll(soft, "Markdown: drag, type in the moved chapter with no click, Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z (the typing comes back, "
             + "t-14f908b4), on \(size.identifier) (flattened copy, chapters \(pair.flat) flat); \(countsLine)")
     }
 

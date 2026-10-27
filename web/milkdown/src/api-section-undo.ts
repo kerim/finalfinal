@@ -20,7 +20,10 @@
 //       history, and the labels and Notes outside the section are the ones the delete found, not the renumbered ones. The one
 //       thing the swap would lose is the editor's REDO branch (what the user typed after the delete and then undid): it is carried
 //       across, mapped onto the restored document (redo-branch.ts), and handed to the history plugin with the (h) dispatch. A carry
-//       that cannot be built falls back to the plain swap, with a trace line;
+//       that cannot be built falls back to the plain swap, with a trace line. The same branch, untouched and in post-operation
+//       coordinates, is also kept aside for the quick redo of a Duplicate or a restore (`setAsideRedoBranch`, after (h)): the
+//       carry maps away every redo step the user made inside the text this undo takes out, and the quick redo puts the kept
+//       branch back once it has put that text back (`putBackAfterQuickRedo`);
 //   (f) put the block-id maps captured with that checkpoint back, with the temp ids Swift has confirmed since resolved through
 //       the entry's confirmation log. The ids are NOT cleared (the slow path clears them and waits for Swift to push fresh
 //       ones); the restored rows keep the ids they had, and the reinsert job writes them back;
@@ -54,9 +57,17 @@ import {
 } from './block-sync-plugin';
 import { pushLiveContentToSwift } from './content-push';
 import { getContentHasBeenSet, getEditorInstance, getIsSettingContent } from './editor-state';
-import { carryRedoBranch, setCarriedHistory } from './redo-branch';
+import {
+  carryRedoBranch,
+  putBackSetAsideRedo,
+  redoBranchOf,
+  resetSetAsideRedo,
+  setAsideRedoBranch,
+  setCarriedHistory,
+} from './redo-branch';
 import {
   cancelPendingInsertions,
+  clearStructuralUndoRegistry,
   closeEditingPopupsAndClearBoundaryState,
   getInFlightOpId,
   getQuickUndoPausedOpId,
@@ -204,7 +215,9 @@ export function undoSectionDeleteEditorFirst(opId: string): QuickUndoResult {
       if (id === undefined || keptIds.has(id) || leaderLevel(node) === undefined) return;
       removedLeaderIds.push(id);
     });
-    const carry = carryRedoBranch(view.state, entry.checkpoint, idsBefore, restoredIdMap); // (e), first half: see `redo-branch.ts`
+    const live = view.state;
+    const liveRedo = redoBranchOf(live); // kept aside below, for the quick redo of this operation (t-14f908b4)
+    const carry = carryRedoBranch(live, entry.checkpoint, idsBefore, restoredIdMap); // (e), first half: see `redo-branch.ts`
     if (carry && !carry.carried) {
       // A never-expected guard: the plain swap below loses the editor's redo branch (what the user undid by typing), never the document.
       trace(`quick-undo opId=${shortId} redo branch not carried, plain swap: ${carry.reason.slice(0, 200)}`);
@@ -240,9 +253,24 @@ export function undoSectionDeleteEditorFirst(opId: string): QuickUndoResult {
     laps.lap('scroll');
 
     completed = true;
+    // The live redo branch (post-operation coordinates, untouched) is kept for the quick redo of this operation, which puts it back
+    // once it has run the operation again (`putBackAfterQuickRedo`). Always written, also with nothing to keep: that deletes a
+    // record an earlier undo of the same operation left. Its block ids go through the entry's confirmation log, like the restored ones.
+    // When Swift drops the structural redo afterwards (`quickUndoLiveDiffersFromRestored`) nothing takes the record; the next store
+    // prunes it once the operation id has left the registry. A section DELETE stores a record too (this undo is shared); its redo
+    // never takes it, so it is memory only and the next store prunes it.
+    const keptAside = liveRedo
+      ? {
+          branch: liveRedo,
+          doc: live.doc,
+          ids: applyConfirmLog(idsBefore, entry.confirmLog ?? []),
+          depthAfterUndo: redoBranchOf(view.state)?.eventCount ?? 0,
+        }
+      : null;
+    setAsideRedoBranch(opId, keptAside, getRegistry().keys());
     trace(
       `quick-undo opId=${shortId} ok=true restored=${restoredIds.length} leaders=${restoredLeaderIds.length} ` +
-        `redoCarried=${carry?.carried ? carry.events : 0} batchUpdates=${batch.updates.length} batchInserts=${batch.inserts.length} batchDeletes=${batch.deletes.length}` +
+        `redoCarried=${carry?.carried ? carry.events : 0} setAside=${keptAside ? keptAside.branch.eventCount : 0} batchUpdates=${batch.updates.length} batchInserts=${batch.inserts.length} batchDeletes=${batch.deletes.length}` +
         laps.summary()
     );
     return { batch, ok: true, restoredIds, restoredLeaderIds, removedLeaderIds };
@@ -338,6 +366,42 @@ export function checkQuickRedoAllowed(opId: string): { entry: UndoRegistryEntry 
   if (entry.midOp) return { reason: 'midOp' };
   if (!liveDocMatchesSavedCopy(view, entry, 'redo')) return { reason: 'docChanged' };
   return { entry };
+}
+
+/**
+ * What the quick redo of a Duplicate or a restore does as its LAST step (`redoSectionDuplicateEditorFirst`,
+ * `redoReplaceRangeEditorFirst`; not the delete's, which never loses typing): puts back the redo branch the quick undo kept aside
+ * (`setAsideRedoBranch`), so the next Cmd-Shift-Z redoes the typing the user did inside the operation's text. Called after the
+ * operation has been run again and its registry entry finalized, so the put-back is one meta-only transaction on the live state.
+ * Writes one trace line, `<label> opId=... redoPutBack=<events>` or `<label> opId=... redo put-back skipped: <reason>`, and
+ * nothing when no record was kept. Never throws.
+ */
+export function putBackAfterQuickRedo(opId: string, label: string): void {
+  const shortId = opId.slice(0, 8);
+  try {
+    const editorInstance = getEditorInstance();
+    if (!editorInstance) return;
+    const view = editorInstance.ctx.get(editorViewCtx);
+    const outcome = putBackSetAsideRedo(view, opId, getAllBlockIds());
+    if (!outcome) return;
+    if (!outcome.putBack) {
+      trace(`${label} opId=${shortId} redo put-back skipped: ${outcome.reason.slice(0, 200)}`);
+      return;
+    }
+    trace(`${label} opId=${shortId} redoPutBack=${outcome.events}`);
+  } catch (e) {
+    trace(`${label} opId=${shortId} redo put-back skipped: exception: ${String(e).slice(0, 200)}`);
+  }
+}
+
+/**
+ * Bridge target for `window.FinalFinal.clearStructuralUndoRegistry` (main.ts registers THIS, not the undo-coordinator function
+ * alone): the barrier clear, plus the set-aside redo records, which belong to the timeline the barrier replaces. A record left
+ * behind would be taken by a later quick redo of the same operation id.
+ */
+export function clearStructuralUndoRegistryAndRedoRecords(): void {
+  clearStructuralUndoRegistry();
+  resetSetAsideRedo();
 }
 
 /**

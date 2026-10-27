@@ -19,6 +19,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MarkdownManagedRegionResult } from '../api-managed-region';
 import type { MarkdownLeader, MarkdownStructuralRequest, MarkdownStructuralResult } from '../api-structural-markdown';
 import { readImageMeta } from '../image-preview-plugin';
+import { setAsideRedoOf } from '../redo-branch';
 import {
   decideLiveRouting,
   decideUndoRouting,
@@ -1200,6 +1201,32 @@ describe('W10 the redo carry (O24)', () => {
     swiftPerformedRedo();
     press('redo'); // text redo of the typing
     expect(docText(), 'typing not restored by redo').toBe(typed);
+  });
+
+  // MR9 (control, exempt from the must-fail rule): a Delete's quick redo re-runs the command; its undo sets nothing aside and nothing is put back
+  // (t-14f908b4 leaves the Delete path as it was: a delete loses no typing).
+  it('MR9 (control): Delete, type, Cmd-Z x2, Cmd-Shift-Z x2 brings the typing back with NO put-back (nothing is set aside for a delete)', () => {
+    const built = docA();
+    load(built.text);
+    expect(clickDelete(built, 'h3').ok).toBe(true);
+    typeAfter('Text of chapter 2.', ' abc');
+    const typed = docText();
+
+    press('undo'); // text undo of the typing
+    press('undo'); // structural
+    expect(ff().markdownStructuralSwap(OP, 'undo').ok).toBe(true);
+    swiftPerformedUndo();
+    expect(setAsideRedoOf(OP), 'a delete entry set its redo list aside').toBeUndefined();
+    press('redo'); // structural redo of the delete (a quick re-run)
+    expect(ff().markdownStructuralSwap(OP, 'redo').ok).toBe(true);
+    swiftPerformedRedo();
+    press('redo'); // text redo of the typing
+
+    expect(docText(), 'typing not restored by redo').toBe(typed);
+    expect(
+      errorHandlerMessages.some((m) => m.includes('put-back')),
+      'a put-back ran for a delete'
+    ).toBe(false);
   });
 
   it('undo, redo, undo keeps working with the carried branch, and the typing still comes back at the end', () => {

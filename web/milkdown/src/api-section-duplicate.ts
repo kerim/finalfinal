@@ -28,7 +28,7 @@
 
 import { Fragment, type Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
 import { findSectionRange, leaderLevel, type RemovedSectionSnapshot } from './api-section-delete';
-import { checkQuickRedoAllowed } from './api-section-undo';
+import { checkQuickRedoAllowed, putBackAfterQuickRedo } from './api-section-undo';
 import { generateBlockId, isBlockType, setTopLevelIdsAt } from './block-id-plugin';
 import type { BlockChanges } from './block-sync-plugin';
 import { runEditorFirstChange, trace } from './editor-first-op';
@@ -259,9 +259,12 @@ export function redoSectionDuplicateEditorFirst(
       predecessorId: null,
     };
   }
-  return duplicateInEditor(opId, rootBlockId, managedIds, {
+  const result = duplicateInEditor(opId, rootBlockId, managedIds, {
     label: 'duplicate-redo',
     previousEntry: gate.entry,
     reuseCopies: copies,
   });
+  // The redo steps the quick undo kept aside (typing done inside the copy) go back now that the copy is back (t-14f908b4).
+  if (result.ok) putBackAfterQuickRedo(opId, 'duplicate-quick-redo');
+  return result;
 }

@@ -16,6 +16,7 @@ import { EditorView } from '@codemirror/view';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MarkdownLeader } from '../api-structural-markdown';
 import type { MarkdownReorderRequest, MarkdownReorderResult } from '../api-structural-markdown-reorder';
+import { setAsideRedoOf } from '../redo-branch';
 import { decideLiveRouting, getRegistry, getUndoDescriptor } from '../undo-coordinator';
 
 type FF = {
@@ -1065,7 +1066,9 @@ describe('W-R8 typing in the hopped-over chapter comes back through the redo', (
   // The dragged chapter is LONG and the chapter it hops over is SHORT: a line diff between the two documents would keep the long
   // chapter's lines and treat the short one as removed and re-inserted, which misplaces the typing in it. The real move (opChanges) does not.
   // Break patch (W-R8.patch): in `buildSwappedState` pass `undefined` instead of the entry's `opChanges` to `carryRedoBranch` for a
-  // reorder entry (the carry then falls back to the minimal diff). Predicted failure: `typing not restored by redo`.
+  // reorder entry (the carry then falls back to the minimal diff, whose removed spans now also drop the redo events inside them: the
+  // hopped-over chapter's typing lies inside the span the line diff removes). Predicted failure: `the redo branch was not carried
+  // across the swap` (the check right after the structural undo; the carried list is empty).
   const longBody = Array.from({ length: 40 }, (_, i) => `Line ${i + 1} of the long chapter.`).join('\n\n');
 
   it('drag the long chapter 2 down over the short chapter 3, type in 3, Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z', () => {
@@ -1180,14 +1183,43 @@ describe('W-R13 a redo after an automatic change moved preOpDoc takes the saved-
   });
 });
 
-describe('W-R16 typing done inside the dragged chapter is never redone into another chapter', () => {
-  // Same-typed redo events that lie inside the moved text must not come back (CodeMirror maps an insertion inside a removed range to the
-  // removal point, which is the start of the hopped-over chapter's heading line).
-  // Break patch (W-R16.patch): in `buildSwappedState` pass `null` instead of `moved` to `carryRedoBranch` (today's carry, unchanged).
-  // Predicted failure: `heading line changed by a redo`.
+describe('W-R16 typing done inside the dragged chapter comes back through the redo, and never lands in another chapter', () => {
+  // Typing done inside the dragged chapter is redone after Cmd-Z x2 and Cmd-Shift-Z x2 (t-14f908b4). The undo's carry still LEAVES OUT the
+  // redo events that lie inside the moved text -- CodeMirror maps an insertion inside a removed range to the removal point, which is the
+  // start of the hopped-over chapter's heading line -- but the undo also sets the full redo list aside and the structural redo puts it
+  // back (redo-branch.ts `putBackRedo`). The drop alone is the FALL-BACK, pinned by MR7 below.
+  // Break patch (W-R16.patch): in `buildSwappedState` pass `null` instead of `moved` to `carryRedoBranch` (the carry without its drop).
+  // Break patch (putBack.patch): remove the `putBackSetAsideRedo(view, opId, depthBeforeRedo);` call in `markdownStructuralSwap`.
   const twoChapters = (): Built => build([...ch(4), ...ch(5)]);
 
-  it('drag chapter 5 up, type inside it, Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z: no heading line changes, the typing stays out', () => {
+  // Break patch: putBack.patch (remove the putBackRedo call). Predicted failure: `the dragged chapter typing is not back`.
+  it('drag chapter 5 up, type inside it, Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z: the typing comes back inside chapter 5, no heading line changes', () => {
+    const start = twoChapters();
+    loadFresh(start.text);
+    expect(clickReorder(start, 'h5', planOf(moveRun(idsOf(start), ['h5'], 'h4'))).ok).toBe(true);
+    const post = docText();
+    typeAfter('Text of chapter 5.', ' And after.');
+    const typed = docText();
+
+    press('undo'); // the typing
+    expect(docText()).toBe(post);
+    expect(structuralUndo().ok).toBe(true); // the drag
+    expect(docText()).toBe(start.text);
+    const redone = structuralRedo('the Cmd-Shift-Z was not routed structural'); // the drag again
+    expect(redone.ok, JSON.stringify(redone)).toBe(true);
+    expect(docText()).toBe(post);
+    press('redo'); // the typing: it lies inside the dragged chapter, set aside by the undo and put back by the redo
+
+    expect(headingLines(docText()), 'heading line changed by a redo').toEqual(headingLines(post));
+    expect(docText(), 'the dragged chapter typing is not back').toBe(typed);
+  });
+
+  // MR7: the fall-back. The old body of the test above: when the put-back is refused (here: the record is broken after the undo), the
+  // carried list is what the redo finds, and that list must not hold the typing inside the dragged chapter: nothing is written into a
+  // heading line, the typing is simply not redone.
+  // Break patch (W-R16.patch): in `buildSwappedState` pass `null` instead of `moved` to `carryRedoBranch` (today's carry, unchanged).
+  // Predicted failure: `heading line changed by a redo`.
+  it('MR7 fall-back: the put-back is refused (record broken): the typing inside the dragged chapter is not redone and no heading line changes', () => {
     const start = twoChapters();
     loadFresh(start.text);
     expect(clickReorder(start, 'h5', planOf(moveRun(idsOf(start), ['h5'], 'h4'))).ok).toBe(true);
@@ -1198,18 +1230,24 @@ describe('W-R16 typing done inside the dragged chapter is never redone into anot
     expect(docText()).toBe(post);
     expect(structuralUndo().ok).toBe(true); // the drag
     expect(docText()).toBe(start.text);
+    const record = setAsideRedoOf(OP);
+    expect(record, 'PREMISE: the undo set the redo list aside').toBeDefined();
+    if (record) record.depthAfterUndo += 1; // the put-back must now refuse
     const redone = structuralRedo('the Cmd-Shift-Z was not routed structural'); // the drag again
     expect(redone.ok, JSON.stringify(redone)).toBe(true);
     expect(docText()).toBe(post);
-    press('redo'); // the typing: it lies inside the dragged chapter and was dropped by the undo
+    press('redo'); // the typing: it lies inside the dragged chapter and was dropped by the carry
 
+    expect(
+      errorHandlerMessages.some((m) => m.includes('redo put-back skipped')),
+      'PREMISE: the put-back was refused'
+    ).toBe(true);
     expect(headingLines(docText()), 'heading line changed by a redo').toEqual(headingLines(post));
-    expect(docText(), 'the dragged chapter typing came back').not.toContain('And after.');
-    expect(docText()).toBe(post);
+    expect(docText(), 'after the fall-back the document must be the post-op copy without the typing').toBe(post);
   });
 
   // Break patch (W-R16c.patch): in `carryRedoBranch` drop every redo event once a moved range is given (`kept = 0`).
-  // Predicted failure: `typing in the hopped-over chapter not restored`.
+  // Predicted failure: `the redo branch was not carried across the swap` (the carried list is empty right after the structural undo).
   it('typing in the HOPPED-OVER chapter is still redone (it lies outside the moved text)', () => {
     const start = twoChapters();
     loadFresh(start.text);
@@ -1220,6 +1258,8 @@ describe('W-R16 typing done inside the dragged chapter is never redone into anot
 
     press('undo');
     expect(structuralUndo().ok).toBe(true);
+    // The carry kept the hopped-over event: the put-back would hide a carry that dropped it, so look at the carried list itself.
+    expect(redoDepth(view.state), 'the redo branch was not carried across the swap').toBe(1);
     expect(structuralRedo('the Cmd-Shift-Z was not routed structural').ok).toBe(true);
     expect(docText()).toBe(post);
     press('redo');
@@ -1227,8 +1267,8 @@ describe('W-R16 typing done inside the dragged chapter is never redone into anot
     expect(docText(), 'typing in the hopped-over chapter not restored').toBe(typed);
   });
 
-  // Break patch: W-R16.patch (also fails here).
-  it('typing in the hopped-over chapter THEN inside the dragged one: the first is redone, the second is not', () => {
+  // Break patch: putBack.patch (remove the putBackRedo call). Predicted failure: `the dragged chapter typing is not back`.
+  it('typing in the hopped-over chapter THEN inside the dragged one: both are redone, in order', () => {
     const start = twoChapters();
     loadFresh(start.text);
     expect(clickReorder(start, 'h5', planOf(moveRun(idsOf(start), ['h5'], 'h4'))).ok).toBe(true);
@@ -1236,6 +1276,7 @@ describe('W-R16 typing done inside the dragged chapter is never redone into anot
     typeAfter('Text of chapter 4.', ' hop'); // outside the moved text, done first
     const hopped = docText();
     typeAfter('Text of chapter 5.', ' And after.'); // inside it, done second
+    const typedBoth = docText();
 
     press('undo'); // " And after."
     press('undo'); // " hop"
@@ -1246,39 +1287,59 @@ describe('W-R16 typing done inside the dragged chapter is never redone into anot
     expect(docText()).toBe(post);
     press('redo'); // " hop" comes back
     expect(docText(), 'typing in the hopped-over chapter not restored').toBe(hopped);
-    press('redo'); // " And after." was dropped: nothing happens
+    press('redo'); // " And after." comes back too, inside the dragged chapter
 
     expect(headingLines(docText()), 'heading line changed by a redo').toEqual(headingLines(hopped));
-    expect(docText()).toBe(hopped);
+    expect(docText(), 'the dragged chapter typing is not back').toBe(typedBoth);
   });
 
-  // Break patch: W-R16.patch (also fails here). The live document at the Cmd-Z is NOT the one the command produced (the rebuild's anchors
-  // came in after it), so the moved range has to be followed through that rewrite first.
-  it('the app rewrote the document after the drag (anchors injected): the dragged chapter typing is still left out', () => {
+  // The live document at the Cmd-Z is NOT the one the command produced (the rebuild's anchors came in after it), so the moved range has
+  // to be followed through that rewrite first. Both orders: the anchors land BEFORE the typing (the saved copy follows them, the put-back
+  // difference is empty) and AFTER it (the saved copy stays where the click left it, so the redo lands on the document WITHOUT the
+  // anchors and the put-back difference removes them). The typing is below the dragged chapter's heading; the anchors are in headings.
+  // Break patch: putBack.patch (remove the putBackRedo call). Predicted failure: `the dragged chapter typing is not back`.
+  it.each([
+    ['BEFORE the typing', true],
+    ['AFTER the typing', false],
+  ])('the app rewrote the document after the drag (anchors injected %s): the dragged chapter typing comes back', (_when, anchorsFirst) => {
     const start = build([
       ...ch(4, 'Text of chapter 4.', { anchored: false }),
       ...ch(5, 'Text of chapter 5.', { anchored: false }),
     ]);
     loadFresh(start.text);
     expect(clickReorder(start, 'h5', planOf(moveRun(idsOf(start), ['h5'], 'h4'))).ok).toBe(true);
-    const anchored = docText()
-      .replace('# Chapter 5', `<!-- @sid:${sid('h5')} --># Chapter 5`)
-      .replace('# Chapter 4', `<!-- @sid:${sid('h4')} --># Chapter 4`);
-    ff().setContent(anchored, { origin: 'derived' });
-    expect(docText()).toBe(anchored);
-    typeAfter('Text of chapter 5.', ' And after.');
+    const post = docText();
+    const anchor = (text: string): string =>
+      text
+        .replace('# Chapter 5', `<!-- @sid:${sid('h5')} --># Chapter 5`)
+        .replace('# Chapter 4', `<!-- @sid:${sid('h4')} --># Chapter 4`);
+    let typed: string;
+    let afterRedo: string; // the document the structural redo lands on
+    if (anchorsFirst) {
+      ff().setContent(anchor(post), { origin: 'derived' });
+      expect(docText()).toBe(anchor(post));
+      typeAfter('Text of chapter 5.', ' And after.');
+      typed = docText();
+      afterRedo = anchor(post); // the saved copy followed the anchors
+    } else {
+      typeAfter('Text of chapter 5.', ' And after.');
+      typed = docText();
+      ff().setContent(anchor(typed), { origin: 'derived' });
+      expect(docText()).toBe(anchor(typed));
+      afterRedo = post; // the saved copy never saw the anchors: after the redo they are gone again, the put-back difference removes them
+    }
 
     press('undo'); // the typing
-    expect(docText()).toBe(anchored);
+    expect(docText()).toBe(anchor(post));
     expect(structuralUndo().ok).toBe(true);
     expect(docText()).toBe(start.text);
     const redone = structuralRedo('the Cmd-Shift-Z was not routed structural');
     expect(redone.ok, JSON.stringify(redone)).toBe(true);
-    expect(docText()).toBe(anchored);
-    press('redo'); // the typing: inside the dragged chapter, left out
+    expect(docText()).toBe(afterRedo);
+    press('redo'); // the typing: inside the dragged chapter, put back
 
-    expect(headingLines(docText()), 'heading line changed by a redo').toEqual(headingLines(anchored));
-    expect(docText()).toBe(anchored);
+    expect(headingLines(docText()), 'heading line changed by a redo').toEqual(headingLines(afterRedo));
+    expect(docText(), 'the dragged chapter typing is not back').toBe(typed);
   });
 
   // Break patch (W-R16d.patch): in `planReorder` leave `padLength` out of the recorded moved range.
@@ -1304,6 +1365,76 @@ describe('W-R16 typing done inside the dragged chapter is never redone into anot
     const endsDocument = moved.to === docText().length;
     const expected = build(chapter(n), endsDocument ? trailing : '\n\n').text;
     expect(docText().slice(moved.from, moved.to), 'recorded moved range differs').toBe(expected);
+  });
+});
+
+describe('MR8 / MR14 the drag, typing inside the dragged chapter, and TWO full Cmd-Z x2 / Cmd-Shift-Z x2 cycles', () => {
+  // The second cycle needs a record stored by the SECOND undo (the first was taken by the first redo) and the entry the swap leaves behind.
+  // Break patch: putBack.patch (remove the `putBackSetAsideRedo(view, opId, depthBeforeRedo);` call in `markdownStructuralSwap`).
+  // Predicted failure: `dragged chapter typing not back after cycle 1`.
+  function dragTypeTwoCycles(start: Built, typedAfter: string, headingsOf: (text: string) => string[]): void {
+    loadFresh(start.text);
+    expect(clickReorder(start, 'h5', planOf(moveRun(idsOf(start), ['h5'], 'h4'))).ok).toBe(true);
+    const post = docText();
+    typeAfter(typedAfter, ' And after.');
+    const typed = docText();
+    expect(typed, 'PREMISE: the typing is in the document').not.toBe(post);
+
+    for (const cycle of [1, 2]) {
+      press('undo'); // the typing
+      expect(docText(), `PREMISE: cycle ${cycle}: Cmd-Z 1 was the typing`).toBe(post);
+      expect(structuralUndo().ok, `cycle ${cycle}: the structural undo`).toBe(true); // the drag
+      expect(docText(), `PREMISE: cycle ${cycle}: Cmd-Z 2 was the drag`).toBe(start.text);
+      expect(
+        structuralRedo('the Cmd-Shift-Z was not routed structural').ok,
+        `cycle ${cycle}: the structural redo`
+      ).toBe(true); // the drag again
+      expect(docText(), `PREMISE: cycle ${cycle}: Cmd-Shift-Z 1 was the drag`).toBe(post);
+      press('redo'); // the typing
+      expect(headingsOf(docText()), `heading line changed by a redo (cycle ${cycle})`).toEqual(headingsOf(post));
+      expect(docText(), `dragged chapter typing not back after cycle ${cycle}`).toBe(typed);
+    }
+  }
+
+  it('MR14: three small chapters, chapter 5 dragged above chapter 4, two cycles: the typing comes back each time', () => {
+    dragTypeTwoCycles(build([...ch(4), ...ch(5), ...ch(6)]), 'Text of chapter 5.', headingLines);
+  });
+
+  it('MR8: a book of 3,000+ lines (six chapters of 250 paragraphs), chapter 5 dragged above chapter 4, two cycles', () => {
+    const body = (n: number): string =>
+      Array.from({ length: 250 }, (_, i) => `Paragraph ${i + 1} of chapter ${n}.`).join('\n\n');
+    const start = build([1, 2, 3, 4, 5, 6].flatMap((n) => ch(n, body(n))));
+    expect(start.text.split('\n').length, 'PREMISE: a book-sized document').toBeGreaterThan(3000);
+    dragTypeTwoCycles(start, 'Paragraph 120 of chapter 5.', headingLines);
+  });
+});
+
+describe('W-R21 a redo event already pending when the drag is clicked never lands in a heading line', () => {
+  // The reviewer's probe (M6, plan review): typing inside chapter 5 and taking it back with Cmd-Z leaves one event in the editor's redo
+  // list. The drag is then clicked with addToHistory:false, which maps both history branches through the move, and an insertion inside
+  // the moved (removed) range lands at the removal point -- the start of the line that follows the chapter's old place, here
+  // chapter 6's heading line. Cmd-Shift-Z (no structural redo is on top: this is the editor's own text redo) would then type the
+  // sentence into that heading line and split it.
+  // Break patch (W-R21.patch): see the line the click's fix adds in api-structural-markdown-reorder.ts (`runReorder`).
+  // Predicted failure: `heading line changed by a redo`.
+  it('type in chapter 5, Cmd-Z, drag chapter 5 above chapter 4, Cmd-Shift-Z: every heading line reads as after the drag', () => {
+    const start = build([...ch(4), ...ch(5), ...ch(6)]);
+    loadFresh(start.text);
+    typeAfter('Text of chapter 5.', ' X');
+    press('undo'); // the typing: one event waits in the redo list
+    expect(docText()).toBe(start.text);
+    expect(redoDepth(view.state), 'PREMISE: the typing waits in the redo list').toBe(1);
+    expect(clickReorder(start, 'h5', planOf(moveRun(idsOf(start), ['h5'], 'h4'))).ok).toBe(true);
+    const post = docText();
+
+    press('redo'); // not routed structural: the editor's own text redo
+
+    expect(redoRequested(), 'PREMISE: the Cmd-Shift-Z was a text redo').not.toHaveBeenCalled();
+    expect(headingLines(docText()), 'heading line changed by a redo').toEqual(headingLines(post));
+    const typedOnHeading = docText()
+      .split('\n')
+      .filter((line) => line.includes(' X') && line.includes('# Chapter'));
+    expect(typedOnHeading, 'the typing landed on a heading line').toEqual([]);
   });
 });
 

@@ -8,11 +8,12 @@ import {
   SearchQuery,
   setSearchQuery,
 } from '@codemirror/search';
-import { type ChangeSet, EditorState, Transaction } from '@codemirror/state';
+import { ChangeSet, EditorState, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { escapeAltAttr } from '../../shared/image-caption-attrs';
 import { clearDocumentReadiness, markDocumentReady } from '../../shared/typewriter-scrolling';
 import { stripAnchors } from './anchor-plugin';
+import { installState, trace } from './api-structural-markdown';
 import { hideCitationAddButton, mergeCitations } from './citations';
 import { derivedCorrection } from './derived-correction';
 import {
@@ -42,6 +43,7 @@ import { commitAndCloseImageCaptionPopup, dismissImageCaptionPopup } from './ima
 import { installLineHeightFix, invalidateHeadingMetricsCache } from './line-height-fix';
 import { renumberWithSortedNotes } from './notes-region-sort';
 import { getRecentUserEditSpan } from './recent-edit-span';
+import { keepRedoList, keptRedoOnto } from './redo-branch';
 import { formatTableCommand, insertTableCommand } from './table-format';
 import { computeMinimalChanges } from './text-diff';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
@@ -1166,15 +1168,42 @@ export function scrollToFootnoteDefinition(label: string, notesHeaderName = 'Not
 }
 
 /**
- * Renumber footnote references and definitions using a mapping of old → new labels.
- * Uses targeted CodeMirror changes to preserve cursor position.
+ * The relabel of the marker `[^old]` that starts at `at`, cut down to the characters of the label that differ: `[^3]` -> `[^4]` is the
+ * digit alone, `[^1]` -> `[^11]` one inserted character. The marker's own brackets are never inside the change.
  */
-export function renumberFootnotes(mapping: Record<string, string>): void {
-  const view = getEditorView();
-  if (!view) return;
+function relabelChange(at: number, oldLabel: string, newLabel: string): { from: number; to: number; insert: string } {
+  let head = 0;
+  while (head < oldLabel.length && head < newLabel.length && oldLabel[head] === newLabel[head]) head++;
+  let tail = 0;
+  while (
+    tail < oldLabel.length - head &&
+    tail < newLabel.length - head &&
+    oldLabel[oldLabel.length - 1 - tail] === newLabel[newLabel.length - 1 - tail]
+  )
+    tail++;
+  const labelStart = at + 2; // behind "[^"
+  return {
+    from: labelStart + head,
+    to: labelStart + oldLabel.length - tail,
+    insert: newLabel.slice(head, newLabel.length - tail),
+  };
+}
 
-  const content = view.state.doc.toString();
+/**
+ * The edits of a footnote renumber in `content`: every `[^old]` marker (references and definitions) with a label in `mapping`, sorted by
+ * position, in two forms that must give ONE document. `changes` replaces the whole marker (what is dispatched); `relabels` is the same
+ * edits cut down to the label characters that differ (what a waiting redo list is mapped through, see `renumberFootnotes`). Exported
+ * for redo-renumber-delete.test.ts, which pins that the two forms cannot drift apart.
+ */
+export function renumberEdits(
+  content: string,
+  mapping: Record<string, string>
+): {
+  changes: Array<{ from: number; to: number; insert: string }>;
+  relabels: Array<{ from: number; to: number; insert: string }>;
+} {
   const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const relabels: Array<{ from: number; to: number; insert: string }> = [];
 
   // Find all [^N] occurrences (both refs and defs) and apply mapping
   for (const [oldLabel, newLabel] of Object.entries(mapping)) {
@@ -1186,12 +1215,26 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
         to: match.index + match[0].length,
         insert: `[^${newLabel}]`,
       });
+      relabels.push(relabelChange(match.index, oldLabel, newLabel));
     }
   }
+  // Sort by position for correct application
+  changes.sort((a, b) => a.from - b.from);
+  relabels.sort((a, b) => a.from - b.from);
+  return { changes, relabels };
+}
+
+/**
+ * Renumber footnote references and definitions using a mapping of old → new labels.
+ * Uses targeted CodeMirror changes to preserve cursor position.
+ */
+export function renumberFootnotes(mapping: Record<string, string>): void {
+  const view = getEditorView();
+  if (!view) return;
+
+  const { changes, relabels } = renumberEdits(view.state.doc.toString(), mapping);
 
   if (changes.length > 0) {
-    // Sort by position for correct application
-    changes.sort((a, b) => a.from - b.from);
     // Application-origin dispatch: the typewriter plugin must not treat a footnote
     // renumber as typing (plan §2.4.1's renumber row).
     //
@@ -1205,7 +1248,16 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
     // is applied outside the text history (`addToHistory:false`, which also keeps it a sync-origin change:
     // `maybeAdvanceRegistryOnSyncOriginTx` advances the saved copies when the document equals them). The user's Cmd-Z count then
     // matches Rich Text's absorbed renumber: one press undoes the typing, the next reaches the command.
-    const annotations = structuralSettleOpId !== null ? Transaction.addToHistory.of(false) : derivedCorrection.of(true);
+    //
+    // Outside a settle the renumber is a RECORDED change, and a recorded change empties the redo list (@codemirror/commands). So the
+    // list is taken first and put back after the dispatch, mapped through the renumber's own edits (redo-branch.ts `keepRedoList`),
+    // as Rich Text's `dispatchDerivedCorrection` keeps its redo branch. `isolateHistory('full')` closes the typing group on both
+    // sides: the renumber is its own undo step (Cmd-Z takes it back first, before the typing that came before it), it never joins
+    // typing before it, and the next keystroke never joins it.
+    const recorded = structuralSettleOpId === null;
+    const annotations = recorded
+      ? [derivedCorrection.of(true), isolateHistory.of('full')]
+      : Transaction.addToHistory.of(false);
     // A settle that was given the Notes heading line also SORTS the Notes definitions, in this same transaction (V1): the page never
     // holds relabelled-but-unsorted Notes for a Save Version or a Cmd-W to write into the rows. Anything the sort does not apply to
     // (no heading line, heading not found, anything but definitions in the region) is the relabel alone, as it has always been.
@@ -1213,7 +1265,23 @@ export function renumberFootnotes(mapping: Record<string, string>): void {
       structuralSettleOpId !== null && structuralSettleNotesHeading !== null
         ? renumberWithSortedNotes(view.state.doc, changes, structuralSettleNotesHeading)
         : null;
+    const keptRedo = recorded ? keepRedoList(view.state) : null;
+    // The list is mapped through these same edits in their label-only form (`relabels`: the document they produce is the same), not
+    // through the whole-marker replacements that are dispatched: typing right in front of a marker lies at the START of a replaced
+    // range there, and the drop rule would take it (and every later event) out of the list.
+    const keptMapping = keptRedo ? ChangeSet.of(relabels, view.state.doc.length) : null;
     withAppOrigin(() => view.dispatch({ changes: sorted ?? changes, annotations }));
+    if (keptRedo && keptMapping) {
+      try {
+        const back = keptRedoOnto(view, keptRedo, keptMapping, getEditorExtensions());
+        if (back.carried) installState(view, back.state, { label: 'renumber-keep', keepScroll: true });
+        else trace(`footnote renumber: the redo list was not kept: ${back.reason}`);
+      } catch (error) {
+        trace(
+          `footnote renumber: keeping the redo list threw: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
   }
 }
 
@@ -1232,8 +1300,9 @@ let structuralSettleNotesHeading: string | null = null;
  *   * `setStructuralSettleOpId(null, expecting?)` CLEARS it (and the heading line with it); with `expecting` only while the flag still
  *     holds `expecting` (compare-and-clear). The second argument therefore means `notesHeadingLine` when setting and `expecting` when
  *     clearing, so every earlier call keeps working.
- * While non-null, `renumberFootnotes` dispatches outside the text history. Null (the steady state) leaves the renumber exactly as it has
- * always been: a `derivedCorrection` that is its own undo step, no sort. */
+ * While non-null, `renumberFootnotes` dispatches outside the text history. Null (the steady state): the renumber is a recorded
+ * `derivedCorrection` and its own undo step (Cmd-Z takes it back before the typing that came before it, and typing after it never
+ * joins it: `isolateHistory('full')`); a redo list that is waiting is kept through it (redo-branch.ts `keepRedoList`); no sort. */
 export function setStructuralSettleOpId(opId: string | null, secondArgument?: string | null): void {
   if (typeof opId === 'string' && opId !== '') {
     structuralSettleOpId = opId;
