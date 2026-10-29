@@ -266,4 +266,71 @@ struct MarkdownLeaderMapTests {
         #expect(
             MarkdownLeaderMap.recordText(fromRaw: raw) == "## Notes\n\n# Bibliography\n\nSmith.\n\n<!-- ::auto-bibliography-end:: -->")
     }
+
+    // MARK: - The Duplicate request (t-4a8fd8af slice 3)
+
+    /// The golden request file the page's own test (`web/codemirror/src/__tests__/structural-markdown-duplicate.test.ts`, WD21) runs too:
+    /// one line of canonical JSON (sorted keys, compact, `managed` left out when nil).
+    private static var requestGolden: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // MarkdownEditorFirst/
+            .deletingLastPathComponent()   // Tier2/
+            .deletingLastPathComponent()   // final finalTests/
+            .deletingLastPathComponent()   // the repository root
+            .appendingPathComponent("docs/architecture/write-queue-plan/phase4b-markdown/slice3-duplicate/request-golden.json")
+    }
+
+    /// The request `markdownStructuralDuplicate` takes, built through `MarkdownLeaderMap.duplicateRequest` from real UUID ids and
+    /// compared, canonical (sorted keys, compact), with the shared golden file the page test reads. Both sides pin the same text, so a
+    /// key, a value or a null that moves on one side fails the other's test. The document is the golden's: Chapter 1, Chapter 2 with
+    /// Part 2.1, Chapter 3, then the Notes (the stop line and the managed leader). BREAK: in `DuplicateRequest.json` drop the
+    /// `"copyIds"` entry. FAILS: "duplicate request JSON mismatch".
+    @Test("the duplicate request JSON is the shared golden file, byte for byte")
+    func testDuplicateRequestJSONIsPinned() throws {
+        func heading(_ id: String, _ level: Int, _ title: String, at order: Double, notes: Bool = false) -> Block {
+            Block(
+                id: id, projectId: "project", sortOrder: order, blockType: .heading, textContent: title,
+                markdownFragment: String(repeating: "#", count: level) + " " + title, headingLevel: level, isNotes: notes)
+        }
+        let chapter1 = "0B8C1E52-3D7A-4F6B-9A10-6C2E5D4F8A01"
+        let chapter2 = "1C9D2F63-4E8B-4A7C-8B21-7D3F6E509B12"
+        let part21 = "2DAE3074-5F9C-4B8D-9C32-8E4A7F61AC23"
+        let chapter3 = "3EBF4185-60AD-4C9E-8D43-9F5B8072BD34"
+        let notes = "4FC05296-71BE-4DAF-9E54-A06C9183CE45"
+        let rows = [
+            heading(chapter1, 1, "Chapter 1", at: 0), heading(chapter2, 1, "Chapter 2", at: 1), heading(part21, 2, "Part 2.1", at: 2),
+            heading(chapter3, 1, "Chapter 3", at: 3), heading(notes, 2, "Notes", at: 4, notes: true)
+        ]
+        let map = MarkdownLeaderMap(rows: rows)
+        let opId = try #require(UUID(uuidString: "5AD163A7-82CF-4EB0-8F65-B17DA294DF56"))
+        let copyIds = [
+            MarkdownLeaderMap.DuplicateCopyId(source: chapter2, new: "6BE274B8-93D0-4FC1-9076-C28EB3A5E067"),
+            MarkdownLeaderMap.DuplicateCopyId(source: part21, new: "7CF385C9-A4E1-40D2-A187-D39FC4B6F178")
+        ]
+        let request = try #require(map.duplicateRequest(opId: opId, rootId: chapter2, copyIds: copyIds), "no duplicate request for a chapter")
+        let text = try #require(request.json, "the request has no JSON")
+        let object = try JSONSerialization.jsonObject(with: Data(text.utf8))
+        let canonicalData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        let canonical = try #require(String(data: canonicalData, encoding: .utf8), "the sorted JSON is not UTF-8")
+        let golden = try String(contentsOf: Self.requestGolden, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(canonical == golden, "duplicate request JSON mismatch (the request built from the rows is not the shared golden file)")
+
+        // The last chapter of a document without Notes: explicit nulls, as the Delete's request writes them.
+        let plain = MarkdownLeaderMap(rows: Array(rows.prefix(4)))
+        let lastCopyIds = [MarkdownLeaderMap.DuplicateCopyId(source: chapter3, new: "8D0496DA-B5F2-41E3-92B8-E40AD5C7A289")]
+        let last = try #require(
+            plain.duplicateRequest(opId: opId, rootId: chapter3, copyIds: lastCopyIds),
+            "no duplicate request for the last chapter")
+        let lastJSON = try #require(last.json, "the last chapter's request has no JSON")
+        let lastParsed = try JSONSerialization.jsonObject(with: Data(lastJSON.utf8))
+        let lastObject = try #require(lastParsed as? [String: Any], "the last chapter's JSON is no object")
+        #expect(lastObject["stopLine"] is NSNull && lastObject["endLeaderId"] is NSNull, "duplicate request JSON mismatch: explicit nulls missing")
+        #expect(
+            Set(lastObject.keys) == ["kind", "opId", "rootId", "leaders", "stopLine", "endLeaderId", "copyIds"],
+            "duplicate request JSON mismatch: keys")
+
+        // Pairs that are not exactly the subtree's leaders, in order, make no request (the page would refuse it).
+        #expect(map.duplicateRequest(opId: opId, rootId: chapter2, copyIds: [copyIds[0]]) == nil, "a request was built with a missing pair")
+        #expect(map.duplicateRequest(opId: opId, rootId: notes, copyIds: []) == nil, "a request was built for the Notes heading")
+    }
 }

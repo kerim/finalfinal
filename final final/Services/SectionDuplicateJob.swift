@@ -22,7 +22,8 @@
 //        that fails to commit leaves no slot and no pin behind.
 //
 //  A system write: it stamps no rows and bumps no epoch (D5; like `SectionDeleteJob` and `SectionReorderJob`, and unlike the old
-//  whole-document duplicate of Markdown mode, zoomed and fallbacks, which writes the table outside the queue and bumps
+//  whole-document duplicate (zoomed, the fallbacks, and Markdown mode when the kill switch is off or the page refused), which writes
+//  the table outside the queue and bumps
 //  `structuralOutOfQueueGeneration`). Reservation order alone orders it behind every batch
 //  reserved earlier and ahead of every later one. It never nests another system write: the resyncs that follow are queued
 //  separately by the wiring.

@@ -1121,10 +1121,10 @@ describe('W-R9 the settle renumber after a reorder is not a history step of its 
 });
 
 describe('W-R12 the redo lands on the settled post-op document, and works again and again', () => {
-  // Break patch (W-R12a.patch): in `composedReorderRedo` apply the recorded move alone (`const changes = extras.opChanges;`).
+  // Break patch (W-R12a.patch): in `composedRedo` apply the recorded move alone (`const changes = extras.opChanges;`).
   // Predicted failure: `redo document differs from postOpDoc` (the references read out of order again until a later settle).
   // Break patch (W-R12b.patch): in `markdownStructuralSwap` run the composed redo in an early return before the midOp block
-  // (`if (direction === 'redo') { const early = composedReorderRedo(view, entry); if (early !== null) return early; }`).
+  // (`if (direction === 'redo') { const early = composedRedo(view, entry); if (early !== null) return early; }`).
   // Predicted failure: `second redo lost` (the redo's own dispatch advances preOpDoc, so the next Cmd-Shift-Z is not routed structural).
   it('drag, settle renumber, then two full Cmd-Z / Cmd-Shift-Z cycles: every redo document equals the renumbered post-op document', () => {
     const start = footnoted();
@@ -1154,7 +1154,7 @@ describe('W-R12 the redo lands on the settled post-op document, and works again 
 });
 
 describe('W-R13 a redo after an automatic change moved preOpDoc takes the saved-copy swap', () => {
-  // Break patch (W-R13.patch): in `composedReorderRedo` guard on `entry.preOpDoc` instead of `entry.checkpoint.doc`.
+  // Break patch (W-R13.patch): in `composedRedo` guard on `entry.preOpDoc` instead of `entry.checkpoint.doc`.
   // Predicted failure: `swapThrew` (the change set was built on the checkpoint document and is applied to a longer one).
   it('after Cmd-Z the rebuild injects anchors (a sync-origin change); Cmd-Shift-Z still works and lands on postOpDoc', () => {
     const start = build([
@@ -1439,7 +1439,7 @@ describe('W-R21 a redo event already pending when the drag is clicked never land
 });
 
 describe('W-R18 the caret goes with the dragged text through Cmd-Z and Cmd-Shift-Z', () => {
-  // Break patch (W-R18.patch): in `composedReorderRedo` leave the recorded selection out of the dispatch (`selection: undefined`), so the
+  // Break patch (W-R18.patch): in `composedRedo` leave the recorded selection out of the dispatch (`selection: undefined`), so the
   // caret is mapped through the move like any position and, inside a removed range, ends at the removal point.
   // Predicted failure: `caret left behind after the redo`.
   const insertAtCaret = (text: string): void => typeAt(view.state.selection.main.head, text);

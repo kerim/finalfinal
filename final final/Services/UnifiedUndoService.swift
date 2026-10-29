@@ -68,7 +68,8 @@ struct StructuralEntry: Identifiable, Equatable {
     /// moment the editor inserted the copy, with `undoSnapshotId` nil, the snapshot its background job wrote kept on the controller's
     /// slot, the undo's payload in the controller's holder. `isEditorFirst` is true for both, and is what every place that treats such
     /// an entry specially (the quick undo and redo, the slow undo's snapshot lookup, the eviction and replace rules below) asks. A
-    /// duplicate the old way (Markdown mode, zoomed, no writer, the UI-test legacy flag) carries its snapshot id here as before.
+    /// duplicate the old way (zoomed, no writer, the UI-test legacy flag, and Markdown mode when the kill switch is off or the page
+    /// refused the click) carries its snapshot id here as before.
     ///
     /// A Version History restore of the WHOLE project (t-18b7fa48 Phase 4b slice 2, round 2d-i) is the third kind: recorded the moment
     /// the editor replaced its document, snapshot id nil here, the snapshot its job wrote on the slot, the quick undo's payload in the

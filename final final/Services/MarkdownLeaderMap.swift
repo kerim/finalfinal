@@ -95,6 +95,42 @@ struct MarkdownLeaderMap: Equatable {
         }
     }
 
+    /// One pair of a Duplicate's `copyIds`: the id a leader of the section has now (`source`) and the id its copy gets (`new`). Swift
+    /// mints `new` BEFORE the page is called; the page writes it into the copy's `<!-- @sid:NEW -->` marker and the queued
+    /// `SectionDuplicateJob` gives the copy row the same id (t-4a8fd8af slice 3).
+    struct DuplicateCopyId: Equatable {
+        let source: String
+        let new: String
+    }
+
+    /// The request `window.FinalFinal.markdownStructuralDuplicate` takes (t-4a8fd8af slice 3; web/codemirror/src/api-structural-markdown-duplicate.ts
+    /// and slice3-duplicate/page-contract.md in docs/architecture/write-queue-plan/phase4b-markdown). The Delete's request with
+    /// `kind` "duplicate" and one more field, `copyIds`: one pair per leader of the section's subtree, root first, in document order.
+    /// Its JSON is pinned by the Swift tests: do not change a key, a value or a null here without changing the page's reader with it.
+    struct DuplicateRequest: Equatable {
+        let opId: UUID
+        let rootId: String
+        let leaders: [Leader]
+        let stopLine: String?
+        let endLeaderId: String?
+        let copyIds: [DuplicateCopyId]
+
+        /// The JSON text of the request. `stopLine` and `endLeaderId` are explicit nulls when absent, as the Delete's.
+        var json: String? {
+            let object: [String: Any] = [
+                "kind": "duplicate",
+                "opId": opId.uuidString,
+                "rootId": rootId,
+                "leaders": leaders.map(\.jsonObject),
+                "stopLine": stopLine ?? NSNull(),
+                "endLeaderId": endLeaderId ?? NSNull(),
+                "copyIds": copyIds.map { ["source": $0.source, "new": $0.new] }
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+    }
+
     /// Every leader of the document, in document order.
     let leaders: [Leader]
     /// The rows in document order (empty fragments dropped): what `stopLine` is looked up in.
@@ -147,6 +183,49 @@ struct MarkdownLeaderMap: Equatable {
         let stopLine = ordered[(rootRow + 1)...].first { $0.isNotes || $0.isBibliography }
             .map { Self.firstLine(of: $0.markdownFragment) }
         return Request(opId: opId, rootId: rootId, leaders: leaders, stopLine: stopLine, endLeaderId: endLeader?.id)
+    }
+
+    /// The request for duplicating the section rooted at `rootId`: the Delete's request (same leaders, `stopLine`, `endLeaderId`) plus
+    /// `copyIds`. nil when `rootId` is no leader, is the Notes or Bibliography heading, or when `copyIds` is not exactly one pair per
+    /// leader of the subtree (`removedLeaderIds(rootId:)`), in that order: the page checks the same thing against the live text, and
+    /// a request that cannot pass is not worth a page call. The ids in `copyIds` are minted by the CALLER (`mintDuplicateCopyIds`), so
+    /// the flush-and-retry sends the same ones.
+    func duplicateRequest(opId: UUID, rootId: String, copyIds: [DuplicateCopyId]) -> DuplicateRequest? {
+        guard copyIds.map(\.source) == removedLeaderIds(rootId: rootId), let base = request(opId: opId, rootId: rootId) else { return nil }
+        return DuplicateRequest(
+            opId: opId, rootId: rootId, leaders: base.leaders, stopLine: base.stopLine, endLeaderId: base.endLeaderId, copyIds: copyIds)
+    }
+
+    /// The `copyIds` for duplicating the section rooted at `rootId`: one pair per leader of its subtree, each new id taken from `minted`
+    /// (source id -> new id) when it is already there and freshly made otherwise, and recorded in `minted`. The caller keeps `minted`
+    /// across the flush-and-retry, so a second call after the typing was flushed reuses every id it sent the first time (a heading
+    /// typed meanwhile is a new source and gets a new id). Empty when `rootId` is no duplicable leader.
+    func mintDuplicateCopyIds(rootId: String, minted: inout [String: String]) -> [DuplicateCopyId] {
+        removedLeaderIds(rootId: rootId).map { source in
+            let new = minted[source] ?? UUID().uuidString
+            minted[source] = new
+            return DuplicateCopyId(source: source, new: new)
+        }
+    }
+
+    /// What the sidebar shows at once for the copy (the overlay `showDuplicateInSidebar` takes), built from the ROWS of the subtree: one
+    /// entry per pair of `copyIds`, `id` = the copy's new id, `kind` "section_break" for a section break and "heading" otherwise, the
+    /// row's level, and the row's own `textContent` as the title (with " copy" for a heading root, as `duplicateSections` adds it to
+    /// the copy row; a section break has no title). The page's own list (`insertedLeaders`) is only a cross-check. Empty when `copyIds`
+    /// is not exactly the subtree's leaders in order or a row is missing.
+    func duplicateInsertedSections(rootId: String, copyIds: [DuplicateCopyId]) -> [EditorFirstDuplicateReply.InsertedSection] {
+        guard copyIds.map(\.source) == removedLeaderIds(rootId: rootId) else { return [] }
+        var sections: [EditorFirstDuplicateReply.InsertedSection] = []
+        for (index, pair) in copyIds.enumerated() {
+            guard let row = ordered.first(where: { $0.id == pair.source }) else { return [] }
+            let isBreak = row.isPseudoSection
+            let suffix = index == 0 && row.blockType == .heading ? " copy" : ""
+            sections.append(
+                EditorFirstDuplicateReply.InsertedSection(
+                    id: pair.new, kind: isBreak ? "section_break" : "heading", level: row.headingLevel ?? 1,
+                    title: isBreak ? "" : row.textContent + suffix))
+        }
+        return sections
     }
 
     /// The request for a drag-reorder whose dragged card is `rootId`. `order` is the plan's ids (every section leader in final order,

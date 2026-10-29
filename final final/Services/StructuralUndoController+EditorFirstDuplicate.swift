@@ -10,8 +10,9 @@
 //  click (`runEditorFirstStructuralClick`, StructuralUndoController+EditorFirstStructural.swift).
 //
 //    1. `performEditorFirstDuplicate(rootId:)`: the click. Returns nil when this press must take today's whole sequence instead
-//       (Markdown mode, zoomed -- a duplicate is refused while zoomed today and stays so --, no writer turn, the UI-test legacy flag,
-//       a root that is not a duplicable leader, an editor that has no document yet).
+//       (Markdown mode -- whose own click, `performMarkdownEditorFirstDuplicate`, is tried next, in
+//       StructuralUndoController+MarkdownEditorFirstDuplicate.swift --, zoomed -- a duplicate is refused while zoomed today and stays
+//       so --, no writer turn, the UI-test legacy flag, a root that is not a duplicable leader, an editor that has no document yet).
 //    2. `startEditorFirstDuplicateJob(...)`: reserves the job and keeps the task that runs it and the work after it.
 //    3. `showDuplicateInSidebar` / `hideDuplicateInSidebar`: what the sidebar shows at once (the copy's leaders after the click and
 //       after a redo; none of them after the quick undo), before the database holds the rows.
@@ -178,10 +179,17 @@ extension StructuralUndoController {
     /// task brings it down as soon as the job's future has resolved, BEFORE the settle or the put-back starts (their rebuild stamps
     /// must see the count already lowered: round 1b, addendum must-fix 1). The quick redo raises the count in its own stretch too
     /// (round 1g-B, review A3) and passes true.
+    ///
+    /// `copiesAreLeadersOnly` (t-4a8fd8af slice 3, the Markdown Duplicate): `copies` holds ONE pair per section LEADER only, because the
+    /// Markdown page gives only the leaders' hidden markers new ids; every other row of the subtree (a paragraph, a list item) gets a
+    /// fresh id from the job and the page has no id for it. `matchEditorCopies` then reports "N node(s) got a fresh id" on EVERY such
+    /// duplicate, which is not a disagreement (the page holds no ids for those rows), so it must not make the settle push the
+    /// database's block ids. With the flag set the ids disagree only when a leader's copy id did not become a row (a copy id missing
+    /// from the job's `copiedBlockIds`: the page's marker would then name no row); the note itself is logged at `.undo` level.
     @discardableResult
     func startEditorFirstDuplicateJob(
         opId: UUID, rootId: String, copies: [DuplicatedBlock], database: ProjectDatabase, projectId: String,
-        jobKey: UUID? = nil, ownsPendingJobCount: Bool = false
+        jobKey: UUID? = nil, ownsPendingJobCount: Bool = false, copiesAreLeadersOnly: Bool = false
     ) async -> Bool {
         guard let editorState else { return false }
         efSlots.open(opId)
@@ -223,6 +231,7 @@ extension StructuralUndoController {
             guard let blockSync = weakBlockSync else {
                 reserved.fire()
                 registry.resolve(registryKey, .abandoned)
+                self?.notifyMarkdownJobEnded(key: registryKey, outcome: .abandoned)   // a Markdown duplicate's hold continuation
                 return
             }
             let result = await job.perform(
@@ -233,13 +242,29 @@ extension StructuralUndoController {
                 })
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
+            // A Markdown duplicate's hold continuation waits for this (t-4a8fd8af slice 3); a no-op for a job without a gate (Rich Text).
+            self?.notifyMarkdownJobEnded(key: registryKey, outcome: JobOutcome(result.outcome))
             var idsDisagree = false
             if case .applied(let output) = result.outcome, let mismatch = output.copiesMismatch {
-                // The editor's copies and the rows differ (D4): the copy was made, the rows the editor had no id for got fresh ones.
-                // Round 1g-C (review A2): the settle then pushes the database's ids to the editor, so both sides agree again.
-                idsDisagree = true
-                DebugLog.alwaysPersisted(
-                    "[StructuralUndoController] editor-first duplicate \(opId): duplicateCopiesMismatch: \(mismatch)")
+                if copiesAreLeadersOnly {
+                    // The Markdown Duplicate: the page holds ids for the leaders only, so "N node(s) got a fresh id" is the normal
+                    // case. The ids disagree only when a leader's copy id is not among the rows the job inserted.
+                    let inserted = Set(output.copiedBlockIds)
+                    let missing = copies.filter { !inserted.contains($0.newId) }.count
+                    idsDisagree = missing > 0
+                    if idsDisagree {
+                        DebugLog.alwaysPersisted(
+                            "[StructuralUndoController] markdown duplicate \(opId): \(missing) leader copy id(s) did not become rows: \(mismatch)")
+                    } else {
+                        DebugLog.log(.undo, "[StructuralUndoController] markdown duplicate \(opId): leaders-only copies matched: \(mismatch)")
+                    }
+                } else {
+                    // The editor's copies and the rows differ (D4): the copy was made, the rows the editor had no id for got fresh ones.
+                    // Round 1g-C (review A2): the settle then pushes the database's ids to the editor, so both sides agree again.
+                    idsDisagree = true
+                    DebugLog.alwaysPersisted(
+                        "[StructuralUndoController] editor-first duplicate \(opId): duplicateCopiesMismatch: \(mismatch)")
+                }
             }
             await self?.editorFirstJobSettled(
                 opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: [], epoch: epochAtClick, jobKey: jobKey,
@@ -293,17 +318,27 @@ extension StructuralUndoController {
     /// The copy goes right after the last outline entry of the original section (the sidebar's own list: the section's root and
     /// everything below it, never into Notes or Bibliography).
     func showDuplicateInSidebar(opId: UUID, rootId: String, reply: EditorFirstDuplicateReply, database: ProjectDatabase) {
-        guard let editorState, !reply.insertedSectionsSnapshot.isEmpty else { return }
+        showDuplicateInSidebar(
+            opId: opId, rootId: rootId, copies: reply.copies, insertedSections: reply.insertedSectionsSnapshot, database: database)
+    }
+
+    /// The overlay itself, for a caller that has no `EditorFirstDuplicateReply`: the Markdown Duplicate builds `copies` (the leaders' source
+    /// and new ids) and `insertedSections` from the ROWS of the subtree (`MarkdownLeaderMap.duplicateInsertedSections`).
+    func showDuplicateInSidebar(
+        opId: UUID, rootId: String, copies: [DuplicatedBlock], insertedSections: [EditorFirstDuplicateReply.InsertedSection],
+        database: ProjectDatabase
+    ) {
+        guard let editorState, !insertedSections.isEmpty else { return }
         let projectId = editorState.currentProjectId ?? ""
-        let sourceByNew = Dictionary(reply.copies.map { ($0.newId, $0.sourceId) }, uniquingKeysWith: { first, _ in first })
-        let sourceIds = reply.insertedSectionsSnapshot.compactMap { sourceByNew[$0.id] }.filter { !$0.isEmpty && !$0.hasPrefix("temp-") }
+        let sourceByNew = Dictionary(copies.map { ($0.newId, $0.sourceId) }, uniquingKeysWith: { first, _ in first })
+        let sourceIds = insertedSections.compactMap { sourceByNew[$0.id] }.filter { !$0.isEmpty && !$0.hasPrefix("temp-") }
         let originals: [String: Block] = sourceIds.isEmpty ? [:] : Dictionary(
             ((try? database.read { try Block.filter(keys: sourceIds).fetchAll($0) }) ?? []).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first })
         let sections = editorState.sections
         let rootSort = sections.first { $0.id == rootId }?.sortOrder ?? 0
         var leaders: [Block] = []
-        for (index, section) in reply.insertedSectionsSnapshot.enumerated() {
+        for (index, section) in insertedSections.enumerated() {
             var block = sourceByNew[section.id].flatMap { originals[$0] } ?? Block(
                 projectId: projectId, sortOrder: rootSort, blockType: section.kind == "section_break" ? .sectionBreak : .heading,
                 headingLevel: section.kind == "heading" ? section.level : nil, isPseudoSection: section.kind == "section_break")

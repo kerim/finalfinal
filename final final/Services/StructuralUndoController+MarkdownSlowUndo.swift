@@ -7,11 +7,14 @@
 //  model: the editor swaps first, a queued job makes the database equal to the snapshot, nothing typed meanwhile is lost).
 //
 //  WHICH ENTRIES. Every Markdown entry whose Cmd-Z or Cmd-Shift-Z is not quick (`quickPathPossible`, or the quick path closed itself):
-//    (a) entries the OLD body recorded in Markdown mode: a Duplicate Section, a drag-reorder, the three Version History restores. Their
-//        CLICKS keep the old body (slices 2 to 4 are not built); their undo and redo go through here, so what the user typed after the
-//        click is never lost. The page recorded their registry entry at the click (`beginStructuralOp` / `finalizeStructuralOpPostOpDoc`:
-//        the checkpoint state, the pre-op and post-op documents), which is all `markdownStructuralSwap` needs;
-//    (b) a Markdown Delete entry whose quick path is not open (the structural generation moved, ...).
+//    (a) entries the OLD body recorded in Markdown mode: the three Version History restores (their clicks keep the old body, slice 4 is
+//        not built), and a Duplicate Section or a drag-reorder whose click took the old body (the kill switch off, a page that refused).
+//        Their undo and redo go through here, so what the user typed after the click is never lost. The page recorded their registry
+//        entry at the click (`beginStructuralOp` / `finalizeStructuralOpPostOpDoc`: the checkpoint state, the pre-op and post-op
+//        documents), which is all `markdownStructuralSwap` needs;
+//    (b) an editor-first Markdown Delete or Duplicate entry whose quick path is not open (the structural generation moved, ...). A
+//        Duplicate's redo here is the page's plain composed redo (`markdownStructuralSwap(opId, 'redo')`, no request), as the quick
+//        redo's.
 //
 //  THE PRESS (`markdownQueuedSnapshotUndo`), called by `queuedSnapshotUndo` for a Markdown session, under the structural gate, with the
 //  snapshot to swap in already resolved by `performUndo` / `performRedo`:
@@ -133,7 +136,8 @@ extension StructuralUndoController {
 
     /// The slow route's one page call. The redo of an editor-first Markdown Delete carries a FRESH request built from the rows as they
     /// are now (review M-3), as the quick redo does; if none can be built (no holder, the root heading cannot be found again) the
-    /// answer is nil and the press is refused. Every other swap (an undo, the redo of an entry the old body recorded) sends no request.
+    /// answer is nil and the press is refused. Every other swap (an undo, the redo of an entry the old body recorded, the redo of an
+    /// editor-first Duplicate, which the page composes by itself) sends no request.
     ///
     /// The root is found in the CURRENT rows through a `RootReference` taken from the rows the delete job saw: the slow undo that
     /// preceded this redo put the section back by replacing the project's rows with a snapshot's, which gives the section's rows FRESH

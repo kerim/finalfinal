@@ -138,13 +138,15 @@ extension StructuralUndoController {
         return true
     }
 
-    /// The Markdown counterpart of `putBackAfterFailedEditorFirstOp` for a Markdown job that did not apply (plan B8): a delete, and since
-    /// slice 2 a drag-reorder (`.sectionReorder`) (slice 1 called it `putBackMarkdownDelete`). The editor was already swapped back by step 8 when
+    /// The Markdown counterpart of `putBackAfterFailedEditorFirstOp` for a Markdown job that did not apply (plan B8): a delete, since
+    /// slice 2 a drag-reorder (`.sectionReorder`) and since slice 3 a duplicate (`.sectionDuplicate`) (slice 1 called it
+    /// `putBackMarkdownDelete`). The editor was already swapped back by step 8 when
     /// the document was unchanged (for a job that never held its place in the queue there is no step 8: the swap is tried here, for a
-    /// delete and a reorder alike), and then the UX contract 4.3 alert of the entry's KIND shows ("Couldn't Delete Section", "Couldn't
-    /// Move Section"); when the user had typed since, the command stands (the flush wrote the editor's text) and NO alert shows. The
-    /// entry, its slot, its job record and its undo-timeline entry go either way, exactly as the Rich Text put-back drops them; a
-    /// reorder's sidebar overlay (`pendingReorder`) goes first, so an outline read from here on shows the rows' (earlier) order.
+    /// delete, a reorder and a duplicate alike), and then the UX contract 4.3 alert of the entry's KIND shows ("Couldn't Delete Section",
+    /// "Couldn't Move Section", "Couldn't Duplicate Section"); when the user had typed since, the command stands (the flush wrote the
+    /// editor's text) and NO alert shows. The entry, its slot, its job record and its undo-timeline entry go either way, exactly as
+    /// the Rich Text put-back drops them; a reorder's sidebar overlay (`pendingReorder`) and a duplicate's copy overlay
+    /// (`pendingRestoreSections`) go first, so an outline read from here on shows the rows' (earlier) state.
     func putBackMarkdownJob(opId: UUID, jobKey: UUID? = nil, kind: EditorFirstOpKind = .sectionDelete, removedLeaders: Set<String>) async {
         guard let editorState, let unifiedUndoService else { return }
         let gateKey = jobKey ?? opId
@@ -157,9 +159,13 @@ extension StructuralUndoController {
             efRecordedGeneration[opId] = nil
             forgetQuickUndoState(opId)
             efEditorKind[opId] = nil
+            editorState.pendingRestoreSections[opId] = nil   // a failed duplicate's copy overlay goes on every way out (as the Rich Text put-back)
             editorState.liftPendingReorder(opId: opId)   // a failed reorder's overlay goes on every way out, the closed-gate return included
         }
         unifiedUndoService.removeEntry(opId: opId)
+        // A failed duplicate's copy never reached the rows: an outline result computed from here on must not merge its leaders back in, so
+        // the overlay that showed it goes before anything below suspends (no-op for any other kind).
+        editorState.pendingRestoreSections[opId] = nil
         editorState.liftPendingReorder(opId: opId)   // and before anything below suspends: its rows never moved (no-op for any other kind)
         efPutBackOpIds.insert(opId)   // a Cmd-Z already on its way for this entry is answered `failed` (as Rich Text does)
         guard !editorState.structuralGate.isClosedToNewWork else {
@@ -172,7 +178,7 @@ extension StructuralUndoController {
         // swapped-in document, and its step 8 flush has written that text into the rows, so the editor and the rows agree; the entry
         // goes off the timeline (below) and the user is not told the press failed, because it did what it said.
         var swappedBack = gate?.swappedBack ?? false
-        if kind == .sectionDelete || kind == .sectionReorder, let gate, !gate.swapAttempted {
+        if kind == .sectionDelete || kind == .sectionReorder || kind == .sectionDuplicate, let gate, !gate.swapAttempted {
             swappedBack = await swapBackFailedMarkdownDelete(opId: opId, gateKey: gateKey)
         }
         await evalVoid("window.FinalFinal.clearFailedStructuralOpEntry?.('\(opId.uuidString)')")

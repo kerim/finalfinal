@@ -84,6 +84,7 @@ import {
 } from './api-formatting';
 import { markdownReplaceManagedRegion } from './api-managed-region';
 import { markdownStructuralEditorFirst, markdownStructuralSwap } from './api-structural-markdown';
+import { markdownStructuralDuplicate } from './api-structural-markdown-duplicate';
 import { markdownStructuralReorder } from './api-structural-markdown-reorder';
 import { caywRemapPlugin } from './cayw-remap-plugin';
 import { updateCitationAddButton } from './citations';
@@ -703,6 +704,8 @@ window.FinalFinal = {
   markdownStructuralSwap,
   // The sidebar drag-reorder of a section, editor-first (Phase 4b, Markdown slice 2) -- see api-structural-markdown-reorder.ts.
   markdownStructuralReorder,
+  // The Duplicate Section of a section, editor-first (Phase 4b, Markdown slice 3) -- see api-structural-markdown-duplicate.ts.
+  markdownStructuralDuplicate,
   // The renumber flag of a structural settle (B5): while set, `renumberFootnotes` is not a text-history step.
   setStructuralSettleOpId,
   // Region-scoped replace of the Notes / bibliography text (O28): see api-managed-region.ts for the JSON contract.

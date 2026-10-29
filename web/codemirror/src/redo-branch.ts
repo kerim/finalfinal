@@ -18,7 +18,8 @@
 // "Live document -> checkpoint document" is NOT just the inverse of the command's own change set: by the time of the undo the live
 // document has had the app's own rewrites (the anchors injected by the rebuild, the renumbered footnotes) applied to it as
 // history-neutral changes, so its positions are not those of the document right after the command. The change set used is
-// therefore `churn` (live -> the document the command produced, a small multi-span line diff) composed with the inverse of the
+// therefore `churn` (live -> the document the command produced, `computeRefinedChanges`: small hunks however long the book is, so
+// the moved span below can be followed through it) composed with the inverse of the
 // command's change set (that document -> the checkpoint), and it is checked to turn the live document into the checkpoint's
 // exactly. For an entry the old body recorded (no stored change set) it is the line diff between the two documents.
 //
@@ -155,7 +156,7 @@ export function carryRedoBranch(
         toCheckpoint = inverse;
         if (moved) spans = [moved];
       } else {
-        const churn = ChangeSet.of(computeMinimalChanges(live.doc.toString(), produced.toString()), live.doc.length);
+        const churn = ChangeSet.of(computeRefinedChanges(live.doc.toString(), produced.toString()), live.doc.length);
         toCheckpoint = churn.compose(inverse);
         if (moved) {
           const back = churn.invert(live.doc); // produced -> live

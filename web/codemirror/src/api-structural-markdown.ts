@@ -28,7 +28,8 @@
 //     managed?: 'notes' | 'bibliography';      // set on the Notes / Bibliography heading rows (database isNotes / isBibliography)
 //   }
 //   interface MarkdownStructuralRequest {
-//     kind: 'delete';                          // any other kind answers { ok:false, reason:'unsupportedKind' } for now
+//     kind: 'delete';                          // any other kind answers { ok:false, reason:'unsupportedKind' } (a Duplicate is
+//                                              // its own entry point, api-structural-markdown-duplicate.ts)
 //     opId: string;                            // the structural entry's id (also the registry key)
 //     rootId: string;                          // the leader whose section is removed
 //     leaders: MarkdownLeader[];               // EVERY leader of the document, in sort order, Notes and Bibliography included
@@ -99,7 +100,7 @@ import {
   withoutRedoEventsTouching,
 } from './redo-branch';
 import { resetSpellcheckAfterStateSwap } from './spellcheck-plugin';
-import { computeMinimalChanges } from './text-diff';
+import { computeRefinedChanges } from './text-diff';
 import { withAppOrigin } from './typewriter-plugin';
 import {
   decideLiveRouting,
@@ -157,7 +158,7 @@ export interface MarkdownDeleteEntryExtras {
 }
 
 /** What an editor-first Markdown REORDER stores (api-structural-markdown-reorder.ts). It has no quick re-run: its redo is the composed
- * redo (`composedReorderRedo` below). */
+ * redo (`composedRedo` below). */
 export interface MarkdownReorderEntryExtras {
   kind: 'reorder';
   request: MarkdownReorderRequest;
@@ -170,8 +171,35 @@ export interface MarkdownReorderEntryExtras {
   postSelection: EditorSelection;
 }
 
+/** One leader of the copied subtree: the id the source leader row has and the id its copy gets (Swift mints it before the call). */
+export interface MarkdownCopyId {
+  source: string;
+  new: string;
+}
+
+/** The request of an editor-first Markdown DUPLICATE (api-structural-markdown-duplicate.ts): the delete's fields plus `copyIds`. */
+export interface MarkdownDuplicateRequest extends Omit<MarkdownStructuralRequest, 'kind'> {
+  kind: 'duplicate';
+  /** One pair per leader of the section's subtree (the root and every deeper leader up to the end of the range), in document order. */
+  copyIds: MarkdownCopyId[];
+}
+
+/** What an editor-first Markdown DUPLICATE stores. Like the reorder it has no quick re-run: its redo is the composed redo
+ * (`composedRedo` below), which lands exactly on the settled post-op document, so the same copy ids come back. */
+export interface MarkdownDuplicateEntryExtras {
+  kind: 'duplicate';
+  request: MarkdownDuplicateRequest;
+  /** The ONE change set the click applied: a pure insertion (the copy and its blank-line separator). */
+  opChanges: ChangeSet;
+  /** The inserted text in the POST-op document. The undo carry drops the redo events that touch it (redo-branch.ts): an event typed
+   * inside the copy would otherwise land, after the undo has removed the copy, at the start of the next chapter's heading line. */
+  moved: MovedRange;
+  /** The selection the click left in the post-op document (the caret stays with its text). The composed redo puts it back. */
+  postSelection: EditorSelection;
+}
+
 /** What an editor-first Markdown command stores on its registry entry (`UndoRegistryEntry.markdown`), tagged by `kind`. */
-export type MarkdownEntryExtras = MarkdownDeleteEntryExtras | MarkdownReorderEntryExtras;
+export type MarkdownEntryExtras = MarkdownDeleteEntryExtras | MarkdownReorderEntryExtras | MarkdownDuplicateEntryExtras;
 
 // === Diagnostics ===
 
@@ -356,8 +384,22 @@ export function leaderMismatchDetail(scan: DocumentScan, leaders: MarkdownLeader
   return null;
 }
 
-/** The request, or the failure to answer. Never throws. */
-function parseRequest(input: unknown): { request: MarkdownStructuralRequest } | { failure: MarkdownStructuralResult } {
+/** A copy id is written into the text as `<!-- @sid:ID -->`, so it must be a UUID's alphabet and nothing that could end the comment. */
+const COPY_ID = /^[0-9a-fA-F-]+$/;
+
+/** The request of kind `kind` (the delete's by default), or the failure to answer. Never throws. */
+export function parseRequest(
+  input: unknown,
+  kind?: 'delete'
+): { request: MarkdownStructuralRequest } | { failure: MarkdownStructuralResult };
+export function parseRequest(
+  input: unknown,
+  kind: 'duplicate'
+): { request: MarkdownDuplicateRequest } | { failure: MarkdownStructuralResult };
+export function parseRequest(
+  input: unknown,
+  kind: 'delete' | 'duplicate' = 'delete'
+): { request: MarkdownStructuralRequest | MarkdownDuplicateRequest } | { failure: MarkdownStructuralResult } {
   let raw: unknown = input;
   if (typeof input === 'string') {
     try {
@@ -367,7 +409,7 @@ function parseRequest(input: unknown): { request: MarkdownStructuralRequest } | 
     }
   }
   if (!isRecord(raw)) return { failure: { ok: false, reason: 'badRequest', detail: 'not an object' } };
-  if (raw.kind !== 'delete') {
+  if (raw.kind !== kind) {
     return { failure: { ok: false, reason: 'unsupportedKind', detail: `kind=${String(raw.kind)}` } };
   }
   if (typeof raw.opId !== 'string' || raw.opId === '') {
@@ -390,16 +432,29 @@ function parseRequest(input: unknown): { request: MarkdownStructuralRequest } | 
   if (endLeaderId !== undefined && endLeaderId !== null && typeof endLeaderId !== 'string') {
     return { failure: { ok: false, reason: 'badRequest', detail: 'endLeaderId' } };
   }
-  return {
-    request: {
-      kind: 'delete',
-      opId: raw.opId,
-      rootId: raw.rootId,
-      leaders,
-      stopLine: stopLine as string | null | undefined,
-      endLeaderId: endLeaderId as string | null | undefined,
-    },
+  const common = {
+    opId: raw.opId,
+    rootId: raw.rootId,
+    leaders,
+    stopLine: stopLine as string | null | undefined,
+    endLeaderId: endLeaderId as string | null | undefined,
   };
+  if (kind === 'delete') return { request: { kind: 'delete', ...common } };
+
+  if (!Array.isArray(raw.copyIds)) return { failure: { ok: false, reason: 'badRequest', detail: 'copyIds' } };
+  const copyIds: MarkdownCopyId[] = [];
+  for (const [index, item] of raw.copyIds.entries()) {
+    const valid =
+      isRecord(item) &&
+      typeof item.source === 'string' &&
+      typeof item.new === 'string' &&
+      COPY_ID.test(item.source) &&
+      COPY_ID.test(item.new);
+    if (!valid) return { failure: { ok: false, reason: 'badRequest', detail: `copyIds ${index}` } };
+    const pair = item as unknown as MarkdownCopyId;
+    copyIds.push({ source: pair.source, new: pair.new });
+  }
+  return { request: { kind: 'duplicate', ...common, copyIds } };
 }
 
 // === The range and the change set ===
@@ -664,7 +719,9 @@ const CARRIED_STATE: CarriedState[] = [
  * redone. A carry that cannot be built falls back to the plain checkpoint (the redo branch is lost, nothing else), with a trace line.
  */
 function buildSwappedState(entry: UndoRegistryEntry, live: EditorState, setAsideCount: number): EditorState {
-  const moved = entry.markdown?.kind === 'reorder' ? entry.markdown.moved : null;
+  // The text whose redo events the carry leaves out: the dragged chapter (reorder) or the inserted copy (duplicate).
+  const moved =
+    entry.markdown?.kind === 'reorder' || entry.markdown?.kind === 'duplicate' ? entry.markdown.moved : null;
   const carry = carryRedoBranch(live, entry.checkpoint, entry.markdown?.opChanges, getEditorExtensions(), moved);
   if (carry === null) return entry.checkpoint;
   if (!carry.carried) {
@@ -762,10 +819,12 @@ function swapUndo(view: EditorView, entry: UndoRegistryEntry, opId: string): Mar
   return { ok: true, preRaw, postRaw: view.state.doc.toString() };
 }
 
-/** The slow redo of an entry the OLD body recorded: the saved post-op text goes in as a minimal diff, outside the text history. */
+/** The slow redo of an entry the OLD body recorded, and the fall-back of the composed redo: the saved post-op text goes in as a refined
+ * diff (`computeRefinedChanges`, no 500-line bound: a book with two automatic rewrites far apart is not one giant replaced span, which
+ * would take the caret and the history events inside it to its edge), outside the text history. */
 function swapRedoFromSavedCopy(view: EditorView, entry: UndoRegistryEntry): MarkdownStructuralResult {
   const preRaw = view.state.doc.toString();
-  const changes = computeMinimalChanges(preRaw, entry.postOpDoc.toString());
+  const changes = computeRefinedChanges(preRaw, entry.postOpDoc.toString());
   if (changes.length > 0) {
     withAppOrigin(() => view.dispatch({ changes, annotations: Transaction.addToHistory.of(false) }));
   }
@@ -773,24 +832,27 @@ function swapRedoFromSavedCopy(view: EditorView, entry: UndoRegistryEntry): Mark
 }
 
 /**
- * The redo of a REORDER entry (decision (a), judge ruling M10): the recorded move is applied to the checkpoint document and then the
- * small difference to the SETTLED post-op document (`entry.postOpDoc`, which has followed the rebuild's anchors and the footnote
- * renumber since the click) is composed onto it, as ONE change outside the text history. The redo therefore lands exactly on
- * `postOpDoc` (so a Cmd-Z pressed at once is still routed structural, and the footnotes are never seen out of order), and the history is
- * mapped through the real move, not through a line diff that would treat a shorter chapter's text as removed and re-inserted.
+ * The redo of a REORDER or DUPLICATE entry (decision (a), judge ruling M10): the recorded change is applied to the checkpoint document
+ * and then the small difference to the SETTLED post-op document (`entry.postOpDoc`, which has followed the rebuild's anchors and the
+ * footnote renumber since the click) is composed onto it, as ONE change outside the text history. The redo therefore lands exactly on
+ * `postOpDoc` (so a Cmd-Z pressed at once is still routed structural, and the footnotes are never seen out of order; for a duplicate it
+ * carries the click's `<!-- @sid:NEW -->` markers, so the same copy ids come back), and the history is mapped through the real change,
+ * not through a line diff that would treat a shorter chapter's text as removed and re-inserted. The caret also goes back with its text
+ * (a caret at the start of the next chapter's heading is there again after the redo; the saved-copy swap would leave it in front of
+ * the copy). Measured for a duplicate (structural-markdown-duplicate.test.ts WD10): the text history comes out the same on both routes.
  *
  * Only for a live document equal to the CHECKPOINT document, the one `opChanges` was built on. Returns null otherwise (the document
  * changed since: an automatic rewrite moved `preOpDoc`, the user typed), and the caller uses the saved-copy swap.
  * Runs inside the midOp-guarded block of `markdownStructuralSwap`: its own dispatch is a sync-origin change and must not advance the
  * entry's saved copies (`maybeAdvanceRegistryOnSyncOriginTx` skips while any entry is mid-op).
  */
-function composedReorderRedo(view: EditorView, entry: UndoRegistryEntry): MarkdownStructuralResult | null {
+function composedRedo(view: EditorView, entry: UndoRegistryEntry): MarkdownStructuralResult | null {
   const extras = entry.markdown;
-  if (extras?.kind !== 'reorder') return null;
+  if (extras?.kind !== 'reorder' && extras?.kind !== 'duplicate') return null;
   if (!view.state.doc.eq(entry.checkpoint.doc)) return null;
   const preRaw = view.state.doc.toString();
   const moved = extras.opChanges.apply(entry.checkpoint.doc).toString();
-  const settle = ChangeSet.of(computeMinimalChanges(moved, entry.postOpDoc.toString()), extras.opChanges.newLength);
+  const settle = ChangeSet.of(computeRefinedChanges(moved, entry.postOpDoc.toString()), extras.opChanges.newLength);
   const changes = settle.empty ? extras.opChanges : extras.opChanges.compose(settle);
   // The caret goes with its text, as it did at the click -- unless the user moved it since the Cmd-Z (the swap-back left the
   // checkpoint's selection in place), in which case their caret is simply mapped through the change.
@@ -855,8 +917,9 @@ export function markdownStructuralSwap(
   }
 
   // A quick redo re-runs the command on the document as it stands, under the same opId. It brings its own midOp handling. Only a DELETE
-  // has a quick re-run; a reorder entry (api-structural-markdown-reorder.ts) goes on to the shared midOp-guarded block below, where its
-  // composed redo runs beside the saved-copy swap (an early return here would let its own dispatch advance `preOpDoc`).
+  // has a quick re-run; a reorder entry (api-structural-markdown-reorder.ts) and a duplicate entry (api-structural-markdown-duplicate.ts)
+  // go on to the shared midOp-guarded block below, where their composed redo runs beside the saved-copy swap (an early return here would
+  // let its own dispatch advance `preOpDoc`).
   if (direction === 'redo' && entry.markdown?.kind === 'delete') {
     let request = entry.markdown.request;
     if (requestJson !== undefined) {
@@ -873,10 +936,10 @@ export function markdownStructuralSwap(
     if (direction === 'undo') return swapUndo(view, entry, opId);
     // The redo list as it stands BEFORE the redo's own dispatch: the put-back needs it unchanged since the undo (redo-branch.ts).
     const depthBeforeRedo = redoDepth(view.state);
-    let redone = composedReorderRedo(view, entry);
+    let redone = composedRedo(view, entry);
     if (redone === null) {
-      if (entry.markdown?.kind === 'reorder')
-        trace('markdown-swap reorder redo: the document is not the checkpoint, saved-copy swap');
+      if (entry.markdown?.kind === 'reorder' || entry.markdown?.kind === 'duplicate')
+        trace(`markdown-swap ${entry.markdown.kind} redo: the document is not the checkpoint, saved-copy swap`);
       redone = swapRedoFromSavedCopy(view, entry);
     }
     putBackSetAsideRedo(view, opId, depthBeforeRedo);

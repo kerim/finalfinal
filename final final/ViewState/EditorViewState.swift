@@ -331,14 +331,32 @@ class EditorViewState {
         // the editor when a lifecycle holds the editor): until that has finished the editor's Notes are half updated, and the
         // flush these callers run next would write them over the database's correct ones. Still only the delete's own work: an
         // unrelated queued write is not waited for (U11), and the follow-up part is bounded (`awaitAllSettled`).
-        if efJobRegistry.hasUnsettledWork {
+        //
+        // And, in Markdown mode (t-4a8fd8af slice 3, judge fix A), the writer's STRUCTURAL HOLD. A Markdown click changes the page
+        // first and registers its job only later, and in between it awaits (the page calls, the rows read, the typing batch). Until its
+        // job is queued the registry above knows nothing of it, yet the page already holds the command (a Duplicate's copy) that the
+        // rows do not: a flush that wrote the page's text into the rows now would be copied again by the job (Duplicate), and a zoom's
+        // push could land after the page insertion. The hold is up from the click's first page change until step 8 has saved the
+        // typing, so this waits for it to fall first; the caller is HELD, never refused, and runs afterwards. Nothing that owns a
+        // hold calls this (the click, the quick undo and redo, the job, step 8: none of them flushes or zooms), so it cannot wait on
+        // itself. The wait for the registry follows: the settle outlives the hold.
+        if hasUnfinishedStructuralWork {
             // Like every delayed progress toast it yields to a progress toast already on screen (fix round 2a, items 5 and R3):
             // Save Version and export call this wait through `flushLiveContentToDatabase`, and export already shows "Exporting...".
             let toast = DelayedProgressToast(toastCenter: toastCenter, message: DelayedProgressToast.finishingMessage)
             defer { toast.stop() }
-            await efJobRegistry.awaitAllSettled()
+            await markdownWriter.awaitStructuralHoldReleased()
+            if efJobRegistry.hasUnsettledWork { await efJobRegistry.awaitAllSettled() }
         }
         outOfQueueWriteGeneration &+= 1
+    }
+
+    /// True while a structural command still has work that a direct writer (the zoom, the flush before Save Version, export and the idle
+    /// backup) must not run beside: an editor-first job or its settle that has not settled (`efJobRegistry.hasUnsettledWork`), or, in
+    /// Markdown mode, the writer's structural hold (`markdownWriter.isHeldForStructuralWork`), which covers a click from its first page
+    /// change, before its job is registered. The user zoom's pre-check and `awaitPendingStructuralJobs` ask it.
+    var hasUnfinishedStructuralWork: Bool {
+        efJobRegistry.hasUnsettledWork || markdownWriter.isHeldForStructuralWork
     }
 
     /// Direct zoom flag passed through SwiftUI view hierarchy to bypass coordinator state race condition.

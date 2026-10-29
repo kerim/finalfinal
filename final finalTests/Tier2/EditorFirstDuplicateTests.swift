@@ -251,4 +251,34 @@ struct EditorFirstDuplicateTests: QuickUndoFixtures {
             rig.alerts.first?.message.contains("Anything you typed into the copy was removed with it.") == true,
             "the alert does not say that typing into the copy was removed: \(String(describing: rig.alerts.first?.message))")
     }
+
+    // U16 (t-4a8fd8af slice 3, the Markdown Duplicate): the Markdown page gives only the section's LEADERS new ids, so its job gets ONE
+    // pair per leader and every other row of the subtree takes a fresh id. The job then reports "N node(s) got a fresh id", which is the
+    // normal case and not a disagreement: with `copiesAreLeadersOnly` the settle must NOT push the database's block ids to the editor.
+    // The same pairs without the flag ARE reported (the Rich Text rule), which is the control inside this test: it shows the push path is
+    // live in this rig, so "no push" for the flagged job is the flag's doing.
+    @Test func testLeaderOnlyCopiesAreNotReportedAsDisagreeing() async throws {
+        let rig = try EditorFirstRig(markdown: Self.fourSections)
+
+        func startJob(on title: String, leadersOnly: Bool) async throws -> Block {
+            let root = try rig.heading(title)
+            let opId = UUID()
+            rig.controller.efOpEpoch[opId] = 1
+            rig.editorState.pendingEditorFirstJobs += 1   // the job's task brings it down again (`ownsPendingJobCount`)
+            let copies = [DuplicatedBlock(sourceId: root.id, newId: UUID().uuidString)]   // the heading only: its paragraph has no pair
+            let reserved = await rig.controller.startEditorFirstDuplicateJob(
+                opId: opId, rootId: root.id, copies: copies, database: rig.db, projectId: rig.pid, ownsPendingJobCount: true,
+                copiesAreLeadersOnly: leadersOnly)
+            #expect(reserved, "the job for \(title) did not reserve its place")
+            #expect(await rig.waitUntilSettled(), "the job for \(title) did not settle")
+            let copyRow = try #require(try rig.blocks().first { $0.id == copies[0].newId }, "the heading's copy does not have the pair's id")
+            #expect(copyRow.textContent == "\(title) copy")
+            return copyRow
+        }
+
+        _ = try await startJob(on: "Section A", leadersOnly: true)
+        #expect(rig.pushBlockIdsCalls == 0, "pushesDatabaseBlockIds true: leader-only copies were reported as disagreeing")
+        _ = try await startJob(on: "Section B", leadersOnly: false)
+        #expect(rig.pushBlockIdsCalls == 1, "control: the same kind of pairs without the flag must be reported (\(rig.pushBlockIdsCalls))")
+    }
 }

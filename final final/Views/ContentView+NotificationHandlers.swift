@@ -607,8 +607,10 @@ extension ContentView {
     func performUserZoomIn(_ sectionId: String, mode: ZoomMode, reason: String) {
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): an editor-first section delete's job is still pending. Wait for it
         // BEFORE any state change below, so the editor stays live (and typing keeps being saved) during the wait; then start the
-        // zoom exactly as usual. Nothing pending (the normal case) takes the unchanged synchronous path.
-        if editorState.efJobRegistry.hasUnsettledWork {
+        // zoom exactly as usual. Nothing pending (the normal case) takes the unchanged synchronous path. In Markdown mode "pending"
+        // also means the writer's structural hold (t-4a8fd8af slice 3): a Duplicate, Delete or drag has changed the page and not yet
+        // queued its job, and a zoom that read the document now would zoom a text the rows do not match.
+        if editorState.hasUnfinishedStructuralWork {
             Task {
                 await editorState.awaitPendingStructuralJobs()
                 // A close, quit or project switch may have started while the zoom waited (it wakes at the very moment the
@@ -674,8 +676,8 @@ extension ContentView {
     func performUserZoomOut(reason: String) {
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): wait for a pending editor-first delete job before any state
         // change, as `performUserZoomIn` does. Delete is refused while zoomed, so this is almost never taken; it is the plan's
-        // listed wait site for zoom out.
-        if editorState.efJobRegistry.hasUnsettledWork {
+        // listed wait site for zoom out. It waits for the Markdown writer's structural hold too (see `performUserZoomIn`).
+        if editorState.hasUnfinishedStructuralWork {
             Task {
                 await editorState.awaitPendingStructuralJobs()
                 // As in `performUserZoomIn`: never zoom a project that a close, quit or switch has started to save (F2).

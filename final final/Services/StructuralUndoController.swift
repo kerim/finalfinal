@@ -1083,13 +1083,16 @@ final class StructuralUndoController {
     ///
     /// t-18b7fa48 Phase 4b slice 3: in Rich Text, not zoomed, on a duplicable root, this is the editor-first path
     /// (`performEditorFirstDuplicate`, StructuralUndoController+EditorFirstDuplicate.swift): the editor inserts the copy at once and
-    /// the database follows as a queued job. Everything else (Markdown mode, zoomed, no writer, the UI-test legacy flag) runs today's
-    /// whole sequence below, unchanged, with its own bumps of the out-of-queue counters. Like Delete, the click takes the gate without
+    /// the database follows as a queued job. In Markdown mode (t-4a8fd8af slice 3) it is `performMarkdownEditorFirstDuplicate`
+    /// (StructuralUndoController+MarkdownEditorFirstDuplicate.swift), the same idea on the CodeMirror page. Everything else (zoomed, no
+    /// writer, the UI-test legacy flag, the Markdown kill switch off, a page that refuses) runs today's whole sequence below, unchanged,
+    /// with its own bumps of the out-of-queue counters. Like Delete, the click takes the gate without
     /// the rebuild wait (the rebuild stamp protects the editor instead), and the old path waits for the running rebuilds itself.
     @discardableResult
     func performSectionDuplicate(rootId: String) async -> StructuralOpOutcome {
         await runStructuralCommand(label: "sectionDuplicate", waitsForRebuilds: false, cancelled: StructuralOpOutcome.refused) {
             if let outcome = await performEditorFirstDuplicate(rootId: rootId) { return outcome }
+            if let outcome = await performMarkdownEditorFirstDuplicate(rootId: rootId) { return outcome }   // t-4a8fd8af: nil while the switch is off
             await editorState?.awaitNoRunningRebuilds(label: "before sectionDuplicate (old path)")
             return await performStructuralOpUngated(
                 kind: .sectionDuplicate, title: "Duplicate Section",

@@ -328,8 +328,10 @@ function refineRun(base: number, old: string, next: string, out: TextChange[]): 
  * is a one-character or a pure-insertion change however long the book is. When the texts differ in more than a few thousand places the
  * middle becomes one span, as in `computeMinimalChanges`. Offsets are UTF-16 code units and no change starts or ends inside a surrogate pair.
  *
- * Used by the redo put-back (redo-branch.ts `putBackRedo`); the redo list kept across a footnote renumber (`keptRedoOnto`) maps through
- * that transaction's own change set instead. `computeMinimalChanges` (setContent, the saved-copy swap, the carry) is unchanged.
+ * Used by the redo put-back (redo-branch.ts `putBackRedo`), by the carry's churn (live document -> the document a structural command
+ * produced, `carryRedoBranch`) and, in api-structural-markdown.ts, by the saved-copy swap and by the composed redo's settle; the redo list
+ * kept across a footnote renumber (`keptRedoOnto`) maps through that transaction's own change set instead. `computeMinimalChanges`
+ * (setContent, and the line diff of an entry the old body recorded) is unchanged.
  */
 export function computeRefinedChanges(oldText: string, newText: string): TextChange[] {
   if (oldText === newText) return [];

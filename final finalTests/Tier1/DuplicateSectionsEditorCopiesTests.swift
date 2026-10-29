@@ -182,4 +182,30 @@ struct DuplicateSectionsEditorCopiesTests {
         #expect(result.copiedBlockIds.count == fixture.subtree.count)
         #expect(Set(result.copiedBlockIds).isDisjoint(with: Set(fixture.subtree.map(\.id))))
     }
+
+    // U15 (t-4a8fd8af slice 3, CONTROL: passes with the code as it is): the Markdown page gives only the section's LEADERS new ids, so the
+    // job's `copies` hold one pair for the heading and none for the paragraph and the list rows. The heading's copy takes the pair's id,
+    // every other row is copied under a fresh id (never one of the original ids, never repeated), and the difference is reported (the
+    // Markdown click treats that report as normal: `copiesAreLeadersOnly`).
+    @Test("leader-only copies: the heading's copy takes the editor's id, every other row gets a fresh one, and it is reported")
+    @MainActor
+    func testLeaderOnlyCopiesGiveLeadersTheirIdsAndOthersFreshIds() throws {
+        let fixture = try makeFixture()
+        let copies = [(source: fixture.root.id, new: UUID().uuidString)]
+
+        let result = try duplicate(fixture, copies: copies)
+
+        #expect(result.copiedBlockIds.count == fixture.subtree.count, "every row of the section is copied")
+        #expect(result.copiedBlockIds.first == copies[0].new, "the heading's copy does not carry the editor's id")
+        #expect(Set(result.copiedBlockIds).count == fixture.subtree.count, "no id is used twice")
+        #expect(
+            Set(result.copiedBlockIds.dropFirst()).isDisjoint(with: Set(fixture.subtree.map(\.id)).union([copies[0].new])),
+            "the other rows must get fresh ids (never an original's id, never the heading copy's)")
+        let rows = Dictionary(try TestFixtureFactory.fetchBlocks(from: fixture.db).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        #expect(result.copiedBlockIds.allSatisfy { rows[$0] != nil }, "every copied row is in the table")
+        #expect(rows[copies[0].new]?.textContent == "Section X copy", "the heading's copy carries the suffix")
+        #expect(
+            result.copiesMismatch?.contains("fresh id") == true,
+            "the nodes without a pair are reported as getting a fresh id, got \(String(describing: result.copiesMismatch))")
+    }
 }
