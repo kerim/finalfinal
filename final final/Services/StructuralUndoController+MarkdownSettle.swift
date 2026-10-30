@@ -139,8 +139,8 @@ extension StructuralUndoController {
     }
 
     /// The Markdown counterpart of `putBackAfterFailedEditorFirstOp` for a Markdown job that did not apply (plan B8): a delete, since
-    /// slice 2 a drag-reorder (`.sectionReorder`) and since slice 3 a duplicate (`.sectionDuplicate`) (slice 1 called it
-    /// `putBackMarkdownDelete`). The editor was already swapped back by step 8 when
+    /// slice 2 a drag-reorder (`.sectionReorder`), since slice 3 a duplicate (`.sectionDuplicate`) and since slice 4 the three Version
+    /// History restores (`kind.isVersionRestore`) (slice 1 called it `putBackMarkdownDelete`). The editor was already swapped back by step 8 when
     /// the document was unchanged (for a job that never held its place in the queue there is no step 8: the swap is tried here, for a
     /// delete, a reorder and a duplicate alike), and then the UX contract 4.3 alert of the entry's KIND shows ("Couldn't Delete Section",
     /// "Couldn't Move Section", "Couldn't Duplicate Section"); when the user had typed since, the command stands (the flush wrote the
@@ -178,7 +178,8 @@ extension StructuralUndoController {
         // swapped-in document, and its step 8 flush has written that text into the rows, so the editor and the rows agree; the entry
         // goes off the timeline (below) and the user is not told the press failed, because it did what it said.
         var swappedBack = gate?.swappedBack ?? false
-        if kind == .sectionDelete || kind == .sectionReorder || kind == .sectionDuplicate, let gate, !gate.swapAttempted {
+        if kind == .sectionDelete || kind == .sectionReorder || kind == .sectionDuplicate || kind.isVersionRestore,
+           let gate, !gate.swapAttempted {
             swappedBack = await swapBackFailedMarkdownDelete(opId: opId, gateKey: gateKey)
         }
         await evalVoid("window.FinalFinal.clearFailedStructuralOpEntry?.('\(opId.uuidString)')")

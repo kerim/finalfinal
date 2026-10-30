@@ -334,3 +334,98 @@ struct MarkdownLeaderMapTests {
         #expect(map.duplicateRequest(opId: opId, rootId: notes, copyIds: []) == nil, "a request was built for the Notes heading")
     }
 }
+
+// MARK: - The Restore request (t-4a8fd8af slice 4)
+
+extension MarkdownLeaderMapTests {
+
+    /// The golden request file of the Version History restores: the page's own test (WR17, `structural-markdown-restore.test.ts`) runs it
+    /// too. The file is the shared contract: never move or edit it from either side.
+    private static var restoreRequestGolden: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // MarkdownEditorFirst/
+            .deletingLastPathComponent()   // Tier2/
+            .deletingLastPathComponent()   // final finalTests/
+            .deletingLastPathComponent()   // the repository root
+            .appendingPathComponent("docs/architecture/write-queue-plan/phase4b-markdown/slice4-restores/request-golden.json")
+    }
+
+    private func canonicalJSON(_ text: String) throws -> String {
+        let object = try JSONSerialization.jsonObject(with: Data(text.utf8))
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        return try #require(String(data: data, encoding: .utf8), "the sorted JSON is not UTF-8")
+    }
+
+    /// The request `markdownStructuralRestore` takes, built through `MarkdownLeaderMap.restoreRequest` from real UUID ids and compared,
+    /// canonical (sorted keys, compact), with the shared golden file the page test reads. The document is the golden's: Chapter 1,
+    /// Chapter 2 with Part 2.1, Chapter 3, then the Notes (the stop line and the managed leader); the mode is `section` on Chapter 2.
+    /// BREAK: in `RestoreRequest.json` rename the `"rootId"` key.   FAILS: "restore request JSON mismatch".
+    @Test("the restore request JSON is the shared golden file, byte for byte")
+    func testRestoreRequestJSONIsPinned() throws {
+        func heading(_ id: String, _ level: Int, _ title: String, at order: Double, notes: Bool = false) -> Block {
+            Block(
+                id: id, projectId: "project", sortOrder: order, blockType: .heading, textContent: title,
+                markdownFragment: String(repeating: "#", count: level) + " " + title, headingLevel: level, isNotes: notes)
+        }
+        let chapter1 = "0B8C1E52-3D7A-4F6B-9A10-6C2E5D4F8A01"
+        let chapter2 = "1C9D2F63-4E8B-4A7C-8B21-7D3F6E509B12"
+        let part21 = "2DAE3074-5F9C-4B8D-9C32-8E4A7F61AC23"
+        let chapter3 = "3EBF4185-60AD-4C9E-8D43-9F5B8072BD34"
+        let notes = "4FC05296-71BE-4DAF-9E54-A06C9183CE45"
+        let rows = [
+            heading(chapter1, 1, "Chapter 1", at: 0), heading(chapter2, 1, "Chapter 2", at: 1), heading(part21, 2, "Part 2.1", at: 2),
+            heading(chapter3, 1, "Chapter 3", at: 3), heading(notes, 2, "Notes", at: 4, notes: true)
+        ]
+        let map = MarkdownLeaderMap(rows: rows)
+        let opId = try #require(UUID(uuidString: "5AD163A7-82CF-4EB0-8F65-B17DA294DF56"))
+        let text = "<!-- @sid:\(chapter2) --># Chapter 2\n\nRestored body of Chapter 2."
+        let request = try #require(
+            map.restoreRequest(opId: opId, mode: .section, rootId: chapter2, text: text), "no restore request for a chapter")
+        let json = try #require(request.json, "the request has no JSON")
+        let golden = try String(contentsOf: Self.restoreRequestGolden, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(try canonicalJSON(json) == golden, "restore request JSON mismatch (the request built from the rows is not the shared golden file)")
+
+        // A whole restore: the root and the stop line are explicit nulls whatever is passed, the mode says so, no leader check is asked for.
+        let whole = try #require(
+            map.restoreRequest(opId: opId, mode: .whole, rootId: chapter2, text: "Whole text."), "no request for a whole restore")
+        let wholeJSON = try #require(whole.json, "the whole request has no JSON")
+        let wholeObject = try #require(try JSONSerialization.jsonObject(with: Data(wholeJSON.utf8)) as? [String: Any], "no JSON object")
+        #expect(
+            Set(wholeObject.keys) == ["kind", "opId", "mode", "rootId", "leaders", "stopLine", "endLeaderId", "text"],
+            "restore request JSON mismatch: keys")
+        #expect(
+            wholeObject["mode"] as? String == "whole" && wholeObject["kind"] as? String == "restore",
+            "restore request JSON mismatch: kind or mode")
+        #expect(
+            wholeObject["rootId"] is NSNull && wholeObject["stopLine"] is NSNull && wholeObject["endLeaderId"] is NSNull,
+            "restore request JSON mismatch: explicit nulls missing for a whole restore")
+
+        // An Insert as New Section: the anchor leader is the root; with none, the root is null and the stop line is the first Notes line.
+        let after = try #require(map.restoreRequest(opId: opId, mode: .insertAfter, rootId: chapter3, text: "New."), "no request after Chapter 3")
+        let afterJSON = try #require(after.json, "the insertAfter request has no JSON")
+        let afterObject = try #require(try JSONSerialization.jsonObject(with: Data(afterJSON.utf8)) as? [String: Any], "no JSON object")
+        #expect(afterObject["rootId"] as? String == chapter3 && afterObject["stopLine"] as? String == "## Notes", "insertAfter root or stop line")
+        let noAnchor = try #require(map.restoreRequest(opId: opId, mode: .insertAfter, rootId: nil, text: "New."), "no request without an anchor")
+        let noAnchorJSON = try #require(noAnchor.json, "the request without an anchor has no JSON")
+        let noAnchorObject = try #require(try JSONSerialization.jsonObject(with: Data(noAnchorJSON.utf8)) as? [String: Any], "no JSON object")
+        #expect(
+            noAnchorObject["rootId"] is NSNull && noAnchorObject["stopLine"] as? String == "## Notes",
+            "restore request JSON mismatch: an insert without an anchor takes the first Notes line as its stop line")
+
+        // The last chapter of a document without Notes: explicit nulls, as the Delete's request writes them.
+        let plain = MarkdownLeaderMap(rows: Array(rows.prefix(4)))
+        let last = try #require(plain.restoreRequest(opId: opId, mode: .section, rootId: chapter3, text: "Last."), "no request for the last chapter")
+        let lastJSON = try #require(last.json, "the last chapter's request has no JSON")
+        let lastObject = try #require(try JSONSerialization.jsonObject(with: Data(lastJSON.utf8)) as? [String: Any], "no JSON object")
+        #expect(lastObject["stopLine"] is NSNull && lastObject["endLeaderId"] is NSNull, "restore request JSON mismatch: explicit nulls missing")
+
+        // A root that is no leader of these rows, a section restore with no root, and a root that is the Notes heading make no request
+        // (the page would refuse each of them).
+        #expect(
+            map.restoreRequest(opId: opId, mode: .section, rootId: "no-such-heading", text: "x") == nil,
+            "a request was built for an unknown root")
+        #expect(map.restoreRequest(opId: opId, mode: .section, rootId: nil, text: "x") == nil, "a section request was built without a root")
+        #expect(map.restoreRequest(opId: opId, mode: .section, rootId: notes, text: "x") == nil, "a request was built for the Notes heading")
+        #expect(map.restoreRequest(opId: opId, mode: .insertAfter, rootId: notes, text: "x") == nil, "an insert was anchored on the Notes heading")
+    }
+}

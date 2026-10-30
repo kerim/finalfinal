@@ -35,6 +35,10 @@
 //  click minted) instead of showing a restored section, and the reinsert makes the rows equal "the rows before the op", which removes the
 //  copy; its redo is `markdownStructuralSwap(opId, 'redo')` with NO request (the page's composed redo lands on the click's post-op
 //  document, markers included) followed by the Duplicate's reply turn (`markdownDuplicateReplyTurn`) with the first click's copy ids.
+//  A VERSION HISTORY RESTORE entry (t-4a8fd8af slice 4) takes it too: its undo swaps the sidebar's two outlines
+//  (`swapSidebarForQuickUndoOfRestore`, the plan's leaders) and the reinsert makes the rows equal "the rows before the restore"; its redo
+//  is the same composed redo (`StructuralEntry.hasComposedMarkdownRedo`) followed by the restore's reply turn
+//  (`markdownRestoreReplyTurn`) with the FIRST click's plan, which records no entry.
 //
 //  THE QUICK REDO (`markdownQuickRedo`): the page re-runs the delete under the same opId on the document as it is NOW, with a FRESH request
 //  built from the rows as the database holds them then (`markdownStructuralSwap(opId, 'redo', request)`). It waits for the quick undo's
@@ -67,6 +71,19 @@ extension EditorFirstEditorKind {
     }
 }
 
+extension StructuralEntry {
+    /// Whether the page's redo of this entry is the plain composed redo (`markdownStructuralSwap(opId, 'redo')`, no request): a Duplicate
+    /// and, since slice 4, the three Version History restores. A Delete's redo re-runs the delete with a fresh request instead.
+    var hasComposedMarkdownRedo: Bool { kind == .sectionDuplicate || isVersionRestore }
+
+    /// The trace line of the page's redo having landed (the real-app tests read it). A restore's redo writes its OWN line, not the
+    /// undo's (`quick restore done (markdown)`), so a test that looks for the redo's line cannot be satisfied by the undo's.
+    var markdownQuickRedoDoneTrace: String {
+        if kind == .sectionDuplicate { return "quick copy done (markdown)" }
+        return isVersionRestore ? "quick restore redo done (markdown)" : "quick removal done (markdown)"
+    }
+}
+
 extension StructuralUndoController {
 
     // MARK: - The route
@@ -92,7 +109,14 @@ extension StructuralUndoController {
         if editorState.structuralGate.isClosedToNewWork { return .cancelled }
         let topId: UUID? = redo ? unifiedUndoService.redoStack.last?.id : unifiedUndoService.undoStack.last?.id
         let eligible: Bool = redo ? quickRedoEligible(entry) : quickUndoEligible(entry)
-        guard topId == opId, eligible, !efPutBackOpIds.contains(opId), editorState.activeLifecycle == nil,
+        // A restore entry's quick redo and the sidebar swap of its quick undo read the click's plan (`efRestorePlans`): without it the
+        // press takes the slow path.
+        // The plan is CAPTURED here, next to `holder`, and handed down: it is not read again after the page has swapped (an entry dropped
+        // meanwhile, by a status or tag edit in the Outline or an annotation toggle, would have left the redo's registry key unsettled
+        // for ever). A restore entry with no plan takes the slow path here, before the press has raised or registered anything.
+        let restorePlan = entry.isVersionRestore ? efRestorePlans[opId] : nil
+        let restorePlanMissing = entry.isVersionRestore && restorePlan == nil
+        guard topId == opId, eligible, !restorePlanMissing, !efPutBackOpIds.contains(opId), editorState.activeLifecycle == nil,
               holder.outcome == .applied, editorState.editorMode == .source, editorState.zoomedSectionId == nil else {
             DebugLog.log(
                 .undo, "[StructuralUndoController] markdown quick \(redo ? "redo" : "undo") of \(opId): not possible after the wait -- slow path")
@@ -100,14 +124,14 @@ extension StructuralUndoController {
         }
         let context = MarkdownJobContext(editorState: editorState, blockSync: blockSync, database: db, projectId: pid)
         return redo
-            ? await markdownQuickRedo(entry, holder: holder, context: context)
-            : await markdownQuickUndo(entry, holder: holder, context: context)
+            ? await markdownQuickRedo(entry, holder: holder, restorePlan: restorePlan, context: context)
+            : await markdownQuickUndo(entry, holder: holder, restorePlan: restorePlan, context: context)
     }
 
     // MARK: - The quick undo
 
     private func markdownQuickUndo(
-        _ entry: StructuralEntry, holder: SectionDeletePayloadHolder, context: MarkdownJobContext
+        _ entry: StructuralEntry, holder: SectionDeletePayloadHolder, restorePlan: RestorePlan?, context: MarkdownJobContext
     ) async -> UndoResult {
         guard let unifiedUndoService else { return .failed }
         let editorState = context.editorState
@@ -163,6 +187,14 @@ extension StructuralUndoController {
             // markers and the copy rows carry) leave the sidebar at once; the reinsert below removes the rows (t-4a8fd8af slice 3).
             hideDuplicateInSidebar(opId: opId, removedLeaderIds: Set((efDuplicateCopies[opId] ?? []).map(\.newId)), holder: holder)
             sidebarUpdate = nil
+        } else if entry.isVersionRestore {
+            // The undo of a restore swaps the two documents (t-4a8fd8af slice 4): the restored outline leaves and the previous one comes
+            // back at once, both the plan's, as in Rich Text. The page took out every leader of the restored text (the plan's new
+            // leaders: for an Insert as New Section only its own).
+            // The plan captured at resolve time, not `efRestorePlans[opId]` read again after the page call's suspension.
+            swapSidebarForQuickUndoOfRestore(
+                opId: opId, holder: holder, editorRemovedLeaderIds: Set(restorePlan?.newLeaders.map(\.id) ?? []), plan: restorePlan)
+            sidebarUpdate = nil
         } else {
             sidebarUpdate = showRestoredSections(
                 opId: opId, reinsertKey: reinsertKey, epoch: epoch, holder: holder, restoredLeaderIds: [], database: context.database)
@@ -217,7 +249,7 @@ extension StructuralUndoController {
     // MARK: - The quick redo
 
     private func markdownQuickRedo(
-        _ entry: StructuralEntry, holder: SectionDeletePayloadHolder, context: MarkdownJobContext
+        _ entry: StructuralEntry, holder: SectionDeletePayloadHolder, restorePlan: RestorePlan?, context: MarkdownJobContext
     ) async -> UndoResult {
         guard let unifiedUndoService else { return .failed }
         let editorState = context.editorState
@@ -253,10 +285,11 @@ extension StructuralUndoController {
         // with the B1 flush-and-retry once. A Duplicate (t-4a8fd8af slice 3): `markdownStructuralSwap(opId, 'redo')` with NO request; the page
         // has no quick re-run for a duplicate, it applies the recorded insertion and lands exactly on the post-op document the click made,
         // which carries the click's `<!-- @sid:NEW -->` markers, so the same copy ids come back on every cycle.
-        let isDuplicate = entry.kind == .sectionDuplicate
+        // A Version History restore (t-4a8fd8af slice 4) is the same: the page's composed redo, no request, landing on the click's post-op
+        // document with the click's markers; then the restore's reply turn with the FIRST plan, so the same ids come back.
         var deleteAttempt: (reply: MarkdownStructuralReply, map: MarkdownLeaderMap)?
         let pageReply: MarkdownStructuralReply?
-        if isDuplicate {
+        if entry.hasComposedMarkdownRedo {
             pageReply = await sendMarkdownSwap(opId: opId, direction: "redo")
         } else {
             deleteAttempt = await sendMarkdownDeleteWithRetry(
@@ -273,13 +306,12 @@ extension StructuralUndoController {
         forgetCommittedDerivedState()   // a redo pressed before the reinsert's settle: the redo's resync must not be skipped as done
         sectionSyncService?.cancelPendingSync()
         sectionSyncService?.resetSyncTracking()
-        trace.log(isDuplicate ? "quick copy done (markdown)" : "quick removal done (markdown)")
+        trace.log(entry.markdownQuickRedoDoneTrace)
 
-        if isDuplicate {
-            let (copies, sections) = markdownQuickRedoDuplicateInputs(opId: opId, rootId: holder.rootId, context: context)
-            await markdownDuplicateReplyTurn(
-                opId: opId, rootId: holder.rootId, jobKey: redoKey, copies: copies, insertedSections: sections, preRaw: preRaw,
-                postRaw: postRaw, context: context, hold: hold, run: &run)
+        if entry.hasComposedMarkdownRedo {
+            await markdownQuickRedoComposedReplyTurn(
+                entry, holder: holder, restorePlan: restorePlan, jobKey: redoKey, preRaw: preRaw, postRaw: postRaw, context: context,
+                hold: hold, run: &run)
         } else if let deleteAttempt {
             await markdownDeleteReplyTurn(
                 opId: opId, rootId: holder.rootId, jobKey: redoKey, attempt: deleteAttempt, preRaw: preRaw, postRaw: postRaw,
@@ -304,6 +336,27 @@ extension StructuralUndoController {
         spy("quickRedoPerformed")
         trace.log("performed")
         return .performed
+    }
+
+    /// The reply turn of a quick redo whose page call was the plain composed redo (`hasComposedMarkdownRedo`): a Duplicate's, with the first
+    /// click's copy ids, or (t-4a8fd8af slice 4) a Version History restore's, with the FIRST click's plan. `restorePlan` is the plan
+    /// `resolveMarkdownQuickPath` captured BEFORE the page swapped (non-nil for every restore entry: a restore entry without one never
+    /// gets here), so this function cannot return after the page has swapped without starting the job: every path ends in a reply turn,
+    /// which starts the job or finishes its gate, and the caller's `defer` settles the rest.
+    private func markdownQuickRedoComposedReplyTurn( // swiftlint:disable:this function_parameter_count
+        _ entry: StructuralEntry, holder: SectionDeletePayloadHolder, restorePlan: RestorePlan?, jobKey: UUID, preRaw: String,
+        postRaw: String, context: MarkdownJobContext, hold: MarkdownStructuralHold, run: inout MarkdownDeleteRun
+    ) async {
+        let opId = entry.id
+        if let restorePlan {
+            await markdownRestoreReplyTurn(
+                opId: opId, jobKey: jobKey, plan: restorePlan, preRaw: preRaw, postRaw: postRaw, context: context, hold: hold, run: &run)
+            return
+        }
+        let (copies, sections) = markdownQuickRedoDuplicateInputs(opId: opId, rootId: holder.rootId, context: context)
+        await markdownDuplicateReplyTurn(
+            opId: opId, rootId: holder.rootId, jobKey: jobKey, copies: copies, insertedSections: sections, preRaw: preRaw,
+            postRaw: postRaw, context: context, hold: hold, run: &run)
     }
 
     /// The Duplicate quick redo's inputs for `markdownDuplicateReplyTurn`. The first click's pairs: the job gives the copy rows the ids the

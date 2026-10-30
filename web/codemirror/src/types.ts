@@ -194,6 +194,12 @@ declare global {
       markdownStructuralDuplicate: (
         request: string | object
       ) => import('./api-structural-markdown-duplicate').MarkdownDuplicateResult;
+      // The three Version History restores (Restore Entire Project, Replace Current Section, Insert as New Section), editor-first (Phase 4b,
+      // Markdown slice 4). The JSON contract is documented at the top of api-structural-markdown-restore.ts; Swift reads the result as
+      // JSON.stringify(...).
+      markdownStructuralRestore: (
+        request: string | object
+      ) => import('./api-structural-markdown-restore').MarkdownRestoreResult;
       // B5 (t-4a8fd8af): while non-null, renumberFootnotes is applied outside the text history (a structural settle's renumber).
       // SET: setStructuralSettleOpId(opId, notesHeadingLine?). `notesHeadingLine` is the Notes heading's line as Swift's rows have it
       // ("## Notes"); when given, the settle's renumber also sorts the Notes definitions in the same transaction (notes-region-sort.ts).

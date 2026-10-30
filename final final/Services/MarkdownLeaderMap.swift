@@ -131,6 +131,41 @@ struct MarkdownLeaderMap: Equatable {
         }
     }
 
+    /// The request `window.FinalFinal.markdownStructuralRestore` takes (t-4a8fd8af slice 4; web/codemirror/src/api-structural-markdown-restore.ts
+    /// "THE JSON CONTRACT" and slice4-restores/page-contract.md in docs/architecture/write-queue-plan/phase4b-markdown). The Delete's leader
+    /// fields with `kind` "restore", a `mode` (whole, section, insertAfter), a `rootId` (the target heading of a section restore, the anchor
+    /// leader of an insertAfter, nil for whole or for an insertAfter without an anchor), an always-null `endLeaderId` and the `text` the page
+    /// inserts (`RestorePlan.markdownPageText`, markers included).
+    ///
+    /// Its JSON is pinned by `slice4-restores/request-golden.json` (a Swift test and a web test read it): CANONICAL form, keys sorted at
+    /// every level, compact, `rootId` / `stopLine` / `endLeaderId` as explicit nulls when absent, `managed` only on the Notes and
+    /// Bibliography leaders. Do not change a key, a value or a null here without changing the page's reader and the golden with it.
+    struct RestoreRequest: Equatable {
+        let opId: UUID
+        let mode: RestorePlan.Mode
+        let rootId: String?
+        let leaders: [Leader]
+        let stopLine: String?
+        let text: String
+
+        var json: String? {
+            let object: [String: Any] = [
+                "kind": "restore",
+                "opId": opId.uuidString,
+                "mode": mode.rawValue,
+                "rootId": rootId ?? NSNull(),
+                "leaders": leaders.map(\.jsonObject),
+                "stopLine": stopLine ?? NSNull(),
+                "endLeaderId": NSNull(),
+                "text": text
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else {
+                return nil
+            }
+            return String(data: data, encoding: .utf8)
+        }
+    }
+
     /// Every leader of the document, in document order.
     let leaders: [Leader]
     /// The rows in document order (empty fragments dropped): what `stopLine` is looked up in.
@@ -194,6 +229,29 @@ struct MarkdownLeaderMap: Equatable {
         guard copyIds.map(\.source) == removedLeaderIds(rootId: rootId), let base = request(opId: opId, rootId: rootId) else { return nil }
         return DuplicateRequest(
             opId: opId, rootId: rootId, leaders: base.leaders, stopLine: base.stopLine, endLeaderId: base.endLeaderId, copyIds: copyIds)
+    }
+
+    /// The request for a Version History restore (t-4a8fd8af slice 4). `rootId`: the target heading of a `section` restore (required: a
+    /// non-managed leader of these rows), the anchor leader of an `insertAfter` (nil: no anchor, the page inserts before the first managed
+    /// leader), ignored (sent as null) for `whole`. `stopLine` is the trimmed first line of the first Notes or Bibliography row after the
+    /// root (after the start of the document when there is no root), null when there is none and always null for `whole`, which the page
+    /// does not locate. nil when a section's root is no leader, or when a root is the Notes or Bibliography heading (the page refuses
+    /// such a root too: `rootIsManaged`).
+    func restoreRequest(opId: UUID, mode: RestorePlan.Mode, rootId: String?, text: String) -> RestoreRequest? {
+        if mode == .whole {
+            return RestoreRequest(opId: opId, mode: mode, rootId: nil, leaders: leaders, stopLine: nil, text: text)
+        }
+        var searchFrom = 0
+        if let rootId {
+            guard let leader = leaders.first(where: { $0.id == rootId }), leader.managed == nil,
+                  let rootRow = ordered.firstIndex(where: { $0.id == rootId }) else { return nil }
+            searchFrom = rootRow + 1
+        } else if mode == .section {
+            return nil
+        }
+        let stopLine = ordered[searchFrom...].first { $0.isNotes || $0.isBibliography }
+            .map { Self.firstLine(of: $0.markdownFragment) }
+        return RestoreRequest(opId: opId, mode: mode, rootId: rootId, leaders: leaders, stopLine: stopLine, text: text)
     }
 
     /// The `copyIds` for duplicating the section rooted at `rootId`: one pair per leader of its subtree, each new id taken from `minted`

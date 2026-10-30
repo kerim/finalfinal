@@ -87,6 +87,8 @@ extension StructuralUndoControllerTests {
         for mode: EditorMode in [.wysiwyg, .source] {
             let fixture = try makeFixture()
             fixture.editorState.editorMode = mode
+            // slice 4: pins the OLD Markdown restore body these tests are about
+            if mode == .source { fixture.controller.testForceLegacyStructural = true }
             let opOk = await fixture.controller.performSectionRestoreReplace(
                 snapshotSectionId: fixture.snapshotSectionId, targetSectionId: fixture.targetSectionId,
                 requestingProjectId: fixture.pid

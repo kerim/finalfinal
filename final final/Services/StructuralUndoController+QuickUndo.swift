@@ -108,9 +108,10 @@ extension StructuralUndoController {
     /// Whether Cmd-Z of this editor-first delete may put the section back on the screen at once: in the editor it was made in (Rich
     /// Text unless `efEditorKind` says Markdown, t-4a8fd8af round 7a), not zoomed; the entry's
     /// slot and payload holder exist and the delete job has not failed; the slot is `reserved` or `applied` (the entry is on the undo
-    /// stack); and no STRUCTURAL out-of-queue write (the old whole-document duplicate, restore or reorder -- in Markdown mode only the
-    /// restores always take it now, a Duplicate or reorder when the kill switch is off or the page refused --, zoomed and fallbacks, or
-    /// the old slow undo or redo) has touched the project since the entry was recorded. An editor-first duplicate,
+    /// stack); and no STRUCTURAL out-of-queue write (the old whole-document duplicate, restore or reorder -- in Markdown mode a
+    /// Duplicate, a reorder or (since t-4a8fd8af slice 4) a restore takes it only when the kill switch is off or the page refused, and a
+    /// restore also when its target or version cannot go through the editor-first path --, zoomed and fallbacks, or the old slow undo
+    /// or redo) has touched the project since the entry was recorded. An editor-first duplicate,
     /// restore or reorder is a queued system write and does not count (t-0b70d1e9: a drag after a delete leaves the delete quick
     /// undoable). The idle backup, Save Version and export do not count either: the reinsert makes the
     /// rows equal the saved pre-delete rows whatever they wrote. NOT `outOfQueueWriteGeneration`. A reorder entry itself has no quick

@@ -46,6 +46,7 @@ extension StructuralUndoControllerTests {
     func sourceModeSetContentPushFailureAbortsOpAndRecordsNoEntry() async throws {
         let fixture = try makeFixture()
         fixture.editorState.editorMode = .source
+        fixture.controller.testForceLegacyStructural = true   // slice 4: pins the OLD Markdown restore body these tests are about
         // Target the raw call embedded inside evalBoolCoercingVoidCall's try/catch IIFE
         // (the coerced string still CONTAINS the raw call) so only the Source-mode content
         // push fails -- everything else falls through to the realistic default.
@@ -141,6 +142,7 @@ extension StructuralUndoControllerTests {
     func sourceModeFullRoundTrip() async throws {
         let fixture = try makeFixture()
         fixture.editorState.editorMode = .source
+        fixture.controller.testForceLegacyStructural = true   // slice 4: pins the OLD Markdown restore body these tests are about
         // Deliberately do NOT override testEvalBoolOverride here -- makeFixture's default
         // (Self.realisticEvalBoolDefault) is exactly the round-4 root-cause fix: a raw
         // (unwrapped) evalBool call against a void-returning JS function like setContent
@@ -214,6 +216,8 @@ extension StructuralUndoControllerTests {
         for mode: EditorMode in [.wysiwyg, .source] {
             let fixture = try makeFixture()
             fixture.editorState.editorMode = mode
+            // slice 4: pins the OLD Markdown restore body these tests are about
+            if mode == .source { fixture.controller.testForceLegacyStructural = true }
             var voidCalls: [String] = []
             fixture.controller.testEvalVoidOverride = { js in
                 voidCalls.append(js)

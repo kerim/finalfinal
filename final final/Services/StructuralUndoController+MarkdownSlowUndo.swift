@@ -7,8 +7,9 @@
 //  model: the editor swaps first, a queued job makes the database equal to the snapshot, nothing typed meanwhile is lost).
 //
 //  WHICH ENTRIES. Every Markdown entry whose Cmd-Z or Cmd-Shift-Z is not quick (`quickPathPossible`, or the quick path closed itself):
-//    (a) entries the OLD body recorded in Markdown mode: the three Version History restores (their clicks keep the old body, slice 4 is
-//        not built), and a Duplicate Section or a drag-reorder whose click took the old body (the kill switch off, a page that refused).
+//    (a) entries the OLD body recorded in Markdown mode: a Version History restore, a Duplicate Section or a drag-reorder whose click
+//        took the old body (the kill switch off, a page that refused, since slice 4 also a restore target the editor-first path cannot
+//        take).
 //        Their undo and redo go through here, so what the user typed after the click is never lost. The page recorded their registry
 //        entry at the click (`beginStructuralOp` / `finalizeStructuralOpPostOpDoc`: the checkpoint state, the pre-op and post-op
 //        documents), which is all `markdownStructuralSwap` needs;

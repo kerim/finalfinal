@@ -96,18 +96,31 @@ extension StructuralUndoController {
     /// has been zoomed out, as the old restore does first), when this press has to take today's whole sequence; otherwise the outcome
     /// the Version History window reports.
     func performEditorFirstRestoreProject(snapshotId: String) async -> StructuralOpOutcome? {
+        // t-4a8fd8af slice 4: Markdown mode has its own editor-first click (`performMarkdownEditorFirstRestore`); it is chosen here, once,
+        // and Rich Text takes the unchanged code below.
+        let markdownPath = takesTheMarkdownEditorFirstRestorePath
         guard let editorState, unifiedUndoService != nil, blockSyncService != nil,
-              let db = editorState.projectDatabase, let pid = editorState.currentProjectId, takesTheEditorFirstPath else { return nil }
+              let db = editorState.projectDatabase, let pid = editorState.currentProjectId,
+              takesTheEditorFirstPath || markdownPath else { return nil }
 
         // Past one second the press shows that it is working (floor rule 3, plan D11), whatever the zoom-out, the plan read and the
         // editor take; dismissed by id on every exit (done, refused, or handed to the old restore). The timer runs on the main actor, so
-        // a stall of this click's synchronous stretch delays the notice until that stretch yields.
+        // a stall of this click's synchronous stretch delays the notice until that stretch yields. In Markdown it is also the ONLY notice:
+        // the wait for an earlier command's save, the page call and the reply turn all happen inside it.
         let notice = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
         defer { notice.stop() }
 
         // `.autoZoomOut`, exactly as today's restore opens (D10): the document is the whole project from here on. The plan reads the
         // rows afterwards, because zooming out rewrites them.
+        // Typing during the zoom-out that happens before a restore of a zoomed section can still be lost in Markdown; zoom is Phase 5.
         if editorState.zoomedSectionId != nil { await editorState.zoomOut() }
+
+        if markdownPath {
+            // The plan is built INSIDE the click, after its hold wait (the rows must be read then) and again after a flush-and-retry.
+            return await performMarkdownEditorFirstRestore(kind: .restoreProject) {
+                markdownWholeRestoreBuild(snapshotId: snapshotId, database: db, projectId: pid)
+            }
+        }
 
         // Everything the click needs from the database, read now, in the click's synchronous stretch (no suspension between this read
         // and the reservation of the click's writer turn, which `runEditorFirstStructuralClick` makes in its first statements).
@@ -173,7 +186,9 @@ extension StructuralUndoController {
 
     /// The click is over and the job holds its place in the queue: record the entry (the Edit menu says "Undo Restore Entire Project" at
     /// once) and push the descriptor, unless a barrier invalidated the timeline while the click ran.
-    private func recordRestoreEntry(opId: UUID, plan: RestorePlan, timelineEpoch: Int, trace: StructTrace) async -> StructuralOpOutcome {
+    /// Internal (t-4a8fd8af slice 4): the Markdown restore click records its entry here too, once, after its page call (its reply turn,
+    /// which the quick redo shares, never records).
+    func recordRestoreEntry(opId: UUID, plan: RestorePlan, timelineEpoch: Int, trace: StructTrace) async -> StructuralOpOutcome {
         guard let editorState, let unifiedUndoService else { return .failedAfterCommit }
         guard unifiedUndoService.generation == timelineEpoch else {
             // Recording now would put an entry on a timeline that is no longer this restore's. The restore happened (and is saved), but
@@ -202,8 +217,8 @@ extension StructuralUndoController {
         return !TestMode.isUITestingLegacyStructural && editorState?.editorMode == .wysiwyg
     }
 
-    /// What reading the plan came to.
-    private enum PlanResult {
+    /// What reading the plan came to. (Internal since slice 4: the Markdown restore builds the same whole plan.)
+    enum PlanResult {
         case plan(RestorePlan)
         /// The press takes the old restore (the version has no blocks: the editor cannot take an empty document through this call).
         case legacy
@@ -211,7 +226,7 @@ extension StructuralUndoController {
         case refused
     }
 
-    private func restorePlan(snapshotId: String, database: ProjectDatabase, projectId: String) -> PlanResult {
+    func restorePlan(snapshotId: String, database: ProjectDatabase, projectId: String) -> PlanResult {
         do {
             guard let built = try SnapshotService.wholeRestorePlan(database: database, projectId: projectId, snapshotId: snapshotId) else {
                 DebugLog.log(.undo, "[StructuralUndoController] editor-first restoreProject: the version has no blocks -- old path")
@@ -287,6 +302,7 @@ extension StructuralUndoController {
             guard let blockSync = weakBlockSync else {
                 reserved.fire()
                 registry.resolve(registryKey, .abandoned)
+                self?.notifyMarkdownJobEnded(key: registryKey, outcome: .abandoned)   // a Markdown restore's hold continuation (slice 4)
                 return
             }
             let result = await job.perform(
@@ -297,6 +313,8 @@ extension StructuralUndoController {
                 })
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
+            // A Markdown restore's hold continuation waits for this (t-4a8fd8af slice 4); a no-op for a job without a gate (Rich Text).
+            self?.notifyMarkdownJobEnded(key: registryKey, outcome: JobOutcome(result.outcome))
             await self?.editorFirstJobSettled(
                 opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: removedLeaders, epoch: epochAtClick, jobKey: jobKey,
                 kind: plan.opKind)
@@ -375,8 +393,12 @@ extension StructuralUndoController {
     /// document's leaves, at once (the same swap as the click, the two documents the other way round). The holder records the ids this
     /// hid, so the reinsert's settle releases them once the restored rows are out of the table. A restore as duplicate hides only its
     /// own leaders, cut down to the ones the editor reports it took out (`hideDuplicateInSidebar`, round 1g-B review A5).
-    func swapSidebarForQuickUndoOfRestore(opId: UUID, holder: SectionDeletePayloadHolder, editorRemovedLeaderIds: Set<String>) {
-        guard let plan = efRestorePlans[opId] else { return }
+    func swapSidebarForQuickUndoOfRestore(
+        opId: UUID, holder: SectionDeletePayloadHolder, editorRemovedLeaderIds: Set<String>, plan capturedPlan: RestorePlan? = nil
+    ) {
+        // `capturedPlan`: the Markdown quick undo captures the plan before its page call and passes it, so an entry dropped during the
+        // call's suspension cannot take it away (Rich Text passes nothing and reads the table, as before).
+        guard let plan = capturedPlan ?? efRestorePlans[opId] else { return }
         if plan.mode == .insertAfter {
             hideDuplicateInSidebar(
                 opId: opId, removedLeaderIds: editorRemovedLeaderIds, holder: holder, ownIds: Set(plan.newLeaders.map(\.id)))
