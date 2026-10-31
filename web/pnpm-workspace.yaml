@@ -1,3 +1,5 @@
 packages:
   - 'milkdown'
   - 'codemirror'
+allowBuilds:
+  esbuild: true
