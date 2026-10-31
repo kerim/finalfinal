@@ -228,7 +228,10 @@ final class WriteQueuePhase4bMdRestoreEFE2ETests: Phase4bDelHarness {
     static let holdFirstKey = "FF_UI_TESTING_STRUCT_JOB_HOLD_FIRST_N"
     /// The writer holds the first queued structural job this long (under the 4 s limit of a hold that blocks the writer).
     static let jobHoldMs = 3_500
-    /// The most presses a polled loop makes (typing groups, a footnote renumber's own step, the structural press).
+    /// The most presses a polled loop makes: the text steps of the typing a test did (a slow host splits one typed sentence into several undo
+    /// groups), then the structural press. It only bounds a failing run. A footnote renumber's own step is no longer allowed for: since
+    /// t-f1a22aa7 (Phase 4c) the footnote burst timer stands aside while a command is unfinished, and `testMdRstWholeFootnotes_book6`, which
+    /// types nothing, asserts exactly one press for its Cmd-Z.
     static let pressCap = 10
     /// A landing counts as "on the section" when the seeded line lies in the upper part of the editor's band.
     static let landingTopFraction: CGFloat = 0.6
@@ -1745,8 +1748,10 @@ extension WriteQueuePhase4bMdRestoreEFE2ETests {
     /// the document as it was before the restore. The Notes region is read ONLY through this page-text and database seam, never from the
     /// accessibility tree.
     /// TODAY: a CONTROL. The old body writes the rows first and pushes them into the page, so page and rows agree; the plan keeps parity
-    /// (D5: nothing new is built). It inherits the footnote-timer race t-f1a22aa7 (Phase 4c): a footnote renumber that lands as its own
-    /// Cmd-Z step is handled by the polled loop, a Notes mismatch left by that race would show here and belongs to that task.
+    /// (D5: nothing new is built). THE CMD-Z TAKES EXACTLY ONE PRESS (asserted): the test types nothing, the document settles before the
+    /// restore, and the restore brings back sequential labels, so no footnote renumber is due. The footnote-timer race t-f1a22aa7 (a burst
+    /// timer that fired inside the restore's unfinished work and became a Cmd-Z step of its own) was fixed in Phase 4c: the timer now stands
+    /// aside while the restore is unfinished. A pin of the count, not a break detector (nothing here makes a renumber due).
     /// BREAK: none (a control). A mismatch goes back to the plan judge as an [approach] question (premise-check.md item 6).
     func testMdRstWholeFootnotes_book6() {
         let deleteTitle = "2.2 The Village Registers"
@@ -1786,6 +1791,12 @@ extension WriteQueuePhase4bMdRestoreEFE2ETests {
         mdRstReport("undo", undo)
         soft.check(undo.last?.isStructural == true && undo.last?.performed == true,
             "the restore was not undone by a structural Cmd-Z within \(Self.pressCap) presses (\(undo.map(\.summary)))")
+        // THE PRESS COUNT IS ASSERTED (t-f1a22aa7, Phase 4c): nothing was typed and the document settled before the restore, so the
+        // editor's text history holds no step ahead of the restore and Cmd-Z #1 is the structural undo.
+        result("PRESS COUNT (asserted, t-f1a22aa7): the Cmd-Z took \(undo.count) press(es) (expected exactly 1)")
+        soft.check(undo.count == 1,
+            "the Cmd-Z took \(undo.count) presses, expected exactly 1 (the structural undo): \(max(0, undo.count - 1)) text step(s) stood before it, "
+            + "a footnote renumber of its own (t-f1a22aa7) or typing the test never made (\(undo.map(\.summary)))")
         mdRstWaitForUserRows(mdRstUserRows(beforeRestore), timeout: size.operationTimeout * 2)
         mdRstSettle()
         let undone = mdRstAddRowChecks("after Cmd-Z (settled)", expectedUser: mdRstUserRows(beforeRestore), to: &soft)

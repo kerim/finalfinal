@@ -177,7 +177,10 @@ final class WriteQueuePhase4bMdDuplicateEFE2ETests: Phase4bDelHarness {
     static let holdKey = "FF_UI_TESTING_STRUCT_JOB_HOLD_MS"
     /// The writer holds every queued structural job this long (under the 4 s limit of a hold that blocks the writer).
     static let jobHoldMs = 3_500
-    /// The most presses a polled loop makes (a text step or two, the structural press, a footnote renumber's own step).
+    /// The most presses a polled loop makes: the text steps of any typing the test did (a slow host splits one typed sentence into several
+    /// undo groups), then the structural press. It only bounds a failing run. A footnote renumber's own step is no longer allowed for: since
+    /// t-f1a22aa7 (Phase 4c) the footnote burst timer stands aside while a command is unfinished, and `testMdDupFootnotedChapter_book6`, which
+    /// types nothing, asserts exactly one press for its undo and one for its redo.
     static let pressCap = 6
     /// A landing counts as "on the copy" when the Dup line lies in the upper part of the editor's band (the card click scrolls the copy's
     /// heading to the top; the Dup line is right under it).
@@ -1697,9 +1700,12 @@ extension WriteQueuePhase4bMdDuplicateEFE2ETests {
 extension WriteQueuePhase4bMdDuplicateEFE2ETests {
     /// E7. CLAIM (the judge's acceptance test for the sync-model finding): "2.2 The Village Registers" of the six-chapter book holds two
     /// footnote references and citations. It is duplicated STRAIGHT after the scenario started (no wait before) and Cmd-Z / Cmd-Shift-Z
-    /// are pressed STRAIGHT after the copy's card shows (no wait after; polled, because a footnote renumber can surface as an extra Cmd-Z
-    /// step: board t-f1a22aa7). When it is quiet: the copy is there, the copy SHARES the original's footnote definitions (the Notes rows are
-    /// exactly those of the document before, one definition per label), the editor text equals the table. A second, polled Cmd-Z then
+    /// are pressed STRAIGHT after the copy's card shows (no wait after). The test types nothing and the copy shares the original's labels,
+    /// so no footnote renumber is due: THE UNDO TAKES EXACTLY ONE PRESS (the structural undo) AND THE REDO EXACTLY ONE (asserted; the
+    /// footnote burst timer that used to add a text step of its own, board t-f1a22aa7, now stands aside while the Duplicate is unfinished;
+    /// a pin of the counts, not a break detector). When it is quiet: the copy is there, the copy SHARES the original's footnote definitions
+    /// (the Notes rows are exactly those of the document before, one definition per label), the editor text equals the table. A second,
+    /// polled Cmd-Z then
     /// restores the document as loaded. LOGGED (judge D5, board t-53a9fb75): whether the Duplicate made the app run a bibliography or Notes
     /// rebuild push or show any toast (the content state `bibliographyUpdate` writes no log line of its own, the rebuild pushes do).
     /// TODAY: FAILS (no `sectionDuplicate-editor-first` line; the old body forces a footnote / bibliography resync and its undo shows toasts).
@@ -1728,20 +1734,29 @@ extension WriteQueuePhase4bMdDuplicateEFE2ETests {
         soft.check(shown, "the copy's card \"\(copyTitle)\" never showed")
         // No wait: the keys straight after the card shows.
         let undoPresses = mdDupUndoUntilStructural()
-        // The redo is POLLED too (review F13): until a structural redo has performed, at most 6 presses. The footnote renumber's timer (about
-        // 3 s after a Duplicate) can add a text step to the timeline or clear the redo (board t-f1a22aa7): extra steps are REPORTED below.
+        // The redo is POLLED too (review F13): until a structural redo has performed, at most 6 presses (the cap only bounds a failing run).
         let redoPresses = mdDupRedoUntilStructural()
         mdDupReport("undo straight away", undoPresses)
         mdDupReport("redo straight away", redoPresses)
-        result("EXTRA STEPS (board t-f1a22aa7, reported): the undo took \(undoPresses.count) press(es) "
-            + "(\(max(0, undoPresses.count - 1)) text step(s) before the structural undo); "
-            + "the redo took \(redoPresses.count) press(es) (\(max(0, redoPresses.count - 1)) text step(s) before the structural redo); "
-            + "text redo step(s) left unpressed after the structural redo: \(max(0, undoPresses.count - redoPresses.count))")
+        // THE PRESS COUNTS ARE ASSERTED (t-f1a22aa7, Phase 4c). This test types nothing (the two Dup lines are seeded in the file) and the copy
+        // shares the original's footnote labels, so no footnote renumber is due after the Duplicate: the undo is ONE press (the structural
+        // undo) and the redo is ONE press (the structural redo). Before the fix the footnote burst timer could fire inside the Duplicate's
+        // unfinished work and add a text step of its own (a renumber), which made the polled loops take two presses. A pin of the counts, not
+        // a break detector: with the timer's stand-aside switched off this test can still pass (nothing here makes a renumber due).
+        result("PRESS COUNTS (asserted, t-f1a22aa7): the undo took \(undoPresses.count) press(es) (expected exactly 1), "
+            + "the redo took \(redoPresses.count) press(es) (expected exactly 1)")
         soft.check(undoPresses.last?.isStructural == true && undoPresses.last?.performed == true,
             "the first Cmd-Z series did not reach the structural undo within \(Self.pressCap) presses (\(undoPresses.map(\.summary)))")
         soft.check(redoPresses.last?.isStructural == true && redoPresses.last?.performed == true,
-            "the Cmd-Shift-Z series did not reach a performed structural redo within \(Self.pressCap) presses (\(redoPresses.map(\.summary))): "
-            + "the redo may have been cleared by the footnote renumber (board t-f1a22aa7)")
+            "the Cmd-Shift-Z series did not reach a performed structural redo within \(Self.pressCap) presses (\(redoPresses.map(\.summary)))")
+        soft.check(undoPresses.count == 1,
+            "the undo took \(undoPresses.count) presses, expected exactly 1 (the structural undo): "
+            + "\(max(0, undoPresses.count - 1)) text step(s) stood before it, a footnote renumber of its own (t-f1a22aa7) "
+            + "or typing the test never made (\(undoPresses.map(\.summary)))")
+        soft.check(redoPresses.count == 1,
+            "the redo took \(redoPresses.count) presses, expected exactly 1 (the structural redo): "
+            + "\(max(0, redoPresses.count - 1)) text step(s) stood before it, a footnote renumber of its own (t-f1a22aa7) "
+            + "(\(redoPresses.map(\.summary)))")
         soft.check(mdDupWaitForCard(copyTitle, present: true, timeout: mdDupAppWait(size.operationTimeout * 2, before: "the copy's card is back")),
             "the copy's card \"\(copyTitle)\" is not back after the straight-away Cmd-Z / Cmd-Shift-Z")
         mdDupSettle(back: [copyTitle])

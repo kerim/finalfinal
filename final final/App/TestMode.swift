@@ -224,6 +224,46 @@ enum TestMode {
         return true
     }
 
+    /// UI-test-only (t-f1a22aa7, Phase 4c): `FF_UI_TESTING_EF_SETTLE_HOLD_MS=<n>` holds the follow-up work (the "settle") of an
+    /// editor-first section command for `n` milliseconds, after its queued job has applied and BEFORE the footnote, bibliography and
+    /// section resyncs run (`StructuralUndoController.editorFirstJobSettled`, next to the unit tests' `testEFSettleHold`). It is a plain
+    /// suspension (the writer is free), so the footnote burst timer can come due while the command is still unfinished: the drag test
+    /// needs this because a drag's queued job is too short to hold with `FF_UI_TESTING_STRUCT_JOB_HOLD_MS`. `nil` (unset, unparseable,
+    /// <= 0, or `isUITesting` false) means no hold. Same `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingEFSettleHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_EF_SETTLE_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// UI-test-only (t-f1a22aa7): `FF_UI_TESTING_EF_SETTLE_HOLD_FIRST_N=<n>` limits the `FF_UI_TESTING_EF_SETTLE_HOLD_MS` hold to the
+    /// first `n` settles of this launch (counted by `holdEditorFirstSettle()`, in the order the settles reach the hold); every later
+    /// settle runs without a hold, mirroring `FF_UI_TESTING_STRUCT_JOB_HOLD_FIRST_N`. Unlike that flag the default is ONE (unset or
+    /// unparseable or <= 0 gives 1): a test that holds a settle almost always wants the command's own settle held and the undo that
+    /// follows it free. Same `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingEFSettleHoldFirstN: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_EF_SETTLE_HOLD_FIRST_N"],
+              let value = Int(raw), value > 0 else { return 1 }
+        return value
+    }
+
+    /// How many settles `holdEditorFirstSettle()` has held so far in this launch.
+    private static var efSettleHoldsGranted = 0
+
+    /// Waits `uiTestingEFSettleHoldMs` milliseconds (a plain suspension) while fewer than `uiTestingEFSettleHoldFirstN` settles have been
+    /// held in this launch; returns at once otherwise (every normal launch and every non-UI-test run: the first guard). Called where
+    /// `editorFirstJobSettled` awaits `testEFSettleHold`. When a hold begins it persists one `[EF-SETTLE-HOLD]` line (the marker the
+    /// drag test reads to prove the footnote timer came due INSIDE the hold, i.e. after the settle's own early work had ended).
+    @MainActor
+    static func holdEditorFirstSettle() async {
+        guard let milliseconds = uiTestingEFSettleHoldMs, efSettleHoldsGranted < uiTestingEFSettleHoldFirstN else { return }
+        efSettleHoldsGranted += 1
+        DebugLog.alwaysPersisted("[EF-SETTLE-HOLD] editor first settle hold begins for \(milliseconds) milliseconds")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+    }
+
     /// UI-test-only (board task t-dfc4fb02): `FF_UI_TESTING_FOOTNOTE_WRITE_HOLD_MS=<n>` delays the NOTES NOTIFICATION after the
     /// footnote write has committed (the writer is NOT blocked: a blocking hold trips the 5 s content-state watchdog and a plain
     /// whole-document push, see board). Concretely, `FootnoteSyncService.performFootnoteUpdate` waits `n` milliseconds in a plain

@@ -208,9 +208,12 @@ extension FootnoteSyncService {
     /// quick undo's restore, the reinsert's settle, the quick redo's first stretch, the C5 fallback's flush). It clears the hash and
     /// NOTHING else: `lastKnownRefs` stays (the checkpoint matcher and `makeUndoCheckpoint` were reviewed against it), and the next
     /// `perform` that applies commits both again.
+    ///
+    /// A section drag (`resyncNow(forgetCommittedHash:)`) calls it too and rewrites no rows: the order of the references changed but the set
+    /// of labels did not (1...N before and after), so without the forget the hash guard would skip the settle's renumber.
     func forgetCommittedNotesState() {
         lastRenumberedHash = 0
-        FootnoteDiag.log("committed Notes state forgotten (the Notes rows were rewritten by a structural job): lastRenumberedHash cleared")
+        FootnoteDiag.log("committed Notes state forgotten (a structural job rewrote rows, or a drag reordered refs): lastRenumberedHash cleared")
     }
 
     /// Ends the hold started with `token`. A different token's hold (a later quick undo's) is left alone.

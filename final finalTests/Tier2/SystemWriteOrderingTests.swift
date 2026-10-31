@@ -517,9 +517,22 @@ struct SystemWriteOrderingTests {
         let genA = service.beginImmediateInsertion()
         let genB = service.beginImmediateInsertion()
 
-        async let resultA = service.commitImmediateInsertion(label: "2", projectId: stack.pid, generation: genA)
-        async let resultB = service.commitImmediateInsertion(label: "3", projectId: stack.pid, generation: genB)
-        let (idA, idB) = await (resultA, resultB)
+        // A's commit must be STARTED strictly before B's, as in the app, where A's `Task` is
+        // created (and so queued on the main actor) before B's. `async let` does not give
+        // that: its two child tasks may reach the service in either order, and when B
+        // (label "3") reserved first, A's shift of every label >= 2 turned B's "3" into "4"
+        // (labels {1,2,4}) -- a flake of the test's own ordering, not of the service. Two
+        // `Task { @MainActor in ... }` created one after the other (the pattern the next
+        // test uses too) run in creation order, and `commitImmediateInsertion` reserves its
+        // writer turn synchronously (`performSystemWrite` step 4) before its first
+        // suspension, so A holds the earlier turn.
+        let taskA = Task { @MainActor in
+            await service.commitImmediateInsertion(label: "2", projectId: stack.pid, generation: genA)
+        }
+        let taskB = Task { @MainActor in
+            await service.commitImmediateInsertion(label: "3", projectId: stack.pid, generation: genB)
+        }
+        let (idA, idB) = await (taskA.value, taskB.value)
 
         #expect(idA != nil, "insertion A's write must have landed -- not silently cancelled by insertion B's later generation bump")
         #expect(idB != nil, "insertion B's write must have landed")

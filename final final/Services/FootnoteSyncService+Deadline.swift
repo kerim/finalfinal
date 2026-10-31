@@ -26,6 +26,50 @@
 
 import Foundation
 
+/// t-f1a22aa7 (Phase 4c): what the burst timer's stand-aside needs, kept in ONE stored property of the service (`standAside`) because
+/// `FootnoteSyncService.swift` sits at SwiftLint's file-length limit; the service exposes the three fields under their own names (below).
+struct FootnoteStandAside {
+    /// Asked when a burst's deadline arrives; true while a section command still has work to do (nil: nothing to ask, the old behaviour).
+    var workPending: (@MainActor () -> Bool)?
+    /// How long a burst that stood aside waits before it asks again.
+    var recheck: TimeInterval = 0.25
+    #if DEBUG
+    /// Every deadline that arrived while `workPending` said true (see `testBurstDueDuringStructuralWorkCount`).
+    var dueCount = 0
+    #endif
+}
+
+extension FootnoteSyncService {
+    /// t-f1a22aa7 (Phase 4c): asked when a burst's deadline arrives. True while a section command (Delete, drag, Duplicate, Version
+    /// History restore, or the undo of one) still has work to do, so the burst must NOT write: the command's own settle renumbers the
+    /// references inside the editor's settle flag (one Cmd-Z step, Notes sorted), and a timer renumber arriving first is a Cmd-Z step of
+    /// its own that also skips the sort. While it is true the timer stands aside and asks again `standAsideRecheck` later, keeping the
+    /// waiting snapshot (`fireBurst`). Wired in `StructuralUndoController.configure`; nil (a service built without a controller, most
+    /// unit tests) keeps the old behaviour.
+    var structuralWorkPending: (@MainActor () -> Bool)? {
+        get { standAside.workPending }
+        set { standAside.workPending = newValue }
+    }
+
+    /// How long a burst that stood aside waits before it asks `structuralWorkPending` again. Fixed at a quarter of a second (a renumber
+    /// that no settle took lands within this long of the command's work ending: a background update no user action waits on). Tests
+    /// shorten it.
+    var standAsideRecheck: TimeInterval {
+        get { standAside.recheck }
+        set { standAside.recheck = newValue }
+    }
+
+    #if DEBUG
+    /// Test-only: how many times a burst's deadline arrived while `structuralWorkPending` said a section command was unfinished (every
+    /// re-check counts, unlike the persisted `[FN-STANDASIDE]` line, which is written once per burst). Tests wait on it instead of
+    /// sleeping. Incremented even when the burst then goes on to write (a break patch that switches the stand-aside off).
+    var testBurstDueDuringStructuralWorkCount: Int {
+        get { standAside.dueCount }
+        set { standAside.dueCount = newValue }
+    }
+    #endif
+}
+
 extension FootnoteSyncService {
     /// Called for a change of the references that nothing else consumed. Starts a burst (fixing its deadline and
     /// starting the one timer) or, inside a burst, replaces the waiting snapshot.
@@ -46,6 +90,13 @@ extension FootnoteSyncService {
         let deadline = ContinuousClock.now + .seconds(debounceInterval)
         fnDiagDeadlineFixed(refs: refs, generation: snapshot.generation, deadline: deadline)
         pendingUpdate = snapshot
+        startBurstTimer(deadline: deadline)
+    }
+
+    /// Cancels the burst's current timer (if any) and starts the one that wakes at `deadline`. Holds ONLY that: the diagnostics that
+    /// belong to a burst's START (`fnDiagDeadlineFixed`, `noteChangedRefsCheck`, the waiting-burst test) stay in `scheduleBurst` and are
+    /// not re-run when a burst that stood aside is re-armed (t-f1a22aa7).
+    func startBurstTimer(deadline: ContinuousClock.Instant) {
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             try? await Task.sleep(until: deadline, clock: .continuous)
@@ -56,12 +107,31 @@ extension FootnoteSyncService {
 
     /// The deadline arrived: runs the LATEST snapshot of the burst (read now, not captured when the burst began). Does
     /// nothing if the burst was ended in the meantime (the snapshot is gone).
+    ///
+    /// t-f1a22aa7 (Phase 4c): if a section command still has work to do (`structuralWorkPending`), the burst STANDS ASIDE: it writes
+    /// nothing, keeps its waiting snapshot (`pendingUpdate`; later changes keep riding along, the burst stays "waiting") and re-arms the
+    /// timer `standAsideRecheck` later. The command's own settle then renumbers the references inside the editor's settle flag (one
+    /// Cmd-Z step, the Notes sorted) and its `resyncNow` ends this burst (cancels the timer, clears the snapshot); if nothing takes the
+    /// burst, it writes on the first re-check after the command's work has ended. The write's `stillWanted` asks the same question again,
+    /// but `fireBurst`'s check, the writer's step-2 `stillWanted` and, for a write that carries a rename map, its `prepare` post all run in
+    /// one main-actor turn (assumed: nothing suspends between the check and the reserve), so it can change the answer only for a write
+    /// without a rename (`prepare == nil`), which the writer re-checks after its wait for a turn (`BlockSyncService`, step 7). A refusal
+    /// posts nothing to the page and leaves no wedge: the next change of the references starts a fresh burst. U-SA4 reaches the refusal
+    /// arm only through the DEBUG `testInFlightHook`, which runs in that gap (between `fireBurst`'s check and the writer's step 2).
     func fireBurst(deadline: ContinuousClock.Instant) async {
         guard let latest = pendingUpdate else { return }
+        let workUnfinished = structuralWorkPending?() == true
+        noteBurstDueDuringStructuralWork(latest, unfinished: workUnfinished)   // a plain call: only the line below is the stand-aside
+        if workUnfinished {
+            // Cancels the very task that is running this method; safe because this branch returns at once.
+            startBurstTimer(deadline: ContinuousClock.now + .seconds(standAsideRecheck))
+            return
+        }
         fnDiagBurstFired(deadline: deadline, generation: latest.generation)
         pendingUpdate = nil
         await performFootnoteUpdate(
             refs: latest.refs, projectId: latest.projectId, fullContent: latest.fullContent,
-            scheduledGeneration: latest.generation)
+            scheduledGeneration: latest.generation,
+            stillWanted: { [weak self] in self?.structuralWorkPending?() != true })
     }
 }

@@ -51,6 +51,11 @@ struct FootnoteDiagState {
     var lastScheduledAt: UInt64?
     /// The burst's fixed deadline, nil when no burst is waiting.
     var deadline: ContinuousClock.Instant?
+    /// t-f1a22aa7: the persisted `[FN-STANDASIDE]` line has been written for the current burst. Cleared by `fnDiagDeadlineFixed`,
+    /// which runs exactly when a burst starts (`scheduleBurst`, nothing waiting), so every way a burst can end (it wrote, it was
+    /// cancelled by an equal-refs check, an undo restore, an immediate insertion, a resync, a lifecycle suspension or `reset()`) is
+    /// followed by a fresh burst that logs once again.
+    var standAsideLogged = false
 }
 
 /// One system write's clock: created just before the call (`start`), `set()` by the first statement of the write's
@@ -93,6 +98,7 @@ extension FootnoteSyncService {
         fnDiag.firstScheduledAt = now
         fnDiag.lastScheduledAt = now
         fnDiag.deadline = deadline
+        fnDiag.standAsideLogged = false   // a new burst: its first stand-aside is logged again (t-f1a22aa7)
         FootnoteDiag.log("deadline fixed interval=\(Int(debounceInterval * 1000))ms generation=\(generation) " +
             "refs=\(FootnoteDiag.labels(refs))")
     }
@@ -112,6 +118,27 @@ extension FootnoteSyncService {
         FootnoteDiag.log("debounce fired generation=\(generation) latenessMs=\(-FootnoteDiag.msUntil(deadline)) " +
             "msSinceFirstSchedule=\(now - (fnDiag.firstScheduledAt ?? now)) msSinceLastSchedule=\(now - (fnDiag.lastScheduledAt ?? now))")
         fnDiag.deadline = nil
+    }
+
+    /// t-f1a22aa7: a burst's deadline arrived (`fireBurst`). Does nothing unless `unfinished` (a section command still had work
+    /// to do). Then it counts the check (DEBUG counter, EVERY re-check, which tests wait on) and writes the always-on
+    /// `[FN-STANDASIDE]` line ONCE PER BURST, on its first stand-aside (`fnDiag.standAsideLogged`, cleared when the next burst
+    /// starts): a settle that lasts four seconds re-checks sixteen times, and sixteen persisted lines per command would drown the log.
+    /// The line is `alwaysPersisted`, not the `.footnotes` category (off by default) and not `StructuralTrace` (which depends on `.undo`),
+    /// so a real-app test can find it in the ordinary diagnostic log. Digits and counts only, never document text.
+    ///
+    /// It is called with the check's result instead of being wrapped in an `if` at the call site, so the one `if workUnfinished {` in
+    /// `fireBurst` is the re-arm and a break patch can switch that off alone (the line still gets written).
+    func noteBurstDueDuringStructuralWork(_ latest: PendingFootnoteUpdate, unfinished: Bool) {
+        guard unfinished else { return }
+        #if DEBUG
+        testBurstDueDuringStructuralWorkCount += 1
+        #endif
+        guard !fnDiag.standAsideLogged else { return }
+        fnDiag.standAsideLogged = true
+        DebugLog.alwaysPersisted(
+            "[FN-STANDASIDE] footnote burst due while structural work unfinished gen=\(latest.generation) " +
+            "refs=\(FootnoteDiag.labels(latest.refs)) recheckMs=\(Int(standAsideRecheck * 1000))")
     }
 
     /// The equal-refs branch cancelled a waiting update.

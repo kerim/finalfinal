@@ -452,6 +452,7 @@ extension StructuralUndoController {
         #if DEBUG
         await testEFSettleHold?()
         #endif
+        await TestMode.holdEditorFirstSettle()   // UI-test-only (FF_UI_TESTING_EF_SETTLE_HOLD_MS): inert unless FF_UI_TESTING=1
         if pushesDatabaseBlockIds, kind == .sectionDuplicate, efLatestJobKey[opId] == jobKey {
             await pushDatabaseBlockIdsAfterCopiesMismatch(editorState: editorState, opId: opId, epoch: epoch)
         }
@@ -471,7 +472,9 @@ extension StructuralUndoController {
             }
             restoreGeneration = generation
         }
-        await resyncAfterEditorFirstDelete(editorState: editorState, opId: opId, epoch: epoch, restoreGeneration: restoreGeneration)
+        await resyncAfterEditorFirstDelete(
+            editorState: editorState, opId: opId, epoch: epoch, restoreGeneration: restoreGeneration,
+            forgetsCommittedNotes: kind == .sectionReorder)
     }
 
     /// The first step of `editorFirstJobSettled` that only a reorder takes (t-0b70d1e9); nothing for any other kind.
@@ -487,14 +490,7 @@ extension StructuralUndoController {
         await editorState.refreshSectionsAwaiting()
         editorState.liftPendingReorder(opId: opId)
         editorState.refreshSections()
-        // The footnote resync that follows in the settle must not be skipped as "already done". A move changes the ORDER of the
-        // references in the text but not which labels there are: the renumber the resync would make ends in 1..N, the same list
-        // the footnote service last committed, so `performFootnoteUpdate` returned at its `contentHash != lastRenumberedHash` guard
-        // (FootnoteSyncService.swift, "perform returned early: lastRenumberedHash guard" in the app log) and neither the references
-        // (10..18, 1..9, ...) nor the Notes were renumbered, for good. A delete or a duplicate changes the label list, so the hash
-        // differs and they never met this. Only the footnote hash is forgotten: the move rewrites no Notes or Bibliography rows, and
-        // the bibliography's own guard (the generated content) already differs when the citation order matters to the style.
-        footnoteSyncService?.forgetCommittedNotesState()
+        // (The committed footnote hash is forgotten by the footnote resync itself, `resyncAfterEditorFirstDelete(forgetsCommittedNotes:)`.)
     }
 
     /// Plan D2.4: bibliography and footnote resyncs, section sync, annotation sync and a sidebar refresh, queued one after the
@@ -523,7 +519,22 @@ extension StructuralUndoController {
     /// Code review G-F1/C-M1: the check also ends when ANY quick undo or redo (of another entry too) has bumped
     /// `editorState.editorRestoreGeneration` since `restoreGeneration` (the value the caller read before the text it works from; nil: now).
     /// Every such operation runs its own settle with a fresh live read and a full resync, so skipping here is safe.
-    func resyncAfterEditorFirstDelete(editorState: EditorViewState, opId: UUID, epoch: Int, restoreGeneration: Int? = nil) async {
+    ///
+    /// `forgetsCommittedNotes` (t-f1a22aa7, FIX-E; only a reorder's settle passes true): the footnote resync clears the footnote service's
+    /// committed Notes hash itself, after its idle wait and immediately before it writes (`FootnoteSyncService.resyncNow(forgetCommittedHash:)`),
+    /// so it must not be skipped as "already done". A move changes the ORDER of the references in the text but not which labels there are:
+    /// the renumber the resync would make ends in 1..N, the same list the footnote service last committed, so `performFootnoteUpdate`
+    /// returned at its `contentHash != lastRenumberedHash` guard (FootnoteSyncService.swift, "perform returned early: lastRenumberedHash
+    /// guard" in the app log) and neither the references (10..18, 1..9, ...) nor the Notes were renumbered, for good. A delete or a duplicate
+    /// changes the label list, so the hash differs and they never met this. Only the footnote hash is forgotten: the move rewrites no Notes
+    /// or Bibliography rows, and the bibliography's own guard (the generated content) already differs when the citation order matters to the
+    /// style. The forget used to run at the START of the settle (in `settleReorderOverlay`); a `/footnote` typed during the settle commits a
+    /// hash of its own without renumbering (`commitImmediateInsertion`), after which the resync skipped at the guard again. At this site it
+    /// runs inside the settle flag, inside the resync's own skip conditions (a settle whose epoch moved never forgets: the quick undo or redo
+    /// that took the entry forgets in its own settle) and with nothing in between it and the write.
+    func resyncAfterEditorFirstDelete(
+        editorState: EditorViewState, opId: UUID, epoch: Int, restoreGeneration: Int? = nil, forgetsCommittedNotes: Bool = false
+    ) async {
         let projectId = editorState.currentProjectId
         let restoreGen = restoreGeneration ?? editorState.editorRestoreGeneration
         let wanted: () -> Bool = { [weak self, weak editorState] in
@@ -544,7 +555,7 @@ extension StructuralUndoController {
                 defer { unmarkMarkdownSettle(opId: opId) }
                 await footnoteSyncService?.resyncNow(
                     footnoteRefs: FootnoteSyncService.extractFootnoteRefs(from: content), projectId: pid, fullContent: content,
-                    stillWanted: wanted)
+                    stillWanted: wanted, forgetCommittedHash: forgetsCommittedNotes)
             } else { skipped("footnote resync") }
         }
         if wanted() {

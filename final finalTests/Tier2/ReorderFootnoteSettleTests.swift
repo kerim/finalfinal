@@ -7,8 +7,10 @@
 //  1..N and put the Notes definitions in the same order. The settle's footnote resync is what does it, and it did nothing: a move changes
 //  the ORDER of the references but not which labels exist, so the renumber it would make ends in 1..N, the very list the service last
 //  committed, and `FootnoteSyncService.performFootnoteUpdate` returned at its `contentHash != lastRenumberedHash` guard ("nothing
-//  changed"). A delete or a duplicate changes the label list, so they never met it. `editorFirstJobSettled` therefore clears the
-//  committed hash (`forgetCommittedNotesState()`) for a reorder before it runs the resyncs.
+//  changed"). A delete or a duplicate changes the label list, so they never met it. `editorFirstJobSettled` therefore asks the footnote
+//  resync of a reorder's settle to clear the committed hash itself (`resyncAfterEditorFirstDelete(forgetsCommittedNotes:)`, which passes
+//  `resyncNow(forgetCommittedHash: true)`; t-f1a22aa7, Phase 4c, FIX-E / FIX-G: the resync runs `forgetCommittedNotesState()` after its
+//  idle wait and just before it writes). Before Phase 4c the settle's first step (`settleReorderOverlay`) cleared it.
 //
 //  The unit rig's own footnote service never saw it because nothing had committed a hash before the move. These tests use a REAL
 //  `FootnoteSyncService` (written through the writer's queue in the first, direct in the second) over a document with 21 footnotes in
@@ -146,8 +148,9 @@ struct ReorderFootnoteSettleTests {
     // The existing guard, pinned on its own. After the service has committed 1..21, a second resync whose references are only REORDERED
     // (10..18, 1..9, 19..21) renumbers to 1..21 again, hashes to the committed value and writes nothing: no renumber notification, the
     // Notes untouched. That is right for a retype of the same text, and wrong right after a structural job that moved the text. The
-    // settle of an editor-first reorder must therefore clear the committed hash first (`forgetCommittedNotesState()`); with it cleared
-    // the same resync writes.
+    // footnote resync of an editor-first reorder's settle must therefore clear the committed hash (`resyncNow(forgetCommittedHash: true)`
+    // runs `forgetCommittedNotesState()` just before the write, FIX-E / FIX-G); this test calls that function by hand: with the hash
+    // cleared the same resync writes.
     @Test("theCommittedStateGuardSkipsAMoveThatOnlyReordersTheReferencesUntilItIsForgotten")
     func theCommittedStateGuardSkipsAMoveThatOnlyReordersTheReferencesUntilItIsForgotten() async throws {
         let db = try TestFixtureFactory.createTemporary(content: Self.original)

@@ -76,6 +76,7 @@ final class FootnoteSyncService {
     /// The LATEST snapshot of the waiting burst (replaced by every later change, read when the deadline arrives).
     /// `pendingUpdate != nil` means "a burst is waiting"; every path that ends a burst clears it and cancels the timer.
     var pendingUpdate: PendingFootnoteUpdate?
+    @ObservationIgnored var standAside = FootnoteStandAside()   // t-f1a22aa7: the burst timer's stand-aside (FootnoteSyncService+Deadline.swift)
 
     /// Phase 3a-1b (C3b): set from `suspendForLifecycle()` to `resumeAfterLifecycle()` / `reset()`; while set,
     /// `checkAndUpdateFootnotes` records its request in `deferredCheck` and returns.
@@ -247,9 +248,10 @@ final class FootnoteSyncService {
     /// Phase 3a-1b (C3b): `allowRenumber: false` is the save sequence's refresh (step 7): references are kept
     /// as written and the WHOLE composed rename map is empty (E2) -- see `performFootnoteUpdate`.
     /// Slice 2b: `stillWanted` is asked after the idle wait (no: nothing touched) and is ANDed into the write's own `stillWanted`.
+    /// t-f1a22aa7 (FIX-G): `forgetCommittedHash` clears the committed Notes hash just before the write, no `await` between it and the write.
     func resyncNow(
         footnoteRefs: [String], projectId: String, fullContent: String, allowRenumber: Bool = true,
-        stillWanted: (() -> Bool)? = nil
+        stillWanted: (() -> Bool)? = nil, forgetCommittedHash: Bool = false
     ) async {
         if state == .syncing {
             let deadline = Date().addingTimeInterval(2.0)
@@ -268,6 +270,7 @@ final class FootnoteSyncService {
         debounceTask = nil
         pendingUpdate = nil
         syncGeneration += 1
+        if forgetCommittedHash { forgetCommittedNotesState() }   // FIX-G: the last statement before the write, no await between
         await performFootnoteUpdate(
             refs: footnoteRefs, projectId: projectId, fullContent: fullContent,
             scheduledGeneration: syncGeneration, allowRenumber: allowRenumber, stillWanted: stillWanted)

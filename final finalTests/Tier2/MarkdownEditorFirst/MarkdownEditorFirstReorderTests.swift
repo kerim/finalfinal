@@ -10,10 +10,13 @@
 //  WHY IT IS A PIN. A move changes the ORDER of the footnote references in the text but not which labels there are. The settle's footnote
 //  resync would renumber them back into 1..N, which ends in the very list the footnote service last committed
 //  (`lastRenumberedHash`), so `performFootnoteUpdate` returns at its `contentHash != lastRenumberedHash` guard and neither the references
-//  nor the Notes are renumbered, for good. `settleReorderOverlay` therefore forgets the committed hash for `.sectionReorder`
-//  (StructuralUndoController+EditorFirstDelete.swift) before the resyncs run. That settle is shared by Rich Text and Markdown
-//  (`ReorderFootnoteSettleTests` pins the Rich Text half with a scripted editor); this pins the Markdown half: the renumber reaches the
-//  CodeMirror page through the coordinator's `.renumberFootnotes` observer, and the Notes rows follow the text.
+//  nor the Notes are renumbered, for good. The footnote resync of a reorder's settle therefore forgets the committed hash itself, for
+//  `.sectionReorder` only (t-f1a22aa7, Phase 4c, FIX-E / FIX-G: `resyncAfterEditorFirstDelete(forgetsCommittedNotes:)` in
+//  StructuralUndoController+EditorFirstDelete.swift passes `forgetCommittedHash:` to `FootnoteSyncService.resyncNow`, which forgets after
+//  its idle wait and just before it writes). It used to be forgotten by `settleReorderOverlay`, the first step of the settle. That settle
+//  is shared by Rich Text and Markdown (`ReorderFootnoteSettleTests` pins the Rich Text half with a scripted editor); this pins the
+//  Markdown half: the renumber reaches the CodeMirror page through the coordinator's `.renumberFootnotes` observer, and the Notes rows
+//  follow the text.
 //
 //  THE STAGING. The footnote service is PRIMED first, as it always is by the time a user drags (an earlier resync has committed the
 //  hash of 1..9). Only then are the rows and the page put into the state a drag leaves: three chapters whose references read 1-3, 7-9,
@@ -30,10 +33,11 @@
 //
 //  Break patch (a 1-5 line change in production code that must make the test fail), and the failure it shows:
 //
-//   T-U11a  BREAK: in `settleReorderOverlay` (StructuralUndoController+EditorFirstDelete.swift, about line 497) delete the line
-//                  `footnoteSyncService?.forgetCommittedNotesState()`.
+//   T-U11a  BREAK (BP-G, t-f1a22aa7 FIX-G): in `FootnoteSyncService.resyncNow` (Services/FootnoteSyncService.swift) delete the line
+//                  `if forgetCommittedHash { forgetCommittedNotesState() }`.
 //           FAILS: "footnote references out of order: [1, 2, 3, 7, 8, 9, 4, 5, 6]" (the resync is skipped at the hash guard, so the page
 //                  keeps the moved order; the Notes rows also stay in their old order, "Notes row 4 ...").
+//                  (Before Phase 4c the forget sat in `settleReorderOverlay`, StructuralUndoController+EditorFirstDelete.swift.)
 //
 //  ROUND 3a (the Swift click, `performMarkdownEditorFirstReorder`) adds the tests below. They drive a real drag through
 //  `performSectionReorderDetailed` against the real page, rows and writer. Break patches (a 1-5 line change in production code):
@@ -41,11 +45,14 @@
 //   T-R1   testAMarkdownDragMovesThePageThenTheRowsLiftsTheOverlayAndReleasesTheHold
 //          BREAK: in `startEditorFirstReorderJob` remove the two `notifyMarkdownJobEnded` calls.   FAILS: "hold still up after settle".
 //   T-U11  testAMarkdownDragRenumbersTheFootnotesOfAPrimedDocument
-//          BREAK: delete `footnoteSyncService?.forgetCommittedNotesState()` in `settleReorderOverlay`.
+//          BREAK (BP-G): delete `if forgetCommittedHash { forgetCommittedNotesState() }` in `FootnoteSyncService.resyncNow`.
 //          FAILS: "footnote references out of order: [1, 2, 3, 7, 8, 9, 4, 5, 6]".
 //   T-FH1  testTheDragsSettleRunsAsAReorderAndForgetsTheFootnoteHash
-//          BREAK: in `startEditorFirstReorderJob` pass `kind: .sectionDelete` to `editorFirstJobSettled`.
-//          FAILS: "the settle did not forget the footnote hash" (and "footnote references out of order").
+//          BREAK A (BP-E, the old forget site back): re-add `footnoteSyncService?.forgetCommittedNotesState()` at the end of
+//          `settleReorderOverlay` (and pass `forgetCommittedHash: false` in `resyncAfterEditorFirstDelete`).
+//          FAILS: "the settle forgot the footnote hash before its flag (the old site)".
+//          BREAK B: in `startEditorFirstReorderJob` pass `kind: .sectionDelete` to `editorFirstJobSettled`.
+//          FAILS: "footnote references out of order" (and "the settle did not lift the reorder overlay").
 //   T-R2   testTypingJustBeforeADragIsSavedWithItAndNothingIsPushedBack
 //          BREAK: in `markdownReorderReplyTurn` do not call `writer.prepareStructuralClick`.   FAILS: "typed text missing from rows".
 //   T-R13  testALevelOnlyDropTakesTheEditorFirstRoad
@@ -366,9 +373,14 @@ extension MarkdownEditorFirstReorderTests {
         try assertFootnotesRenumbered(page: page)
     }
 
-    // T-FH1 (forget site 1): the reorder job's settle must run with kind `.sectionReorder`, because only that kind forgets the footnote
-    // service's committed hash (`settleReorderOverlay`). Seen at the settle's own hold (the DEBUG seam sits right after that step and
-    // before the resyncs): the hash is 0 and the overlay is lifted. A settle that ran as a delete would leave both.
+    // T-FH1 (the forget site): the reorder job's settle must run with kind `.sectionReorder`, because only that kind forgets the footnote
+    // service's committed hash, and since t-f1a22aa7 (Phase 4c) the FOOTNOTE RESYNC forgets it, not the settle's first step
+    // (`resyncAfterEditorFirstDelete(forgetsCommittedNotes:)` hands the flag to `FootnoteSyncService.resyncNow(forgetCommittedHash:)`,
+    // FIX-E / FIX-G). Seen at the settle's own hold (the DEBUG seam sits after the overlay step and before the resyncs): the overlay is
+    // lifted, and the hash is NOT forgotten yet (a forget at the start of the settle is the old site: a `/footnote` typed during the settle
+    // commits a hash of its own after it, and the resync then skips at the guard; R4b in MarkdownEditorFirstReorderTests+TimerRace.swift
+    // is that case). The forget shows in the result: the references are renumbered. A settle that ran as a delete would leave the overlay
+    // up and never forget the hash.
     func testTheDragsSettleRunsAsAReorderAndForgetsTheFootnoteHash() async throws {
         let rig = try await makePrimedRig()
         guard rig.footnotes.lastRenumberedHash != 0 else {
@@ -391,7 +403,7 @@ extension MarkdownEditorFirstReorderTests {
         await rig.settleEverything()
 
         XCTAssertTrue(settleHoldReached, "premise: the job's settle never reached its hold (the job did not apply)")
-        XCTAssertEqual(hashAtSettleHold, 0, "the settle did not forget the footnote hash: it did not run as a reorder (kind .sectionReorder)")
+        XCTAssertNotEqual(hashAtSettleHold, 0, "the settle forgot the footnote hash before its flag (the old site)")
         XCTAssertNil(overlayAtSettleHold, "the settle did not lift the reorder overlay: it did not run as a reorder (kind .sectionReorder)")
         let page = try await rig.waitForPage { FootnoteSyncService.extractFootnoteRefs(from: $0) == Self.sequentialLabels }
         try assertFootnotesRenumbered(page: page)

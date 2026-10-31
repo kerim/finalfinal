@@ -248,6 +248,10 @@ final class StructuralUndoController {
         self.annotationSyncService = annotationSyncService
         self.unifiedUndoService = unifiedUndoService
         self.findBarState = findBarState
+        // t-f1a22aa7 (Phase 4c, FIX-C): the footnote burst timer stands aside while a section command has unfinished work, so its renumber
+        // cannot arrive outside the command's settle flag (its own Cmd-Z step, Notes unsorted). The hold covers a Markdown click before its
+        // job is registered, the registry covers the job and its settle (`EditorViewState.hasUnfinishedStructuralWork`).
+        footnoteSyncService.structuralWorkPending = { [weak editorState] in editorState?.hasUnfinishedStructuralWork ?? false }
         // Plan D2.2(f), addendum A18: when the timeline permanently discards an editor-first delete's entry (eviction, a fresh op
         // abandoning the redo branch, a barrier), its slot goes too, which unpins the slot's snapshot, and its job record is dropped.
         unifiedUndoService.discardEditorFirstEntry = { [weak self] opId in
