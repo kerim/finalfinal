@@ -143,34 +143,33 @@
 //  A Cmd-Z or Cmd-Shift-Z that cannot take the quick road (an entry that was swapped slowly before, a reorder, ...) now runs in Rich Text as ONE
 //  editor call (`structuralSwapEditorFirst`) plus a queued job (`StructuralReplaceJob`, kind snapshotUndo / snapshotRedo: no epoch bump, no
 //  restamp), so what the user types during and after it is kept. Typing made while the press WAITED (for the delete's held job and settle)
-//  makes the swap REFUSE: nothing is swapped, the typing is saved, the warning toast "Some undo or redo presses could not be carried out."
-//  shows, the entry stays recorded, the next Cmd-Z takes the typing back and the one after it carries the slow undo out (R7); it never
-//  refuses twice in a row on a quiet document. Markdown mode keeps the old body (not in this file's scope).
+//  used to make the swap REFUSE (the warning toast "Some undo or redo presses could not be carried out.", a retry in two more presses, R7).
+//  Since Phase 4c job 2 (bt t-d2061b27) the press keeps waiting, runs on the document as it was at the press and the typing is put back on
+//  top (`typing-since-press ... decision=rebased`, `typingReplayed=true`): the three tests of section 21 assert that, and a Cmd-Z after it
+//  takes exactly that typing away. Markdown mode keeps the old body (not in this file's scope).
 //    testSlowUndoThenTypeAtOnce_{article,book6,book12}     Delete a section, Cmd-Z (FORCED slow), type at once into another paragraph.
 //    testSlowRedoAfterSlowUndo_book6                       Delete, Cmd-Z (slow), Cmd-Shift-Z (the slow redo), type at once.
-//    testTypeDuringUndoingNotice_book12                    Delete, Cmd-Z at once (it waits behind the held delete job), TYPE while it
-//        waits: the press is refused (`ok=false reason=docChanged`), the warning toast shows, the typing is kept, the section stays deleted;
-//        then Cmd-Z (the typing goes), Cmd-Z (the slow undo is carried out, `ok=true`): the document is the one before.
-//    testTypeDuringUndoingNoticeThenReopen_article         The same refusal on the article, then a quit and a reopen: the typing is kept.
+//    testTypeDuringUndoIsCarriedOut_book12                 Delete, Cmd-Z at once (the slow press waits), TYPE while it waits: the press is
+//        carried out (`typing-since-press ... decision=rebased`, `swap-editor-first ... ok=true typingReplayed=true`), no warning toast, the
+//        section is back with the typing kept; then ONE Cmd-Z takes exactly the typing away: the document is the one before the delete.
+//    testTypeDuringUndoIsCarriedOutThenReopen_article      The same on the article, then a quit and a reopen: the typing is kept.
 //    testDuplicateSlowUndoThenDeleteUndoQuick_book6        Delete B, Duplicate A, Cmd-Z (the duplicate's undo, FORCED slow), Cmd-Z (the
 //        delete's undo is QUICK again: the slow undo closed no quick path, boards t-d8f5684f and t-7e5e2d88).
 //    testSlowUndoTiming_oldVsNew_book12                    D11: the click turn of the slow undo, the old body (FF_UI_TESTING_LEGACY_STRUCTURAL=1)
 //        against the new one in one session, with the counts; the decision "is a working indicator needed?" is the judge's, from the figures.
 //  FIX ROUND F2 (the judge's must-fix 6 and the D11 ruling after the slice 2-3 review; sections 24 to 26 at the end, and the person-pace test
-//  at the end of section 21 beside the refusal tests it extends):
+//  at the end of section 21 beside the typing-during-the-wait tests it extends):
 //    testReorderSlowUndoScreenEqualsDatabase_book6        (C3a) Drag the section "3.6 Conclusion" below the heading "Chapter 4: ..." in the sidebar
 //        (a REORDER), Cmd-Z (a reorder's undo is the queued slow road by itself: no seam), type at once into the Anchor05 line, let it settle.
 //        `swap-editor-first direction=undo ... ok=true` once, the heading order in the block table is the one before the drag, the sentence is
 //        in the database exactly once, and the editor's text equals the database (the File > Save Version round trip leaves the table unchanged).
 //        (C3b, the same check after a DELETE's slow undo on the six-chapter book, is NOT added: `testSlowUndoThenTypeAtOnce_book6` already ends
 //        with `addScreenEqualsDatabaseCheck` for the article and the six-chapter book.)
-//    testTypeDuringUndoingNoticeAtPersonPace_book6        (C5) The refusal test of the six-chapter book (the delete's job held 3.5 s, Cmd-Z at once,
-//        type while the press waits: refused, `ok=false reason=docChanged`, one warning toast), then Cmd-Z TWICE in a row with NOTHING awaited
-//        between the two presses (the app's settle is awaited only before the first). End state: the typing is gone (the text undo took it
-//        back), the section is back, the rows are the document before the delete (Notes and Bibliography included), the screen equals the
-//        database, exactly one `ok=false reason=docChanged` and one `ok=true` swap line in the whole test (in that order: never two refusals
-//        in a row), exactly one warning toast. Two `typeKey` calls back to back is as close to a person's double press as XCUITest gets (each
-//        call costs a few hundred milliseconds in the VM); the gap between the two Z keys on the app's clock is printed.
+//    testTypeDuringUndoIsCarriedOutAtPersonPace_book6     (C5, converted by Phase 4c job 2) The six-chapter book (the delete's job held 3.5 s,
+//        Cmd-Z at once, type while the press waits): the press is carried out (`decision=rebased`, exactly one `ok=true typingReplayed=true`
+//        swap line and no `ok=false` one, no warning toast), the section is back with the typing kept; then ONE Cmd-Z. End state: the typing
+//        is gone (the text undo took exactly it back), the section is back, the rows are the document before the delete (Notes and
+//        Bibliography included) and the screen equals the database.
 //    testSlowUndoTimingPresses_book12 (and testSlowUndoTimingPresses_book6, the cheap shake-down of the same code)   (D11) The judge's three
 //        figures, new road only (the old-versus-new pair stays `testSlowUndoTiming_oldVsNew_book12`): the key to `performed` of (i) a single slow
 //        Cmd-Z of a REORDER, (ii) a single slow Cmd-Z of a DELETE whose quick road is closed by the seam, (iii) the SECOND of two back-to-back
@@ -188,13 +187,13 @@
 //  slow press, new road or old (printed, never asserted on the slow roads; the quick roads still assert that it is absent).
 //  Typing goes ONLY into the Anchor05 paragraph (a footnote-free line of chapter 1, outside every section deleted here; board t-ba597502).
 //  RUNNING (serialised: at most 2 runs at once; the timing test alone on one VM; every vmtest call needs the sandbox off):
-//    1. together:  [article]  testSlowUndoThenTypeAtOnce_article, testTypeDuringUndoingNoticeThenReopen_article          --timeout 3600
+//    1. together:  [article]  testSlowUndoThenTypeAtOnce_article, testTypeDuringUndoIsCarriedOutThenReopen_article        --timeout 3600
 //                  [book6]    testSlowUndoThenTypeAtOnce_book6, testSlowRedoAfterSlowUndo_book6, testDuplicateSlowUndoThenDeleteUndoQuick_book6
 //                             --timeout 7000
-//    2. alone:     [book12]   testSlowUndoThenTypeAtOnce_book12, testTypeDuringUndoingNotice_book12                       --timeout 7000
+//    2. alone:     [book12]   testSlowUndoThenTypeAtOnce_book12, testTypeDuringUndoIsCarriedOut_book12                    --timeout 7000
 //    3. alone:     [timing]   testSlowUndoTiming_oldVsNew_book12                                                           --timeout 7000
 //    FIX ROUND F2 (".../" stands for "final finalUITests/WriteQueuePhase4bStructuralQueueE2ETests/"):
-//    4. together:  [book6]    testReorderSlowUndoScreenEqualsDatabase_book6, testTypeDuringUndoingNoticeAtPersonPace_book6,
+//    4. together:  [book6]    testReorderSlowUndoScreenEqualsDatabase_book6, testTypeDuringUndoIsCarriedOutAtPersonPace_book6,
 //                             testSlowUndoTimingPresses_book6 (the shake-down)                                                --timeout 7000
 //    5. alone:     [timing]   testSlowUndoTimingPresses_book12   (about 45 to 60 minutes: load, then four phases of sidebar driving) --timeout 7000
 //    FIX ROUND F3 (t-18b7fa48; section 27 at the end, and the drag fix in `dragCard`):
@@ -203,8 +202,8 @@
 //        what is asserted and what could not be made person-paced). The Markdown variant was removed again (round F3b, see section 27).
 //      testSlowUndoTimingPresses_book6 / _book12: the second drag of the launch (phase (iii)) now drops at 0.6 of the target card's height
 //        instead of 0.5, because the sidebar ignores a drop at exactly the same point as the one before it (see `dragCard`).
-//    6. alone:     [book6]    testTypeDuringUndoingNoticeAtPersonPace_book6   --timeout 7000
-//                             (the real-app reproduction of the finding: red before round F3b's equivalence rule, see section 27)
+//    6. alone:     [book6]    testTypeDuringUndoIsCarriedOutAtPersonPace_book6   --timeout 7000
+//                             (formerly the real-app reproduction of the finding, red before round F3b's equivalence rule, see section 27)
 //    7. together:  [book6]    testStuckUndoExperiment_noSeam_book6, testSlowUndoTimingPresses_book6 (phase (iii) with the drag fix)   --timeout 7000
 //
 
@@ -4131,7 +4130,7 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
     }
 }
 
-// MARK: - 21. Typing while the slow undo waits: the refusal (D13), the retry (R7) and the reopen
+// MARK: - 21. Typing while the slow undo waits: the undo is carried out and the typing is kept (Phase 4c job 2), one more Cmd-Z, the reopen
 
 extension WriteQueuePhase4bStructuralQueueE2ETests {
     /// The press's own wait for the two tests that rely on a wait window (`FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS`): 8 s between the slow undo's
@@ -4140,32 +4139,32 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
     /// may exceed about 3.9 s. This wait blocks nothing; it is a plain suspension in the press's gate turn, as a real wait is.
     static let pressHoldMs = 8_000
 
-    func testTypeDuringUndoingNotice_book12() {
-        runTypeDuringUndoingNotice(.book12, method: #function, thenReopen: false, pressHoldMs: Self.pressHoldMs)
+    func testTypeDuringUndoIsCarriedOut_book12() {
+        runTypeDuringUndoIsCarriedOut(.book12, method: #function, thenReopen: false, pressHoldMs: Self.pressHoldMs)
     }
-    func testTypeDuringUndoingNoticeThenReopen_article() {
-        runTypeDuringUndoingNotice(.article, method: #function, thenReopen: true, pressHoldMs: Self.pressHoldMs)
+    func testTypeDuringUndoIsCarriedOutThenReopen_article() {
+        runTypeDuringUndoIsCarriedOut(.article, method: #function, thenReopen: true, pressHoldMs: Self.pressHoldMs)
     }
-    /// Fix round F2, judge ruling C5: the refusal test with a person's retry, two Cmd-Z presses with nothing awaited between them.
-    func testTypeDuringUndoingNoticeAtPersonPace_book6() {
-        runTypeDuringUndoingNotice(.book6, method: #function, thenReopen: false, atPersonPace: true)
+    /// Fix round F2, judge ruling C5, converted by Phase 4c job 2: the same test on the six-chapter book with no press hold, the Cmd-Z waiting
+    /// behind the delete's held job (a person's pace).
+    func testTypeDuringUndoIsCarriedOutAtPersonPace_book6() {
+        runTypeDuringUndoIsCarriedOut(.book6, method: #function, thenReopen: false, atPersonPace: true)
     }
 
     /// User step: "Delete a section, press Cmd-Z straight away, and type while it works." The first two Cmd-Z presses that would be quick are
     /// forced slow, and the press waits: with `pressHoldMs` (> 0) the app holds the slow press `pressHoldMs` between reading its plan and its
     /// swap click (the book12 and article tests); with 0 the delete's job is held 3.5 s (the first job only) and the press waits behind it
-    /// (the person-pace test, unchanged). Cmd-Z is the next thing done after the delete's `performed` line (the "Undoing..." notice shows
-    /// after a second), and the sentence is typed at once, before the swap click. The swap turn finds the document changed: ONE
-    /// `swap-editor-first direction=undo ... ok=false reason=docChanged` line and no ok line, the Swift sequence logs `refused`, the warning
-    /// toast "Some undo or redo presses could not be carried out." shows once, nothing was swapped: the sentence is in the database once
-    /// and on screen, and the section is STILL deleted (rows, sidebar). Then, as a person does it (R7, no waits): `thenReopen` false (the
-    /// twelve-chapter book): Cmd-Z takes the typing back (a plain text step), the Cmd-Z after it carries the slow undo out (a second
-    /// swap line, ok=true; never two refusals in a row on the quiet document), and the document is the one before the delete.
-    /// `thenReopen` true (the article): a quit and a reopen, after which the sentence is still in the document and the section still
-    /// deleted (the typing is kept). `atPersonPace` (fix round F2,
-    /// judge ruling C5; `thenReopen` false): after the refusal the test presses Cmd-Z TWICE with nothing awaited between the two presses
-    /// (`retryAtPersonPace`) instead of one press at a time with an observation wait after each (`retryAfterTheRefusal`).
-    func runTypeDuringUndoingNotice(
+    /// (the person-pace test). Cmd-Z is the next thing done after the delete's `performed` line (the "Undoing..." notice shows after a second),
+    /// and the sentence is typed at once, before the swap click. Until Phase 4c job 2 the swap turn found the document changed and REFUSED
+    /// (`ok=false reason=docChanged`, the warning toast, the section still deleted, a retry stage); now the press keeps waiting, runs on the
+    /// document as it was at the press and the typing is put back on top. Asserted, in this order: (1) the page's
+    /// `typing-since-press ... decision=rebased` line with steps >= 1; (2) no "Some undo or redo presses could not be carried out." toast (log
+    /// and screen); (3) ONE `swap-editor-first direction=undo ... ok=true typingReplayed=true` line and no `ok=false` line, the section is back
+    /// (rows, Notes and Bibliography are the document before, with the sentence at the end of the Anchor05 line, once, on screen), no plain
+    /// push, no beep; then `thenReopen` false (book12 and book6): ONE further Cmd-Z takes exactly the sentence away (a plain text step, no
+    /// second swap) and the rows are the document before the delete; `thenReopen` true (the article): a quit and a reopen keep the sentence
+    /// and the restored section.
+    func runTypeDuringUndoIsCarriedOut(
         _ size: Phase4bDelSize, method: String, thenReopen: Bool, atPersonPace: Bool = false, pressHoldMs: Int = 0
     ) {
         let sentence = Self.markerAfter
@@ -4183,26 +4182,45 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         let run = Phase4bSqWaitRun(deleteFrom: deleteFrom, undoFrom: undoFrom, typedFrom: typedFrom, pressHoldMs: pressHoldMs)
 
         guard let verdictIndex = waitForSwapVerdict(direction: "undo", from: undoFrom, size: size) else { return }
-        let toastSeen = waitForLogLine(from: undoFrom, timeout: appWait(60, before: "the warning toast is looked for")) {
-            $0.text.contains("[toast] show") && $0.text.contains("could not be carried out")
-        }
-        result("TOAST ON SCREEN (supplementary, never asserted: the log line below is the evidence; one look takes seconds on a book): "
-            + "\(toastSeen == nil ? "the log shows no warning toast" : (toastOnScreen() ?? "none seen on screen"))")
+        // (1) THE PREMISE: the page says the sentence fell inside the wait and was put back. The line is written whatever the outcome (the old
+        // refusal reads `decision=changed`), so an app without the fix fails here and the message quotes the line it wrote.
+        let premise = typingSincePressLine(from: undoFrom)
+        let steps = premise.flatMap { Phase4bDelTypingParser.intAfter(" steps=", in: $0.text) } ?? -1
+        let decision = premise.flatMap { Phase4bDelTypingParser.word(after: " decision=", in: $0.text) } ?? "none"
+        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undo-\(size.identifier)-after-the-press")
+        assertCheck(decision == "rebased" && steps >= 1,
+                    "(1) PREMISE: the page wrote `\(premise.map { String($0.text.suffix(120)) } ?? "no typing-since-press line")`, expected "
+                        + "`decision=rebased` with steps >= 1 (the sentence was typed while the press waited; `changed` is the old refusal, "
+                        + "`matched` means the sentence came after the wait)")
+        // (2) NO TOAST "Some undo or redo presses could not be carried out." (the log, and the toast-message element on screen).
+        let toasts = droppedPressToasts(from: deleteFrom)
+        let onScreen = toastOnScreen() ?? ""
+        assertCheck(toasts.isEmpty && !onScreen.contains("could not be carried out"),
+                    "(2) TOAST: \"Some undo or redo presses could not be carried out.\" was shown (\(toasts.count) `[toast] show` line(s) in the log, "
+                        + "on screen: \"\(onScreen)\"): the waiting Cmd-Z was cancelled instead of carried out")
+        // (3) THE UNDO WAS CARRIED OUT and the typing is kept.
         assertCheck(waitForSentenceInDatabase(sentence, timeout: 90), "the sentence typed while the press waited reached the database")
-        _ = settle()
-        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undoing-notice-\(size.identifier)-after-refusal")
+        assertCheck(settle(back: [setup.title]), "\"\(setup.title)\" is back in the block table and the document is quiet")
+        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undo-\(size.identifier)-carried-out")
         var soft = Phase4bFlowSoftChecks()
-        soft.check(toastSeen != nil, "the warning toast \"Some undo or redo presses could not be carried out.\" was never shown")
-        addRefusalChecks(run, verdictIndex: verdictIndex, setup: setup, sentence: sentence, to: &soft)
-        assertSoft(soft, "typing while the slow Cmd-Z waited (the refusal), on \(size.identifier)")
+        addCarriedOutChecks(run, verdictIndex: verdictIndex, setup: setup, sentence: sentence, to: &soft)
+        assertSoft(soft, "typing while the slow Cmd-Z waited (carried out, typing kept), on \(size.identifier)")
 
         if thenReopen {
-            reopenAfterTheRefusal(setup: setup, sentence: sentence, size: size)
-        } else if atPersonPace {
-            retryAtPersonPace(setup: setup, run: run, sentence: sentence, size: size)
+            reopenAfterTheUndo(setup: setup, sentence: sentence, size: size)
         } else {
-            retryAfterTheRefusal(setup: setup, run: run, sentence: sentence, size: size)
+            takeTheWaitTypingBack(
+                setup: setup, run: run, sentence: sentence, size: size, premiseIndex: premise?.index ?? 0, atPersonPace: atPersonPace)
         }
+    }
+
+    /// The page's `[STRUCT-TRACE] typing-since-press press=P steps=N decision=D` line since `index` (Phase 4c job 2, written at the swap's
+    /// re-check whatever the outcome): its log index and text, nil when none was written.
+    func typingSincePressLine(from index: Int) -> (index: Int, text: String)? {
+        tail.poll()
+        guard index <= tail.lines.count,
+              let found = (index..<tail.lines.count).first(where: { tail.lines[$0].text.contains("[STRUCT-TRACE] typing-since-press ") }) else { return nil }
+        return (found, tail.lines[found].text)
     }
 
     /// The text of a toast that is on screen right now, from one accessibility snapshot (a toast that goes away between an existence
@@ -4227,38 +4245,38 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         return found
     }
 
-    /// The facts of the refusal, added to `soft`: the typing came before the swap turn (a TEST-SETUP failure when the VM was too slow), the
-    /// swap turn answered `ok=false reason=docChanged` once and never `ok=true`, the warning toast showed exactly once (the "Undoing..."
-    /// notice count is printed, not asserted), the sentence is in the database once and on screen, the section is still deleted, the rows
-    /// are the document after the delete with the sentence typed, no plain push, no beep, no other fallback line.
-    func addRefusalChecks(
+    /// The facts of the carried-out press, added to `soft`: the typing came before the swap turn (a TEST-SETUP failure when the VM was too slow),
+    /// the swap turn answered `ok=true` with `typingReplayed=true` (the typing taken out and put back) and never `ok=false`, the warning toast was
+    /// not shown, the sentence is in the database once and on screen, the section is back (rows, Notes and Bibliography are the document before
+    /// with the sentence typed, the Outline), no plain push, no beep, no other fallback line.
+    func addCarriedOutChecks(
         _ run: Phase4bSqWaitRun, verdictIndex: Int, setup: Phase4bSqSlowUndoSetup, sentence: String, to soft: inout Phase4bFlowSoftChecks
     ) {
         let verdict = tail.lines[verdictIndex].text
-        soft.check(verdict.contains(" ok=false") && verdict.contains(" reason=docChanged"),
-                   "the swap turn answered `\(verdict.suffix(120))`, expected ok=false reason=docChanged "
-                       + "(the sentence was typed while the press waited)")
+        soft.check(verdict.contains(" ok=true") && verdict.contains(" typingReplayed=true"),
+                   "the swap turn answered `\(verdict.suffix(140))`, expected ok=true with typingReplayed=true "
+                       + "(the sentence was typed while the press waited and the press must put it back)")
         addTypedWhileWaitingCheck(run, verdictIndex: verdictIndex, to: &soft)
-        addSlowUndoMechanismChecks("undo", performed: 0, refused: 1, from: run.undoFrom, to: &soft)
+        addSlowUndoMechanismChecks("undo", performed: 1, refused: 0, from: run.undoFrom, to: &soft)
         let dropped = droppedPressToasts(from: run.undoFrom)
         result("TOASTS: the warning toast \"Some undo or redo presses could not be carried out.\" was logged \(dropped.count) time(s); "
             + "\"Undoing...\" notice(s) \(undoingToastCount(from: run.undoFrom)); beeps \(beepLines(from: run.undoFrom).count); plain pushes "
             + "\(plainPushCount(from: run.undoFrom))")
-        soft.check(dropped.count == 1,
-                   "the warning toast \"Some undo or redo presses could not be carried out.\" was shown \(dropped.count) time(s), expected once")
+        soft.check(dropped.isEmpty,
+                   "the warning toast \"Some undo or redo presses could not be carried out.\" was shown \(dropped.count) time(s), expected never")
         soft.check(plainPushCount(from: run.undoFrom) == 0,
                    "\(plainPushCount(from: run.undoFrom)) `[SYNC-DIAG:UpdateNSView] PUSHING` line(s): a plain whole-document push wipes typing")
         soft.check(beepLines(from: run.undoFrom).isEmpty, "the editor beeped \(beepLines(from: run.undoFrom).count) time(s)")
         soft.check(blocksContaining(sentence) == 1, "the sentence is in \(blocksContaining(sentence)) row(s), expected exactly 1 (the Anchor05 line)")
-        soft.check(exactHeadingCount(setup.title) == 0,
-                   "the section \"\(setup.title)\" is in the table \(exactHeadingCount(setup.title)) time(s): the refused press undid the delete")
-        soft.check(!sidebarCard(setup.title).exists, "the section's sidebar card is on screen although nothing was swapped")
-        guard let expected = expectedUserRows(
-            duplicating: nil, removed: [setup.range], originalTyped: [setup.anchor: Self.anchorLine + " " + sentence]) else {
+        soft.check(exactHeadingCount(setup.title) == 1,
+                   "the section \"\(setup.title)\" is in the table \(exactHeadingCount(setup.title)) time(s), expected once: the Cmd-Z did not bring it back")
+        soft.check(sidebarCard(setup.title).exists || waitForCard(setup.title, present: true, timeout: appWait(60, before: "the card is looked for")),
+                   "the section's sidebar card did not come back")
+        guard let expected = expectedUserRows(duplicating: nil, originalTyped: [setup.anchor: Self.anchorLine + " " + sentence]) else {
             fail("TEST-SETUP: the expected rows could not be worked out")
             return
         }
-        addRowChecks("after Delete Section, a Cmd-Z that waited, and the typing", expectedUser: expected, managed: nil, to: &soft)
+        addRowChecks("after Delete Section, a Cmd-Z that waited, and the typing", expectedUser: expected, managed: preManagedRows, to: &soft)
         addTypedLineOnScreenCheck(line: Self.anchorLine, marker: sentence, requireIt: true, to: &soft)
     }
 
@@ -4299,122 +4317,46 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         }
     }
 
-    /// R7, the way a person does it, with no wait between two commands: Cmd-Z until a structural undo ran (the first press must be a plain
-    /// text step that takes the typed sentence back; the press after it carries the slow undo out), then the document is the one before the
-    /// delete. In total ONE refusal and ONE success (it never refuses twice in a row on the quiet document), one warning toast.
-    func retryAfterTheRefusal(setup: Phase4bSqSlowUndoSetup, run: Phase4bSqWaitRun, sentence: String, size: Phase4bDelSize) {
+    /// ONE further Cmd-Z after the carried-out undo (nothing awaited between the app's own settle and the press): it takes exactly the typing
+    /// done in the wait away and nothing else. The editor decides it `fallthrough` (a plain text step: the swap's replay is ONE history step),
+    /// no second swap runs, and the rows are the document before the delete, Notes and Bibliography included. Every key was typed before
+    /// the page's re-check line (a TEST-SETUP failure otherwise: a sentence split across the swap is more than one undo step).
+    func takeTheWaitTypingBack(
+        setup: Phase4bSqSlowUndoSetup, run: Phase4bSqWaitRun, sentence: String, size: Phase4bDelSize, premiseIndex: Int, atPersonPace: Bool
+    ) {
         tail.poll()
-        let retryFrom = tail.lines.count
-        var presses: [UndoPress] = []
-        for number in 1...Self.maxUndoPresses {
-            let press = pressUndoWaiting(number: number, sentence: sentence)
-            presses.append(press)
-            if press.structural { break }
-        }
-        let decisions = presses.map(\.decision)
-        let handedPresses = presses.filter { $0.decision == "fallthrough" }.count
-        result("PRESSES after the refusal: \(presses.count) Cmd-Z press(es), the editor decided \(decisions); "
-            + "\(presses.filter { !$0.structural }.count) text step(s) before the slow undo; `routing-refused` lines per press: "
-            + "\(presses.map { "\($0.handedToTextUndo.count) text-undo hand-off, \($0.refusals.count) refusal" })")
-        var soft = Phase4bFlowSoftChecks()
-        soft.check(presses.last?.structural == true,
-                   "the slow undo was not carried out within \(Self.maxUndoPresses) Cmd-Z presses after the refusal (decisions \(decisions))")
-        soft.check(presses.first?.decision == "fallthrough" && presses.first?.structural == false,
-                   "the first Cmd-Z after the refusal was not a plain text step that takes the typing back (the editor decided "
-                       + "\(presses.first?.decision ?? "none"))")
-        soft.check(presses.last?.decision == "structural",
-                   "the Cmd-Z that carried the undo out was not routed as a structural undo (the editor decided \(presses.last?.decision ?? "none"))")
-        soft.check(settle(back: [setup.title]), "\"\(setup.title)\" is not back in the block table once the slow undo has settled")
-        addSlowUndoMechanismChecks("undo", performed: 1, refused: 1, from: run.undoFrom, to: &soft)
-        let dropped = droppedPressToasts(from: run.deleteFrom)
-        soft.check(dropped.count == 1,
-                   "the warning toast \"Some undo or redo presses could not be carried out.\" was shown \(dropped.count) time(s) over the whole "
-                       + "test, expected once (the first press only: it never refuses twice in a row)")
-        addLogChecks(from: retryFrom, handedToTextUndo: handedPresses, to: &soft)
-        let what = "after the refusal, the text Cmd-Z and the slow Cmd-Z: the document as it was"
-        let post = addRowChecks(what, expectedUser: preUserRows, managed: preManagedRows, to: &soft)
-        soft.check(blocksContaining(sentence) == 0, "the sentence is still in \(blocksContaining(sentence)) row(s) after the text Cmd-Z took it back")
-        soft.check(exactHeadingCount(setup.title) == 1,
-                   "the section \"\(setup.title)\" is in the table \(exactHeadingCount(setup.title)) time(s), expected once")
-        if size != .book12 { addScreenEqualsDatabaseCheck(before: post, what: what, to: &soft) }
-        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undoing-notice-\(size.identifier)-after-retry")
-        assertSoft(soft, "refused, then retried (R7), on \(size.identifier)")
-    }
-
-    /// R7 at a PERSON'S PACE (fix round F2, judge ruling C5; `retryAfterTheRefusal` observes after every press, which a person does not). The
-    /// refusal has happened and the app is quiet (the sentence is in the database and the log has settled: the app's own settle is awaited
-    /// BEFORE the first press only). Then Cmd-Z is pressed twice in a row, two `typeKey` calls with nothing between them, and only after
-    /// both presses is anything observed. XCUITest cannot press two keys faster than its own call overhead (a few hundred milliseconds in
-    /// the VM), so the gap between the two Z keys on the app's clock is printed, and a gap over 5 s is a TEST-SETUP failure (the pair was
-    /// not back to back). The END STATE is asserted: the typing is gone (the first press was a text step), the section is back (the second
-    /// carried the slow undo out), the rows are the document before the delete (Notes and Bibliography included), the screen equals the
-    /// database, the whole test holds exactly one `ok=false reason=docChanged` and one `ok=true` swap line in that order (never two refusals
-    /// in a row) and one warning toast. If the typing took more than one text step (the editor groups typing by pause) the pair ends with
-    /// the section still deleted: the test then goes on one press at a time, as `retryAfterTheRefusal` does, and says so; the end state is
-    /// asserted either way.
-    func retryAtPersonPace(setup: Phase4bSqSlowUndoSetup, run: Phase4bSqWaitRun, sentence: String, size: Phase4bDelSize) {
-        guard let pressFrom = pressUndoReachingTheEditor(times: 2) else { return }
-        var swapped = waitForSwapOk(from: pressFrom, timeout: 45)
-        var extraPresses = 0
-        while swapped == nil, routingDecisions(direction: "undo", from: pressFrom).last == "fallthrough",
-              extraPresses < Self.maxUndoPresses - 2 {
-            extraPresses += 1
-            let press = pressUndoWaiting(number: 2 + extraPresses, sentence: sentence)
-            note("EXTRA PRESS \(extraPresses): the typing took more than one text step; the editor decided \(press.decision)")
-            swapped = waitForSwapOk(from: pressFrom, timeout: 5)
-        }
-        if swapped == nil {
-            swapped = waitForSwapOk(from: pressFrom, timeout: appWait(size.operationTimeout * 2, before: "the slow undo's swap turn is looked for"))
-        }
-        guard swapped != nil else {
-            fail("the slow undo was never carried out after the two Cmd-Z presses (the editor decided "
-                + "\(routingDecisions(direction: "undo", from: pressFrom)); swap verdicts \(swapVerdicts(direction: "undo", from: run.undoFrom)))")
-            return
-        }
-        expectPerformed("undo", from: pressFrom, "the Cmd-Z that carried the slow undo out reached its performed line", slow: true)
+        let keysAfterTheSwap = (premiseIndex..<tail.lines.count).filter { position in
+            guard let key = Phase4bDelTypingParser.key(tail.lines[position].text) else { return false }
+            return key.inEditor && key.code != Phase4bDelTypingParser.zKeyCode
+        }.count
+        guard let pressFrom = pressUndoReachingTheEditor() else { return }
         let gone = waitForSentenceGoneFromDatabase(sentence, timeout: 90)
         let back = settle(back: [setup.title])
-        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undoing-notice-\(size.identifier)-person-pace-after-retry")
-        assertCheck(gone, "the typed sentence was taken back by the text undo")
-        assertCheck(back, "\"\(setup.title)\" is back in the block table and the document is quiet")
-
+        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undo-\(size.identifier)-typing-taken-back")
         let decisions = routingDecisions(direction: "undo", from: pressFrom)
-        let keys = zKeyLines(from: pressFrom)
-        let gap = keys.count >= 2 ? keys[1].t - keys[0].t : nil
-        result("PERSON PACE: two Cmd-Z presses back to back, nothing awaited between them; the editor decided \(decisions); "
-            + "\(extraPresses) extra press(es); the first two Z keys came \(gap.map { "\($0) ms" } ?? "n/a") apart on the app's clock; "
-            + "swap verdicts over the whole test (true = ok): \(swapVerdicts(direction: "undo", from: run.undoFrom))")
+        let verdicts = swapVerdicts(direction: "undo", from: run.undoFrom)
+        result("ONE FURTHER Cmd-Z\(atPersonPace ? " (person pace: the delete's job was held, no press hold)" : ""): the editor decided \(decisions); "
+            + "swap verdicts over the whole test (true = ok): \(verdicts); editor key(s) typed after the page's re-check line: \(keysAfterTheSwap)")
+        assertCheck(gone, "the typed sentence was taken back by the one further Cmd-Z")
+        assertCheck(back, "\"\(setup.title)\" is back in the block table and the document is quiet")
         var soft = Phase4bFlowSoftChecks()
-        soft.check(decisions.last == "structural" && decisions.dropLast().allSatisfy { $0 == "fallthrough" },
-                   "the presses after the refusal were decided \(decisions), expected plain text steps and then one structural undo")
-        soft.check(gap.map { $0 < 5_000 } ?? true,
-                   "TEST-SETUP: the first two Z keys came \(gap ?? 0) ms apart, so the pair was not back to back")
-        soft.check(swapVerdicts(direction: "undo", from: run.undoFrom) == [false, true],
-                   "the swap verdicts over the whole test are \(swapVerdicts(direction: "undo", from: run.undoFrom)), expected "
-                       + "[false, true]: one refusal and then one success, never two refusals in a row")
-        addSlowUndoMechanismChecks("undo", performed: 1, refused: 1, from: run.undoFrom, to: &soft)
-        let dropped = droppedPressToasts(from: run.deleteFrom)
-        soft.check(dropped.count == 1,
-                   "the warning toast \"Some undo or redo presses could not be carried out.\" was shown \(dropped.count) time(s) over the whole "
-                       + "test, expected once (the refused press only)")
+        soft.check(keysAfterTheSwap == 0,
+                   "TEST-SETUP: \(keysAfterTheSwap) editor key(s) were typed after the page's re-check line, so the sentence is more than the "
+                       + "replay's one undo step")
+        soft.check(decisions == ["fallthrough"],
+                   "the Cmd-Z after the carried-out undo was decided \(decisions), expected one plain text step that takes the typing back")
+        soft.check(verdicts == [true], "the swap verdicts over the whole test are \(verdicts), expected exactly one success and no second swap")
         addLogChecks(from: pressFrom, handedToTextUndo: decisions.filter { $0 == "fallthrough" }.count, to: &soft)
-        let what = "after the refusal and two Cmd-Z presses at a person's pace: the document as it was"
+        let what = "after the carried-out undo and one further Cmd-Z: the document as it was"
         let post = addRowChecks(what, expectedUser: preUserRows, managed: preManagedRows, to: &soft)
-        soft.check(blocksContaining(sentence) == 0, "the sentence is still in \(blocksContaining(sentence)) row(s) after the text Cmd-Z took it back")
+        soft.check(blocksContaining(sentence) == 0, "the sentence is still in \(blocksContaining(sentence)) row(s) after the further Cmd-Z took it back")
         soft.check(exactHeadingCount(setup.title) == 1,
                    "the section \"\(setup.title)\" is in the table \(exactHeadingCount(setup.title)) time(s), expected once")
         soft.check(sidebarCard(setup.title).exists || waitForCard(setup.title, present: true, timeout: appWait(60, before: "the card is looked for")),
                    "the section's sidebar card did not come back")
         if size != .book12 { addScreenEqualsDatabaseCheck(before: post, what: what, to: &soft) }
-        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undoing-notice-\(size.identifier)-person-pace")
-        assertSoft(soft, "refused, then two Cmd-Z presses at a person's pace, on \(size.identifier)")
-    }
-
-    /// The first `swap-editor-first direction=undo ... ok=true` line since `index` (a log index), or nil after `timeout` seconds.
-    func waitForSwapOk(from index: Int, timeout: TimeInterval) -> Int? {
-        waitForLogLine(from: index, timeout: timeout) {
-            $0.text.contains("[STRUCT-TRACE] swap-editor-first direction=undo opId=") && $0.text.contains(" ok=true")
-        }
+        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undo-\(size.identifier)-after-the-further-undo")
+        assertSoft(soft, "carried out, then one further Cmd-Z, on \(size.identifier)")
     }
 
     /// The editor's verdicts on the slow `direction` presses since `index`, in the order the log holds them: true for `ok=true`, false for
@@ -4506,31 +4448,25 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         return UndoPress(decision: decision, structural: structural, handedToTextUndo: handedToTextUndo, refusals: refusals)
     }
 
-    /// A quit and a reopen after the refusal: the typed sentence is still in the document (database and screen) and the section is still
-    /// deleted, exactly as before the quit (nothing was swapped, so nothing was undone).
-    func reopenAfterTheRefusal(setup: Phase4bSqSlowUndoSetup, sentence: String, size: Phase4bDelSize) {
+    /// A quit and a reopen after the carried-out undo: the typed sentence is still in the document (database and screen), once, and the
+    /// restored section is still there (rows, Notes and Bibliography are the document before with the sentence typed, the Outline).
+    func reopenAfterTheUndo(setup: Phase4bSqSlowUndoSetup, sentence: String, size: Phase4bDelSize) {
         guard reopen() else { return }
         var soft = Phase4bFlowSoftChecks()
-        // A card of the section that follows the deleted one proves the sidebar has loaded before its absence is read.
-        let neighbour = pre[setup.range.upperBound...].lazy.filter { !$0.isManaged }.compactMap(\.headingTitle).first
-        if let neighbour {
-            soft.check(waitForCard(neighbour, present: true, timeout: appWait(60, before: "the neighbouring card is looked for")),
-                       "after the reopen the sidebar shows no card \"\(neighbour)\"")
-        }
-        soft.check(!sidebarCard(setup.title).exists, "after the reopen the deleted section's card is in the sidebar")
+        soft.check(waitForCard(setup.title, present: true, timeout: appWait(60, before: "the restored section's card is looked for")),
+                   "after the reopen the sidebar shows no card \"\(setup.title)\": the carried-out undo was not kept")
         soft.check(blocksContaining(sentence) == 1,
                    "after the reopen the sentence is in \(blocksContaining(sentence)) row(s), expected exactly 1: the typing was not kept")
-        soft.check(exactHeadingCount(setup.title) == 0,
-                   "after the reopen the section \"\(setup.title)\" is in the table \(exactHeadingCount(setup.title)) time(s), expected 0")
-        guard let expected = expectedUserRows(
-            duplicating: nil, removed: [setup.range], originalTyped: [setup.anchor: Self.anchorLine + " " + sentence]) else {
+        soft.check(exactHeadingCount(setup.title) == 1,
+                   "after the reopen the section \"\(setup.title)\" is in the table \(exactHeadingCount(setup.title)) time(s), expected once")
+        guard let expected = expectedUserRows(duplicating: nil, originalTyped: [setup.anchor: Self.anchorLine + " " + sentence]) else {
             fail("TEST-SETUP: the expected rows could not be worked out")
             return
         }
-        addRowChecks("after the reopen", expectedUser: expected, managed: nil, to: &soft)
+        addRowChecks("after the reopen", expectedUser: expected, managed: preManagedRows, to: &soft)
         addTypedLineOnScreenCheck(line: Self.anchorLine, marker: sentence, requireIt: true, to: &soft)
-        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undoing-notice-\(size.identifier)-after-reopen")
-        assertSoft(soft, "the reopened project after the refusal, on \(size.identifier)")
+        attachEvidenceScreenshot(app.screenshot(), name: "type-during-undo-\(size.identifier)-after-reopen")
+        assertSoft(soft, "the reopened project after the carried-out undo, on \(size.identifier)")
     }
 }
 
@@ -5223,7 +5159,8 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
 // MARK: - 27. The stuck-undo experiments (fix round F3, the judge's ruling on a real-app finding)
 
 // The finding: on the six-chapter book, after a slow undo was REFUSED because the user typed while it waited
-// (`testTypeDuringUndoingNoticeAtPersonPace_book6`, which forces the slow road with a seam), the Cmd-Z presses that followed never reached the
+// (the test then called `testTypeDuringUndoingNoticeAtPersonPace_book6`, now `testTypeDuringUndoIsCarriedOutAtPersonPace_book6` since the
+// refusal is gone, Phase 4c job 2; it forces the slow road with a seam), the Cmd-Z presses that followed never reached the
 // structural undo: the text history ran out and every later press was `fallthrough`, so the deleted chapter could not be brought back with
 // Cmd-Z. The cause (round F3b, from the first run's evidence lines): not the rebase cost bound alone. The Notes rebuild that landed after the
 // typing and the renumber overlapped the renumber's unabsorbed ranges (`registry-rebase ... result=overlap`), so the saved copy stayed as it
@@ -5249,7 +5186,7 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
 // keystrokes with pauses. The gaps between the three Z keys on the app's clock are printed; a gap over 5 s is a TEST-SETUP failure.
 // A LIMIT OF THIS TEST: it does not hold the footnote renumber back, so whether the typing lands BEFORE the renumber (the window the
 // real-app finding needed: `registry-chain ... historyStep=true` after the typing) depends on how fast the VM types; the evidence lines say
-// which order a run got. `testTypeDuringUndoingNoticeAtPersonPace_book6` is the test that always hits the window.
+// which order a run got. `testTypeDuringUndoIsCarriedOutAtPersonPace_book6` is the test that always hits the window.
 // RUNNING (".../" stands for "final finalUITests/WriteQueuePhase4bStructuralQueueE2ETests/"; about 15 to 20 minutes; at most 2 runs at once):
 //    scripts/vmtest/vmtest run --detach --timeout 7000 --scope ".../testStuckUndoExperiment_noSeam_book6"
 

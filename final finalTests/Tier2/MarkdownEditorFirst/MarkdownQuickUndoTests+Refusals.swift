@@ -9,7 +9,8 @@
 //  Break patches (a 1-5 line change in production code that must make the test fail), and the failure each shows:
 //
 //   refused (review C.F8 + F2)  Delete, Cmd-Z at once while the job applies, the user types during the wait AND in the moment between the
-//          press's cancel of the pending re-parse and its page call: the page answers `changed`, the existing notice shows, the delete
+//          press's cancel of the pending re-parse and its page call, and (t-d2061b27) the page's registry entry is cleared in that moment
+//          (typing alone no longer refuses a press): the page answers `noEntry`, the existing notice shows, the delete
 //          stands, the typing is in the editor and (re-armed re-parse) in the rows, the hold is lowered, the entry stays on the undo stack.
 //          BREAK: in `markdownQuickUndo` delete the `rearmMarkdownReparseAfterRefusedPress()` line.
 //          FAILS: "rr9 typed while the press was being prepared never reached the rows".
@@ -30,7 +31,12 @@ extension MarkdownQuickUndoTests {
 
     // MARK: - A refused swap (C.F8 and F2)
 
-    func testACmdZThatWaitsForTheDeleteIsRefusedWhenTheUserTypedAndTheTypingIsKeptInTheEditorAndTheRows() async throws {
+    // t-d2061b27 (Phase 4c, job 2): typing in the wait is no longer a reason to refuse a waiting Cmd-Z (the press is carried out, the typing
+    // put back on top: testACmdZThatWaitsForTheDeleteIsCarriedOutWhenTheUserTyped... in MarkdownQuickUndoTests+TypingAcrossUndo.swift). This
+    // test kept the refusal path under test with a difference that is NOT typing: the page's undo registry is cleared in the wait (as a
+    // barrier does), so the page answers `noEntry`. Everything it asserted about the refusal (the notice once, the delete stands, the
+    // typing in the editor and the rows, the hold lowered, the entry untouched) is unchanged; the typing is still made, to show it is kept.
+    func testACmdZThatWaitsForTheDeleteIsRefusedWhenThePageHasNoEntryAndTheTypingIsKeptInTheEditorAndTheRows() async throws {
         try await startRig(Self.book4)
         rig.installReparseHost()   // ContentView's wiring: a re-parse can be (re-)armed through the lifecycle host
         let hold = rig.holdNextJob()
@@ -57,6 +63,8 @@ extension MarkdownQuickUndoTests {
             rigRef.editorState.sourceReparseDebounce = .seconds(30)
             _ = rigRef.writerRig.schedule(rigRef.editorState.content)
             rigRef.editorState.sourceReparseDebounce = .milliseconds(20)   // what the re-armed re-parse will use
+            // t-d2061b27: the difference that refuses the press is not typing: the page's registry entry is gone (`noEntry`).
+            _ = try? await rigRef.helper.webView.evaluateJavaScript("window.FinalFinal.clearStructuralUndoRegistry()")
         }
 
         hold.release()

@@ -125,6 +125,7 @@ import {
 } from './spellcheck-plugin';
 import { handleTablePaste } from './table-paste';
 import { typewriterExtension } from './typewriter-plugin';
+import { pushOrHoldContent } from './typing-push-hold';
 import {
   beginStructuralOp,
   clearFailedStructuralOpEntry,
@@ -135,6 +136,7 @@ import {
   heldUndoPressCount,
   maybeAdvanceRegistryOnSyncOriginTx,
   maybeNotifyHistoryEdited,
+  noteTypingTransaction,
   noteUserTransaction,
   receiveRedoOutcome,
   receiveUndoOutcome,
@@ -447,6 +449,9 @@ export function buildExtensions(): Extension[] {
         // last actually typed in, so setContent (api.ts) can tell whether an incoming
         // derived push overlaps it.
         noteTransactionForEditSpanTracking(tr);
+        // Phase 4c job 2: while a Cmd-Z / Cmd-Shift-Z press is latched or queued, every change is recorded (typing-rebase.ts) so the
+        // typing done meanwhile can be put back on top of the undone document. Records nothing when no press is waiting.
+        noteTypingTransaction(tr);
       }
     }),
     // Debounced push-based content messaging to Swift (replaces 500ms polling as primary).
@@ -472,10 +477,9 @@ export function buildExtensions(): Extension[] {
           cmPushTimer = setTimeout(() => {
             const wasUndo = pendingWasUndo;
             pendingWasUndo = false;
-            const view = getEditorView();
-            if (!view) return;
-            const raw = view.state.doc.toString(); // raw includes anchors
-            (window as any).webkit?.messageHandlers?.contentChanged?.postMessage({ content: raw, wasUndo });
+            if (!getEditorView()) return;
+            // Phase 4c job 2: posted now, or owed until the press that is latched has been answered (typing-push-hold.ts).
+            pushOrHoldContent(wasUndo);
           }, 50);
         }
       });

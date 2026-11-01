@@ -61,6 +61,13 @@ struct EditorFirstReplaceReply: EditorFirstOpReply {
     /// The ids of the top-level blocks the change took out (for `whole`, every block of the old document).
     let removedIds: [String]
     let removedLeaderIds: [String]
+    /// The slow undo's and redo's reply only (`structuralSwapEditorFirst`, t-d2061b27): `true` when the typing done while the press waited
+    /// was put back on top of the swapped-in document. Then `batch` is empty (the replay is the only carrier of that typing) and Swift ends
+    /// the redo branch (`endRedoAfterReplayedTyping`). Absent from every other reply, and from a reply of an older editor.
+    let typingReplayed: Bool?
+    /// The quick REDO's `ok: true` reply only (round 6): true when the user typed since the key was pressed (the page's own answer from
+    /// the redo's gate). Absent on every other reply. The older redo entries end only when it is true, not for a non-empty `batch`.
+    let typed: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -71,6 +78,8 @@ struct EditorFirstReplaceReply: EditorFirstOpReply {
         case insertedSectionsSnapshot
         case removedIds
         case removedLeaderIds
+        case typingReplayed
+        case typed
     }
 
     init(from decoder: Decoder) throws {
@@ -84,6 +93,8 @@ struct EditorFirstReplaceReply: EditorFirstOpReply {
             [EditorFirstDuplicateReply.InsertedSection].self, forKey: .insertedSectionsSnapshot) ?? []
         removedIds = try container.decodeIfPresent([String].self, forKey: .removedIds) ?? []
         removedLeaderIds = try container.decodeIfPresent([String].self, forKey: .removedLeaderIds) ?? []
+        typingReplayed = try container.decodeIfPresent(Bool.self, forKey: .typingReplayed)
+        typed = try container.decodeIfPresent(Bool.self, forKey: .typed)
     }
 }
 
@@ -493,6 +504,9 @@ extension StructuralUndoController {
             return .failed
         }
         await pushDescriptor()
+        // t-d2061b27 (review F4, parity with Markdown; round 6): typing done in the redo's wait ends the older redo entries too, and the
+        // page says whether the user typed (`typed`), not the batch (see `performQuickRedoOfDuplicate`).
+        await endRedoAfterReplayedTyping(reply.typed, opId: opId, trace: trace)
         spy("quickRedoPerformed")
         trace.log("performed")
         return .performed

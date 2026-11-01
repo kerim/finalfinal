@@ -55,6 +55,7 @@ import {
   setInFlightOpId,
   setLatched,
   setUndoDescriptor,
+  typingCollectorPlugin,
 } from '../undo-coordinator';
 
 // === Documents ===
@@ -156,6 +157,7 @@ async function makeEditor(): Promise<{ view: EditorView; posted: Posted }> {
     .use(blockIdPlugin)
     .use(historyPlugin)
     .use(blockSyncPlugin)
+    .use(typingCollectorPlugin) // records the steps typed while a press waits, as main.ts registers it
     .create();
   current = editor;
   setEditorInstance(editor);
@@ -327,6 +329,9 @@ describe('quick undo of an editor-first section delete', () => {
 
     expect(resumed.ok).toBe(true);
     expect(resumed.resumed).toBe(true);
+    // Swift's polls get nothing while the press is latched (phase 4c job 2); the reply ends the hold and the queued edits go out.
+    expect(getBlockChangesApi(), 'held until the reply').toEqual(EMPTY_BATCH);
+    receiveUndoOutcome(OP_A, 'performed');
     const queued = getBlockChangesApi();
     const text = (id: string) => queued.updates.find((u) => u.id === id)?.textContent ?? '';
     expect(text('b-p1'), 'the word typed into the restored paragraph is queued at resume').toContain('TYPED-QU3-IN');
@@ -337,7 +342,6 @@ describe('quick undo of an editor-first section delete', () => {
     typeInto(view, 'Alpha', ' AFTER-RESUME');
     await sleep(160);
     expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['a-p1']);
-    receiveUndoOutcome(OP_A, 'performed');
   });
 
   it('QU3b: resume sends the contentChanged notification, off the call, with the live restored text', async () => {
@@ -364,12 +368,17 @@ describe('quick undo of an editor-first section delete', () => {
     receiveUndoOutcome(OP_A, 'performed');
   });
 
-  it('QU4: refuses and changes nothing when the live document no longer matches the saved copy', async () => {
+  it('QU4: refuses and changes nothing when a change that is not typing was made since the press (the document no longer matches the saved copy)', async () => {
     const { view } = await makeEditor();
     await load(SPECS);
     expect(deleteSectionEditorFirst(OP_A, 'b', []).ok).toBe(true);
     expect(pressUndo(view, OP_A)).toBe(true); // routed structurally: the document equalled the saved copy at the press
-    typeInto(view, 'Gamma', ' TYPED-QU4'); // ... and the user types before the quick undo's turn
+    // ... and the user types, then an automatic correction lands, before the quick undo's turn (typing alone would be put back on top:
+    // typing-across-undo-quick.test.ts)
+    typeInto(view, 'Gamma', ' TYPED');
+    view.dispatch(
+      view.state.tr.insertText(' TYPED-QU4', endOfParagraph(view, 'Gamma')).setMeta('derivedCorrection', true)
+    );
     const docWithTyping = view.state.doc;
     const entryBefore = getRegistry().get(OP_A);
 
@@ -383,13 +392,15 @@ describe('quick undo of an editor-first section delete', () => {
     expect(getRegistry().get(OP_A), 'the registry entry is untouched').toBe(entryBefore);
     expect(entryBefore?.redoCheckpoint).toBeUndefined();
     expect(getQuickUndoPausedOpId()).toBeNull();
-    // Block-sync was never paused and the typed edit was never consumed: it is queued by the normal detection.
+    // Block-sync was never paused and the edit was never consumed: it is queued by the normal detection, and goes out once the reply has
+    // ended the hold on Swift's polls (phase 4c job 2).
     await sleep(160);
+    expect(getBlockChangesApi(), 'held while the press is latched').toEqual(EMPTY_BATCH);
+    expect(resumeSyncAfterQuickUndo()).toMatchObject({ ok: true, resumed: false });
+    receiveUndoOutcome(OP_A, 'failed');
     const queued = getBlockChangesApi();
     expect(queued.updates.map((u) => u.id)).toEqual(['c-p1']);
     expect(queued.updates[0].textContent).toContain('TYPED-QU4');
-    expect(resumeSyncAfterQuickUndo()).toMatchObject({ ok: true, resumed: false });
-    receiveUndoOutcome(OP_A, 'failed');
   });
 
   it('QU5: after an absorbed renumber, puts the original reference labels back and queues no block changes for the restore itself', async () => {
@@ -613,11 +624,12 @@ describe('quick undo of an editor-first section delete', () => {
     // Block-sync runs, against the live document: an edit is exactly one update.
     typeInto(view, 'Gamma', ' AFTER-QU10');
     await sleep(160);
+    expect(getBlockChangesApi(), 'held while the press is latched (phase 4c job 2)').toEqual(EMPTY_BATCH);
+    receiveUndoOutcome(OP_A, 'failed');
     const queued = getBlockChangesApi();
     expect(queued.updates.map((u) => u.id)).toEqual(['c-p1']);
     expect(queued.inserts).toEqual([]);
     expect(queued.deletes).toEqual([]);
-    receiveUndoOutcome(OP_A, 'failed');
   });
 
   it('QU12: a barrier inside the paused window ends the pause itself: typing done during it is queued, and typing after it is recorded', async () => {
@@ -717,7 +729,7 @@ describe('quick undo of an editor-first section delete', () => {
     );
   });
 
-  it('QU14: a redo that finds the document changed is refused, and one that fails after it started leaves the op undone with its entry', async () => {
+  it('QU14: a redo whose removal would take typed words with it (typing INSIDE the removed chapter) is refused, and one that fails after it started leaves the op undone with its entry', async () => {
     const { view } = await makeEditor();
     await load(SPECS);
     expect(deleteSectionEditorFirst(OP_A, 'b', []).ok).toBe(true);
@@ -726,14 +738,17 @@ describe('quick undo of an editor-first section delete', () => {
     swiftFinishesUndo(OP_A, { redoTopOpId: OP_A });
     const entryAfterUndo = getRegistry().get(OP_A);
 
-    // Typed between the press and the redo's turn: refused, nothing touched, nothing consumed.
+    // Round 3 (Q2): a quick redo is a fresh command on the document as it stands, so typing ELSEWHERE no longer refuses it (see
+    // typing-across-undo-quick.test.ts W16a). Typed between the press and the redo's turn INSIDE the chapter the redo takes out (the
+    // typed words would go with it): refused, nothing removed, the typing comes back in the reply once.
     expect(pressRedo(view, OP_A)).toBe(true);
-    typeInto(view, 'Gamma', ' TYPED-QU14');
+    typeInto(view, 'Beta one', ' TYPED-QU14');
     const docWithTyping = view.state.doc;
     const refused = redoSectionDeleteEditorFirst(OP_A, 'b', []);
     expect(refused.ok).toBe(false);
     expect(refused.reason).toBe('docChanged');
-    expect(refused.batch).toEqual({ updates: [], inserts: [], deletes: [] });
+    expect(refused.batch.updates.map((u) => u.id)).toEqual(['b-p1']);
+    expect(refused.batch.updates[0].textContent).toBe('Beta one. TYPED-QU14');
     expect(view.state.doc.eq(docWithTyping)).toBe(true);
     expect(getRegistry().get(OP_A)).toBe(entryAfterUndo);
     receiveRedoOutcome(OP_A, 'failed');
@@ -773,7 +788,8 @@ describe('quick undo of an editor-first section delete', () => {
     expect(view.state.doc.textContent).toContain('Gamma one.');
     swiftFinishesUndo(OP_A, { redoTopOpId: OP_A });
 
-    // A redo whose re-check refuses (typing since the press) has still cleared the Find session: hygiene comes before the re-check.
+    // A redo that refuses (typing since the press, inside the chapter it takes out: round 3 refuses only that) has still cleared the
+    // Find session: hygiene comes before the re-check.
     expect(find('Gamma').matchCount).toBe(1);
     expect(pressRedo(view, OP_A)).toBe(true);
     typeInto(view, 'Beta one', ' TYPED-QU16');

@@ -25,7 +25,7 @@ import { undoSectionDeleteEditorFirst } from '../api-section-undo';
 import { isTempBlockId } from '../block-id-plugin';
 import { flushPendingBlockChanges } from '../block-sync-plugin';
 import { imagePlugin } from '../image-plugin';
-import { getRegistry, receiveRedoOutcome } from '../undo-coordinator';
+import { getRegistry } from '../undo-coordinator';
 import {
   automaticRewrite,
   EMPTY_BATCH,
@@ -391,10 +391,13 @@ describe('duplicateSectionEditorFirst', () => {
     expect(diff.deletes).toEqual([]);
   });
 
-  it('V1-10: a redo whose gate finds the document changed since the press touches nothing and consumes nothing', async () => {
+  // Round 3 (Q2): a Duplicate takes nothing out of the document, so typing since the redo's press can never go with anything and the
+  // redo is not refused for it (it was refused for ANY typing before): the copy comes back and the typing is kept.
+  it("V1-10: typing in the redo's wait does not refuse it (a duplicate removes nothing): the copy comes back, the typing is kept and goes out once", async () => {
     const { view } = await makeEditor();
     await load(DOC);
     const first = duplicateSectionEditorFirst(OP, 'a', []);
+    const idsAfterFirst = idsInOrder();
     expect(pressUndo(view, OP)).toBe(true);
     expect(undoSectionDeleteEditorFirst(OP).ok).toBe(true);
     swiftFinishesUndo(OP, { redoTopOpId: OP });
@@ -402,21 +405,20 @@ describe('duplicateSectionEditorFirst', () => {
     getBlockChangesApi();
     expect(pressRedo(view, OP), 'routed structurally: the document equalled the saved copy at the press').toBe(true);
     typeInto(view, 'B body', ' typed after the press'); // ... and the user types before the redo's turn
-    const docBefore = view.state.doc;
-    const entryBefore = getRegistry().get(OP);
 
     const redo = redoSectionDuplicateEditorFirst(OP, 'a', [], first.copies);
 
-    expect(redo.ok).toBe(false);
-    expect(redo.reason).toBe('docChanged');
-    expect(redo.batch, 'a refusal consumes nothing').toEqual(EMPTY_BATCH);
-    expect(redo.copies).toEqual([]);
-    expect(view.state.doc.eq(docBefore), 'the document is exactly as the user has it').toBe(true);
-    expect(getRegistry().get(OP), 'the undone entry is untouched').toBe(entryBefore);
-    // The typed edit was never consumed: the normal detection queues it.
+    expect(redo.ok, `reason: ${redo.reason}`).toBe(true);
+    expect(idsInOrder(), 'the copy has the ids of the first click again').toEqual(idsAfterFirst);
+    expect(view.state.doc.textContent.split('typed after the press').length - 1, 'the typing is there once').toBe(1);
+    const sent = [...redo.batch.updates];
+    swiftFinishesRedo(OP, { undoTopOpId: OP });
     await sleep(160);
-    expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['pb']);
-    receiveRedoOutcome(OP, 'failed');
+    sent.push(...getBlockChangesApi().updates);
+    expect(
+      sent.filter((u) => u.id === 'pb').map((u) => u.textContent),
+      'the typing went out once, in the reply or the next poll'
+    ).toEqual(['B body. typed after the press']);
   });
 
   it("V1-11: a copied figure carries its OWN id on the node and on the DOM, never the source figure's", async () => {

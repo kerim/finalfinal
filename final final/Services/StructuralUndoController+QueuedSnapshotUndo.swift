@@ -91,7 +91,19 @@ extension StructuralUndoController {
     /// The slow undo (`direction` `.undo`: restore from the entry's undo snapshot) or slow redo (`.redo`: from its redo snapshot) of
     /// `entry`, editor first. Called under the structural gate with `snapshotId` already resolved. Returns the reply for the editor's
     /// latch, or nil when this press has to take the old body (nothing has been changed that the old body would not do itself).
+    ///
+    /// t-d2061b27 (judge D1, review F7): while this press is latched on the Rich Text page, the page HOLDS the typing it would report to the
+    /// polls. When the press goes to the old body (zoomed, no plan, `noCheckpoint`, an editor refusal that falls back, the legacy flags)
+    /// the old body's own flush would find that typing held back, so the hold is released and the released batch is sent as batch N
+    /// FIRST (`releaseHeldTypingForOldBody`, StructuralUndoController+TypingAcrossUndo.swift), once, before the old body runs.
     func queuedSnapshotUndo(entry: StructuralEntry, direction: UndoDirection, snapshotId: String) async -> UndoResult? {
+        let result = await queuedSnapshotUndoRoute(entry: entry, direction: direction, snapshotId: snapshotId)
+        if result == nil { await releaseHeldTypingForOldBody() }
+        return result
+    }
+
+    /// The editor-first route of `queuedSnapshotUndo` (its body before t-d2061b27 F7 wrapped it): the reply, or nil for the old body.
+    private func queuedSnapshotUndoRoute(entry: StructuralEntry, direction: UndoDirection, snapshotId: String) async -> UndoResult? {
         // Markdown (t-4a8fd8af round 7b): its own queued route, StructuralUndoController+MarkdownSlowUndo.swift; nil there = the old body.
         if editorState?.editorMode == .source { return await markdownQueuedSnapshotUndo(entry: entry, direction: direction, snapshotId: snapshotId) }
         // (A sync service with no web view has no editor to swap: the click would find no writer turn and send the press to the old body
@@ -118,7 +130,8 @@ extension StructuralUndoController {
         let timelineEpoch = unifiedUndoService.generation
         let removedLeaders = Set(plan.previousLeaders.map(\.id))
         // UI-test seam (FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS, see TestMode): widens the window between the plan and the click in which the
-        // user can type, so the click's re-check refuses (`docChanged`) the way it does after a real wait. Swift side only; no wait when off.
+        // user can type, so the click meets typing done during the wait the way it does after a real wait (the page puts that typing back
+        // on top of the swapped-in document: `typingReplayed`). Swift side only; no wait when off.
         await TestMode.holdSlowUndoPress(opId: trace.opId)
 
         // 2. The click: ONE editor call (`structuralSwapEditorFirst`), the sidebar swap, the job's reservation. The same function that
@@ -138,32 +151,73 @@ extension StructuralUndoController {
             }
         }
         var outcome = await click(script: swapScript)
-        if case .declined = outcome {
+        if case .declined(let declinedReply) = outcome {
             // `noCheckpoint` (U-S3-3): the editor has no saved state for this entry (or, for a redo, no redo checkpoint), so there is
             // nothing to swap and nothing was changed. Slice 2's whole replace puts the snapshot's document in from the same plan. It
             // runs under a FRESH operation id, so the editor's registry entry for this one (if it has any) is left alone; it records
             // no entry of its own (this press moves the existing entry). There is no re-check on this road (RARE, plan-v3 section 6).
+            //
+            // Round 6 (N3): there is no replay on this road either. When the call consumed pending edits (`batch` non-empty: the
+            // typing done in the wait), the whole replace would take them off the screen and its job would overwrite their rows, a
+            // silent loss. So the press is REFUSED with the existing notice before any replace: the batch has been applied (the typing
+            // stays on the screen and goes to the rows), the entry stays where it is, and the fresh settle puts back the steps the
+            // click's epoch bump skipped. With an empty batch the whole replace runs as before.
+            if !declinedReply.batch.isEmpty {
+                startFreshSettleAfterRefusedEditorFirstClick(opId: opId)
+                DebugLog.log(
+                    .undo, "[StructuralUndoController] editor-first \(kind.logName): no checkpoint and pending typing -- refused "
+                    + "before the whole replace, which would overwrite it")
+                return answerRefusedSlowSwap(label: label, trace: trace)
+            }
             guard let replaceScript = plan.script(function: "replaceRangeEditorFirst", opId: UUID()) else { return nil }
             DebugLog.log(.undo, "[StructuralUndoController] editor-first \(kind.logName): no checkpoint -- whole replace from the snapshot")
             outcome = await click(script: replaceScript)
         }
+        var typingReplayed: Bool?
         switch outcome {
         case .legacy, .declined:
             return nil
         case .refused:
-            // D13 / R5: the user typed while the press waited (`docChanged`), or the bridge failed. The editor is as it was, the batch it
-            // consumed has been applied (the typing is on the screen and goes to the database), the entry stays where it is, and the
-            // press is answered `failed` with the existing notice. The next Cmd-Z takes the typing back (text undo) and the one after it
-            // finds the document equal to the saved copy again (R7).
-            trace.log("refused (editor-first \(label))")
-            showUndoQueueDroppedWarning()
-            return .failed
-        case .done:
-            break
+            // R5 (Phase 4c job 2: typing is NOT a reason any more -- the page puts it back on top of the swap, see `.done`): the page
+            // found the document changed by something that is not typing while the press waited, or it could not place a typed step in
+            // the target document (`docChanged`), or the bridge failed. The editor is as it was, the batch it consumed has been applied
+            // (any typing is on the screen and goes to the database), the entry stays where it is, and the press is answered `failed`
+            // with the existing notice. The next Cmd-Z takes the typing back (text undo) and the one after it finds the document equal
+            // to the saved copy again (R7).
+            // Review F18 (UX contract 4.2: a press made while the project is being saved shows nothing, the window is going away): with
+            // the gate closed to new work (a close, quit or switch has begun) the refusal is silent and the reply is `.cancelled`, as
+            // `moveEntryAfterSwap` answers a barrier.
+            return answerRefusedSlowSwap(label: label, trace: trace)
+        case .done(let reply):
+            typingReplayed = reply.typingReplayed
         }
 
-        // 3. The timeline. The editor shows the swapped-in document and the job holds its place in the queue.
-        return await moveEntryAfterSwap(opId: opId, kind: kind, timelineEpoch: timelineEpoch, trace: trace)
+        // 3. The timeline. The editor shows the swapped-in document and the job holds its place in the queue. When the page put the typing
+        // done during the wait back on top of it (`typingReplayed`), that typing ends the redo branch: inside the gate, after the entry
+        // has moved (StructuralUndoController+TypingAcrossUndo.swift).
+        return await moveEntryAndEndRedoBranch(
+            opId: opId, kind: kind, timelineEpoch: timelineEpoch, typingReplayed: typingReplayed, trace: trace)
+    }
+
+    /// The answer to a refused slow press (an extraction of `queuedSnapshotUndoRoute`'s `.refused` branch, which keeps its statements in
+    /// the same order; round 6 reuses it for the `noCheckpoint` refusal): trace line, then, with the gate closed to new work (review F18,
+    /// a close, quit or switch has begun), silence and `.cancelled`; otherwise the existing notice and `.failed`.
+    private func answerRefusedSlowSwap(label: String, trace: StructTrace) -> UndoResult {
+        trace.log("refused (editor-first \(label))")
+        if editorState?.structuralGate.isClosedToNewWork == true { return .cancelled }
+        showUndoQueueDroppedWarning()
+        return .failed
+    }
+
+    /// The timeline step that ends the editor-first route (a mechanical extraction of `queuedSnapshotUndoRoute`'s tail): the entry moves
+    /// (`moveEntryAfterSwap`), and when the page put the typing back on top of the swapped-in document that typing ends the redo branch,
+    /// still inside the gate (t-d2061b27).
+    private func moveEntryAndEndRedoBranch(
+        opId: UUID, kind: EditorFirstOpKind, timelineEpoch: Int, typingReplayed: Bool?, trace: StructTrace
+    ) async -> UndoResult {
+        let result = await moveEntryAfterSwap(opId: opId, kind: kind, timelineEpoch: timelineEpoch, trace: trace)
+        if result == .performed { await endRedoAfterReplayedTyping(typingReplayed, opId: opId, trace: trace) }
+        return result
     }
 
     /// Reads the plan of a snapshot swap, or nil (logged) when the press has to take the old body: the snapshot has no blocks, or does not

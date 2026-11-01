@@ -7,6 +7,7 @@ import { insertEquationDialog } from '../../shared/equation-dialog';
 import { recomputeAndPushWebPopupState } from '../../shared/escape-ladder';
 import { insertFootnoteReplacingRange, openCAYWPicker } from './api';
 import { setPendingSlashUndo } from './editor-state';
+import { dispatchAsTyping } from './typing-rebase';
 
 /** Route diagnostic messages through the WKWebView errorHandler bridge.
  *  JS console.log/error are NOT bridged to Xcode — this is the only visible channel. */
@@ -42,7 +43,7 @@ function applyHeading(view: EditorView, from: number, to: number, level: number)
   const cleanBefore = textBeforeSlash.replace(/^#+\s*/, '');
   const combinedText = (cleanBefore + textAfterCommand).trim();
   const prefix = '#'.repeat(level);
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: line.from, to: line.to, insert: `${prefix} ${combinedText}` },
   });
   setPendingSlashUndo(true);
@@ -56,7 +57,7 @@ function applyLinePrefix(view: EditorView, from: number, to: number, prefix: str
   const textBeforeSlash = line.text.slice(0, slashPosInLine);
   const textAfterCommand = line.text.slice(slashPosInLine + matchedLength);
   const combinedText = (textBeforeSlash + textAfterCommand).trim();
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: line.from, to: line.to, insert: `${prefix}${combinedText}` },
   });
   setPendingSlashUndo(true);
@@ -68,7 +69,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/break',
     description: 'Insert Section Break',
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '<!-- ::break:: -->\n\n' } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '<!-- ::break:: -->\n\n' } });
       setPendingSlashUndo(true);
     },
   },
@@ -85,7 +86,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/code',
     description: 'Code block',
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '```\n\n```' }, selection: { anchor: from + 4 } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '```\n\n```' }, selection: { anchor: from + 4 } });
       setPendingSlashUndo(true);
     },
   },
@@ -93,7 +94,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/link',
     description: 'Insert link',
     apply: (view, from, to) => {
-      view.dispatch({
+      dispatchAsTyping(view, {
         changes: { from, to, insert: '[link text](url)' },
         selection: { anchor: from + 1, head: from + 10 },
       });
@@ -104,7 +105,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/highlight',
     description: 'Toggle highlight',
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '' } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '' } });
       window.FinalFinal.toggleHighlight();
       setPendingSlashUndo(true);
     },
@@ -113,7 +114,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/task',
     description: 'Insert task annotation',
     apply: (view, from, to) => {
-      view.dispatch({
+      dispatchAsTyping(view, {
         changes: { from, to, insert: '<!-- ::task:: [ ]  -->' },
         selection: { anchor: from + 17 },
       });
@@ -124,7 +125,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/comment',
     description: 'Insert comment annotation',
     apply: (view, from, to) => {
-      view.dispatch({
+      dispatchAsTyping(view, {
         changes: { from, to, insert: '<!-- ::comment::  -->' },
         selection: { anchor: from + 17 },
       });
@@ -135,7 +136,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/reference',
     description: 'Insert reference annotation',
     apply: (view, from, to) => {
-      view.dispatch({
+      dispatchAsTyping(view, {
         changes: { from, to, insert: '<!-- ::reference::  -->' },
         selection: { anchor: from + 19 },
       });
@@ -154,7 +155,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/image',
     description: 'Insert image from file',
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '' } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '' } });
       (window as any).webkit?.messageHandlers?.requestImagePicker?.postMessage(null);
     },
   },
@@ -170,7 +171,7 @@ export const slashCommands: SlashCommand[] = [
     description: 'Insert table',
     disabledInsideTable: true,
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '' } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '' } });
       const fn = (window as any).FinalFinal?.insertTable;
       if (typeof fn === 'function') fn(3, 2);
       setPendingSlashUndo(true);
@@ -180,7 +181,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/format-table',
     description: 'Format table columns',
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '' } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '' } });
       (window as any).FinalFinal?.formatTable?.();
       setPendingSlashUndo(true);
     },
@@ -189,7 +190,7 @@ export const slashCommands: SlashCommand[] = [
     label: '/equation',
     description: 'Insert math equation',
     apply: (view, from, to) => {
-      view.dispatch({ changes: { from, to, insert: '' } });
+      dispatchAsTyping(view, { changes: { from, to, insert: '' } });
       // Open the Swift equation dialog — do NOT inject $$ directly (setContent escapes $)
       insertEquationDialog();
       // No pendingSlashUndo — dialog is async

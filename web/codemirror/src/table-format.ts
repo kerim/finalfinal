@@ -2,6 +2,7 @@ import type { EditorView } from '@codemirror/view';
 import type { Align, ParsedTable } from '../../shared/format-table';
 import { formatTable } from '../../shared/format-table';
 import { getEditorView } from './editor-state';
+import { dispatchAsTyping } from './typing-rebase';
 
 // MARK: - Helpers
 
@@ -68,7 +69,7 @@ export function formatTableCommand(): void {
   if (!parsed) return;
   const formatted = formatTable(parsed);
   if (formatted === tableStr) return;
-  view.dispatch({ changes: { from: range.from, to: range.to, insert: formatted } });
+  dispatchAsTyping(view, { changes: { from: range.from, to: range.to, insert: formatted } });
 }
 
 /**
@@ -100,14 +101,14 @@ export function insertTableCommand(rows: number, cols: number): void {
     const atStartOfDoc = line.from === 0;
     const insert = atStartOfDoc ? tableStr : `\n${tableStr}`;
     const offset = atStartOfDoc ? 0 : 1;
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from: line.to, to: line.to, insert },
       selection: { anchor: line.to + offset },
     });
     return;
   }
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: line.to, to: line.to, insert: `\n\n${tableStr}` },
     selection: { anchor: line.to + 2 },
   });

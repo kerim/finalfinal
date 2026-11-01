@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import WebKit
 
 /// How one poll cycle ended (t-94369a83 Phase 3a-1b, coder obligation 20).
 enum PollCycleOutcome: Equatable {
@@ -73,6 +74,34 @@ extension BlockSyncService {
     func retireWriterForLifecycle(reason: SkipReason) {
         writer?.retire(reason: reason)
     }
+
+    /// t-d2061b27 (Phase 4c job 2, judge D1): the Rich Text editor HOLDS the typing it would report to the polls while a Cmd-Z or
+    /// Cmd-Shift-Z is latched on it (`hasBlockChanges()` answers false and `getBlockChanges()` an empty batch from the page's request
+    /// until Swift's reply): the press's swap puts that typing back on top of the undone document, and the replay is the only
+    /// carrier. A close, quit or project switch must not wait for that: its forced poll (F) has to see the typing, or it would go
+    /// unsaved. This asks the page to release the hold, on the CAPTURED view, once, before the lifecycle's drain and forced poll
+    /// (`EditorViewState.forceSendForLifecycle`). Returns whether a hold was released (false: nothing was held, the page did not answer
+    /// within `bound` seconds, or the page has no such function). After a release a press that is still waiting on the page is answered
+    /// `docChanged` (the typing was already sent, so putting it back would save it twice). Markdown needs no such call: the lifecycle
+    /// reads CodeMirror's live document directly (step 5), and F is not run in source mode.
+    @discardableResult
+    func releaseHeldTypingPushes(webView: WKWebView, bound: TimeInterval) async -> Bool {
+        let outcome = await raceAgainstTimeout(.seconds(bound)) { () -> Bool in
+            let raw = try? await self.evaluateJS(Self.releaseHeldTypingPushesScript, in: webView)
+            return (raw as? Bool) ?? (raw as? NSNumber)?.boolValue ?? false
+        }
+        switch outcome {
+        case .finished(let released):
+            if released { DebugLog.log(.lifecycle, "[LifecycleFlush] F: released the typing the editor held for a waiting Cmd-Z") }
+            return released
+        case .timedOut:
+            DebugLog.log(.lifecycle, "[LifecycleFlush] F: the editor did not answer releaseHeldTypingPushes within \(bound)s -- going on")
+            return false
+        }
+    }
+
+    /// `window.FinalFinal.releaseHeldTypingPushes()` (web/milkdown/src/undo-coordinator.ts); `?.` so a page without it answers nothing.
+    static let releaseHeldTypingPushesScript = "window.FinalFinal.releaseHeldTypingPushes?.() === true"
 }
 
 #if DEBUG

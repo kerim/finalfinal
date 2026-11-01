@@ -44,7 +44,7 @@ import {
   type SectionRange,
   type TopLevelEntry,
 } from './api-section-delete';
-import { checkQuickRedoAllowed, putBackAfterQuickRedo } from './api-section-undo';
+import { checkQuickRedoAllowed, finishQuickRedoLine, putBackAfterQuickRedo } from './api-section-undo';
 import {
   alignTopLevelIds,
   clearBlockIds,
@@ -96,8 +96,9 @@ export interface ReplaceRangePayload {
 
 /** What `replaceRangeEditorFirst` and `redoReplaceRangeEditorFirst` return, on every path. Swift reads it as `JSON.stringify(...)`. */
 export interface ReplaceRangeResult {
-  /** Every pending edit this call consumed, in `getBlockChanges()` shape. Empty when nothing was pending, and on a redo refusal (the
-   * gate consumes nothing). Swift always applies a returned batch. */
+  /** Every pending edit this call consumed, in `getBlockChanges()` shape. Empty when nothing was pending, and on a refusal by the redo's
+   * gate (the gate consumes nothing). A redo refused because typing sits inside the text it replaces carries the typing (once). Swift
+   * always applies a returned batch. */
   batch: BlockChanges;
   ok: boolean;
   /** Why `ok` is false: 'noEditor', 'beginFailed', 'rootNotFound', 'managedRoot', 'rootNotLeader' (section mode), 'anchorNotFound',
@@ -121,6 +122,10 @@ export interface ReplaceRangeResult {
   /** Id of the nearest block before the range that has one ('section'), or of the block the fragment follows ('insertAfter'); null
    * when there is none, and always null for 'whole'. */
   predecessorId: string | null;
+  /** The quick REDO only, on an `ok: true` reply: true when the user typed since the key was pressed (the page's own answer, from the
+   * redo's gate), absent on every other reply. A non-empty `batch` is not proof of typing (it can hold a rewrite the previous command's
+   * settle left); Swift ends the older redo entries only when this is true. */
+  typed?: boolean;
 }
 
 // Test seam (web tests only; production never sets it): runs right after the change was dispatched and its ids set, before they are
@@ -295,6 +300,9 @@ interface ReplaceOptions {
   label: 'replace' | 'replace-redo';
   /** The quick redo only: the registry entry this opId already has (see `runEditorFirstChange`'s `previousEntry`). */
   previousEntry?: UndoRegistryEntry;
+  /** The quick redo only, and only when the user typed since its press: asked with the span the replace is about to take out; true
+   * (typing sits inside it) refuses the redo (`docChanged`) before anything is dispatched, so the typing is not removed with it. */
+  refuseIfTypedInside?: (from: number, to: number) => boolean;
 }
 
 const emptyBatch = (): BlockChanges => ({ updates: [], inserts: [], deletes: [] });
@@ -401,6 +409,9 @@ function replaceInEditor(opId: string, payload: ReplaceRangePayload, options: Re
       } else if (mode !== 'whole') {
         return { ok: false, reason: 'unknownMode' };
       }
+      // A quick redo with typing since its press: typing inside the span this replace takes out would be removed with it, so the redo
+      // is refused before anything is dispatched (typing elsewhere is simply kept; the replace works on the document as it stands).
+      if (from !== to && options.refuseIfTypedInside?.(from, to)) return { ok: false, reason: 'docChanged' };
 
       // The payload against the editor's own parse, BEFORE anything is dispatched: a refusal here touches nothing.
       const parsed = editorInstance.ctx.get(parserCtx)(payload.markdown);
@@ -533,7 +544,8 @@ export function replaceRangeEditorFirst(opId: string, payload: ReplaceRangePaylo
  * Bridge target for `window.FinalFinal.redoReplaceRangeEditorFirst`. Synchronous; Swift calls it, with the structural-redo latch held
  * for `opId`, like the duplicate's redo. Re-checks that the live document is still the saved pre-op copy (`checkQuickRedoAllowed`,
  * shared with the delete's and the duplicate's redo; nothing is touched on a refusal: `ok: false`, `reason: 'docChanged'`, an empty
- * batch), then replaces the range again in the document as it stands NOW, under the same opId, as a fresh editor-first replace.
+ * batch). Typing since the press elsewhere is kept (it goes out once as batch N); typing inside the text the replace takes out refuses
+ * the redo with `docChanged` and the batch carrying that typing. It replaces the range again in the document as it stands NOW, under the same opId, as a fresh editor-first replace.
  * `payload` is the first click's payload (the same ids), so the redo gives the same blocks the same ids [S9].
  */
 export function redoReplaceRangeEditorFirst(opId: string, payload: ReplaceRangePayload): ReplaceRangeResult {
@@ -542,8 +554,13 @@ export function redoReplaceRangeEditorFirst(opId: string, payload: ReplaceRangeP
     trace(`replace-quick-redo mode=${payload.mode} opId=${opId.slice(0, 8)} refused reason=${gate.reason}`);
     return failureReply(emptyBatch(), gate.reason);
   }
-  const result = replaceInEditor(opId, payload, { label: 'replace-redo', previousEntry: gate.entry });
+  const result = replaceInEditor(opId, payload, {
+    label: 'replace-redo',
+    previousEntry: gate.entry,
+    refuseIfTypedInside: gate.guard,
+  });
+  finishQuickRedoLine(gate, result.ok);
   // The redo steps the quick undo kept aside (typing done inside the restored text) go back now that the text is back (t-14f908b4).
-  if (result.ok) putBackAfterQuickRedo(opId, 'replace-quick-redo');
-  return result;
+  if (result.ok) putBackAfterQuickRedo(opId, 'replace-quick-redo', gate.typed);
+  return result.ok ? { ...result, typed: gate.typed } : result;
 }

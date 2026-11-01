@@ -47,6 +47,11 @@ struct MarkdownStructuralReply: Decodable, Equatable {
     let postRaw: String?
     /// A reorder's reply only (`markdownStructuralReorder`): the order ids the page had no leader for. Absent in every other reply.
     let skippedIds: [String]?
+    /// t-d2061b27: `true` (never `false`; absent otherwise) when the typing done while an undo or redo waited was put back on top of the
+    /// swapped-in text, or, for the quick redo of a Delete, was already in the text the re-run worked on. Swift ends the redo branch
+    /// (`endRedoAfterReplayedTyping`). Then `preRaw` is the document AT THE PRESS (no typing in it) for an undo or a composed redo, so the
+    /// typing batch up to the swap finds nothing new to write: the replay is the typing's only carrier, saved by step 8's live read.
+    let typingReplayed: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case succeeded = "ok"
@@ -55,6 +60,7 @@ struct MarkdownStructuralReply: Decodable, Equatable {
         case preRaw
         case postRaw
         case skippedIds
+        case typingReplayed
     }
 }
 

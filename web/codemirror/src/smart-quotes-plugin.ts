@@ -16,6 +16,7 @@ import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { isNativeQuoteSubstitution, plainEquivalentOf } from '../../shared/smart-quotes';
+import { typingDispatch } from './typing-rebase';
 
 let enabled = true;
 
@@ -100,7 +101,12 @@ export function smartQuotesInputHandler(view: EditorView, from: number, to: numb
   if (text.length !== 1 || (text !== '"' && text !== "'")) return false;
   const curly = resolveSmartQuoteChar(view.state, from, text);
   if (!curly) return false;
-  view.dispatch({ changes: { from, to, insert: curly }, selection: { anchor: from + curly.length } });
+  // `typingDispatch`: this IS the user's keystroke (the inputHandler took it from CM6's own insertion), so the typing collector counts it.
+  view.dispatch({
+    changes: { from, to, insert: curly },
+    selection: { anchor: from + curly.length },
+    annotations: typingDispatch.of(true),
+  });
   return true;
 }
 
@@ -148,7 +154,7 @@ export function handleBeforeInput(event: InputEvent, view: EditorView): boolean 
   for (const ch of plain) {
     const curly = resolveSmartQuoteChar(view.state, pos, ch);
     const insert = curly ?? ch;
-    view.dispatch({ changes: { from: pos, to: pos, insert } });
+    view.dispatch({ changes: { from: pos, to: pos, insert }, annotations: typingDispatch.of(true) });
     pos = view.state.selection.main.head;
   }
   return true;

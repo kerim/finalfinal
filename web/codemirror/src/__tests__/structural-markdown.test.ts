@@ -18,6 +18,7 @@ import { EditorView } from '@codemirror/view';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MarkdownManagedRegionResult } from '../api-managed-region';
 import type { MarkdownLeader, MarkdownStructuralRequest, MarkdownStructuralResult } from '../api-structural-markdown';
+import { derivedCorrection } from '../derived-correction';
 import { readImageMeta } from '../image-preview-plugin';
 import { setAsideRedoOf } from '../redo-branch';
 import {
@@ -742,7 +743,10 @@ describe('W5 the swap re-checks the document', () => {
   // `if (isOwnRequest) return { action: 'structural', opId: params.ownRequestOpId as string };` (answer "yes" for the in-flight request
   // without comparing the documents).
   // Predicted failure: `typing "kp4" gone after refused swap`.
-  it('refuses when the user typed between the key press and the swap, and changes nothing', () => {
+  // Phase 4c job 2 (t-d2061b27): typing between the key press and the swap is no longer a reason to refuse (typing-across-undo.test.ts
+  // proves it is carried out and kept). What still refuses is a change that is NOT the user's typing: here an automatic rewrite
+  // (`derivedCorrection`) that meets the typing, so the document at the press cannot be rebuilt as typing alone.
+  it('refuses when an automatic rewrite meets the typing between the key press and the swap, and changes nothing', () => {
     const built = docA();
     load(built.text);
     expect(clickDelete(built, 'h3').ok).toBe(true);
@@ -755,6 +759,7 @@ describe('W5 the swap re-checks the document', () => {
     expect(isLatched()).toBe(true);
 
     typeAfter('Text of chapter 2.', ' kp4'); // Swift reserves its writer ticket in between; the user keeps typing
+    view.dispatch({ changes: { from: 0, insert: 'Q' }, annotations: derivedCorrection.of(true) }); // and an automatic rewrite lands
     const typedDoc = view.state.doc;
     const depth = undoDepth(view.state);
 

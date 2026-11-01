@@ -19,17 +19,20 @@
 //
 //  THE QUICK UNDO (`markdownQuickUndo`):
 //    page call   `markdownStructuralSwap(opId, 'undo')`: setState(checkpoint), the live redo branch carried over, the carried state
-//                re-applied. `{ok:false, reason:'changed'|'noEntry'|'midOp'}` (the user typed since the press, or an automatic push changed
-//                the document) changes nothing on the screen: the counters and the footnote hold are put back, the press is answered
-//                `failed` with the existing notice ("Some undo or redo presses could not be carried out."), one fresh settle runs
-//                (`abandonQuickUndo`, the Rich Text quick undo's own). Typing stays.
+//                re-applied. Typing done while the press waited is NOT a refusal (t-d2061b27): the page checks the document as it was at
+//                the press, swaps, and puts the typing back on top (`typingReplayed: true`). `{ok:false, reason:'changed'|'noEntry'|
+//                'midOp'|'unplaceable'}` (something that is not typing changed the document in the wait, the entry is gone, or a typed step
+//                has no place in the restored text) changes nothing on the screen: the counters and the footnote hold are put back, the
+//                press is answered `failed` with the existing notice ("Some undo or redo presses could not be carried out."), one fresh
+//                settle runs (`abandonQuickUndo`, the Rich Text quick undo's own). Any typing stays.
 //    reply turn  the typing batch, `noteQueuedStructuralJob`, the restored document adopted, the section shown again in the sidebar
 //                (`showRestoredSections`, which reads the leaders from the payload holder the delete job filled), then the SAME
 //                `SectionReinsertJob` the Rich Text quick undo starts (`startReinsert`), keyed by its own fresh reinsert key.
 //    hand-off    the hold goes to the continuation keyed by that reinsert key (`swapsBackOnFailure: false`: a failed reinsert has nothing
 //                to swap back; the flush writes the page's text into the rows instead).
-//    timeline    the slot is `quickUndone`, the entry moves to the redo stack, the descriptor is pushed; a document that differs from the
-//                restored one by now (typed during the press) drops the redo branch, as the Rich Text quick undo does.
+//    timeline    the slot is `quickUndone`, the entry moves to the redo stack, the descriptor is pushed; typing put back on top by the page
+//                (`typingReplayed`) drops the redo branch (`endRedoAfterReplayedTyping`), and so does a document that differs from the
+//                restored one by now (typed after the swap, during the press), as the Rich Text quick undo does.
 //  A missing payload (the delete job's rows were never recorded) is NEVER undone wrongly: the press takes the slow path (nil).
 //  A DUPLICATE entry (t-4a8fd8af slice 3) takes the same route: its undo hides the copy's leaders (`hideDuplicateInSidebar`, the ids the
 //  click minted) instead of showing a restored section, and the reinsert makes the rows equal "the rows before the op", which removes the
@@ -235,9 +238,12 @@ extension StructuralUndoController {
             return closed ? .cancelled : .failed
         }
         await pushDescriptor()
+        // t-d2061b27: typing done while the press WAITED was put back on top of the restored text by the page (`typingReplayed`); it
+        // ends the redo branch by that flag, not by the text compare below (which would also see it, as postRaw is read before the replay).
+        let endedByReplay = await endRedoAfterReplayedTyping(reply.typingReplayed, opId: opId, trace: trace)
         // Typing made while the press was being carried out (the hold wait is over, but the swap's reply turn can still suspend) is
         // text the redo branch does not know: it drops the branch, as the Rich Text quick undo does.
-        if let live = await evalString("window.FinalFinal.getContentRaw()"), live != postRaw {
+        if !endedByReplay, let live = await evalString("window.FinalFinal.getContentRaw()"), live != postRaw {
             unifiedUndoService.invalidateRedoBranch(reason: "typed during the quick undo")
             await pushDescriptor()
         }
@@ -333,6 +339,10 @@ extension StructuralUndoController {
             return closed ? .cancelled : .failed
         }
         await pushDescriptor()
+        // t-d2061b27: typing done while the redo WAITED ends the whole redo branch, the older redo entries under this one included. The
+        // page says so with `typingReplayed` (a composed redo: the typing was put back on top of the redone text; a Delete's redo: the
+        // typing was already in the text the re-run worked on, and its `preRaw` carried it to the rows).
+        await endRedoAfterReplayedTyping(pageReply.typingReplayed, opId: opId, trace: trace)
         spy("quickRedoPerformed")
         trace.log("performed")
         return .performed

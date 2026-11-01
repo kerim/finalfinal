@@ -102,10 +102,23 @@ import {
 import { resetSpellcheckAfterStateSwap } from './spellcheck-plugin';
 import { computeRefinedChanges } from './text-diff';
 import { withAppOrigin } from './typewriter-plugin';
+import { releaseTypingPushes } from './typing-push-hold';
+import {
+  buildOver,
+  docAtPress,
+  formatTypingSincePressLine,
+  type PressDoc,
+  type ReplayInput,
+  swapWithReplay,
+  type TypingDecision,
+} from './typing-rebase';
 import {
   decideLiveRouting,
   deleteRegistryEntry,
+  getInFlightPress,
   getRegistry,
+  getTypingCollector,
+  noteTypingReplayed,
   setRegistryEntry,
   setUndoDescriptor,
   type UndoRegistryEntry,
@@ -138,6 +151,7 @@ export type MarkdownStructuralFailure =
   | 'noEntry'
   | 'midOp'
   | 'changed'
+  | 'unplaceable'
   | 'swapThrew';
 
 export interface MarkdownStructuralResult {
@@ -146,6 +160,10 @@ export interface MarkdownStructuralResult {
   detail?: string;
   preRaw?: string;
   postRaw?: string;
+  /** Phase 4c job 2: set (true) when the swap put the typing done while the press waited back on top of the undone/redone document.
+   * Then `preRaw` is the document AT THE PRESS (the typing is not sent as a batch of its own; the replay is its only carrier) and `postRaw`
+   * is the swapped-in text BEFORE the replay (the writer baseline). Swift ends the redo branch on seeing it. */
+  typingReplayed?: boolean;
 }
 
 /** What an editor-first Markdown DELETE stores on its registry entry (`UndoRegistryEntry.markdown`). */
@@ -663,11 +681,35 @@ function planDelete(doc: Text, request: MarkdownStructuralRequest): RangeOutcome
 
 // === The click ===
 
+/** The ranges of text the user's typing since a press INSERTED, in the LIVE document: the changes composed, one range per typed run that
+ * left text behind. A pure deletion (a Backspace) inserts nothing, so it has no range: text it took out of the span the redo is about to
+ * remove is not text the redo can take with it (the same rule as Rich Text's `typedRangesInLive`). For the quick redo's check that no typed
+ * text lies inside the text the re-run removes. */
+function typedRangesInLive(steps: ReadonlyArray<{ changes: ChangeSet }>): MovedRange[] {
+  if (steps.length === 0) return [];
+  let total = steps[0].changes;
+  for (let i = 1; i < steps.length; i++) total = total.compose(steps[i].changes);
+  const ranges: MovedRange[] = [];
+  total.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+    if (toB > fromB) ranges.push({ from: fromB, to: toB });
+  });
+  return ranges;
+}
+
+/** Whether any typed (inserted, so non-empty) range overlaps a removed span. */
+function typingTouchesRemoval(typed: ReadonlyArray<MovedRange>, removed: ReadonlyArray<MovedRange>): boolean {
+  return removed.some((span) => typed.some((range) => range.from < span.to && range.to > span.from));
+}
+
 /**
  * Runs the command on the document as it is now: plans it, records the entry, dispatches once. When an entry of the same opId already
  * exists (a quick REDO is a re-run under the same opId) a throwing dispatch puts it back instead of deleting it.
  */
-function runDelete(view: EditorView, request: MarkdownStructuralRequest): MarkdownStructuralResult {
+function runDelete(
+  view: EditorView,
+  request: MarkdownStructuralRequest,
+  typedRanges: ReadonlyArray<MovedRange> = []
+): MarkdownStructuralResult {
   const registry = getRegistry();
   const doc = view.state.doc;
 
@@ -680,6 +722,12 @@ function runDelete(view: EditorView, request: MarkdownStructuralRequest): Markdo
     return { ok: false, reason: 'badRequest', detail: 'planThrew' };
   }
   if (!plan.ok) return plan.failure;
+
+  // 1a. Typing done since the press that lies inside the text this removes would be removed with it (the quick redo runs on the live
+  // document). Refused before anything is recorded or dispatched; the typing stays. The ranges are in the coordinates of `doc`.
+  if (typedRanges.length > 0 && typingTouchesRemoval(typedRanges, removedSpans(plan.changes))) {
+    return { ok: false, reason: 'unplaceable', detail: 'typingInRemovedSection' };
+  }
 
   // 1b. A redo event that is already waiting (typing taken back with Cmd-Z before the Delete) and lies inside the section this removes
   // would be mapped to the removal point by the dispatch below -- the start of the next chapter's heading line -- and a later
@@ -979,12 +1027,84 @@ function putBackSetAsideRedo(view: EditorView, opId: string, depthBeforeRedo: nu
 }
 
 /**
+ * The undo or redo of `entry` when the user TYPED while the press waited (Phase 4c, job 2; typing-rebase.ts). The routing has already
+ * found the document at the press equal to the saved copy. The typing is rebased onto the swap target and tried on a throwaway state first
+ * (`buildReplayDryRun`); only a change that cannot be placed refuses, BEFORE anything on the screen has changed (`unplaceable`). Otherwise
+ * the target is installed, `postRaw` is read (the swapped-in text, the writer baseline), the typing is replayed on top and the page checks the
+ * document is the dry run's; a throw or a mismatch puts the state from before back.
+ *
+ * `preRaw` is the document AT THE PRESS, so Swift's typing batch up to the swap (`prepareStructuralClick`) finds nothing new: the replay is
+ * the typing's only carrier (Swift's step-8 flush reads the live page text behind the job).
+ */
+function swapWithTypingReplay(
+  view: EditorView,
+  entry: UndoRegistryEntry,
+  opId: string,
+  direction: 'undo' | 'redo',
+  press: number,
+  atPress: PressDoc
+): MarkdownStructuralResult {
+  const live = view.state;
+  const d0 = atPress.doc;
+  const extras = entry.markdown;
+  let targetState: EditorState;
+  let target: Text;
+  if (direction === 'undo') {
+    targetState = buildSwappedState(entry, live, 0); // typing ended the live redo branch: nothing to carry from it
+    target = entry.checkpoint.doc;
+  } else {
+    // The redo lands on the saved post-op document (`composedRedo` and the saved-copy swap both do); here it is a history-neutral change
+    // from the live text to that document, on top of the live state.
+    target = entry.postOpDoc;
+    const toTarget = ChangeSet.of(computeRefinedChanges(live.doc.toString(), target.toString()), live.doc.length);
+    targetState = live.update({
+      changes: toTarget,
+      annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')],
+    }).state;
+  }
+  const over = buildOver({
+    direction,
+    d0,
+    target,
+    checkpointDoc: entry.checkpoint.doc,
+    opChanges: extras?.opChanges,
+    moved: extras?.kind === 'reorder' ? extras.moved : null,
+  });
+  if (over === null) return { ok: false, reason: 'unplaceable', detail: 'noOver' };
+
+  const input: ReplayInput = { targetState, over, steps: atPress.steps, liveSelection: live.selection };
+  let postRaw = '';
+  const result = swapWithReplay(
+    view,
+    input,
+    (state) =>
+      installState(view, state, { label: state === live ? 'swap-put-back' : 'swap', keepScroll: direction === 'redo' }),
+    () => {
+      postRaw = view.state.doc.toString();
+    }
+  );
+  if (!result.ok) return { ok: false, reason: 'unplaceable', detail: result.reason };
+
+  getTypingCollector().adoptReplay(press, result.rebasedSteps ?? []);
+  noteTypingReplayed();
+  clearSetAsideRedo(opId); // the redo steps set aside at an earlier undo belong to a document that now has typing on top (amendment 6)
+  return { ok: true, preRaw: d0.toString(), postRaw, typingReplayed: true };
+}
+
+/** The press and entry whose first (retriable) `leadersMismatch` refusal was answered without a trace line. */
+let retriedMismatch: { press: number; opId: string } | null = null;
+
+/**
  * window.FinalFinal.markdownStructuralSwap: the undo/redo turn of the registry entry `opId`. Never throws.
  *
- * It re-checks first that the live document still equals the entry's saved copy -- the same routing function and comparison the key
- * press used (`decideLiveRouting`), asked again because Swift reserves its writer ticket between the press and this turn and the user
- * can type in those milliseconds. The call passes its own opId, so the latch the press raised does not swallow it. If the answer is not
- * "structural, for this opId" nothing has changed and `{ ok:false, reason:'changed' }` comes back. The swap never deletes the entry.
+ * It re-checks first that the document AS IT WAS AT THE PRESS still equals the entry's saved copy (modulo what the app regenerates) --
+ * the same routing function and comparison the key press used (`decideLiveRouting`, with the typing and the automatic changes made since
+ * the press taken out of the live document: typing-rebase.ts `docAtPress`), asked again because Swift reserves its writer ticket
+ * between the press and this turn and the user can type in those milliseconds. The call passes its own opId, so the latch the press
+ * raised does not swallow it. If the answer is not "structural, for this opId" nothing has changed and `{ ok:false, reason:'changed' }`
+ * comes back. Typing made since the press is put back on top of the swapped-in text (`swapWithTypingReplay`), except in the quick redo
+ * of a Delete, which runs on the live document. It writes ONE `typing-since-press` trace line per press, at the final decision. The
+ * swap never deletes the entry.
  */
 export function markdownStructuralSwap(
   opId: string,
@@ -995,13 +1115,30 @@ export function markdownStructuralSwap(
   if (!view) return { ok: false, reason: 'noEditor' };
   const registry = getRegistry();
   const entry = registry.get(opId);
-  if (!entry) return { ok: false, reason: 'noEntry' };
-  if (entry.midOp) return { ok: false, reason: 'midOp' };
 
+  // Phase 4c job 2: the press this swap answers, and the ONE trace line it writes whatever the outcome (typing-rebase.ts).
+  const press = getInFlightPress();
+  const collector = getTypingCollector();
+  const stepsSince = press > 0 ? collector.stepsSince(press).length : 0;
+  const traceDecision = (decision: TypingDecision): void => {
+    trace(formatTypingSincePressLine(press, stepsSince, decision));
+  };
+  // A refusal changes nothing; the typing the press held back is released first (judge D1/D2): Swift answers `failed` next.
+  const refuse = (decision: TypingDecision, result: MarkdownStructuralResult): MarkdownStructuralResult => {
+    traceDecision(decision);
+    releaseTypingPushes('send');
+    return result;
+  };
+  if (!entry) return refuse('noEntry', { ok: false, reason: 'noEntry' });
+  if (entry.midOp) return refuse('midOp', { ok: false, reason: 'midOp' });
+
+  // The routing compares the document AS IT WAS AT THE PRESS with the saved copy (undo-coordinator.ts `documentAtPress`).
   const decision = decideLiveRouting(view, direction, opId);
   if (decision.action !== 'structural' || decision.opId !== opId) {
-    return { ok: false, reason: 'changed', detail: `decision=${decision.action}` };
+    return refuse('changed', { ok: false, reason: 'changed', detail: `decision=${decision.action}` });
   }
+  const atPress: PressDoc | null = press > 0 ? docAtPress(view.state.doc, collector, press) : null;
+  const typedSincePress = atPress !== null && atPress.decision === 'rebased';
 
   // A quick redo re-runs the command on the document as it stands, under the same opId. It brings its own midOp handling. Only a DELETE
   // has a quick re-run; a reorder entry (api-structural-markdown-reorder.ts), a duplicate entry (api-structural-markdown-duplicate.ts) and
@@ -1012,16 +1149,49 @@ export function markdownStructuralSwap(
     let request = entry.markdown.request;
     if (requestJson !== undefined) {
       const parsed = parseRequest(requestJson);
-      if ('failure' in parsed) return parsed.failure;
-      if (parsed.request.opId !== opId) return { ok: false, reason: 'badRequest', detail: 'opIdDiffers' };
+      if ('failure' in parsed) return refuse('changed', parsed.failure);
+      if (parsed.request.opId !== opId)
+        return refuse('changed', { ok: false, reason: 'badRequest', detail: 'opIdDiffers' });
       request = parsed.request;
     }
-    return runDelete(view, request);
+    // Phase 4c job 2, round 2b: the quick redo re-runs the delete on the LIVE document, so typing done while the press waited is already
+    // in it and is NOT replayed. The routing has found the document at the press equal to what the entry expects. What the re-run removes
+    // is decided on the live text; typing that lies inside the text it removes would go with it, so that one case is refused BEFORE
+    // anything changes (`unplaceable`, the typing kept, the existing notice): see `runDelete`.
+    const typedRanges = typedSincePress && atPress !== null ? typedRangesInLive(atPress.steps) : [];
+    const rerun = runDelete(view, request, typedRanges);
+    if (!rerun.ok) {
+      // `leadersMismatch` is the one refusal Swift RETRIES (it flushes and asks again, once): the first one writes no trace line and keeps
+      // the typing push held, so the press has ONE line, at its final decision (F21). If the retry also fails, that is the final one.
+      if (rerun.reason === 'leadersMismatch' && !(retriedMismatch?.press === press && retriedMismatch.opId === opId)) {
+        retriedMismatch = { press, opId };
+        return rerun;
+      }
+      return refuse(rerun.reason === 'unplaceable' ? 'unplaceable' : 'changed', rerun);
+    }
+    traceDecision(typedSincePress ? 'rebased' : 'matched');
+    if (!typedSincePress) return rerun;
+    // The reply's `preRaw` is the live text (typing included), which Swift's typing batch up to the press saves: the held push is not sent.
+    noteTypingReplayed();
+    return { ...rerun, typingReplayed: true };
   }
 
   registry.set(opId, { ...entry, midOp: true });
   try {
-    if (direction === 'undo') return swapUndo(view, entry, opId);
+    if (typedSincePress && atPress !== null) {
+      const replayed = swapWithTypingReplay(view, entry, opId, direction, press, atPress);
+      traceDecision(replayed.ok ? 'rebased' : 'unplaceable');
+      if (!replayed.ok) releaseTypingPushes('send'); // D1/D2: put back, the held typing is released (sent) before the refusal is answered
+      return replayed;
+    }
+    traceDecision('matched');
+    if (direction === 'undo') {
+      const swapped = swapUndo(view, entry, opId);
+      // `setState` replaced the document under the records the presses held behind this one made (automatic changes only: typing would
+      // have been replayed). They are written for the old document; a later press must not build its base from them.
+      if (swapped.ok && press > 0) collector.adoptReplay(press, []);
+      return swapped;
+    }
     // The redo list as it stands BEFORE the redo's own dispatch: the put-back needs it unchanged since the undo (redo-branch.ts).
     const depthBeforeRedo = redoDepth(view.state);
     let redone = composedRedo(view, entry);

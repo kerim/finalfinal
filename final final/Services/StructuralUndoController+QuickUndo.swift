@@ -51,6 +51,10 @@ struct QuickUndoReply: EditorFirstBatchReply {
     /// The section leaders the undo took OUT of the document (t-18b7fa48): empty for the undo of a delete (a delete only removes), the
     /// copy's leaders for the undo of a duplicate, which the sidebar hides at once. Absent in a reply from an older editor.
     let removedLeaderIds: [String]?
+    /// t-d2061b27: `true` when the typing done while the press waited was put back on top of the restored document. Then `batch` is empty
+    /// (the replay is the only carrier of that typing; `resumeSyncAfterQuickUndo` queues it behind the reinsert) and Swift ends the redo
+    /// branch (`endRedoAfterReplayedTyping`). Absent otherwise, and from a reply of an older editor.
+    let typingReplayed: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -59,6 +63,7 @@ struct QuickUndoReply: EditorFirstBatchReply {
         case restoredIds
         case restoredLeaderIds
         case removedLeaderIds
+        case typingReplayed
     }
 }
 
@@ -185,6 +190,10 @@ extension StructuralUndoController {
         let trace = StructTrace(label: "undo", opId: String(entry.id.uuidString.prefix(8)))
         StructuralTrace.beginOp(label: "undo", opId: trace.opId)   // slice 0 measurement: the shared timeline
         trace.log("start (quick)")
+        // UI-test seam FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS (see TestMode): the quick undo is one synchronous stretch and waits for nothing,
+        // so the page's latch lasts a few milliseconds and a UI test cannot type into its wait. The hold stands for that wait. Before
+        // anything is mutated (the click flag, the epoch, the counters, the registry, the writer ticket). No wait when unset.
+        await TestMode.holdSlowUndoPress(opId: trace.opId)
         var run = QuickUndoRun()
         defer { blockSync.structuralClickPending = false }
         let result = await quickUndoBody(entry, holder: holder, database: db, projectId: pid, trace: trace, run: &run)
@@ -306,11 +315,16 @@ extension StructuralUndoController {
             return closed ? .cancelled : .failed
         }
         await pushDescriptor()
+        // t-d2061b27: typing done while the press WAITED was put back on top of the restored document by the page (`typingReplayed`). It
+        // ends the redo branch by that flag, not by the text compare below: a replay that changes only text the compare ignores (a
+        // bibliography entry, other derived content) would leave the redo standing. The page query is then not needed.
         // Code review G-F5/C-L10/B-L2: while this command held the gate `handleHistoryEdited` ignored every keystroke and the editor
         // posts `historyEdited` only once the descriptor shows a redo, so typing during the paused window never dropped the redo
         // branch. A live document that differs from the restored one (typed during the window: the paused edits are part of that) drops
         // it now; typing from here on follows the normal `historyEdited` path. (`pausedEdits > 0` implies this difference.)
-        if await evalBool("window.FinalFinal.quickUndoLiveDiffersFromRestored?.(\(opLiteral)) === true") {
+        // (Ended by the flag: nothing typed later can be missed either, the branch is already gone.)
+        let endedByReplay = await endRedoAfterReplayedTyping(reply.typingReplayed, opId: opId, trace: trace)
+        if !endedByReplay, await evalBool("window.FinalFinal.quickUndoLiveDiffersFromRestored?.(\(opLiteral)) === true") {
             unifiedUndoService.invalidateRedoBranch(reason: "typed during the quick undo")
             await pushDescriptor()
         }
@@ -332,9 +346,12 @@ extension StructuralUndoController {
         holder.setCheckpointHoldToken(nil)
         editorState.efJobRegistry.forget(reinsertKey)
         editorState.efJobRegistry.markSettled(reinsertKey)
-        showUndoQueueDroppedWarning()
+        // Review F18 (UX contract 4.2: a press made while the project is being saved shows nothing): with the gate closed to new work
+        // (a close, quit or switch has begun) the refusal is silent and the reply is `.cancelled`, as the stack-move exits answer a barrier.
+        let closed = editorState.structuralGate.isClosedToNewWork
+        if !closed { showUndoQueueDroppedWarning() }
         startFreshSettleAfterRefusedRestore(opId: opId)
-        return .failed
+        return closed ? .cancelled : .failed
     }
 
     /// `window.FinalFinal.resumeSyncAfterQuickUndo()`: ends the editor's pause and queues what was typed while it lasted (idempotent and
@@ -490,6 +507,9 @@ extension StructuralUndoController {
             return .failed
         }
         await pushDescriptor()
+        // t-d2061b27 (review F4, parity with Markdown; round 6): typing done in the redo's wait ends the older redo entries too, and the
+        // page says whether the user typed (`typed`), not the batch (see `performQuickRedoOfDuplicate`).
+        await endRedoAfterReplayedTyping(reply.typed, opId: opId, trace: trace)
         spy("quickRedoPerformed")
         trace.log("performed")
         return .performed

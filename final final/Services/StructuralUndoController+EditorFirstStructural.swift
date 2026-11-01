@@ -107,9 +107,10 @@ enum EditorFirstOpKind {
     /// Nothing was changed." is shown only when that body itself refuses. Delete and Duplicate refuse (their old body would meet the
     /// same editor state).
     ///
-    /// The slow undo and redo (round 3c) fall back for every reason EXCEPT the two it answers itself: `docChanged` (the user typed while
-    /// the press waited: the press is refused with the notice and the typing stays, D13) and `noCheckpoint` (handed back to the
-    /// caller, `handsBackToCaller`).
+    /// The slow undo and redo (round 3c) fall back for every reason EXCEPT the two it answers itself: `docChanged` (something that is not
+    /// typing changed the document while the press waited, or a typed step has no place in the target document: the press is refused
+    /// with the notice and any typing stays; typing alone is not a reason, the page puts it back on top of the swap, t-d2061b27) and
+    /// `noCheckpoint` (handed back to the caller, `handsBackToCaller`).
     ///
     /// A reorder (t-0b70d1e9) falls back for every reason too: the old whole-document reorder is a complete, working reorder, and it
     /// runs in the same gate turn, as a restore's does (`planMismatch`, `managedMoved`, `rootNotFound`, `noEditor`, a failed begin).

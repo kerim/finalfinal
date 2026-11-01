@@ -9,9 +9,13 @@
 // `structuralSwapEditorFirst(opId, direction, payload)` is that turn. In order:
 //   (0) the boundary hygiene every structural op performs (`closeEditingPopupsAndClearBoundaryState`, `cancelPendingInsertions`);
 //   (a) flush the 100 ms detection debounce, so an edit typed a moment ago is a pending change now;
-//   (b) consume everything pending (`getBlockChanges`) as the batch Swift applies BEFORE the job. It is taken FIRST and in this very
+//   (b) consume everything pending (`getBlockChanges`, block-sync-plugin's own: the bridge's `getBlockChanges` that Swift's polls call
+//       holds the typing back while a press is latched) as the batch Swift applies BEFORE the job. It is taken FIRST and in this very
 //       turn: the re-check below and the swap can then never see a document that holds an edit the batch does not (binding
-//       requirement R2, README "Requirements the model puts on rounds 3b and 3c"). The batch comes back on EVERY path;
+//       requirement R2, README "Requirements the model puts on rounds 3b and 3c"). The batch comes back on EVERY path EXCEPT a
+//       swap that put the typing back (`typingReplayed`): the amended invariant is "typing is saved as batch N before any swap,
+//       except under `rebased`, where the wait typing is saved exactly once, by the replay, behind the job" (the job rewrites the rows
+//       to the snapshot, so a batch N sent as well would only be overwritten, and its Enter-made rows would be inserted twice);
 //   (c) find the target: for 'undo' the entry's pre-op `checkpoint`, for 'redo' the `redoCheckpoint` that `performStructuralSwap`
 //       stored when the entry was undone. No entry, or no such checkpoint: `noCheckpoint`, nothing swapped (Swift then falls back to
 //       slice 2's whole-document replace);
@@ -19,7 +23,12 @@
 //       shared comparison the routing decision, the quick undo's re-check and the quick redo's gate use; `postOpDoc` for an undo,
 //       `preOpDoc` for a redo, exactly or modulo what the app regenerates). Swift reads the snapshot and builds the payload between
 //       the press and this turn, the editor is live meanwhile, and the user can type in that stretch (the model's
-//       EFSnapTypedInWait). If anything differs: `docChanged`, nothing swapped, the entry stays recorded (binding requirement R5);
+//       EFSnapTypedInWait). Typing since the PRESS is not a difference (phase 4c, job 2): the comparison is made on the document as it
+//       was when the key was pressed (`liveDocMatchesSavedCopy` with the press, typing-rebase.ts `docAtPress`), and the typing is
+//       put back on top of the swapped-in document by a replay built and tried against the TARGET before anything is swapped
+//       (`buildReplayDryRun`). If something else differs (a change that is not typing, or a typed step the target has no place for):
+//       `docChanged`, nothing swapped, the entry stays recorded (binding requirement R5). The line
+//       `typing-since-press press=P steps=N decision=...` is written at this re-check whatever the outcome;
 //   (e) the FULL top-level id alignment pre-check of the payload against the TARGET document (`alignmentProblem`, shared with the
 //       restore: count both ways, node types, non-blank content). A mismatch is `idAlignment`: nothing swapped;
 //   (f) the swap itself, EXACTLY as today's `performStructuralSwap` does it (undo-coordinator.ts, called unchanged): the redo checkpoint
@@ -28,6 +37,8 @@
 //       and the ids are checked once more against the swapped-in document (`idProblem`);
 //   (g) `finishStructuralSwapSettle`, unchanged: re-baseline block-sync on the swapped-in document WITH its ids, resume block-sync,
 //       refresh the JS-side content cache;
+//   (g2) dispatch the replay (typing since the press, put back on top), after the swap, the ids and the settle's `resetAndSnapshot`,
+//       so block-sync sees it as new typing; the live document must then equal the dry run's. Anything else puts the live state back;
 //   (h) schedule the ordinary `contentChanged` notification for the swapped-in text (api-section-undo.ts `scheduleContentChanged`,
 //       the quick undo's mechanism): a checkpoint swap changes the document with no document-changing transaction, so main.ts's
 //       typing debounce never fires for it.
@@ -70,14 +81,29 @@ import {
 } from './block-sync-plugin';
 import { trace } from './editor-first-op';
 import { getEditorInstance } from './editor-state';
+import { setAsideRedoBranch } from './redo-branch';
 import type { ExpectedBlockMeta } from './types';
 import {
+  buildReplayDryRun,
+  formatTypingSincePressLine,
+  inspectPress,
+  type ReplayDryRun,
+  type TypingDecision,
+} from './typing-rebase';
+import { idsByOffsetFromPayload, idsOfDocumentAtPress } from './typing-route';
+import {
+  adoptReplayedTyping,
   cancelPendingInsertions,
   closeEditingPopupsAndClearBoundaryState,
   finishStructuralSwapSettle,
+  getInFlightOpId,
+  getInFlightPress,
   getRegistry,
+  getTypingCollector,
+  isLatched,
   liveDocMatchesSavedCopy,
   performStructuralSwap,
+  typingAlreadySent,
 } from './undo-coordinator';
 
 /**
@@ -111,6 +137,10 @@ export interface StructuralSwapPayload {
 export interface StructuralSwapResult extends ReplaceRangeResult {
   /** Which saved state was swapped in: 'checkpoint' (direction 'undo') or 'redo' (the stored redo checkpoint). Absent on a refusal. */
   swappedTo?: 'checkpoint' | 'redo';
+  /** True when the typing done while the press waited was put back on top of the swapped-in document (decision `rebased`). Then
+   * `batch` is empty: the replay is the only carrier of that typing, saved once behind the job. Swift ends the redo branch on it
+   * (inside the gate, after the stacks have moved). Absent otherwise. */
+  typingReplayed?: boolean;
 }
 
 // Test seam (web tests only; production never sets it): runs right after the swap, the payload's ids and the repaint, before the ids
@@ -119,6 +149,13 @@ export interface StructuralSwapResult extends ReplaceRangeResult {
 let afterSwapHook: (() => void) | null = null;
 export function setTestAfterSwapHook(hook: (() => void) | null): void {
   afterSwapHook = hook;
+}
+
+// Test seam (web tests only): runs right after the replay is dispatched, before the check that the document equals the dry run's. A throw
+// from it exercises the put-back after a replay that went wrong.
+let afterReplayHook: (() => void) | null = null;
+export function setTestAfterReplayHook(hook: (() => void) | null): void {
+  afterReplayHook = hook;
 }
 
 const emptyBatch = (): BlockChanges => ({ updates: [], inserts: [], deletes: [] });
@@ -150,7 +187,11 @@ export function structuralSwapEditorFirst(
   const shortId = opId.slice(0, 8);
   let batch: BlockChanges = emptyBatch();
   let detail = ''; // counts and positions only, for the trace line of a refusal
+  // F21: ONE `typing-since-press` line per press, written when this call ends, at its FINAL decision (set below once the press is
+  // known). A refusal that Swift hands to another road (the old body, the caller's whole replace) writes none: that road decides.
+  let finalizeLine: (reason: string | null) => void = () => {};
   const refuse = (reason: string): StructuralSwapResult => {
+    finalizeLine(reason);
     trace(
       `swap-editor-first direction=${direction} opId=${shortId} ok=false reason=${reason.slice(0, 200)}` +
         (detail ? ` detail=${detail.slice(0, 200)}` : '')
@@ -165,6 +206,25 @@ export function structuralSwapEditorFirst(
   if (!editorInstance) return refuse('noEditor');
   const view = editorInstance.ctx.get(editorViewCtx);
   const laps = new Laps();
+  // The press this call answers (the latch is held for this very op), and the line the re-check writes whatever the outcome.
+  const press = isLatched() && getInFlightOpId() === opId ? getInFlightPress() : undefined;
+  const collector = getTypingCollector();
+  let decision: TypingDecision | null = null;
+  const decide = (next: TypingDecision): void => {
+    if (decision === null) decision = next;
+  };
+  finalizeLine = (reason) => {
+    if (press === undefined || decision === null) return;
+    // A refusal Swift hands to another road (`idAlignment`, `exception`, ...) writes none: that road decides. The refusals that name
+    // their own reason (no registry entry, entry mid-operation, no id map) are final here and write their line.
+    const named = decision === 'noEntry' || decision === 'midOp' || decision === 'noIdMap';
+    if (reason !== null && reason !== 'docChanged' && !named) return;
+    // `rebased` is decided at the dry run; a failure after it means the typing was not put back.
+    const final = reason !== null && decision === 'rebased' ? 'unplaceable' : decision;
+    trace(formatTypingSincePressLine(press, collector.stepsSince(press).length, final));
+  };
+  let replay: ReplayDryRun | null = null;
+  let typingReplayed = false;
 
   // What the `finally` puts back. `entryBefore` also carries the redo bookkeeping the swap may add (`redoCheckpoint` on an undo,
   // a re-anchored `postOpDoc` on a redo), so a failed swap leaves the entry exactly as it was.
@@ -187,20 +247,55 @@ export function structuralSwapEditorFirst(
     const target = direction === 'undo' ? entry?.checkpoint : entry?.redoCheckpoint;
     if (!entry || !target) {
       detail = entry ? 'the entry has no redo checkpoint' : 'no registry entry';
+      decide('noEntry');
       return refuse('noCheckpoint');
     }
 
-    // (d) the re-check: the document the batch above was taken from is `view.state.doc`, so typing taken into the batch counts as live.
-    if (!liveDocMatchesSavedCopy(view, entry, direction)) return refuse('docChanged');
+    // (d) the re-check, on the document as it was when the key was pressed (without a press: on the live document, as before).
+    const inspection = press === undefined ? null : inspectPress(collector, press, view.state.doc);
+    if (press === undefined || inspection === null) {
+      if (!liveDocMatchesSavedCopy(view, entry, direction)) return refuse('docChanged');
+    } else {
+      // Typing that was already sent (the lifecycle flush released the hold) cannot be put back: it would be saved twice.
+      const alreadySent = inspection.kind === 'typing' && typingAlreadySent(press);
+      if (inspection.kind === 'changed' || alreadySent || !liveDocMatchesSavedCopy(view, entry, direction, press)) {
+        decide('changed');
+        return refuse('docChanged');
+      }
+      if (inspection.kind === 'matched') decide('matched');
+    }
     laps.lap('recheck');
 
     // (e) the payload against the document it is about to name, BEFORE anything is touched.
     const problem = alignmentProblem(target.doc, payload);
     if (problem !== null) {
       detail = problem;
+      decide('unplaceable');
       return refuse('idAlignment');
     }
     laps.lap('align');
+
+    // The typing since the press, rebuilt against the TARGET and tried there before anything is touched. Only a typed step the target
+    // has no place for refuses, here, before the swap (typing kept: the batch comes back).
+    if (press !== undefined && inspection !== null && inspection.kind === 'typing') {
+      const dry = buildReplayDryRun(target, {
+        steps: inspection.typing,
+        docAtPress: inspection.docAtPress,
+        idsAtPress: idsOfDocumentAtPress(collector, press, view.state.doc, getAllBlockIds()),
+        targetIds: idsByOffsetFromPayload(target.doc, payload.blockIds, payload.expectedBlocks),
+        liveSelection: view.state.selection,
+        syncPausedAfter: false,
+        liveState: view.state,
+      });
+      if (!dry.ok) {
+        detail = `unplaceable: ${dry.reason ?? ''}`;
+        decide('unplaceable');
+        return refuse('docChanged');
+      }
+      decide('rebased');
+      replay = dry;
+      laps.lap('replay-dry-run');
+    }
 
     // The blocks the swap takes out, read from the LIVE document and its ids before they are cleared.
     idsBefore = getAllBlockIds();
@@ -242,12 +337,32 @@ export function structuralSwapEditorFirst(
     // (g) re-baseline on the swapped-in document with its ids, resume block-sync, refresh the JS-side content cache.
     if (!finishStructuralSwapSettle()) throw new Error('finishStructuralSwapSettle returned false');
     laps.lap('settle');
+
+    // (g2) the typing put back, as new typing for block-sync (the settle just re-baselined it on the swapped-in document). The ids
+    // and the managed set are installed above, so plugin state they reset is not seen by the replay.
+    if (replay?.dryState && press !== undefined) {
+      for (const replayTr of replay.replayTrs) view.dispatch(replayTr);
+      afterReplayHook?.();
+      if (!view.state.doc.eq(replay.dryState.doc)) {
+        // Refuse with the notice (F13): `exception: ...` would make Swift run the old restore body, which silently drops the typing.
+        // The `finally` below puts the live state back; the batch of the typing comes back with the refusal.
+        detail = 'the replay did not produce the document the dry run built';
+        return refuse('docChanged');
+      }
+      adoptReplayedTyping(press, replay.rebased);
+      setAsideRedoBranch(opId, null, getRegistry().keys()); // no later quick redo may put back steps the typing has ended
+      batch = emptyBatch(); // the replay is the only carrier of the wait typing (saved once, behind the job)
+      typingReplayed = true;
+      laps.lap('replay');
+    }
     completed = true;
+    finalizeLine(null);
     scheduleContentChanged(); // (h)
     trace(
       `swap-editor-first direction=${direction} opId=${shortId} ok=true blocks=${payload.blockIds.length} ` +
         `removed=${removedIds.length} insertedLeaders=${leaderIds.length} removedLeaders=${removedLeaderIds.length} ` +
         `batchUpdates=${batch.updates.length} batchInserts=${batch.inserts.length} batchDeletes=${batch.deletes.length}` +
+        (typingReplayed ? ' typingReplayed=true' : '') +
         laps.summary()
     );
     return {
@@ -260,9 +375,16 @@ export function structuralSwapEditorFirst(
       removedLeaderIds,
       predecessorId: null,
       swappedTo: direction === 'undo' ? 'checkpoint' : 'redo',
+      ...(typingReplayed ? { typingReplayed: true } : {}),
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    if (replay !== null) {
+      // The user's typing is in play (F13): refuse with the notice and keep the typing; `exception: ...` would make Swift run the old
+      // restore body, which silently drops it. The exception text goes to the trace line only.
+      detail = `exception: ${message}`;
+      return refuse('docChanged');
+    }
     return refuse(`exception: ${message}`);
   } finally {
     if (!completed && swapStarted) {

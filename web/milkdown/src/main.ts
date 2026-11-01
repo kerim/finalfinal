@@ -47,6 +47,7 @@ import {
   getContent,
   hasBlockChanges,
   insertImage,
+  releaseHeldTypingAndGetBatch,
   replayPendingPreMountContent,
   resetEditorState,
   resetForProjectSwitch,
@@ -156,10 +157,12 @@ import {
   performStructuralSwap,
   receiveRedoOutcome,
   receiveUndoOutcome,
+  releaseHeldTypingPushes,
   requestUnifiedRedo,
   requestUnifiedUndo,
   runUndoTrackedDispatch,
   setUndoDescriptor,
+  typingCollectorPlugin,
 } from './undo-coordinator';
 import './heading-zoom-click-handler';
 import './link-click-handler';
@@ -297,6 +300,7 @@ async function initEditor() {
       // 5. citationPlugin MUST be before commonmark to parse [@citekey] syntax
       .use(blockIdPlugin) // Assign stable IDs to block-level nodes
       .use(blockSyncPlugin) // Track block changes for Swift sync — MUST run AFTER blockIdPlugin so currentBlockIds is fresh before snapshotBlocks() reads it
+      .use(typingCollectorPlugin) // Records every step since a Cmd-Z press latched, so typing done while it waits can be put back (typing-rebase.ts)
       .use(sectionBreakPlugin) // Intercept <!-- ::break:: --> before commonmark filters it
       .use(zoomNotesMarkerPlugin) // Intercept <!-- ::zoom-notes:: --> before commonmark filters it
       .use(bibliographyPlugin) // Intercept <!-- ::auto-bibliography:: --> before commonmark filters it
@@ -766,6 +770,11 @@ window.FinalFinal = {
   receiveRedoOutcome,
   // Slice 2a: how many Cmd-Z / Cmd-Shift-Z presses are held behind an in-flight undo (Swift reads it when a close starts).
   heldUndoPressCount,
+  // Phase 4c job 2: the typing done while a press waits is held back from Swift's polls; the lifecycle flush calls this once before its
+  // forced poll so the poll sees it.
+  releaseHeldTypingPushes,
+  // F7: the same release, plus the pending batch in the same call, for a press handed to the old whole-document body.
+  releaseHeldTypingAndGetBatch,
   // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift at the
   // audited op-sequence/undo-sequence boundaries (plan §4.4).
   beginStructuralOp,

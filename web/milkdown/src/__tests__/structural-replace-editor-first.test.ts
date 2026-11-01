@@ -757,17 +757,24 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     expect(diff.updates.map((x) => x.id)).toEqual([first.insertedIds[1] ?? first.insertedIds[0]]);
   });
 
-  it('R-gate: a redo whose gate finds the document changed since the press touches nothing and consumes nothing', async () => {
-    const { view } = await makeEditor();
+  // Round 3 (Q2): a quick redo is a fresh command on the document as it stands. It is refused only when the typing since its press sits
+  // inside the text it replaces (the typed words would go with it); typing elsewhere is kept and the redo runs.
+  async function sceneForRedoGate() {
+    const made = await makeEditor();
     await load(DOC);
     expect(replaceRangeEditorFirst(OP, sectionA()).ok).toBe(true);
-    expect(pressUndo(view, OP)).toBe(true);
+    expect(pressUndo(made.view, OP)).toBe(true);
     expect(undoSectionDeleteEditorFirst(OP).ok).toBe(true);
     swiftFinishesUndo(OP, { redoTopOpId: OP });
     await sleep(160);
     getBlockChangesApi();
-    expect(pressRedo(view, OP)).toBe(true);
-    typeInto(view, 'B body', ' typed after the press');
+    expect(pressRedo(made.view, OP)).toBe(true);
+    return made;
+  }
+
+  it('R-gate: a redo whose replace would take typed words with it (typing INSIDE the replaced section) is refused: nothing replaced, the typing comes back once', async () => {
+    const { view } = await sceneForRedoGate();
+    typeInto(view, 'A body', ' typed after the press');
     const docBefore = view.state.doc;
     const entryBefore = getRegistry().get(OP);
 
@@ -775,13 +782,40 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
 
     expect(redo.ok).toBe(false);
     expect(redo.reason).toBe('docChanged');
-    expect(redo.batch, 'a refusal consumes nothing').toEqual(EMPTY_BATCH);
     expect(redo.insertedIds).toEqual([]);
     expect(view.state.doc.eq(docBefore)).toBe(true);
     expect(getRegistry().get(OP), 'the undone entry is untouched').toBe(entryBefore);
-    await sleep(160);
-    expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['pb']);
+    // The refusal came from the replace itself, so the reply carries the pending edit (the typing), once.
+    expect(redo.batch.updates.map((u) => u.id)).toEqual(['pa']);
+    expect(redo.batch.updates[0].textContent).toBe('A body. typed after the press');
     receiveRedoOutcome(OP, 'failed');
+    await sleep(160);
+    expect(getBlockChangesApi(), 'not sent a second time').toEqual(EMPTY_BATCH);
+  });
+
+  it('R-gate-elsewhere: typing outside the replaced section does not refuse the redo: the section is replaced again, the typing is kept and goes out once', async () => {
+    const { view } = await sceneForRedoGate();
+    typeInto(view, 'B body', ' typed after the press');
+
+    const redo = redoReplaceRangeEditorFirst(OP, sectionA());
+
+    expect(redo.ok, `reason: ${redo.reason}`).toBe(true);
+    expect(topLevelTexts(view)).toEqual([
+      'Chapter',
+      'Chapter body.',
+      'Section A restored',
+      'A restored body.',
+      'Section B',
+      'B body. typed after the press',
+    ]);
+    const sent = [...redo.batch.updates];
+    swiftFinishesRedo(OP, { undoTopOpId: OP });
+    await sleep(160);
+    sent.push(...getBlockChangesApi().updates);
+    expect(
+      sent.filter((u) => u.id === 'pb').map((u) => u.textContent),
+      'the typing went out once, in the reply or the next poll'
+    ).toEqual(['B body. typed after the press']);
   });
 
   it('R-fail: a redo whose replace is refused leaves the undone entry in place', async () => {

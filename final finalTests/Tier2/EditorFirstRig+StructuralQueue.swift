@@ -117,7 +117,9 @@ extension EditorFirstRig {
         let handedBack = literals.enumerated().compactMap { index, literal in
             literal == "newId" && index + 1 < literals.count ? literals[index + 1] : nil
         }
-        return duplicateReply(opId: literals[0], rootId: literals[1], batch: BlockChanges(), reusing: handedBack)
+        let batch = redoReplyBatch ?? BlockChanges()   // t-d2061b27: the typing done in the redo's wait, as batch N
+        redoReplyBatch = nil
+        return addingTypedFlag(to: duplicateReply(opId: literals[0], rootId: literals[1], batch: batch, reusing: handedBack))
     }
 
     /// The editor's answer to a duplicate of the section rooted at `rootId`. The database still holds the document without the copy

@@ -201,9 +201,13 @@ final class EditorFirstRig {
     /// The pending edits the next `structuralSwapEditorFirst` call consumes and returns as its `batch`, on EVERY path (typing up to the
     /// call). nil: an empty batch. Spent by the call.
     var swapClickBatch: BlockChanges?
-    /// The editor answers the next swap `ok:false`, reason `docChanged` (the user typed while the press waited): nothing is swapped, and
-    /// the batch is still handed back. Spent by the call.
+    /// The editor answers the next swap `ok:false`, reason `docChanged` (the page found the document changed by an automatic update, or a
+    /// typed step with no place in the target; typing alone no longer refuses, t-d2061b27): nothing is swapped, and the batch is still
+    /// handed back. Spent by the call.
     var swapLiveDiffers = false
+    /// t-d2061b27: the stand-in's switches for typing across a waiting press (replayed typing, held typing, the batch of a redo): one state
+    /// object; the switches are forwarded as properties of the rig in EditorFirstRig+TypingAcrossUndo.swift.
+    let typingStubs = TypingAcrossUndoStubState()
     /// The editor answers the next swap `ok:false`, reason `noCheckpoint` (no saved state for the entry). Spent by the call.
     var swapAnswerNoCheckpoint = false
     /// The editor answers the next swap `ok:false`, reason `idAlignment` (the payload does not fit the saved document). Spent by the call.

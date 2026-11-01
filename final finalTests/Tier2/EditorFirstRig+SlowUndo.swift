@@ -8,7 +8,8 @@
 //  `swapScripts`, `getContentCallsAtSwap`, `onSwapAnswered`. `forceNextJobFailure` is the duplicate's and the restore's switch too.
 //
 //  What the stand-in editor does at a swap, as the real one does: it consumes the pending batch (`swapClickBatch`, handed back on EVERY
-//  path), and then either REFUSES (`docChanged`: the live document no longer equals the saved copy; `noCheckpoint`: no saved state for
+//  path), and then either REFUSES (`docChanged`: the page found the document changed by an automatic update, or a typed step with no
+//  place in the target; typing alone no longer refuses, t-d2061b27; `noCheckpoint`: no saved state for
 //  the entry; `idAlignment`: the payload does not fit) and changes nothing, or swaps the saved document in. The document it swaps in is
 //  the payload's Markdown (the snapshot's document, which is what the entry's checkpoint holds), under the payload's ids; the reply lists
 //  those ids as inserted and the live document's ids (the database's rows, which still lack the change because the job has not run) as
@@ -36,6 +37,8 @@ private struct SwapStubReply: Encodable {
     var removedLeaderIds: [String] = []
     var predecessorId: String?
     var swappedTo: String?
+    /// t-d2061b27: present (as `true`) only when the page put the typing done during the wait back on top of the swapped-in document.
+    var typingReplayed: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -48,6 +51,7 @@ private struct SwapStubReply: Encodable {
         case removedLeaderIds
         case predecessorId
         case swappedTo
+        case typingReplayed
     }
 }
 
@@ -102,6 +106,12 @@ extension EditorFirstRig {
         reply.removedIds = rows.map(\.id)
         reply.removedLeaderIds = rows.filter { $0.blockType == .heading || $0.isPseudoSection }.map(\.id)
         reply.swappedTo = direction == "undo" ? "checkpoint" : "redo"
+        if swapReplaysTyping {
+            // The page put the wait typing back on top; the replay is its only carrier, so the batch is empty (t-d2061b27).
+            swapReplaysTyping = false
+            reply.batch = BlockChanges()
+            reply.typingReplayed = true
+        }
 
         quickEditorText = payload.markdown
         editorText = payload.markdown

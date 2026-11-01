@@ -50,6 +50,10 @@ export interface DeleteSectionResult {
   predecessorId: string | null;
   /** One entry per removed leader, in document order. */
   removedSectionsSnapshot: RemovedSectionSnapshot[];
+  /** The quick REDO only, on an `ok: true` reply: true when the user typed since the key was pressed (the page's own answer, from the
+   * redo's gate), absent on every other reply. A non-empty `batch` is not proof of typing (it can hold a rewrite the previous command's
+   * settle left); Swift ends the older redo entries only when this is true. */
+  typed?: boolean;
 }
 
 /** One top-level node of the document with the block id the block-id plugin holds for it (undefined for the marker atoms,
@@ -157,6 +161,9 @@ export interface RemoveSectionOptions {
    * the last key, undo-coordinator.ts `advanceRegistryEntries`; plan v3 D8), and puts it back untouched if the removal does not
    * complete: a failed redo leaves the op undone with the entry it had, so a later press still routes. */
   previousEntry?: UndoRegistryEntry;
+  /** The quick redo only, and only when the user typed since its press: asked with the span the removal is about to take out; true
+   * (typing sits inside it) refuses the redo (`docChanged`) before anything is dispatched, so the typing is not removed with it. */
+  refuseIfTypedInside?: (from: number, to: number) => boolean;
 }
 
 /** What the delete's mutator hands back through `runEditorFirstChange` on success. */
@@ -184,6 +191,7 @@ export function removeSectionInEditor(
   const result = runEditorFirstChange<RemovalFacts>(opId, label, previousEntry, (view, savedIds, ctx) => {
     const range = findSectionRange(view.state.doc, savedIds, rootBlockId, new Set(managedIds)); // (e)
     if (!range.ok) return { ok: false, reason: range.reason };
+    if (options.refuseIfTypedInside?.(range.from, range.to)) return { ok: false, reason: 'docChanged' };
     ctx.lap('range');
 
     const removedIds: string[] = [];

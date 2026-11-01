@@ -12,6 +12,7 @@ import { dismissMenu, showSpellcheckMenu } from '../../shared/spellcheck-menu';
 import { dismissPopover, isPopoverOpen, showProofingPopover } from '../../shared/spellcheck-popover';
 import { ALL_HIDDEN_MARKERS_REGEX } from './anchor-plugin';
 import { getEditorView } from './editor-state';
+import { typingDispatch } from './typing-rebase';
 import '../../shared/spellcheck.css';
 
 // --- Types ---
@@ -472,6 +473,7 @@ export function spellcheckPlugin() {
                 if (!current) return;
                 view.dispatch({
                   changes: { from: current.from, to: current.to, insert: replacement },
+                  annotations: typingDispatch.of(true),
                 });
               },
               onLearn: (word: string) => {
@@ -516,6 +518,7 @@ export function spellcheckPlugin() {
                   if (!current) return;
                   view.dispatch({
                     changes: { from: current.from, to: current.to, insert: replacement },
+                    annotations: typingDispatch.of(true),
                   });
                 },
                 onLearn: (word: string) => {
@@ -567,6 +570,7 @@ export function spellcheckPlugin() {
                 if (!current) return;
                 view.dispatch({
                   changes: { from: current.from, to: current.to, insert: suggestion },
+                  annotations: typingDispatch.of(true),
                 });
               },
               onIgnore: () => {

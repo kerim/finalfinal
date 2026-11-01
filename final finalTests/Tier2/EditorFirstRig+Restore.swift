@@ -184,13 +184,14 @@ extension EditorFirstRig {
     func answerQuickRedoOfReplace(_ script: String) -> String? {
         redoReplaceScripts.append(script)
         events.note("js " + script)
-        return replaceReply(script, isRedo: true)
+        return addingTypedFlag(to: replaceReply(script, isRedo: true))
     }
 
     private func replaceReply(_ script: String, isRedo: Bool) -> String? {
         let literals = Self.stringLiterals(in: script)
         guard let opId = literals.first, let payload = Self.replacePayload(in: script) else { return nil }
-        let batch = isRedo ? BlockChanges() : (replaceClickBatch ?? BlockChanges())
+        let batch = isRedo ? (redoReplyBatch ?? BlockChanges()) : (replaceClickBatch ?? BlockChanges())
+        if isRedo { redoReplyBatch = nil }   // t-d2061b27: the typing done in the redo's wait, as batch N
         if !isRedo {
             replaceClickBatch = nil
             if forceEditorRefusal {

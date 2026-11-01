@@ -30,6 +30,8 @@ struct QuickUndoStubReply: Encodable {
     var restoredLeaderIds: [String] = []
     /// The leaders the undo took OUT (t-18b7fa48): empty for the undo of a delete, the copy's leaders for the undo of a duplicate.
     var removedLeaderIds: [String] = []
+    /// t-d2061b27: present (as `true`) only when the page put the typing done during the wait back on top of the restored document.
+    var typingReplayed: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -38,6 +40,7 @@ struct QuickUndoStubReply: Encodable {
         case restoredIds
         case restoredLeaderIds
         case removedLeaderIds
+        case typingReplayed
     }
 }
 
@@ -72,6 +75,9 @@ extension EditorFirstRig {
     func answerScript(_ script: String) async throws -> Any? {
         // The slow undo and redo (round 3c): `structuralSwapEditorFirst`, answered in EditorFirstRig+SlowUndo.swift.
         if script.contains("structuralSwapEditorFirst") { return answerSwapClick(script) }
+        // The two calls that end the page's hold on the typing of a latched press (t-d2061b27; EditorFirstRig+TypingAcrossUndo.swift).
+        if script.contains("releaseHeldTypingAndGetBatch") { return answerReleaseHeldTypingAndGetBatch(script) }
+        if script.contains("releaseHeldTypingPushes") { return await answerReleaseHeldTypingPushes(script) }
         // Duplicate Section (t-18b7fa48): the click and the quick redo. (Neither name contains the other, nor the delete's.)
         if script.contains("redoSectionDuplicateEditorFirst") { return answerQuickRedoOfDuplicate(script) }
         if script.contains("duplicateSectionEditorFirst") { return answerDuplicateClick(script) }
@@ -87,13 +93,15 @@ extension EditorFirstRig {
         }
         if script.contains("undoSectionDeleteEditorFirst") { return await answerQuickUndo(script) }
         if script.contains("redoSectionDeleteEditorFirst") { return await answerQuickRedo(script) }
-        if script.contains("hasBlockChanges"), !typingQueue.isEmpty { return true }
-        if script.contains("getBlockChanges"), !typingQueue.isEmpty { return Self.json(typingQueue.removeFirst()) }
         return try await answerEditorQuery(script)
     }
 
-    /// The editor's queries that need no scripting of the quick path: the held-press count, `getContent()`, everything else.
+    /// The editor's queries that need no scripting of the quick path: the poll's two calls while the typing queue holds an edit (they
+    /// were the last two checks of `answerScript`, moved here unchanged and in the same order to keep that function's complexity down), the
+    /// held-press count, `getContent()`, everything else.
     private func answerEditorQuery(_ script: String) async throws -> Any? {
+        if script.contains("hasBlockChanges"), !typingQueue.isEmpty { return true }
+        if script.contains("getBlockChanges"), !typingQueue.isEmpty { return Self.json(typingQueue.removeFirst()) }
         if script.contains("heldUndoPressCount") {
             heldCountReads += 1
             // A busy editor answers late (JavaScript is single-threaded: the call waits behind a long content push).
@@ -259,6 +267,12 @@ extension EditorFirstRig {
                     removedLeaderIds: replace.newLeaderIds.filter { !previousIds.contains($0) })
             }
             if case .restoreWithBatch(let batch) = quickUndoAnswer { reply.batch = batch }
+            if quickUndoReplaysTyping {
+                // The page put the wait typing back on top; the replay is its only carrier, so the batch is empty (t-d2061b27).
+                quickUndoReplaysTyping = false
+                reply.batch = BlockChanges()
+                reply.typingReplayed = true
+            }
             // The real swap puts the checkpoint's document into the editor; `editorTextAfterUndoSwap` is the same wish the slow path's
             // emulation honours.
             let restored = editorTextAfterUndoSwap ?? click?.preDeleteText ?? duplicate?.preText ?? replace?.preText
@@ -292,8 +306,8 @@ extension EditorFirstRig {
             editorText = text
             if !withholdContentUpdate { editorState.content = text }   // `contentChanged` after the removal
         }
-        if let registered, let text = String(data: registered, encoding: .utf8) { return text }
-        return Self.json(EditorFirstReply(removedLeaderIds: click?.leaderIds ?? []))
+        if let registered, let text = String(data: registered, encoding: .utf8) { return addingTypedFlag(to: text) }
+        return addingTypedFlag(to: Self.json(EditorFirstReply(removedLeaderIds: click?.leaderIds ?? [])))
     }
 
     /// `resumeSyncAfterQuickUndo()`: the editor queues what was typed while it was paused and, a few milliseconds later, tells Swift

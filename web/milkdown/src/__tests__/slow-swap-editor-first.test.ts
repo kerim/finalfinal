@@ -47,6 +47,7 @@ import { getContentHasBeenSet, getEditorInstance, getIsSettingContent, setEditor
 import {
   finishStructuralSwapSettle,
   getRegistry,
+  getTypingCollector,
   performStructuralSwap,
   receiveUndoOutcome,
   resetUndoCoordinatorState,
@@ -54,6 +55,7 @@ import {
 } from '../undo-coordinator';
 import {
   EMPTY_BATCH,
+  endOfParagraph,
   heading,
   idsInOrder,
   load,
@@ -109,6 +111,16 @@ const redoPayload = () => swapPayload(POST_OP, POST_IDS);
 afterEach(() => {
   setTestAfterSwapHook(null);
 });
+
+/** The last `typing-since-press` line the route wrote. */
+function typingLine(posted: Posted): string | undefined {
+  return posted
+    .filter((p) => p.handler === 'errorHandler' && typeof p.body?.message === 'string')
+    .map((p) => p.body.message as string)
+    .filter((m) => m.startsWith('[STRUCT-TRACE] typing-since-press'))
+    .map((m) => m.replace('[STRUCT-TRACE] ', ''))
+    .pop();
+}
 
 function topLevelTexts(view: EditorView): string[] {
   const texts: string[] = [];
@@ -316,17 +328,24 @@ describe('structuralSwapEditorFirst: the slow undo in one turn', () => {
     swiftRepliesUndo({ redoTopOpId: OP });
   });
 
-  it('S4: typing AFTER the reply is an update of the payload id, never an insert, never lost', async () => {
+  it('S4: typing right after the click is held until the reply, then goes out as an update of the payload id, never an insert, never lost', async () => {
     const { view } = await makeEditor();
     await load(DOC);
     deleteSectionA();
     expect(pressUndo(view, OP)).toBe(true);
     expect(structuralSwapEditorFirst(OP, 'undo', undoPayload()).ok).toBe(true);
 
-    // Typed in the very next task: before any animation frame, before Swift's reply.
-    expectNextEditIsAnUpdateOf(view, 'B body', 'n-pb');
+    // Typed in the very next task: before any animation frame, before Swift's reply. While the press is latched the polls get nothing
+    // (phase 4c job 2: the hold ends with the latch), so the poll that takes it comes after the reply.
+    typeInto(view, 'B body', ' next');
+    flushPendingBlockChanges();
+    expect(getBlockChangesApi(), 'held while the press is latched').toEqual(EMPTY_BATCH);
     await waitForRAF();
     swiftRepliesUndo({ redoTopOpId: OP });
+    const diff = getBlockChangesApi();
+    expect(diff.updates.map((u) => u.id)).toEqual(['n-pb']);
+    expect(diff.inserts).toEqual([]);
+    expect(diff.deletes).toEqual([]);
   });
 });
 
@@ -479,13 +498,76 @@ describe("V3-2: the bookkeeping equals today's performStructuralSwap + finishStr
   });
 });
 
-describe('V3-3 and R2: a document that changed since the press is refused, and the batch is taken in the same turn', () => {
-  it('V3-3: typing between the press and the click: ok:false docChanged, nothing swapped, the entry stays recorded, the batch carries the typing', async () => {
+describe('V3-3 and R2: typing since the press is put back; a document that changed otherwise is refused, and the batch is taken in the same turn', () => {
+  it('V3-3: typing between the press and the click is put back on top of the swapped-in document: ok, typingReplayed, no batch N, the typing sent once by the replay', async () => {
     const { view, posted } = await makeEditor();
     await load(DOC);
     deleteSectionA();
     expect(pressUndo(view, OP)).toBe(true);
     typeInto(view, 'B body', ' JUSTTYPED'); // the 100 ms detection has not run when the click arrives
+    expect(getTypingCollector().stepsSince(1).length, 'premise: the typing was recorded').toBeGreaterThanOrEqual(1);
+
+    // The snapshot rows of a delete carry the ids the blocks had before it (the editor's own), so the surviving blocks match by id.
+    const originalIds = DOC.map((spec) => spec.name);
+    const r = structuralSwapEditorFirst(OP, 'undo', swapPayload(DOC, originalIds));
+
+    expect(typingLine(posted)).toMatch(/^typing-since-press press=1 steps=[1-9]\d* decision=rebased$/);
+    expect(r.ok, `reason: ${r.reason}`).toBe(true);
+    expect(r.typingReplayed).toBe(true);
+    expect(r.batch, 'the replay is the only carrier of the wait typing').toEqual(EMPTY_BATCH);
+    expect(topLevelTexts(view)).toEqual([
+      'Chapter',
+      'Chapter body.',
+      'Section A',
+      'A body.',
+      'Section B',
+      'B body. JUSTTYPED',
+    ]);
+    expect(idsInOrder(), 'the payload ids are installed').toEqual(originalIds);
+    expect(getRegistry().get(OP)?.redoCheckpoint, 'the entry was swapped: it has its redo checkpoint').toBeDefined();
+    swiftRepliesUndo({ redoTopOpId: OP });
+    // The replay is new typing for block-sync: one update of the payload id, once.
+    flushPendingBlockChanges();
+    const batch = getBlockChangesApi();
+    expect(batch.updates.map((u) => u.id)).toEqual(['pb']);
+    expect(batch.updates[0].textContent).toBe('B body. JUSTTYPED');
+    expect(getBlockChangesApi(), 'not queued a second time').toEqual(EMPTY_BATCH);
+    expectNextEditIsAnUpdateOf(view, 'Chapter body', 'p1');
+  });
+
+  it('R2a: after a refusal for a change that is not typing, a text undo takes it back and the very next press swaps (it never refuses twice on a quiet document)', async () => {
+    const { view, posted } = await makeEditor();
+    await load(DOC);
+    deleteSectionA();
+    expect(pressUndo(view, OP)).toBe(true);
+    // Typing, then an automatic correction (undoable like typing, but not the user's typing) lands in the wait: the order cannot be unpicked.
+    typeInto(view, 'B body', ' JUSTTYPED');
+    view.dispatch(view.state.tr.insertText(' CORR', endOfParagraph(view, 'B body')).setMeta('derivedCorrection', true));
+    expect(getTypingCollector().stepsSince(1).length, 'premise: the changes were recorded').toBeGreaterThanOrEqual(2);
+    const refused = structuralSwapEditorFirst(OP, 'undo', undoPayload());
+    expect(typingLine(posted)).toMatch(/^typing-since-press press=1 steps=[1-9]\d* decision=changed$/);
+    expect(refused.reason).toBe('docChanged');
+    receiveUndoOutcome(OP, 'failed'); // Swift: refuse with the notice, release the latch; the entry stays where it was
+
+    for (let i = 0; i < 4 && /JUSTTYPED|CORR/.test(view.state.doc.textContent); i++) undo(view.state, view.dispatch);
+    expect(view.state.doc.textContent, 'Cmd-Z: the text undo takes the changes back').not.toMatch(/JUSTTYPED|CORR/);
+    expect(pressUndo(view, OP), 'the next Cmd-Z routes to the delete again').toBe(true);
+    const r = structuralSwapEditorFirst(OP, 'undo', undoPayload());
+
+    expect(r.ok, `reason: ${r.reason}`).toBe(true);
+    expect(topLevelTexts(view)).toContain('Section A');
+    swiftRepliesUndo({ redoTopOpId: OP });
+  });
+
+  it('V3-3b: a change that is not typing since the press: ok:false docChanged, nothing swapped, the entry stays recorded, the batch carries the pending edit', async () => {
+    const { view, posted } = await makeEditor();
+    await load(DOC);
+    deleteSectionA();
+    expect(pressUndo(view, OP)).toBe(true);
+    // Typing, then an automatic correction, lands in the wait (the 100 ms detection has not run when the click arrives).
+    typeInto(view, 'B body', ' JUSTTYPED');
+    view.dispatch(view.state.tr.insertText(' CORR', endOfParagraph(view, 'B body')).setMeta('derivedCorrection', true));
+    expect(getTypingCollector().stepsSince(1).length, 'premise: the changes were recorded').toBeGreaterThanOrEqual(2);
     const docBefore = view.state.doc;
     const entryBefore = getRegistry().get(OP);
     setManagedBlockIds(['keep']);
@@ -500,61 +582,46 @@ describe('V3-3 and R2: a document that changed since the press is refused, and t
     expect(getRegistry().get(OP), 'the entry stays recorded, untouched (no redo checkpoint added)').toBe(entryBefore);
     expect(
       r.batch.updates.map((u) => u.id),
-      'typing just before the click was lost'
+      'the pending edit comes back as batch N'
     ).toEqual(['pb']);
-    expect(r.batch.updates[0].textContent).toBe('B body. JUSTTYPED');
+    expect(r.batch.updates[0].textContent).toBe('B body. JUSTTYPED CORR');
     expect(r.insertedIds).toEqual([]);
     expect(r.removedIds).toEqual([]);
+    expect(typingLine(posted)).toMatch(/^typing-since-press press=1 steps=[1-9]\d* decision=changed$/);
     expect(swapTraces(posted).pop()).toBe(
       '[STRUCT-TRACE] swap-editor-first direction=undo opId=dddddddd ok=false reason=docChanged'
     );
-    // The typing is in the batch and block-sync is running: it is not reported a second time, and the next edit is one update.
+    // The edit is in the batch and block-sync is running: it is not reported a second time, and the next edit is one update.
     await sleep(160);
     expect(getBlockChangesApi(), 'the consumed edit is not queued again').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP, 'failed');
     expectNextEditIsAnUpdateOf(view, 'Chapter body', 'p1');
   });
-
-  it('R2a: after the refusal a text undo takes the typing back and the very next press swaps (it never refuses twice on a quiet document)', async () => {
-    const { view } = await makeEditor();
-    await load(DOC);
-    deleteSectionA();
-    expect(pressUndo(view, OP)).toBe(true);
-    typeInto(view, 'B body', ' JUSTTYPED');
-    const refused = structuralSwapEditorFirst(OP, 'undo', undoPayload());
-    expect(refused.reason).toBe('docChanged');
-    receiveUndoOutcome(OP, 'failed'); // Swift: refuse with the notice, release the latch; the entry stays where it was
-
-    expect(undo(view.state, view.dispatch), 'Cmd-Z: the text undo takes the typing back').toBe(true);
-    expect(view.state.doc.textContent).not.toContain('JUSTTYPED');
-    expect(pressUndo(view, OP), 'the next Cmd-Z routes to the delete again').toBe(true);
-    const r = structuralSwapEditorFirst(OP, 'undo', undoPayload());
-
-    expect(r.ok, `reason: ${r.reason}`).toBe(true);
-    expect(topLevelTexts(view)).toContain('Section A');
-    swiftRepliesUndo({ redoTopOpId: OP });
-  });
 });
 
 // Typing into a bibliography entry is ignored by the saved-copy comparison, so the press stays routable with edits pending: the only
 // way to have both a swap that goes ahead and a non-empty batch.
-describe('R2b: typing just before the click, in a region the saved-copy comparison ignores, is in the batch', () => {
-  it('R2b: the bibliography entry typed just before the click lands in the returned batch, is not reported again, and the document is swapped', async () => {
-    const { view } = await managedDocWithLateTyping();
+describe('R2b: typing just before the click, in a region the saved-copy comparison ignores, is put back and sent once', () => {
+  it('R2b: the bibliography entry typed just before the click is put back on top of the swapped-in document and sent once, by the replay', async () => {
+    const { view, posted } = await managedDocWithLateTyping();
+    expect(getTypingCollector().stepsSince(1).length, 'premise: the typing was recorded').toBeGreaterThanOrEqual(1);
 
-    const r = structuralSwapEditorFirst(OP, 'undo', managedPayload());
+    // The snapshot rows of a delete carry the ids the blocks had before it (the editor's own), so the blocks match by id.
+    const r = structuralSwapEditorFirst(OP, 'undo', swapPayload(MANAGED_PRE_SPECS, MANAGED_DOC_IDS, MANAGED));
 
+    expect(typingLine(posted)).toMatch(/^typing-since-press press=1 steps=[1-9]\d* decision=rebased$/);
     expect(r.ok, `reason: ${r.reason}`).toBe(true);
-    expect(
-      r.batch.updates.map((u) => u.id),
-      'typing just before the click was lost'
-    ).toEqual(['bp']);
-    expect(r.batch.updates[0].textContent).toBe('Reference one. LATE');
+    expect(r.typingReplayed).toBe(true);
+    expect(r.batch, 'the replay is the only carrier: no batch N').toEqual(EMPTY_BATCH);
     expect(topLevelTexts(view)).toContain('Title');
-    expect(idsInOrder()).toEqual(MANAGED_PRE_IDS);
-    await sleep(160);
-    expect(getBlockChangesApi(), 'the consumed edit is not queued a second time').toEqual(EMPTY_BATCH);
+    expect(topLevelTexts(view)).toContain('Reference one. LATE');
+    expect(idsInOrder()).toEqual(MANAGED_DOC_IDS);
     swiftRepliesUndo({ redoTopOpId: OP });
+    flushPendingBlockChanges();
+    const batch = getBlockChangesApi();
+    expect(batch.updates.map((u) => u.id)).toEqual(['bp']);
+    expect(batch.updates[0].textContent).toBe('Reference one. LATE');
+    expect(getBlockChangesApi(), 'the replayed edit is not queued a second time').toEqual(EMPTY_BATCH);
   });
 
   const failures: Array<{
@@ -584,8 +651,11 @@ describe('R2b: typing just before the click, in a region the saved-copy comparis
         throw new Error('injected failure after the swap');
       },
       payload: managedPayload,
-      reason: (r) => r.includes('injected failure after the swap'),
-      trace: / ok=false reason=exception: injected failure after the swap$/,
+      // F13 (round 5): the press carries the user's typing (the late bibliography edit), so the page refuses with the notice
+      // (`docChanged`) instead of `exception: ...`, which would make Swift run the old restore body and drop the typing. The exception
+      // text is in the trace line only.
+      reason: (r) => r === 'docChanged',
+      trace: / ok=false reason=docChanged detail=exception: injected failure after the swap$/,
     },
   ];
 
@@ -724,7 +794,33 @@ describe('the redo direction', () => {
     swiftRepliesUndo({ redoTopOpId: OP });
   });
 
-  it('RD-gate: a redo whose re-check finds the document changed swaps nothing, keeps the entry and returns the batch', async () => {
+  it('RD-gate: a redo with typing since its press puts the typing back on top of the redone document: ok, typingReplayed, no batch N', async () => {
+    const { view, posted } = await makeEditor();
+    await load(DOC);
+    deleteSectionA();
+    expect(pressUndo(view, OP)).toBe(true);
+    expect(structuralSwapEditorFirst(OP, 'undo', undoPayload()).ok).toBe(true);
+    swiftRepliesUndo({ redoTopOpId: OP });
+    expect(pressRedo(view, OP)).toBe(true);
+    typeInto(view, 'B body', ' AFTERPRESS');
+    expect(getTypingCollector().stepsSince(2).length, 'premise: the typing was recorded').toBeGreaterThanOrEqual(1);
+
+    // The snapshot rows of the redo carry the ids the blocks hold now (the swap-in of the undo gave them the n- ids).
+    const redoIds = POST_OP.map((spec) => `n-${spec.name}`);
+    const r = structuralSwapEditorFirst(OP, 'redo', swapPayload(POST_OP, redoIds));
+
+    expect(typingLine(posted)).toMatch(/^typing-since-press press=2 steps=[1-9]\d* decision=rebased$/);
+    expect(r.ok, `reason: ${r.reason}`).toBe(true);
+    expect(r.typingReplayed).toBe(true);
+    expect(r.batch).toEqual(EMPTY_BATCH);
+    expect(topLevelTexts(view)).toEqual(['Chapter', 'Chapter body.', 'Section B', 'B body. AFTERPRESS']);
+    expect(idsInOrder()).toEqual(redoIds);
+    swiftFinishesRedo(OP, { undoTopOpId: OP });
+    flushPendingBlockChanges();
+    expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['n-pb']);
+  });
+
+  it('RD-gate-b: a redo whose re-check finds a change that is not typing swaps nothing, keeps the entry and returns the batch', async () => {
     const { view } = await makeEditor();
     await load(DOC);
     deleteSectionA();
@@ -733,6 +829,8 @@ describe('the redo direction', () => {
     swiftRepliesUndo({ redoTopOpId: OP });
     expect(pressRedo(view, OP)).toBe(true);
     typeInto(view, 'B body', ' AFTERPRESS');
+    view.dispatch(view.state.tr.insertText(' CORR', endOfParagraph(view, 'B body')).setMeta('derivedCorrection', true));
+    expect(getTypingCollector().stepsSince(2).length, 'premise: the changes were recorded').toBeGreaterThanOrEqual(2);
     const docBefore = view.state.doc;
     const entryBefore = getRegistry().get(OP);
 

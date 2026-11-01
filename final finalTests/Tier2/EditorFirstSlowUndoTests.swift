@@ -90,10 +90,14 @@ struct EditorFirstSlowUndoTests: QuickUndoFixtures {
         #expect(rig.alerts.isEmpty, "an alert was raised: \(rig.alerts)")
     }
 
-    // U-S3-2 (D13): typing while the slow undo waited makes the turn refuse; the typing is saved; the notice shows.
+    // U-S3-2 (D13, reworded for t-d2061b27): a slow undo the editor REFUSES (`docChanged`: the page found the document changed by an
+    // automatic update it could not place the user's typing against, or a typed step with no place in the target document) hands back the
+    // batch it consumed; the typing is saved, the entry stays, the notice shows. This is a HYGIENE test of Swift's handling of the
+    // refusal against a STAND-IN editor: typing alone is no longer a reason to refuse (the page puts it back on top of the swap,
+    // `typingReplayed`; see TypingAcrossUndoSwiftTests and the web tests). Assertions are unchanged.
     // Predicted failure with the swap applied on a changed document (the old body's overwrite): "typing during the slow undo was lost".
-    @Test("U-S3-2: typing while the slow undo waited refuses the press, keeps the typing, and shows the notice")
-    func testTypingDuringSlowUndoRefusesAndKeepsTyping() async throws {
+    @Test("U-S3-2: a slow undo the editor refused for an automatic change keeps the batch it consumed, leaves the entry, and shows the notice")
+    func testSlowUndoRefusedForAnAutomaticChangeKeepsTheTypingBatchAndShowsTheNotice() async throws {
         let rig = try slowRig()
         defer { Self.unpinSnapshots(of: rig) }
         let deleted = try await delete(rig, "Section A")
@@ -160,9 +164,10 @@ struct EditorFirstSlowUndoTests: QuickUndoFixtures {
         #expect(rig.persistedLog.allSatisfy { !$0.contains("[EF-STRUCT]") }, "a fallback was logged: \(rig.persistedLog)")
     }
 
-    // R6: typing in the redo's wait refuses the press, keeps the typing, leaves the entry on the redo stack.
-    @Test("R6: typing made while the slow redo waited refuses the redo, keeps the typing, and keeps the entry on the redo stack")
-    func testTypingDuringSlowRedoRefusesAndKeepsTyping() async throws {
+    // R6: a slow redo the editor refuses (`docChanged`, an automatic change) keeps the batch it consumed and leaves the entry on the redo
+    // stack. A HYGIENE test against the stand-in editor (typing alone no longer refuses a press: t-d2061b27); assertions are unchanged.
+    @Test("R6: a slow redo the editor refused for an automatic change keeps the batch it consumed and keeps the entry on the redo stack")
+    func testSlowRedoRefusedForAnAutomaticChangeKeepsTheTypingBatch() async throws {
         let rig = try slowRig()
         defer { Self.unpinSnapshots(of: rig) }
         let deleted = try await delete(rig, "Section A")
@@ -277,13 +282,14 @@ struct EditorFirstSlowUndoTests: QuickUndoFixtures {
 
     // MARK: - R7: refused, then retried
 
-    // R7, the Swift side only: a refused slow undo (typing during its wait) keeps the entry where it was and the typing in the database,
-    // and the SAME press, repeated on the quiet document, is carried out. This test does NOT model the user's Cmd-Z taking the typing
-    // back (a text undo inside the editor, which Swift never sees): `swapLiveDiffers` is single-shot, so the second press simply finds
-    // the document equal to the saved copy. That the editor really routes the press (text undo first, then the structural one) is proven
-    // by the web test R2a (slow-swap.test.ts) and by the VM end-to-end tests, not here.
-    @Test("R7: a refused slow undo, then the retry on the quiet document, is carried out; it never refuses twice")
-    func testRefusedThenRetriedIsCarriedOut() async throws {
+    // R7, the Swift side only: a slow undo the editor refused (`docChanged`, an automatic change; the stand-in hands back a typing
+    // batch) keeps the entry where it was and the batch in the database, and the SAME press, repeated on the quiet document, is carried
+    // out. This test does NOT model the user's Cmd-Z taking the typing back (a text undo inside the editor, which Swift never sees):
+    // `swapLiveDiffers` is single-shot, so the second press simply finds the document equal to the saved copy. That the editor really
+    // routes the press (text undo first, then the structural one) is proven by the web test R2a (slow-swap.test.ts) and by the VM
+    // end-to-end tests, not here. (Reworded for t-d2061b27: typing alone no longer refuses; assertions are unchanged.)
+    @Test("R7: a slow undo refused for an automatic change, then the retry on the quiet document, is carried out; it never refuses twice")
+    func testRefusedForAnAutomaticChangeThenRetriedIsCarriedOut() async throws {
         let rig = try slowRig()
         defer { Self.unpinSnapshots(of: rig) }
         let deleted = try await delete(rig, "Section A")

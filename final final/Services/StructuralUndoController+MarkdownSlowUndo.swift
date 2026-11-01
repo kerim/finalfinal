@@ -28,9 +28,12 @@
 //    3. ONE call into the page, `markdownStructuralSwap(opId, 'undo'|'redo')`: undo = `setState(checkpoint)` with the live redo branch
 //       carried over; redo = the saved post-op text swapped in as a minimal diff (an entry the old body recorded) or the command run
 //       again with a FRESH request built from the rows as they are now (an editor-first Delete, `sendMarkdownDeleteWithRetry`, the quick
-//       redo's own call). A refusal (`changed`, `noEntry`, `midOp`: the user typed since the press, or an automatic push
-//       changed the document) changes nothing on the screen: the existing notice "Some undo or redo presses could not be carried out.",
-//       one fresh settle, `failed`; the typing stays;
+//       redo's own call). Typing done while the press waited is NOT a refusal (t-d2061b27): the page checks the document AS IT WAS AT THE
+//       PRESS, swaps, and puts the typing back on top (`typingReplayed: true` in the reply; `preRaw` is then the document at the press,
+//       so the typing batch below finds nothing new, and step 8's live read saves the typing, once). A refusal (`changed`, `noEntry`,
+//       `midOp`, `unplaceable`: something that is not typing changed the document in the wait, the entry is gone, or a typed step has
+//       no place in the target document) changes nothing on the screen: the existing notice "Some undo or redo presses could not be
+//       carried out.", one fresh settle, `failed`; the typing stays;
 //    4. the reply turn, with no suspension after the writer's last write has been awaited: the typing batch up to the swap
 //       (`prepareStructuralClick`), `noteQueuedStructuralJob`, the swapped-in text adopted (`adoptMarkdownPageText`), the sidebar swap
 //       (`showRestoreInSidebar`, the plan's leaders), a gate under the job's fresh key, and the job itself:
@@ -38,7 +41,8 @@
 //       (`readSwapPlan`). The plan's Markdown text is not needed: the page swap has restored the editor, the job writes the rows;
 //    5. the hold goes to the step-8 continuation keyed by the job's key (`swapsBackOnFailure: false`: a failed swap job cannot swap the
 //       page back; the flush writes the page's text into the rows, so the editor and the rows agree), and the timeline moves
-//       (`moveEntryAfterSwap`, which also closes the quick path for the entry).
+//       (`moveEntryAfterSwap`, which also closes the quick path for the entry); when the page put typing back on top
+//       (`typingReplayed`), that typing then ends the redo branch (`endRedoAfterReplayedTyping`), still inside the gate.
 //
 //  NO `structuralOutOfQueueGeneration` BUMP (the R5 point): the old body bumped it on every undo, which closed the quick path of EVERY
 //  other entry; this route writes through the queue (non-stamping `replaceProjectRows`) and touches nothing the other entries' quick
@@ -70,6 +74,11 @@ extension StructuralUndoController {
         // belongs to the whole press from its first line, and a second delayed toast would replace it and leave the slot empty when it
         // stopped. One notice per press.
         await writer.awaitStructuralHoldReleased()
+        // UI-test seam FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS (see TestMode; the Rich Text slow route has the same one): widens the wait in
+        // which the user can type between the press and the page's swap. It stands for the wait above, so it sits BEFORE the guards that
+        // follow a real wait: a close, quit or switch that begins during it cancels the press exactly as it cancels one that waited for a
+        // job (review F15). Before this press raises its own writer hold, so it is a plain suspension of the gate turn. No wait when off.
+        await TestMode.holdSlowUndoPress(opId: String(entry.id.uuidString.prefix(8)))
         if editorState.structuralGate.isClosedToNewWork { return .cancelled }
         guard editorState.activeLifecycle == nil, editorState.editorMode == .source, editorState.zoomedSectionId == nil,
               unifiedUndoService.generation == timelineEpoch else { return nil }
@@ -97,15 +106,7 @@ extension StructuralUndoController {
         // request cannot be built the press is refused: there is no second fallback to the stored request.
         let reply = await sendMarkdownSlowSwap(entry: entry, isUndo: isUndo, database: db, projectId: pid)
         guard let reply, reply.succeeded, let preRaw = reply.preRaw, let postRaw = reply.postRaw else {
-            // R5 / D13: the editor is as it was (the user typed while the press waited, or the entry is gone): the entry stays where it
-            // is, the typing stays, the press is answered `failed` with the existing notice, one fresh settle puts back the steps.
-            trace.log("refused (markdown queued \(label)) by the page")
-            run.countHandedToJob = true   // released here, not by the defer
-            releasePendingEditorFirstJob()
-            startFreshSettleAfterRefusedEditorFirstClick(opId: opId)
-            showUndoQueueDroppedWarning()
-            rearmMarkdownReparseAfterRefusedPress()   // F2: the typing made during the wait reaches the rows
-            return .failed
+            return refuseMarkdownSlowSwap(opId: opId, label: label, trace: trace, run: &run)
         }
 
         // The reply turn.
@@ -132,7 +133,38 @@ extension StructuralUndoController {
             await runMarkdownStep8(opId: opId, jobKey: jobKey, hold: hold, outcome: .failed("swap job not reserved"), swapsBackOnFailure: false)
         }
         spy("markdownSlowSwapReserved")
-        return await moveEntryAfterSwap(opId: opId, kind: kind, timelineEpoch: timelineEpoch, trace: trace)
+        return await moveMarkdownSlowEntryAndEndRedoBranch(
+            opId: opId, kind: kind, timelineEpoch: timelineEpoch, typingReplayed: reply.typingReplayed, trace: trace)
+    }
+
+    /// The page refused the press (an extraction of `markdownQueuedSnapshotUndo`'s refusal branch: it keeps the order of the statements;
+    /// the result changes as intended, review F18: when the window is closing, the gate being closed to new work, the refusal is silent
+    /// and the reply is `.cancelled`, not the notice and `.failed`).
+    /// R5: the editor is as it was (something that is not typing changed the document while the press waited, a typed step could
+    /// not be placed in the target document, or the entry is gone): the entry stays where it is, any typing stays, the press is
+    /// answered `failed` with the existing notice, one fresh settle puts back the steps.
+    private func refuseMarkdownSlowSwap(opId: UUID, label: String, trace: StructTrace, run: inout MarkdownDeleteRun) -> UndoResult {
+        trace.log("refused (markdown queued \(label)) by the page")
+        run.countHandedToJob = true   // released here, not by the defer
+        releasePendingEditorFirstJob()
+        startFreshSettleAfterRefusedEditorFirstClick(opId: opId)
+        // Review F18: a press made while the project is being saved shows nothing (UX contract 4.2); `.cancelled` then, as the
+        // other exits of this route answer a barrier.
+        let closed = editorState?.structuralGate.isClosedToNewWork ?? false
+        if !closed { showUndoQueueDroppedWarning() }
+        rearmMarkdownReparseAfterRefusedPress()   // F2: the typing made during the wait reaches the rows
+        return closed ? .cancelled : .failed
+    }
+
+    /// The timeline step that ends the route (a mechanical extraction of `markdownQueuedSnapshotUndo`'s tail): the entry moves, and
+    /// t-d2061b27: typing done while the press waited was put back on top of the swapped-in text by the page; it ends the redo branch,
+    /// inside the gate, after the entry has moved (StructuralUndoController+TypingAcrossUndo.swift).
+    private func moveMarkdownSlowEntryAndEndRedoBranch(
+        opId: UUID, kind: EditorFirstOpKind, timelineEpoch: Int, typingReplayed: Bool?, trace: StructTrace
+    ) async -> UndoResult {
+        let result = await moveEntryAfterSwap(opId: opId, kind: kind, timelineEpoch: timelineEpoch, trace: trace)
+        if result == .performed { await endRedoAfterReplayedTyping(typingReplayed, opId: opId, trace: trace) }
+        return result
     }
 
     /// The slow route's one page call. The redo of an editor-first Markdown Delete carries a FRESH request built from the rows as they

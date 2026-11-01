@@ -58,6 +58,10 @@ struct EditorFirstDuplicateReply: EditorFirstOpReply {
     let insertedLeaderIds: [String]
     /// What the sidebar needs to show each leader of the copy at once.
     let insertedSectionsSnapshot: [InsertedSection]
+    /// The quick REDO's `ok: true` reply only (t-d2061b27 round 6): true when the user typed since the key was pressed (the page's own
+    /// answer from the redo's gate). Absent on every other reply. The older redo entries end only when it is true: a non-empty `batch` is
+    /// not proof of typing (it can hold a rewrite the previous command's settle left).
+    let typed: Bool?
 
     struct InsertedSection: Decodable, Equatable {
         let id: String
@@ -75,6 +79,7 @@ struct EditorFirstDuplicateReply: EditorFirstOpReply {
         case copies
         case insertedLeaderIds
         case insertedSectionsSnapshot
+        case typed
     }
 
     init(from decoder: Decoder) throws {
@@ -85,6 +90,7 @@ struct EditorFirstDuplicateReply: EditorFirstOpReply {
         copies = try container.decodeIfPresent([DuplicatedBlock].self, forKey: .copies) ?? []
         insertedLeaderIds = try container.decodeIfPresent([String].self, forKey: .insertedLeaderIds) ?? []
         insertedSectionsSnapshot = try container.decodeIfPresent([InsertedSection].self, forKey: .insertedSectionsSnapshot) ?? []
+        typed = try container.decodeIfPresent(Bool.self, forKey: .typed)
     }
 }
 
@@ -499,6 +505,11 @@ extension StructuralUndoController {
             return .failed
         }
         await pushDescriptor()
+        // t-d2061b27 (review F4, parity with Markdown): the typing done in a redo's wait ends the editor's own redo list, so the older
+        // redo entries end too, inside the gate, after the entry has moved. The page says whether the user typed (`typed`, its gate's own
+        // answer, round 6): a non-empty `batch` is not proof (it can hold a rewrite the previous command's settle left), so the batch is
+        // sent as batch N either way and only `typed == true` ends the branch. (A redo never carries `typingReplayed`.)
+        await endRedoAfterReplayedTyping(reply.typed, opId: opId, trace: trace)
         spy("quickRedoPerformed")
         trace.log("performed")
         return .performed

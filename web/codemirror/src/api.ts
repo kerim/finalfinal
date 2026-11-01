@@ -48,6 +48,7 @@ import { formatTableCommand, insertTableCommand } from './table-format';
 import { computeMinimalChanges } from './text-diff';
 import type { AnnotationType, FindOptions, FindResult, ParsedAnnotation, SearchState } from './types';
 import { withAppOrigin } from './typewriter-plugin';
+import { dispatchAsTyping } from './typing-rebase';
 
 /** Route diagnostic messages through the WKWebView errorHandler bridge — the same
  *  `sync-diag` message type Milkdown's `sync-debug.ts#syncLog` uses, so both editors'
@@ -181,7 +182,7 @@ export function wrapSelection(wrapper: string): void {
   const { from, to } = view.state.selection.main;
   const selected = view.state.sliceDoc(from, to);
   const wrapped = wrapper + selected + wrapper;
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from, to, insert: wrapped },
     selection: { anchor: from + wrapper.length, head: to + wrapper.length },
   });
@@ -194,7 +195,7 @@ export function insertLink(): void {
   const selected = view.state.sliceDoc(from, to);
   const linkText = selected || 'link text';
   const inserted = `[${linkText}](url)`;
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from, to, insert: inserted },
     selection: { anchor: from + 1, head: from + 1 + linkText.length },
   });
@@ -637,7 +638,7 @@ export function insertAtCursor(text: string): void {
   const view = getEditorView();
   if (!view) return;
   const { from, to } = view.state.selection.main;
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from, to, insert: text },
     selection: { anchor: from + text.length },
   });
@@ -774,7 +775,7 @@ export function deleteInlineAnnotation(index: number, expectedType: string, expe
   }
 
   const { offset, length } = target;
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: offset, to: offset + length, insert: '' },
   });
   return true;
@@ -819,7 +820,7 @@ export function insertAnnotation(type: string): void {
     cursorOffset = 19;
   }
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from, to, insert: insertText },
     selection: { anchor: from + cursorOffset },
   });
@@ -845,7 +846,7 @@ export function insertFootnote(atPosition?: number): string | null {
     const newLabel = currentMax + 1;
     setZoomFootnoteState(true, newLabel);
 
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from: insertPos, insert: `[^${newLabel}]` },
       selection: { anchor: insertPos + `[^${newLabel}]`.length },
     });
@@ -898,7 +899,7 @@ export function insertFootnote(atPosition?: number): string | null {
   // Sort forward (CodeMirror applies simultaneously)
   changes.sort((a, b) => a.from - b.from);
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes,
     selection: { anchor: insertPos + `[^${newLabel}]`.length },
   });
@@ -926,7 +927,7 @@ export function insertFootnoteReplacingRange(from: number, to: number): string |
     const newLabel = currentMax + 1;
     setZoomFootnoteState(true, newLabel);
 
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from, to, insert: `[^${newLabel}]` },
       selection: { anchor: from + `[^${newLabel}]`.length },
     });
@@ -979,7 +980,7 @@ export function insertFootnoteReplacingRange(from: number, to: number): string |
   // Sort forward (CodeMirror applies simultaneously)
   changes.sort((a, b) => a.from - b.from);
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes,
     selection: { anchor: from + `[^${newLabel}]`.length },
   });
@@ -1370,7 +1371,7 @@ export function insertImage(opts: { src: string; alt?: string; caption?: string 
 
   const insertFrom = needBlankBefore ? targetPos : line.from;
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: insertFrom, to: targetPos, insert },
     selection: { anchor: insertFrom + insert.length },
   });
@@ -1398,7 +1399,7 @@ export function toggleHighlight(): boolean {
 
   if (beforeStart === '==' && afterEnd === '==') {
     // Remove highlight - delete the surrounding ==
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: [
         { from: from - 2, to: from, insert: '' },
         { from: to, to: to + 2, insert: '' },
@@ -1412,7 +1413,7 @@ export function toggleHighlight(): boolean {
   if (selectedText.startsWith('==') && selectedText.endsWith('==') && selectedText.length > 4) {
     // Remove highlight by replacing with content minus delimiters
     const innerText = selectedText.slice(2, -2);
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from, to, insert: innerText },
       selection: { anchor: from, head: from + innerText.length },
     });
@@ -1421,7 +1422,7 @@ export function toggleHighlight(): boolean {
 
   // Add highlight
   const highlighted = `==${selectedText}==`;
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from, to, insert: highlighted },
     selection: { anchor: from + 2, head: to + 2 },
   });
@@ -1478,7 +1479,7 @@ export function citationPickerCallback(data: any, _items: any[]): void {
     const rawSyntax = (data.rawSyntax as string) || `[@${(data.citekeys as string[]).join('; @')}]`;
     const merged = mergeCitations(existing, rawSyntax);
 
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from: start, to: end, insert: merged },
       selection: { anchor: start + merged.length },
     });
@@ -1510,7 +1511,7 @@ export function citationPickerCallback(data: any, _items: any[]): void {
   const rawSyntax = (data.rawSyntax as string) || `[@${citekeys.join('; @')}]`;
 
   // Replace /cite with the citation syntax
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: start, to: end, insert: rawSyntax },
     selection: { anchor: start + rawSyntax.length },
   });
@@ -1697,7 +1698,7 @@ export function replaceCurrent(replacement: string): boolean {
     effects: setSearchQuery.of(searchQuery),
   });
 
-  // Execute replaceNext command
+  // Execute replaceNext command (its own transaction carries `input.replace`, which counts as typing)
   return replaceNext(view);
 }
 
@@ -1722,7 +1723,7 @@ export function apiReplaceAll(replacement: string): number {
     effects: setSearchQuery.of(searchQuery),
   });
 
-  // Execute replaceAll command
+  // Execute replaceAll command (its own transaction carries `input.replace.all`, which counts as typing)
   cmReplaceAll(view);
 
   // Return the number of replacements made
@@ -1876,7 +1877,7 @@ export function insertEquation(latex: string, isDisplay: boolean): void {
     insert = `$${latex}$`;
   }
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from, to, insert },
     selection: { anchor: from + insert.length },
   });

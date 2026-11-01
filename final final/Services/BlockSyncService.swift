@@ -1661,7 +1661,9 @@ class BlockSyncService {
     /// `updateHeadingLevels`) still do NOT route through here: they are not part of
     /// the poll cycle the watchdog bounds (nor of `fetchContentFromWebView`'s own
     /// timeout), and routing them would widen the seam past what the tests need.
-    private func evaluateJS(_ script: String, in webView: WKWebView) async throws -> Any? {
+    ///
+    /// Internal (it was private) so `releaseHeldTypingPushes` in BlockSyncService+Lifecycle.swift goes through the same seam.
+    func evaluateJS(_ script: String, in webView: WKWebView) async throws -> Any? {
         #if DEBUG
         testJSWebViewObserver?(webView)
         if let testJSEvaluator { return try await testJSEvaluator(script) }
@@ -2331,18 +2333,12 @@ extension BlockSyncService {
         }())
 
         // Escape markdown for JS template literal
-        let escapedMarkdown = markdown
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "${", with: "\\${")
+        let escapedMarkdown = jsTemplateLiteralEscaped(markdown)
 
         guard let idsData = try? JSONSerialization.data(withJSONObject: blockIds),
               let idsJson = String(data: idsData, encoding: .utf8) else { return nil }
 
-        let escapedIds = idsJson
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "${", with: "\\${")
+        let escapedIds = jsTemplateLiteralEscaped(idsJson)
 
         // Build options object
         var optionParts: [String] = []
@@ -2353,26 +2349,8 @@ extension BlockSyncService {
         appendOption(&optionParts, cursorBoundary) { "cursorBoundary: \($0)" }
         appendOption(&optionParts, cursorBoundaryEnd) { "cursorBoundaryEnd: \($0)" }
         appendFlagOption(&optionParts, detectPausedEdits, "detectPausedEdits")
-        if !expectedBlocks.isEmpty {
-            if let expectedData = try? JSONEncoder().encode(expectedBlocks),
-               let expectedJson = String(data: expectedData, encoding: .utf8) {
-                let escapedExpected = expectedJson
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "`", with: "\\`")
-                    .replacingOccurrences(of: "${", with: "\\${")
-                optionParts.append("expected: JSON.parse(`\(escapedExpected)`)")
-            }
-        }
-        if !managedBlockIds.isEmpty {
-            if let managedData = try? JSONSerialization.data(withJSONObject: Array(managedBlockIds)),
-               let managedJson = String(data: managedData, encoding: .utf8) {
-                let escapedManaged = managedJson
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "`", with: "\\`")
-                    .replacingOccurrences(of: "${", with: "\\${")
-                optionParts.append("managedBlockIds: JSON.parse(`\(escapedManaged)`)")
-            }
-        }
+        appendOption(&optionParts, expectedOptionString(expectedBlocks)) { $0 }
+        appendOption(&optionParts, managedBlockIdsOptionString(managedBlockIds)) { $0 }
         appendFlagOption(&optionParts, zoomMode, "zoomMode")
         appendOption(&optionParts, scrollToBlockId) { "scrollToBlockId: `\($0.escapedForJSTemplateLiteral)`" }
         appendFlagOption(&optionParts, preserveUserBlocks, "preserveUserBlocks")
@@ -2455,6 +2433,35 @@ extension BlockSyncService {
         if flag {
             optionParts.append("\(key): true")
         }
+    }
+
+    /// Escapes `text` for embedding inside a JS template literal (`` `...` ``): backslash, backtick and `${`, nothing else.
+    /// Deliberately NOT `String.escapedForJSTemplateLiteral` (StringExtensions.swift), which also turns CR and CRLF into LF and
+    /// strips NUL -- using it here would change the script sent for any markdown containing those characters. Extracted from
+    /// `setContentWithBlockIds` (four identical inline chains) to bring its cyclomatic complexity under the cap; pure.
+    private func jsTemplateLiteralEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "${", with: "\\${")
+    }
+
+    /// Builds the `expected: JSON.parse(...)` JS option-string entry for `setContentWithBlockIds` -- `nil` when there are no
+    /// expected blocks or JSON encoding failed, matching the no-op behavior of the nested `if` blocks this replaced. Pure.
+    private func expectedOptionString(_ expectedBlocks: [BlockParser.BlockAlignmentMeta]) -> String? {
+        guard !expectedBlocks.isEmpty,
+              let expectedData = try? JSONEncoder().encode(expectedBlocks),
+              let expectedJson = String(data: expectedData, encoding: .utf8) else { return nil }
+        return "expected: JSON.parse(`\(jsTemplateLiteralEscaped(expectedJson))`)"
+    }
+
+    /// Builds the `managedBlockIds: JSON.parse(...)` JS option-string entry for `setContentWithBlockIds` -- `nil` when the set is
+    /// empty or JSON encoding failed, matching the no-op behavior of the nested `if` blocks this replaced. Pure.
+    private func managedBlockIdsOptionString(_ managedBlockIds: Set<String>) -> String? {
+        guard !managedBlockIds.isEmpty,
+              let managedData = try? JSONSerialization.data(withJSONObject: Array(managedBlockIds)),
+              let managedJson = String(data: managedData, encoding: .utf8) else { return nil }
+        return "managedBlockIds: JSON.parse(`\(jsTemplateLiteralEscaped(managedJson))`)"
     }
 
     /// Builds the `imageMeta: ...` JS option-string entry (same shape as `appendOption`'s

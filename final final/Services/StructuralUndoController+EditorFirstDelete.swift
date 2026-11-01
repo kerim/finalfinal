@@ -112,6 +112,10 @@ struct EditorFirstDeleteReply: EditorFirstBatchReply {
     /// Every block id the removal transaction actually deleted, in document order. Absent (an older editor, a failed call): the
     /// job makes no comparison (fix round 2a, item 10).
     let removedIds: [String]?
+    /// The quick REDO's `ok: true` reply only (t-d2061b27 round 6): true when the user typed since the key was pressed (the page's own
+    /// answer from the redo's gate). Absent on every other reply. The older redo entries end only when it is true, not for a non-empty
+    /// `batch` (which can hold a rewrite the previous command's settle left).
+    let typed: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case batch
@@ -119,6 +123,7 @@ struct EditorFirstDeleteReply: EditorFirstBatchReply {
         case reason
         case removedLeaderIds
         case removedIds
+        case typed
     }
 }
 

@@ -78,7 +78,12 @@ extension StructuralUndoController {
                 StructuralTrace.log("quick-undo lap: sidebar update dropped (the project changed)")
                 return
             }
-            let reinsertPending = !(editorState.efJobRegistry.record(for: reinsertKey)?.isResolved ?? true)
+            // t-d2061b27 (review F14): decided from the pending-reinsert count (raised in the quick undo's first stretch, lowered when the
+            // reinsert's future resolves), NOT from the registry record: typing put back on top of the undo ends the redo branch, whose
+            // discard forgets the entry's job keys (and their records) at once, and a missing record used to read as "resolved", so the
+            // overlay was never set and the restored section's Outline card was missing until the reinsert's settle. (A count that is
+            // up for ANOTHER reinsert only sets the overlay one settle early; the reinsert's settle, which waits for this update, lifts it.)
+            let reinsertPending = editorState.pendingReinsertCount > 0
             StructuralTrace.log("quick-undo lap: sidebar update starts (painted, reinsertPending=\(reinsertPending))")
             self.applyRestoredSections(update, includeOverlay: reinsertPending)
         }

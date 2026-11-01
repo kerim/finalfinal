@@ -28,7 +28,7 @@
 
 import { Fragment, type Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
 import { findSectionRange, leaderLevel, type RemovedSectionSnapshot } from './api-section-delete';
-import { checkQuickRedoAllowed, putBackAfterQuickRedo } from './api-section-undo';
+import { checkQuickRedoAllowed, finishQuickRedoLine, putBackAfterQuickRedo } from './api-section-undo';
 import { generateBlockId, isBlockType, setTopLevelIdsAt } from './block-id-plugin';
 import type { BlockChanges } from './block-sync-plugin';
 import { runEditorFirstChange, trace } from './editor-first-op';
@@ -48,8 +48,8 @@ export type InsertedSectionSnapshot = RemovedSectionSnapshot;
 /** What `duplicateSectionEditorFirst` and `redoSectionDuplicateEditorFirst` return, on every path. Swift reads it as
  * `JSON.stringify(...)`, like `getBlockChanges`. */
 export interface DuplicateSectionResult {
-  /** Every pending edit this call consumed, in `getBlockChanges()` shape. Empty when nothing was pending, and on a redo refusal
-   * (the gate consumes nothing). Swift always applies a returned batch. */
+  /** Every pending edit this call consumed, in `getBlockChanges()` shape. Empty when nothing was pending, and on a refusal by the
+   * redo's gate (the gate consumes nothing). Swift always applies a returned batch. */
   batch: BlockChanges;
   ok: boolean;
   /** Why `ok` is false: 'noEditor', 'beginFailed', 'rootNotFound', 'managedRoot', 'rootNotLeader', 'notInFlight', 'noEntry',
@@ -64,6 +64,10 @@ export interface DuplicateSectionResult {
   insertedSectionsSnapshot: InsertedSectionSnapshot[];
   /** Id of the block the copy sits directly after: the last block of the ORIGINAL section that has an id (null if none has). */
   predecessorId: string | null;
+  /** The quick REDO only, on an `ok: true` reply: true when the user typed since the key was pressed (the page's own answer, from the
+   * redo's gate), absent on every other reply. A non-empty `batch` is not proof of typing (it can hold a rewrite the previous command's
+   * settle left); Swift ends the older redo entries only when this is true. */
+  typed?: boolean;
 }
 
 // Test seam (web tests only; production never sets it): runs right after the insertion was dispatched and its ids replaced, before
@@ -237,7 +241,8 @@ export function duplicateSectionEditorFirst(
  * Bridge target for `window.FinalFinal.redoSectionDuplicateEditorFirst`. Synchronous; Swift calls it, with the structural-redo latch
  * held for `opId`, like the delete's redo. Re-checks that the live document is still the saved pre-op copy
  * (`checkQuickRedoAllowed`, shared with the delete's redo; nothing is touched on a refusal: `ok: false`, `reason: 'docChanged'`,
- * an empty batch), then duplicates the section again from the document as it is NOW, under the same opId, as a fresh editor-first
+ * an empty batch). Typing since the press does not refuse it (a duplicate takes nothing out): the copy comes back and the typing is
+ * kept, going out once as batch N. It duplicates the section again from the document as it is NOW, under the same opId, as a fresh editor-first
  * duplicate. `copies` is the first click's `copies`: the new blocks take those ids again [S9].
  */
 export function redoSectionDuplicateEditorFirst(
@@ -264,7 +269,9 @@ export function redoSectionDuplicateEditorFirst(
     previousEntry: gate.entry,
     reuseCopies: copies,
   });
+  // A duplicate takes nothing out, so typing elsewhere (or anywhere) never refuses it: only the trace line needs the outcome.
+  finishQuickRedoLine(gate, result.ok);
   // The redo steps the quick undo kept aside (typing done inside the copy) go back now that the copy is back (t-14f908b4).
-  if (result.ok) putBackAfterQuickRedo(opId, 'duplicate-quick-redo');
-  return result;
+  if (result.ok) putBackAfterQuickRedo(opId, 'duplicate-quick-redo', gate.typed);
+  return result.ok ? { ...result, typed: gate.typed } : result;
 }

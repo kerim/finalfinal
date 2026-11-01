@@ -30,6 +30,8 @@ import { derivedCorrection } from './derived-correction';
 import { explainTextDifference } from './derived-equivalence';
 import { getEditorView } from './editor-state';
 import { resetSetAsideRedo } from './redo-branch';
+import { discardOwedTypingPush, holdTypingPushes, releaseTypingPushes } from './typing-push-hold';
+import { docAtPress, TypingCollector, typingReplay } from './typing-rebase';
 
 // Real user-transaction counter for the permanent `[UnifiedUndo]` fallthrough log below
 // (undo-mode-switch-focus investigation legacy -- kept because it proved genuinely useful
@@ -117,7 +119,56 @@ let latchTimeoutId: ReturnType<typeof setTimeout> | null = null;
 /** Cmd-Z / Cmd-Shift-Z presses made while the in-flight latch was held (O19, mirrors Milkdown's undo-coordinator.ts), oldest first.
  * Each one is routed afresh against the LIVE document when the latch clears -- structural presses and text presses alike, so the
  * order the user pressed them in is kept -- instead of being dropped. */
-const queuedPresses: Array<{ direction: 'undo' | 'redo' }> = [];
+const queuedPresses: Array<{ direction: 'undo' | 'redo'; press: number }> = [];
+
+// === Typing done while a press waits (Phase 4c, job 2; typing-rebase.ts) ===
+// Every press that is latched or queued gets a number. From the first such press until the last one is answered the collector records
+// every change, tagged with the number of the latest press at or before it, and the page holds its typing push to Swift
+// (typing-push-hold.ts). The routing compares the document AS IT WAS AT THE PRESS with the saved copy; the swap puts the typing back.
+const typingCollector = new TypingCollector();
+let pressSeq = 0;
+/** The number of the press the in-flight latch is held for (0: none). */
+let inFlightPress = 0;
+
+export function getTypingCollector(): TypingCollector {
+  return typingCollector;
+}
+export function getInFlightPress(): number {
+  return inFlightPress;
+}
+/** Called by main.ts's update listener for every transaction. Records only while a press is latched or queued. */
+export function noteTypingTransaction(tr: Transaction): void {
+  typingCollector.record(tr);
+}
+/** The swap of the in-flight press carried the typing done in the wait (the replay, or the delete's own typing batch): the push the hold
+ * owes for it is dropped NOW. Keys typed after this moment, before Swift's reply, are not carried by anything: their push stays owed and
+ * is sent when the press window ends (F5). */
+export function noteTypingReplayed(): void {
+  discardOwedTypingPush();
+}
+
+/** A Cmd-Z / Cmd-Shift-Z was pressed while it must wait (latched or queued): number it, start recording, hold the typing push. */
+function startNewPress(): number {
+  pressSeq += 1;
+  typingCollector.startPress(pressSeq);
+  holdTypingPushes();
+  return pressSeq;
+}
+
+/** The press window is over (every press answered, dropped or cancelled): the held typing push is released FIRST (judge D1: `'send'`
+ * posts it, so typing is saved as it always was), then the collector forgets. */
+function endPressWindow(mode: 'send' | 'discard' = 'send'): void {
+  releaseTypingPushes(mode);
+  typingCollector.reset();
+  inFlightPress = 0;
+}
+
+/** The document the routing compares with the saved copy: the document AS IT WAS AT `press` (every change since inverted), or the live
+ * document when there is no press to ask about (a fresh keydown has no typing since its press, so today's routing is unchanged). */
+function documentAtPress(view: EditorView, press: number | undefined): Text {
+  if (press === undefined || press <= 0 || !typingCollector.recording) return view.state.doc;
+  return docAtPress(view.state.doc, typingCollector, press).doc;
+}
 
 function clearLatchTimeout(): void {
   if (latchTimeoutId !== null) {
@@ -225,6 +276,7 @@ export function resetUndoCoordinatorState(): void {
   queuedPresses.length = 0;
   lastEquivalence = null;
   clearLatchTimeout();
+  endPressWindow('discard');
 }
 
 // === Pure routing decision (see docs/architecture/unified-undo.md's routing section) ===
@@ -315,13 +367,16 @@ function textsEquivalentTimed(a: Text, b: Text): boolean {
   return reason === null;
 }
 
-function liveRoutingParams(view: EditorView, ownRequestOpId?: string): RoutingParams<Text> {
+function liveRoutingParams(view: EditorView, ownRequestOpId?: string, press?: number): RoutingParams<Text> {
   return {
     descriptor,
     registry,
-    pendingMapsEmpty: true, // no block-sync channel in CodeMirror -- see header
+    // No block-sync channel in CodeMirror -- see header. (Judge D3, the pending-local-edit test that leaves out what the collector has
+    // recorded, has nothing to leave out here: the test is constantly false.)
+    pendingMapsEmpty: true,
     latched,
-    currentDoc: view.state.doc,
+    // The document at the press (typing-rebase.ts), through the SAME comparison below: a fresh press has no steps since itself.
+    currentDoc: documentAtPress(view, press),
     docsEqual,
     docsEquivalent: textsEquivalentTimed,
     ownRequestOpId,
@@ -365,11 +420,14 @@ function traceRoutingEquivalence(
 export function decideLiveRouting(
   view: EditorView,
   direction: 'undo' | 'redo',
-  ownRequestOpId?: string
+  ownRequestOpId?: string,
+  press?: number
 ): RoutingDecision {
   const routingStart = performance.now();
   lastEquivalence = null;
-  const params = liveRoutingParams(view, ownRequestOpId);
+  // The swap's own re-check asks about the in-flight press; a held press being drained asks about its own number.
+  const isOwn = ownRequestOpId !== undefined && ownRequestOpId === inFlightOpId;
+  const params = liveRoutingParams(view, ownRequestOpId, press ?? (isOwn ? inFlightPress : undefined));
   const decision = direction === 'undo' ? decideUndoRouting(params) : decideRedoRouting(params);
   // The whole decision's time (what Cmd-Z pays per press, not only the fallback comparison), taken before
   // the trace line is built.
@@ -565,16 +623,33 @@ function releaseLatchAndQueue(): void {
   inFlightOpId = null;
   queuedPresses.length = 0;
   clearLatchTimeout();
+  endPressWindow('send'); // D1: the held typing is released before anything else
   postHeldPressesSettled(held);
 }
 
 /** Holds a press made while the latch is held; it is routed when Swift's reply for the in-flight request arrives. */
 function queuePress(direction: 'undo' | 'redo'): void {
-  queuedPresses.push({ direction });
+  queuedPresses.push({ direction, press: startNewPress() });
   (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
     type: 'debug',
     message: `[undo-coordinator] ${direction} press queued behind in-flight opId=${inFlightOpId} (queued=${queuedPresses.length})`,
   });
+}
+
+/** True when the user typed after `press` was pressed (some typing change carries its tag or a later one). A plain text undo/redo run
+ * then would take back the NEWEST typing, which the user typed after the press, and keep the typing the press was meant to take back. */
+function userTypedAfterPress(press: number): boolean {
+  return press > 0 && typingCollector.stepsSince(press).some((step) => step.typing);
+}
+
+/** The existing notice for a press that could not be carried out, once (the caller settles a HELD press; the press that was in flight
+ * needs no settling). */
+function endPressTypedAfter(why: string): void {
+  (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
+    type: 'debug',
+    message: `[undo-coordinator] ${why}`,
+  });
+  (window as any).webkit?.messageHandlers?.undoQueueDropped?.postMessage({ count: 1 });
 }
 
 /** Routes the queued presses, oldest first, each one deciding afresh against the LIVE document. A structural one takes the latch
@@ -590,29 +665,63 @@ function drainQueuedPresses(): void {
       postHeldPressesSettled(ended);
       return;
     }
-    const decision = decideLiveRouting(view, press.direction);
+    // Typing after a held Cmd-Shift-Z was pressed ends its redo when that redo needs a REPLAY (a swap: the entry is not a Delete; judge
+    // amendment 5): the tag rule is "some change recorded since this press, replayed or typed after the swap, carries a tag of this
+    // press or later". Answered at once with the existing notice, the press settled, nothing routed (floor rule 5: no silent empty
+    // redo). A QUICK redo, the re-run of a Delete on the live document, has the typing in the document already and is routed: the
+    // swap refuses it only when the typing lies inside the text it removes (F2, as in Rich Text).
+    const heldRedoEntry =
+      press.direction === 'redo' && descriptor.redoTopOpId !== undefined
+        ? registry.get(descriptor.redoTopOpId)
+        : undefined;
+    if (
+      press.direction === 'redo' &&
+      (heldRedoEntry === undefined || heldRedoEntry.markdown?.kind !== 'delete') &&
+      userTypedAfterPress(press.press)
+    ) {
+      endPressTypedAfter('a held redo ended: the user typed after pressing it');
+      postHeldPressesSettled(1);
+      continue;
+    }
+    // Each held press is routed on the document AS IT WAS AT ITS OWN PRESS (the replay of the press before it has put its typing back).
+    const decision = decideLiveRouting(view, press.direction, undefined, press.press);
     if (decision.action === 'structural') {
-      requestStructural(decision.opId, press.direction, true); // a held press: the request carries `held: true`
+      requestStructural(decision.opId, press.direction, true, press.press); // a held press: the request carries `held: true`
       return;
+    }
+    // A plain text undo/redo run NOW would take back the newest typing, which the user typed after this press, and keep the typing the
+    // press was meant to take back. Answer at once with the existing notice and settle the press (F1).
+    if (userTypedAfterPress(press.press)) {
+      endPressTypedAfter(
+        'a held press that falls through to a text undo/redo was ended: the user typed after pressing it'
+      );
+      postHeldPressesSettled(1);
+      continue;
     }
     maybeBeepOnRefusal(view, press.direction);
     if (press.direction === 'undo') undo(view);
     else redo(view);
     postHeldPressesSettled(1); // this held press ended here, as a text undo/redo, with no request to Swift
   }
+  // Nothing is held any more and no request is in flight: the press window is over.
+  if (!latched && queuedPresses.length === 0) endPressWindow('send');
 }
 
 /** `held` is true only for a press that was queued behind the latch and is now being sent (drained): the request then carries
  * `held: true`. A press sent directly omits the field. */
-function requestStructural(opId: string, direction: 'undo' | 'redo', held = false): void {
+function requestStructural(opId: string, direction: 'undo' | 'redo', held = false, press?: number): void {
   latched = true;
   inFlightOpId = opId; // N5: track the specific request this latch is now held for
+  // A press sent at once is numbered here (recording starts, the typing push is held); a drained held press keeps the number it was queued with.
+  inFlightPress = held && press !== undefined ? press : startNewPress();
+  holdTypingPushes();
   clearLatchTimeout();
   latchTimeoutId = setTimeout(() => {
     latchTimeoutId = null;
     if (!latched) return;
     latched = false;
     inFlightOpId = null;
+    endPressWindow('send'); // D1: the held typing is released before anything else
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
       type: 'debug',
       message: `[undo-coordinator] latch timeout: no reply from Swift for ${direction} opId=${opId} -- self-clearing`,
@@ -778,6 +887,15 @@ export function handleUndoReplyFromSwift(
   latched = false;
   inFlightOpId = null;
   clearLatchTimeout();
+  // F1: a fallback runs the text undo/redo the press suppressed; with typing made after the press it would take back the newest typing
+  // instead. Decided here, before the exit below forgets the records.
+  const typedAfterFallback = reply.outcome === 'fallback' && userTypedAfterPress(inFlightPress);
+  // D1: every exit that is not "the typing was put back" releases the held typing push as the FIRST thing that happens. A press whose
+  // swap carried the typing already dropped the push it owed (`noteTypingReplayed`); what is owed now was typed after the swap. A fallback
+  // keeps the records for the presses held behind it (the drain ends the window).
+  if (reply.outcome === 'fallback') releaseTypingPushes('send');
+  else if (reply.outcome !== 'performed') endPressWindow('send');
+  inFlightPress = 0;
   if (reply.outcome === 'cancelled') {
     // The project is closing or switching: the document is left exactly as it is, and the presses held behind the request are
     // dropped WITHOUT a warning (the window is going away). Swift is still told they ended, so a close that counted them as held
@@ -808,7 +926,11 @@ export function handleUndoReplyFromSwift(
   }
   if (reply.outcome === 'fallback') {
     const view = getEditorView();
-    if (view) {
+    if (typedAfterFallback) {
+      endPressTypedAfter(
+        `a ${direction} that fell back to a text ${direction} was ended: the user typed after pressing it`
+      );
+    } else if (view) {
       if (direction === 'undo') undo(view);
       else redo(view);
     }
@@ -847,5 +969,7 @@ export function maybeNotifyHistoryEdited(tr: Transaction): void {
   // count as "the user edited history" for the redo-branch invalidation this guards.
   if (tr.annotation(Transaction.addToHistory) === false || tr.annotation(derivedCorrection)) return;
   if (tr.isUserEvent('undo') || tr.isUserEvent('redo')) return;
+  // The replay of typing done while a press waited is not a new edit of the history: the reply tells Swift (`typingReplayed`).
+  if (tr.annotation(typingReplay) === true) return;
   (window as any).webkit?.messageHandlers?.historyEdited?.postMessage({});
 }

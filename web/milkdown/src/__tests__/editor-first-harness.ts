@@ -32,6 +32,7 @@ import {
   resetUndoCoordinatorState,
   runUndoTrackedDispatch,
   setUndoDescriptor,
+  typingCollectorPlugin,
 } from '../undo-coordinator';
 
 // === Documents ===
@@ -133,6 +134,7 @@ export async function makeEditor(
     .use(blockIdPlugin)
     .use(historyPlugin)
     .use(blockSyncPlugin)
+    .use(typingCollectorPlugin) // records the steps typed while a press waits (Phase 4c job 2), as main.ts registers it
     .create();
   current = editor;
   setEditorInstance(editor);

@@ -3,6 +3,7 @@
 
 import { insertLink, wrapSelection } from './api';
 import { getEditorView } from './editor-state';
+import { dispatchAsTyping } from './typing-rebase';
 
 /**
  * Toggle inline markdown wrapper (e.g. ** for bold, * for italic, ~~ for strikethrough).
@@ -46,7 +47,7 @@ function toggleInlineWrap(wrapper: string): boolean {
       }
     }
 
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: [
         { from: from - wLen, to: from, insert: '' },
         { from: to, to: to + wLen, insert: '' },
@@ -59,7 +60,7 @@ function toggleInlineWrap(wrapper: string): boolean {
   // Case 2: Selection itself starts/ends with wrapper → strip them
   if (selectedText.startsWith(wrapper) && selectedText.endsWith(wrapper) && selectedText.length > wLen * 2) {
     const innerText = selectedText.slice(wLen, -wLen);
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from, to, insert: innerText },
       selection: { anchor: from, head: from + innerText.length },
     });
@@ -98,7 +99,7 @@ export function setHeading(level: number): boolean {
   const prefix = level > 0 ? `${'#'.repeat(level)} ` : '';
   const newLine = prefix + cleanText;
 
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: line.from, to: line.to, insert: newLine },
   });
   return true;
@@ -115,14 +116,14 @@ export function toggleBulletList(): boolean {
   // Toggle: if line starts with "- ", remove it; otherwise add it
   if (/^\s*- /.test(lineText)) {
     const newLine = lineText.replace(/^(\s*)- /, '$1');
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: newLine } });
+    dispatchAsTyping(view, { changes: { from: line.from, to: line.to, insert: newLine } });
   } else {
     // Remove numbered list prefix if present, then add bullet
     const cleanText = lineText.replace(/^(\s*)\d+\.\s+/, '$1');
     const match = cleanText.match(/^(\s*)/);
     const indent = match ? match[1] : '';
     const content = cleanText.trimStart();
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: `${indent}- ${content}` } });
+    dispatchAsTyping(view, { changes: { from: line.from, to: line.to, insert: `${indent}- ${content}` } });
   }
   return true;
 }
@@ -138,14 +139,14 @@ export function toggleNumberList(): boolean {
   // Toggle: if line starts with "N. ", remove it; otherwise add it
   if (/^\s*\d+\.\s+/.test(lineText)) {
     const newLine = lineText.replace(/^(\s*)\d+\.\s+/, '$1');
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: newLine } });
+    dispatchAsTyping(view, { changes: { from: line.from, to: line.to, insert: newLine } });
   } else {
     // Remove bullet prefix if present, then add number
     const cleanText = lineText.replace(/^(\s*)- /, '$1');
     const match = cleanText.match(/^(\s*)/);
     const indent = match ? match[1] : '';
     const content = cleanText.trimStart();
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: `${indent}1. ${content}` } });
+    dispatchAsTyping(view, { changes: { from: line.from, to: line.to, insert: `${indent}1. ${content}` } });
   }
   return true;
 }
@@ -161,9 +162,9 @@ export function toggleBlockquote(): boolean {
   // Toggle: if line starts with "> ", remove it; otherwise add it
   if (/^>\s?/.test(lineText)) {
     const newLine = lineText.replace(/^>\s?/, '');
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: newLine } });
+    dispatchAsTyping(view, { changes: { from: line.from, to: line.to, insert: newLine } });
   } else {
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: `> ${lineText}` } });
+    dispatchAsTyping(view, { changes: { from: line.from, to: line.to, insert: `> ${lineText}` } });
   }
   return true;
 }
@@ -186,7 +187,7 @@ export function toggleCodeBlock(): boolean {
 
     if (/^```/.test(prevLine.text) && /^```$/.test(nextLine.text)) {
       // Remove fences
-      view.dispatch({
+      dispatchAsTyping(view, {
         changes: [
           { from: prevLine.from, to: prevLine.to + 1, insert: '' },
           { from: nextLine.from - 1, to: nextLine.to, insert: '' },
@@ -199,7 +200,7 @@ export function toggleCodeBlock(): boolean {
   // Add code fence around selection
   const selectedText = view.state.sliceDoc(fromLine.from, toLine.to);
   const replacement = `\`\`\`\n${selectedText}\n\`\`\``;
-  view.dispatch({
+  dispatchAsTyping(view, {
     changes: { from: fromLine.from, to: toLine.to, insert: replacement },
   });
   return true;

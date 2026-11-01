@@ -259,8 +259,9 @@ export interface SetAsideRedo {
   ids: ReadonlyMap<number, string>;
   /** How many redo events the live state is expected to hold when the put-back runs: right after the quick undo it is the carried
    * branch's count. The put-back only runs when the redo finds that count: a text undo and a text redo done in between push and
-   * pop one event and leave it equal. It is a count check, and it suffices: real typing in between empties the list and refuses
-   * the structural redo before it can run. */
+   * pop one event and leave it equal. It is a count check, and it is not the whole story: real typing in between empties the list, which
+   * may equal the count, so the quick redo of a Duplicate or a restore does not put back at all when the user typed in its wait
+   * (`putBackAfterQuickRedo`, `typingEndedIt`). */
   depthAfterUndo: number;
 }
 

@@ -63,7 +63,7 @@ import { dispatchDerivedCorrection } from './redo-branch';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
-import { traceMidOpPushDrift } from './undo-coordinator';
+import { isTypingPushHeld, releaseHeldTypingPushes, traceMidOpPushDrift } from './undo-coordinator';
 
 /**
  * Clear the ProseMirror undo/redo history stacks after a structural, DB-driven document
@@ -2326,8 +2326,10 @@ export function getBlockAtCursor(): { blockId: string; offset: number } | null {
   }
 }
 
+/** Swift's cheap pre-check before a poll. While a Cmd-Z waits (a press is latched) what the user types is held back from the polls
+ * (undo-coordinator.ts `isTypingPushHeld`): the replay saves it, once, behind the undo's database work. */
 export function hasBlockChanges(): boolean {
-  return hasPendingChanges();
+  return isTypingPushHeld() ? false : hasPendingChanges();
 }
 
 export function flushPendingBlockChanges(): void {
@@ -2335,7 +2337,24 @@ export function flushPendingBlockChanges(): void {
 }
 
 export function getBlockChangesApi(): BlockChanges {
+  // Held while a press is latched, see `hasBlockChanges`. The routes call block-sync-plugin's `getBlockChanges` directly and so still
+  // take the held typing as their batch N.
+  if (isTypingPushHeld()) return { updates: [], inserts: [], deletes: [] };
   return getBlockChangesPlugin();
+}
+
+/**
+ * Bridge target for `window.FinalFinal.releaseHeldTypingAndGetBatch` (F7): for a press that Swift hands to the OLD whole-document body
+ * (zoomed, no plan, `noCheckpoint`, or an editor refusal that falls back) while the page is still holding the user's typing back from
+ * the polls. In ONE synchronous call it ends the hold for the press in flight (`releaseHeldTypingPushes`), runs the block-sync
+ * detection that the 100 ms timer has not yet run for what was typed a moment ago, and returns the pending batch, so Swift can send
+ * the typing BEFORE the old body runs. `released` is true when a hold was ended. Nothing is held back afterwards; a press still
+ * waiting on this page that has typing since is answered `changed` (the typing has been sent).
+ */
+export function releaseHeldTypingAndGetBatch(): { released: boolean; batch: BlockChanges } {
+  const released = releaseHeldTypingPushes();
+  flushPendingBlockChangesPlugin();
+  return { released, batch: getBlockChangesPlugin() };
 }
 
 export function confirmBlockIdsApi(mapping: Record<string, string>): void {

@@ -365,15 +365,41 @@ enum TestMode {
         NSLog("[QuickUndoHold] settle-hold END")
     }
 
-    /// `FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS=<n>` (t-18b7fa48 round 3d): a SLOW (snapshot) undo or redo, editor first
-    /// (`StructuralUndoController.queuedSnapshotUndo`), waits `n` ms (clamped to 15,000) after its plan has been read and BEFORE its swap
-    /// click. It makes the window the model calls EFSnapTypedInWait (the user types between the press and the swap) as wide as a UI test
-    /// needs, instead of hoping that the test's own typing falls inside the few hundred milliseconds a real wait leaves it, or inside a
-    /// writer hold, which cannot exceed about 3.9 s (the content-state watchdog fires at 5 s). The wait is on the Swift side only: a plain
-    /// `Task.sleep` on the main actor in the press's gate turn, as a real wait for a delete's job is; the editor is live and the writer is
-    /// free, so the typing is seen by the click's re-check exactly as typing during a real wait is (the click takes batch N and re-checks
-    /// the document). `nil` (unset, unparseable, <= 0, or `isUITesting` false) means no wait, and nothing differs from a normal press.
-    /// Same `isUITesting &&` guard as every sibling flag, so a value left in a shell profile never slows a real user's undo.
+    /// `FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS=<n>` (t-18b7fa48 round 3d; t-d2061b27 added the Markdown twin and the Rich Text quick undo):
+    /// a SLOW (snapshot) undo or redo waits `n` ms (clamped to 15,000) after its plan has been read and BEFORE its swap. BOTH slow routes
+    /// and the Rich Text QUICK undo call it: the Rich Text slow one (`StructuralUndoController.queuedSnapshotUndo`, before its swap click),
+    /// the Markdown slow one (`markdownQueuedSnapshotUndo`, before the press raises its own writer hold and calls the page) and the Rich
+    /// Text quick undo (`performQuickUndoOfDelete`, which serves Delete, Duplicate and the three restores). It makes the window the
+    /// model calls EFSnapTypedInWait (the user types
+    /// between the press and the swap) as wide as a UI test needs, instead of hoping that the test's own typing falls inside the few
+    /// hundred milliseconds a real wait leaves it, or inside a writer hold, which cannot exceed about 3.9 s (the content-state watchdog
+    /// fires at 5 s). The wait is on the Swift side only: a plain `Task.sleep` on the main actor in the press's gate turn, as a real wait
+    /// for a delete's job is; the editor is live and the writer is free, so the typing is seen by the page's swap exactly as typing during
+    /// a real wait is: the page recorded it since the press, held its pushes, and now puts it back on top of the swapped-in document
+    /// (`typingReplayed`), no refusal. `nil` (unset, unparseable, <= 0, or `isUITesting` false) means no wait, and nothing differs from a
+    /// normal press. Same `isUITesting &&` guard as every sibling flag, so a value left in a shell profile never slows a real user's undo.
+    ///
+    /// WHERE IT SITS (Markdown route, review F15): right after the route's wait for the previous job (`awaitStructuralHoldReleased`) and
+    /// BEFORE the guards that follow a real wait (`isClosedToNewWork` -> `.cancelled`, a lifecycle armed, zoom, the timeline epoch), so
+    /// it stands for that wait: a Cmd-W, Cmd-Q or project switch that begins during the hold cancels the press the way it cancels one
+    /// that waited for a job. The Rich Text slow route's seam sits after its plan is read, as it always did.
+    ///
+    /// WHERE IT SITS (Rich Text quick undo, round S5): in `performQuickUndoOfDelete`, right after its `start (quick)` trace line and BEFORE
+    /// `quickUndoBody`, i.e. before anything is mutated (the click flag, the epoch bump, the counters, the registry, the writer ticket).
+    /// The quick undo is one synchronous stretch and does not wait behind the delete's held job (only its reinsert queues behind it), so
+    /// the page's latch lasts only a few milliseconds and a UI test cannot type into a wait; this hold stands for that wait. A press
+    /// forced onto the slow path (`FF_UI_TESTING_SLOW_DELETE_UNDO_FIRST_N`, `testForceSlowDeleteUndo`) returns nil from `resolveQuickPath`
+    /// before it gets here, so it holds once, in the slow route, never twice. The quick REDO has no such seam.
+    ///
+    /// WATCHDOG INTERPLAY (Markdown route, read from the code 2026-10-31 for t-d2061b27, not measured): the sleep runs before this press
+    /// raises its writer hold
+    /// (`beginStructuralHold`) and before anything sets `contentState`, and the previous Markdown job's hold has already been released
+    /// (`awaitStructuralHoldReleased` returned), so neither the writer's 5 s stall backstop nor the content-state watchdog is running
+    /// while it sleeps; its only bounds are the 15 s clamp above and the page's 30 s latch timeout (`LATCH_TIMEOUT_MS`, which would
+    /// release the latch under a held press). The Phase 4c UI tests (`WriteQueuePhase4cTypingAcrossUndoE2ETests`) hold 8,000 ms on the
+    /// Rich Text slow route (the 12-chapter driver needs more than 3.5 s from the Cmd-Z to its first key), 3,500 ms on the Markdown slow
+    /// route and 3,000 ms on the Rich Text quick route (the Markdown quick routes use the job hold instead, 3,500 ms). Keep any use of
+    /// the Markdown route at or under about 3,900 ms, the limit the hold knobs above have, since that is the proven-safe number.
     static var uiTestingSlowUndoPressHoldMs: Int? {
         guard isUITesting,
               let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_SLOW_UNDO_PRESS_HOLD_MS"],
@@ -381,8 +407,12 @@ enum TestMode {
         return min(value, 15_000)
     }
 
-    /// The wait `uiTestingSlowUndoPressHoldMs` asks for, called ONCE per press by `queuedSnapshotUndo` after the plan has been read and
-    /// before the first swap click (not again before the `noCheckpoint` fallback's second click). Logs its two ends at `.undo`
+    /// The wait `uiTestingSlowUndoPressHoldMs` asks for, called ONCE per press by `queuedSnapshotUndo` (Rich Text), by
+    /// `markdownQueuedSnapshotUndo` (Markdown; right after its wait for the previous job, before its post-wait guards) and by
+    /// `performQuickUndoOfDelete` (the Rich Text quick undo, before anything is mutated) before the
+    /// first swap (not again before the `noCheckpoint` fallback's second click). The marker is the same for every route; the press's
+    /// own `[STRUCT-TRACE]` lines
+    /// (`start (editor-first undo)` / `start (markdown queued undo)` / `start (quick)`) say which one it was. Logs its two ends at `.undo`
     /// (diagnostic.log, marker family `[SlowUndoPressHold]`, `op` being the entry's first 8 characters), so a test can show that every key
     /// it typed fell inside. A plain suspension: nothing is blocked. Returns at once when unset (every normal launch).
     @MainActor

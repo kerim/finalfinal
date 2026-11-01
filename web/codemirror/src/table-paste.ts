@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view';
 import type { ParsedTable } from '../../shared/format-table';
 import { formatTable, parseHTMLTable, parseTSV, truncateParsedTable } from '../../shared/format-table';
+import { dispatchAsTyping } from './typing-rebase';
 
 // MARK: - Public Handler
 
@@ -61,12 +62,12 @@ export function handleTablePaste(event: ClipboardEvent, view: EditorView): boole
     // Inside a cell: flatten multi-row content to plain text
     const allCells = [table.header, ...table.rows].flat().join(' ');
     const plainText = allCells.replace(/\s+/g, ' ').trim();
-    view.dispatch({ changes: { from: head, to: head, insert: plainText } });
+    dispatchAsTyping(view, { changes: { from: head, to: head, insert: plainText } });
   } else {
     // Outside a table: insert as a new block after the current line
     const tableStr = formatTable(table);
     const insertPos = curLine.to;
-    view.dispatch({
+    dispatchAsTyping(view, {
       changes: { from: insertPos, to: insertPos, insert: `\n\n${tableStr}` },
       selection: { anchor: insertPos + 2 },
     });
