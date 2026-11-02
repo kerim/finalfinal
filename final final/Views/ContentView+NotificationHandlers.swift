@@ -630,11 +630,13 @@ extension ContentView {
         unifiedUndoService.invalidateAll(reason: reason)
         findBarState.clearSearch()
         editorState.contentState = .zoomTransition
+        let zoomInStart = Date()
         Task {
             await editorState.zoomToSection(sectionId, mode: mode)
             await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
             await annotationSyncService.syncNow(editorState.content)
             editorState.contentState = .idle
+            DebugLog.log(.zoom, "[ZoomClick] performUserZoomIn tail complete in \(Date().timeIntervalSince(zoomInStart))s")
         }
     }
 
