@@ -314,9 +314,13 @@ extension ContentView {
                         // content back into Swift state -- never a push INTO the editor, so
                         // the settle-window guard is moot here (shouldPushContent's identical-
                         // content check already no-ops since this IS what CodeMirror has).
+                        // Round M1 measurement (MdSpeed.swift): the whole closure and each part are `md-speed ... onContentChange*` spans.
+                        let onContentChangeSpan = MdSpeed.span("onContentChange")
+                        defer { onContentChangeSpan.end() }
+
                         // Update sourceContent with raw content (including anchors)
                         // This keeps anchors in sync for mode switch
-                        editorState.sourceContent = newContent
+                        MdSpeed.timed("onContentChange.sourceContent") { editorState.sourceContent = newContent }
 
                         // Strip anchors and bibliography marker FIRST -- the token's
                         // contentHash must match what .onChange(of: editorState.content)
@@ -324,8 +328,15 @@ extension ContentView {
                         // `newContent` (which still has anchors) -- otherwise the
                         // content-sync consumer's hash check in
                         // ViewNotificationModifiers.handleContentChange could never match.
-                        let cleanContent = sectionSyncService.stripSectionAnchors(from: newContent)
-                        let strippedContent = SectionSyncService.stripBibliographyMarker(from: cleanContent)
+                        // t-2fbe4c9b: the parse memo's background task may already have made exactly this text's stripped form
+                        // (looked up by the raw text, byte for byte); a miss strips here, as before.
+                        let remembered = editorState.scanMemo.stripped(forRaw: newContent)
+                        let cleanContent = MdSpeed.timed("onContentChange.stripSectionAnchors") {
+                            remembered ?? sectionSyncService.stripSectionAnchors(from: newContent)
+                        }
+                        let strippedContent = MdSpeed.timed("onContentChange.stripBibliographyMarker") {
+                            remembered ?? SectionSyncService.stripBibliographyMarker(from: cleanContent)
+                        }
 
                         // P3 §4d token (undo-mode-switch-focus second timing gap, M1
                         // design): set BEFORE `content` is reassigned below, so it's
@@ -341,7 +352,7 @@ extension ContentView {
                             editorState.reconcileSuppression = nil
                         }
 
-                        editorState.content = strippedContent
+                        MdSpeed.timed("onContentChange.contentAssign") { editorState.content = strippedContent }
                     },
                     onStatsChange: { words, characters in
                         editorState.updateStats(words: words, characters: characters)

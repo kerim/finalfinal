@@ -558,7 +558,7 @@ final class FootnoteSyncService {
         }
 
         // Check if renumbering is needed: labels should be sequential 1..N (never under `allowRenumber: false`)
-        let renumberMapping = allowRenumber ? computeRenumberMapping(refs: refs) : [:]
+        let renumberMapping = allowRenumber ? MdSpeed.timed("footnote.computeRenumberMapping") { computeRenumberMapping(refs: refs) } : [:]
 
         // Determine the effective refs (post-renumbering)
         let effectiveRefs: [String]
@@ -661,7 +661,7 @@ final class FootnoteSyncService {
             // UI-test-only delay of the Notes notification and push (no-op unless FF_UI_TESTING_FOOTNOTE_WRITE_HOLD_MS is set).
             await TestMode.holdFootnoteNotesNotification()
             NotificationCenter.default.post(name: .notesSectionChanged, object: nil)
-            pushDefinitionsToEditor(fullContent: fullContent)
+            MdSpeed.timed("footnote.pushDefinitionsToEditor") { pushDefinitionsToEditor(fullContent: fullContent) }
         default:
             // M1 (point 2): recovery is decided by `prepareRan`, never by the
             // refusal's name.

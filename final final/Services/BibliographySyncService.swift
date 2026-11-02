@@ -440,7 +440,7 @@ final class BibliographySyncService {
         // closure itself (ContentView+ProjectLifecycle.swift), right before it calls
         // flushContentToDatabase() -- the one place that knows whether a flush is really occurring.
         if let flush = flushLiveEditorContentToBlocks {
-            await flush(projectId, overrideContent)
+            await flushLiveEditorContent(flush, projectId: projectId, overrideContent: overrideContent)
         }
 
         // The flush is the first suspension point since the staleness guard above. Re-check
@@ -730,5 +730,16 @@ extension BibliographySyncService {
     /// as `FootnoteSyncService.forgetCommittedNotesState`). Clears the hash and nothing else; the next write that applies commits it.
     func forgetCommittedBibliographyState() {
         lastGeneratedHash = 0
+    }
+
+    /// The editor's live flush (`flushLiveEditorContentToBlocks`) as one `bibliography.liveFlush` trace span (round M2 measurement: the
+    /// span is silent unless tracing is on). Same actor, same single `await`, nothing added: the call used to sit in the update itself, and
+    /// moved here, as three plain lines, because the class body is at SwiftLint's type-body-length cap.
+    private func flushLiveEditorContent(
+        _ flush: (_ scheduledForProjectId: String, _ overrideContent: String?) async -> Void, projectId: String, overrideContent: String?
+    ) async {
+        let liveFlushSpan = MdSpeed.span("bibliography.liveFlush")
+        await flush(projectId, overrideContent)
+        liveFlushSpan.end()
     }
 }

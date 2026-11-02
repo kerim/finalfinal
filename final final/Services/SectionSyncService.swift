@@ -341,6 +341,9 @@ class SectionSyncService {
         let reconciler = self.reconciler
         let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
 
+        // Round M2 measurement: `sectionSync.detachedWait` is the main thread waiting (free); the four `sectionSync.*` spans inside the
+        // detached closure run off the main thread; `sectionSync.mainTail` is the main-thread work after it.
+        let detachedWaitSpan = MdSpeed.span("sectionSync.detachedWait")
         do {
             try await Task.detached(priority: .utility) {
                 // 1-2. C6: every read `parseHeaders`/`reconcile` below depend on --
@@ -350,17 +353,20 @@ class SectionSyncService {
                 // that a concurrent write (this whole call runs off-MainActor, inside
                 // `Task.detached`) could interleave between. See
                 // `fetchSectionSyncSnapshot`'s doc comment for the full TOCTOU this closes.
-                let snapshot = try db.fetchSectionSyncSnapshot(projectId: pid)
+                let snapshot = try MdSpeed.timed("sectionSync.fetchSnapshot") { try db.fetchSectionSyncSnapshot(projectId: pid) }
                 let dbSections = snapshot.dbSections
-                let headers = SectionSyncService.parseHeaders(
-                    from: markdown, existingBibTitle: snapshot.existingBibTitle,
-                    existingNotesTitle: snapshot.existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
+                let headers = MdSpeed.timed("sectionSync.parseHeaders") {
+                    SectionSyncService.parseHeaders(
+                        from: markdown, existingBibTitle: snapshot.existingBibTitle,
+                        existingNotesTitle: snapshot.existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
+                }
 
                 // 3-4. Reconcile + apply -- skipped entirely while suppressed (§4d). Guarded
                 // on `!headers.isEmpty` same as before, only now nested under the
                 // suppression check rather than an early return, since step 5 below must
                 // still run even when headers is empty or suppression is active.
                 if !suppressReconcile && !headers.isEmpty {
+                    let changesSpan = MdSpeed.span("sectionSync.reconcileApply")
                     let changes = reconciler.reconcile(
                         headers: headers, dbSections: dbSections, projectId: pid,
                         bibliographyExistsInBlocks: snapshot.bibliographyExistsInBlocks,
@@ -369,19 +375,23 @@ class SectionSyncService {
                     if !changes.isEmpty {
                         try db.applySectionChanges(changes, for: pid)
                     }
+                    changesSpan.end()
                 }
 
                 // 5. Save full content to database ONLY when not zoomed -- ALWAYS runs,
                 // suppression or not (content-of-record is never suppressed).
                 if !isZoomed {
-                    try db.saveContent(markdown: markdown, for: pid)
+                    try MdSpeed.timed("sectionSync.saveContent") { try db.saveContent(markdown: markdown, for: pid) }
                 }
             }.value
         } catch {
             DebugLog.log(.sync, "[SectionSyncService] Error: \(error)")
         }
+        detachedWaitSpan.end()
 
         // Back on MainActor
+        let mainTailSpan = MdSpeed.span("sectionSync.mainTail")
+        defer { mainTailSpan.end() }
         lastSyncedContent = markdown
         if fromEditorChange {
             // Detect the false -> true transition specifically (not "is it edited"), so the

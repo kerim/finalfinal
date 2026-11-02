@@ -23,10 +23,19 @@ final class BuiltInProvider: ProofingProvider {
 
     func check(segments: [SpellCheckService.TextSegment]) async -> [SpellCheckService.SpellCheckResult] {
         var allResults: [SpellCheckService.SpellCheckResult] = []
+        // Round C1b measurement (MdSpeed.swift, plan step 1): one span for the whole check; its end line reports the longest SLICE, the
+        // main-thread stretch between two yields (one segment's check and suggestions), so a slice that blocks typing shows up. Silent
+        // and clock-free while tracing is off.
+        let tracing = StructuralTrace.isOn
+        var maxSliceMs = 0
+        let slicesSpan = MdSpeed.span("spellcheck.slice")
+        defer { slicesSpan.end("maxSliceMs=\(maxSliceMs) segments=\(segments.count)") }
 
         for segment in segments {
             guard !Task.isCancelled else { return allResults }
             await Task.yield()
+            let sliceStart = tracing ? StructuralTrace.nowMs() : 0
+            defer { if tracing { maxSliceMs = max(maxSliceMs, StructuralTrace.nowMs() - sliceStart) } }
 
             let nsString = segment.text as NSString
             let range = NSRange(location: 0, length: nsString.length)

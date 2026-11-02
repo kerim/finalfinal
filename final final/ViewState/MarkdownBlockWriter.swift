@@ -50,6 +50,14 @@
 //  LEGACY SWITCH. `isLegacyReparse` (the UI-test flag `FF_UI_TESTING_MD_LEGACY_REPARSE`, read when the editor state is
 //  created) turns every piece of this type off: the set-point methods return at once and the callers use today's code.
 //
+//  THE PARSE MEMO (t-2fbe4c9b, Phase 4c job 3). `prepare` looks the parse of the text up in `parseCache` (ViewState/MarkdownParseCache.swift:
+//  a byte-exact memo of `BlockParser.parse` and the open-fence scan, prepared in the background or stored by an earlier `prepare`)
+//  and parses on the main thread only on a miss; the `[MdWrite]` line ends with `cache=hit|miss`. Besides the lookup, `prepare` also
+//  changed in three ways: the Notes-title read and `ExportSettings.load()` (once; they build the key) now come BEFORE the open-fence
+//  check instead of after it, the miss path passes the bibliography names to the parse explicitly (so the stored entry is keyed by
+//  exactly what it was parsed with), and `line.chars` reads the key's contiguous text. The hold check, writer identity, `resolveMode`,
+//  the baseline side of the fence check, `fetchRows`, `baselineEntries`, the diff and the reservation are as they were, in the same order.
+//
 //  File layout (SwiftLint's type-body-length applies to the class body, so the parts sit in same-file extensions):
 //  the state and the public API here; the synchronous core and `writeNow` in "The synchronous core"; the completion
 //  in "Completion"; the `[MdWrite]` line in "The timing line".
@@ -108,13 +116,27 @@ final class MarkdownBlockWriter {
     /// t-4a8fd8af: the structural hold (count, held refire, waiters). Its type, its API and every write to it live in
     /// MarkdownBlockWriter+StructuralHold.swift; it is a stored property here only because an extension cannot add one.
     var structuralHoldState = StructuralHoldState()
+    /// t-2fbe4c9b: the memo of the whole-text parse `prepare` needs (see the header). `reset()` empties it; `noteLoaded` does not.
+    let parseCache: MarkdownParseCache
+    #if DEBUG
+    /// Test seams: the source of the temp ids the diff mints, and a look at the changes a step reserved.
+    var testMakeTempId: (() -> String)?
+    var testChangesObserver: ((BlockChanges) -> Void)?
+    fileprivate var tempIdSource: () -> String { testMakeTempId ?? MarkdownBlockDiff.makeTempId }
+    #else
+    fileprivate var tempIdSource: () -> String { MarkdownBlockDiff.makeTempId }
+    #endif
 
     /// True when the UI-test flag `FF_UI_TESTING_MD_LEGACY_REPARSE` is set: every new piece is off.
     var isLegacyReparse: Bool
     var isEnabled: Bool { !isLegacyReparse }
 
-    init(isLegacyReparse: Bool = TestMode.isUITestingMarkdownLegacyReparse) {
+    /// `parseMemoDisabled`: the UI-test flag `FF_UI_TESTING_NO_PARSE_MEMO` (read once, here): the parse memo and the scan memo are off.
+    init(
+        isLegacyReparse: Bool = TestMode.isUITestingMarkdownLegacyReparse, parseMemoDisabled: Bool = TestMode.isUITestingNoParseMemo
+    ) {
         self.isLegacyReparse = isLegacyReparse
+        parseCache = MarkdownParseCache(isDisabled: parseMemoDisabled)
     }
 
     // MARK: - Set-points
@@ -162,6 +184,7 @@ final class MarkdownBlockWriter {
         baseline = .rows
         consecutiveFailures = 0
         version += 1
+        parseCache.reset()
         structuralHoldState.pullOwed = false   // a pull owed to the old document must not act on the new one (O29)
     }
 
@@ -357,6 +380,10 @@ extension MarkdownBlockWriter {
     }
 
     func prepare(_ context: Context) -> Disposition {
+        // Round M2 measurement: every caller reaches the parse and diff through here; the span names its trigger (the `[MdWrite]` line
+        // this call may write later is matched to it, in order, by the UI test's report). Synchronous: the whole span is main-thread work.
+        let prepareSpan = MdSpeed.span("writer.prepare.\(context.trigger)")
+        defer { prepareSpan.end() }
         let clock = ContinuousClock()
         let start = clock.now
 
@@ -379,17 +406,35 @@ extension MarkdownBlockWriter {
             return failBeforeReservation(.refused(.epochUnavailable), context)
         }
 
-        var line = TimingLine(mode: mode.label)
+        // The parse memo (t-2fbe4c9b): the settings and the Notes title are read ONCE, here, and the key is built from them; on a hit the
+        // memo's blocks and fence answer stand in for the parse and the new-text fence scan below.
+        let lookupSpan = MdSpeed.span("parseCache.lookup")
+        let notesTitle = try? context.database.fetchNotesHeadingTitle(projectId: context.projectId)
+        let names = BlockParser.bibliographyNames(from: ExportSettings.load())
+        let key = MarkdownParseCache.Key(
+            text: context.text, projectId: context.projectId, notesTitle: notesTitle,
+            bibliographyHeaderName: names.headerName, graceNames: names.graceNames)
+        let cached = parseCache.lookup(key)
+        lookupSpan.end()
+
+        var line = TimingLine(mode: mode.label, cache: cached == nil ? "miss" : "hit")
         var rows: [Block]?
-        let fence = checkOpenFence(context, mode: mode, line: &line, rows: &rows)
+        let fence = checkOpenFence(context, mode: mode, cachedEndsOpen: cached?.endsOpen, line: &line, rows: &rows)
         if let stop = fence.stop { return stop }
 
-        let parseStart = clock.now
-        let notesTitle = try? context.database.fetchNotesHeadingTitle(projectId: context.projectId)
-        let parsed = BlockParser.parse(markdown: context.text, projectId: context.projectId, notesHeaderName: notesTitle)
-        line.parse = clock.now - parseStart
+        let parsed: [Block]
+        if let cached {
+            parsed = cached.blocks
+        } else {
+            let parseStart = clock.now
+            parsed = BlockParser.parse(
+                markdown: key.text, projectId: context.projectId, bibliographyHeaderName: names.headerName,
+                graceNames: names.graceNames, notesHeaderName: notesTitle)
+            line.parse = clock.now - parseStart
+            parseCache.store(key, blocks: parsed, endsOpen: fence.endsOpen)   // trigger (iv): the next step on this text hits
+        }
         line.blocks = parsed.count
-        line.chars = context.text.utf8.count
+        line.chars = key.text.utf8.count
 
         guard let result = diffAgainstBaseline(context, mode: mode, parsed: parsed, line: &line, rows: &rows) else {
             return failBeforeReservation(.unreadable, context)
@@ -443,11 +488,11 @@ extension MarkdownBlockWriter {
     /// computed from the assembled rows in `.rows` mode (only when the new text ends open, which is rare). `stop` is
     /// the disposition to return when the guard tripped (or the rows could not be read).
     fileprivate func checkOpenFence(
-        _ context: Context, mode: Mode, line: inout TimingLine, rows: inout [Block]?
+        _ context: Context, mode: Mode, cachedEndsOpen: Bool?, line: inout TimingLine, rows: inout [Block]?
     ) -> (endsOpen: Bool, stop: Disposition?) {
         let clock = ContinuousClock()
         let guardStart = clock.now
-        let newEndsOpen = BlockParser.endsInsideOpenFenceOrMath(context.text)
+        let newEndsOpen = cachedEndsOpen ?? BlockParser.endsInsideOpenFenceOrMath(context.text)   // the memo's answer on a hit
         line.guardPass = clock.now - guardStart
         guard newEndsOpen else { return (false, nil) }
 
@@ -498,7 +543,7 @@ extension MarkdownBlockWriter {
             line.align += clock.now - alignStart
         }
         let diffStart = clock.now
-        let result = MarkdownBlockDiff.diff(baseline: entries, new: parsed)
+        let result = MarkdownBlockDiff.diff(baseline: entries, new: parsed, makeTempId: tempIdSource)
         line.diff = clock.now - diffStart
         return result
     }
@@ -545,6 +590,9 @@ extension MarkdownBlockWriter {
         let pending = PendingWrite(
             prepared: prepared, line: line, versionAtReservation: version, stampEpoch: turn.stamp.epoch, token: inFlightToken)
         let changes = prepared.result.changes
+        #if DEBUG
+        testChangesObserver?(changes)
+        #endif
         let service = context.service
         inFlight = Task { [weak self] in
             let applyStart = ContinuousClock.now
@@ -687,7 +735,8 @@ extension MarkdownBlockWriter {
 
     /// The fields of the ONE `[MdWrite]` line both arms log (the per-block path and `legacyWholeDocumentReparse`), so the
     /// e2e reads the same fields from either:
-    /// `[MdWrite] mode=rows|text|legacy parse= align= guard= diff= mainThread= apply= u/i/d= filtered= blocks= chars= outcome=`.
+    /// `[MdWrite] mode=rows|text|legacy parse= align= guard= diff= mainThread= apply= u/i/d= filtered= blocks= chars= outcome= cache=hit|miss`
+    /// (`cache=` is the parse memo's answer, t-2fbe4c9b; the legacy arm has none).
     ///
     /// `align` is the stored-row read plus the baseline keys (rows mode only); `diff` is the difference and the change list;
     /// `mainThread` is the whole synchronous step on the main actor; `apply` is the wait for the turn plus the write (the
@@ -706,11 +755,13 @@ extension MarkdownBlockWriter {
         var blocks = 0
         var chars = 0
         var outcome = ""
+        /// t-2fbe4c9b: "hit" when the parse memo supplied the blocks, "miss" when this step parsed. nil on the legacy arm (no memo).
+        var cache: String?
 
         var text: String {
             "[MdWrite] mode=\(mode) parse=\(Self.format(parse)) align=\(Self.format(align)) guard=\(Self.format(guardPass)) "
                 + "diff=\(Self.format(diff)) mainThread=\(Self.format(mainThread)) apply=\(Self.format(apply)) "
-                + "u/i/d=\(counts) filtered=\(filtered) blocks=\(blocks) chars=\(chars) outcome=\(outcome)"
+                + "u/i/d=\(counts) filtered=\(filtered) blocks=\(blocks) chars=\(chars) outcome=\(outcome)" + (cache.map { " cache=\($0)" } ?? "")
         }
 
         static func format(_ duration: Duration) -> String {

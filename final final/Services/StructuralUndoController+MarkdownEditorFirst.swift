@@ -90,12 +90,22 @@ extension StructuralUndoController {
               editorFirstRootIsEligible(rootId: rootId, database: db, projectId: pid) else { return nil }
         let writer = editorState.markdownWriter
 
+        // Round M1 measurement (MdSpeed.swift): the Markdown Delete had no timeline of its own; this starts it at the menu click, so every
+        // `md-speed delete ...` span below reads its `+timeline=` offset from the click. Silent unless tracing is on.
+        StructuralTrace.beginOp(label: "sectionDelete")
+        MdSpeed.mark("entered")
+        let clickSpan = MdSpeed.span("click")
+        defer { clickSpan.end() }
+
         // Step 1 (A7): an earlier Markdown command finishes saving first. Delete, then Delete again at once, waits here (the gate came free
         // at the first one's step 7, its writer hold stays up until step 8), so past one second the existing notice shows (review DR-1,
-        // UX contract 4.2: a held structural command shows "Finishing the last change…").
+        // UX contract 4.2: a held structural command shows "Finishing the last change…"). t-2fbe4c9b: ONE notice belongs to the whole
+        // click, as for Duplicate: it stays through the page call and the reply turn (seconds on a book) and the `defer` takes it down.
         let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
+        defer { waiting.stop() }
+        let holdWaitSpan = MdSpeed.span("holdWait")
         await writer.awaitStructuralHoldReleased()
-        waiting.stop()
+        holdWaitSpan.end()
         guard editorState.activeLifecycle == nil else { return nil }
 
         // Step 2 (O7): the hold, and the `defer` that releases it on every early exit.
@@ -114,6 +124,7 @@ extension StructuralUndoController {
 
         // Step 5: the page call, with the B1 flush-and-retry once.
         let opId = UUID()
+        StructuralTrace.noteOpId(String(opId.uuidString.prefix(8)))   // round M1: the timeline lines carry the op's short id
         let attempt = await sendMarkdownDeleteWithRetry(opId: opId, rootId: rootId, redo: false, database: db, projectId: pid)
         guard let attempt, attempt.reply.succeeded, let preRaw = attempt.reply.preRaw, let postRaw = attempt.reply.postRaw else {
             DebugLog.log(
@@ -146,7 +157,9 @@ extension StructuralUndoController {
         efEditorKind[opId] = .markdown
         unifiedUndoService.record(StructuralEntry(id: opId, kind: .sectionDelete, title: "Delete Section", undoSnapshotId: nil))
         spy("efRecorded")
+        let descriptorSpan = MdSpeed.span("pushDescriptor")
         await pushDescriptor()
+        descriptorSpan.end()
         return .performed
     }
 
@@ -156,13 +169,20 @@ extension StructuralUndoController {
     /// the boundary hygiene the old body does is made (the page does NOT do it, judge D-7).
     func prepareMarkdownPageForStructuralCommand() async {
         guard let editorState else { return }
+        let prepareSpan = MdSpeed.span("prepare")   // round M1 measurement: the whole step, and each page call inside it
+        defer { prepareSpan.end() }
         #if DEBUG
         await testBeforeMarkdownPagePrepare?()
         #endif
+        await TestMode.holdMarkdownPagePrepare()   // t-2fbe4c9b: UI-test knob; returns at once unless FF_UI_TESTING_MD_PAGE_PREPARE_HOLD_MS is set
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseTask = nil
+        let cancelInsertionsSpan = MdSpeed.span("prepare.cancelPendingInsertions")
         await evalVoid("window.FinalFinal.cancelPendingInsertions?.()")
+        cancelInsertionsSpan.end()
+        let closePopupsSpan = MdSpeed.span("prepare.closeEditingPopups")
         await evalVoid("window.FinalFinal.closeEditingPopupsAndClearBoundaryState?.()")
+        closePopupsSpan.end()
         findBarState?.clearSearch()
     }
 
@@ -185,20 +205,26 @@ extension StructuralUndoController {
         opId: UUID, rootId: String, rootReference: MarkdownLeaderMap.RootReference?, redo: Bool, database: ProjectDatabase,
         projectId: String
     ) async -> (reply: MarkdownStructuralReply, map: MarkdownLeaderMap)? {
-        guard let rows = try? database.fetchBlocks(projectId: projectId) else { return nil }
-        let map = MarkdownLeaderMap(rows: rows)
+        guard let rows = try? MdSpeed.timed("fetchBlocks", { try database.fetchBlocks(projectId: projectId) }) else { return nil }
+        let map = MdSpeed.timed("leaderMap") { MarkdownLeaderMap(rows: rows) }
         // `rootReference`: the root is found again in the CURRENT rows by its heading line when its own id is gone (a slow undo
         // re-created the section's rows with fresh ids). nil: the id is trusted (the click, and the quick redo, whose reinsert restores
         // the ids).
         let currentRootId: String?
         if let rootReference { currentRootId = map.currentRootId(for: rootReference) } else { currentRootId = rootId }
-        guard let currentRootId, let json = map.request(opId: opId, rootId: currentRootId)?.json else { return nil }
+        guard let currentRootId,
+              let json = MdSpeed.timed("requestJson", { map.request(opId: opId, rootId: currentRootId)?.json }) else { return nil }
         let call = redo
             ? "markdownStructuralSwap('\(opId.uuidString)', 'redo', \(json))"
             : "markdownStructuralEditorFirst(\(json))"
-        guard let answer = await evalString("JSON.stringify(window.FinalFinal.\(call))"),
-              let data = answer.data(using: .utf8),
-              let reply = try? JSONDecoder().decode(MarkdownStructuralReply.self, from: data) else { return nil }
+        let pageCallSpan = MdSpeed.span("pageCall")
+        let answer = await evalString("JSON.stringify(window.FinalFinal.\(call))")
+        pageCallSpan.end("chars=\(answer?.utf16.count ?? 0)")
+        guard let answer else { return nil }
+        let decodeSpan = MdSpeed.span("replyDecode")
+        let reply = answer.data(using: .utf8).flatMap { try? JSONDecoder().decode(MarkdownStructuralReply.self, from: $0) }
+        decodeSpan.end()
+        guard let reply else { return nil }
         return (reply, map)
     }
 
@@ -251,14 +277,26 @@ extension StructuralUndoController {
     ) async {
         let editorState = context.editorState
         let writer = editorState.markdownWriter
+        let replyTurnSpan = MdSpeed.span("replyTurn")   // round M1 measurement: the whole reply turn, and each step inside it
+        defer { replyTurnSpan.end() }
+        // t-2fbe4c9b trigger (iii): the parse memo prepares the post-click text in the background while the wait below runs; step 8 reads it.
+        writer.prewarmParse(raw: postRaw, projectId: context.projectId, database: context.database)
+        let inFlightSpan = MdSpeed.span("inFlightWait")
         while let pending = writer.inFlight { await pending.value }
+        inFlightSpan.end()
+        let preText = MdSpeed.timed("recordText.pre") { MarkdownLeaderMap.recordText(fromRaw: preRaw) }
+        let prepareClickSpan = MdSpeed.span("prepareStructuralClick")
         writer.prepareStructuralClick(
-            text: MarkdownLeaderMap.recordText(fromRaw: preRaw), database: context.database, projectId: context.projectId,
+            text: preText, database: context.database, projectId: context.projectId,
             service: context.blockSync,
             refire: { [weak editorState] in editorState?.lifecycleHost?.scheduleSourceModeReparse(editorState?.content ?? "") })
+        prepareClickSpan.end()
         writer.noteQueuedStructuralJob()
+        let adoptSpan = MdSpeed.span("adopt")
         editorState.adoptMarkdownPageText(postRaw)   // O11: the record takes the page's text in this turn; nothing is pushed back
+        adoptSpan.end()
 
+        let sidebarSpan = MdSpeed.span("sidebar")
         let removedLeaders = Set(attempt.map.removedLeaderIds(rootId: rootId))
         editorState.pendingRemovalIds.formUnion(removedLeaders)
         editorState.pendingRestoreSections[opId] = nil
@@ -267,19 +305,24 @@ extension StructuralUndoController {
         visibleSections.removeAll { removedLeaders.contains($0.id) }
         editorState.sections = visibleSections
         editorState.recalculateParentRelationships()
+        sidebarSpan.end()
 
         run.countHandedToJob = true   // the job's task brings `pendingEditorFirstJobs` down once its future has resolved
         let gate = MarkdownStep8Gate()
         writer.structuralHoldState.step8Gates[jobKey ?? opId] = gate
         efEditorKind[opId] = .markdown
         if jobKey != nil { efSlots.markReserved(opId) }   // the quick redo's fresh job, as the Rich Text redo
+        let jobStartSpan = MdSpeed.span("jobStart")
         let reserved = await startEditorFirstJob(
             opId: opId, rootId: rootId, removedLeaders: removedLeaders, editorRemovedIds: nil,
             database: context.database, projectId: context.projectId, jobKey: jobKey, ownsPendingJobCount: true)
+        jobStartSpan.end()
         // D2/O21: the hand-off is the same synchronous turn as the starter's return, no `await` in between.
         if reserved {
             run.handedOff = true
+            let handOffSpan = MdSpeed.span("holdHandOff")
             startMarkdownHoldContinuation(hold: hold, opId: opId, jobKey: jobKey)
+            handOffSpan.end()
         } else {
             gate.finish()   // no continuation will run step 8
         }
@@ -291,6 +334,8 @@ extension StructuralUndoController {
     func flushTypingForMarkdownRetry(projectId: String) async -> Bool {   // internal: the drag-reorder click retries the same way
         guard let editorState, let raw = await evalString("window.FinalFinal.getContentRaw()") else { return false }
         editorState.adoptMarkdownPageText(raw)
+        let writeNowSpan = MdSpeed.span("writer.writeNow.retryFlush")   // round M2: names the caller of this writeNow
+        defer { writeNowSpan.end() }
         let outcome = await editorState.markdownWriter.writeNow(
             overrideContent: MarkdownLeaderMap.recordText(fromRaw: raw),
             editorState: editorState,
@@ -343,7 +388,9 @@ extension StructuralUndoController {
                 writer?.structuralHoldState.continuations[key] = nil
             }
             if let gate {
+                let jobEndedSpan = MdSpeed.span("jobEndedWait")   // round M1 measurement: hand-off to the job's end (queue wait + its write)
                 await Self.awaitJobEndedOrCancellation(gate: gate)
+                jobEndedSpan.end()
             } else {
                 await Self.awaitJobOutcomeOrCancellation(registry: registry, opId: key)
             }

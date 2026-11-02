@@ -110,8 +110,11 @@ extension CodeMirrorEditor.Coordinator {
             guard let data = message.body as? [String: Any] else { return true }
             let title = (data["title"] as? String) ?? ""
             let blockId = data["blockId"] as? String
+            MdSpeed.mark("contentMessage.received sectionChanged")   // round M2 measurement: the arrival, before the main-actor hop
             Task { @MainActor in
+                let messageSpan = MdSpeed.span("contentMessage.sectionChanged")
                 self.applySectionChange(title: title, blockId: blockId)
+                messageSpan.end()
             }
             return true
 
@@ -137,7 +140,10 @@ extension CodeMirrorEditor.Coordinator {
                 wasUndo = false
             }
             guard let content else { return true }
+            MdSpeed.mark("contentMessage.received contentChanged chars=\(content.utf16.count)")   // round M2: the arrival, before the hop
             Task { @MainActor in
+                let messageSpan = MdSpeed.span("contentMessage.contentChanged")   // round M2: the whole main-actor handling of the message
+                defer { messageSpan.end("chars=\(content.utf16.count)") }
                 // Set BEFORE handleContentPush's own early-return guards (mid-contentState
                 // transition, the 150ms push grace window, mid-reset) -- all cases where a
                 // local edit genuinely happened and must still count. Deliberately not
@@ -174,7 +180,9 @@ extension CodeMirrorEditor.Coordinator {
         case "selectionChanged":
             guard let text = message.body as? String else { return true }
             Task { @MainActor in
+                let messageSpan = MdSpeed.span("contentMessage.selectionChanged")
                 self.onSelectionChange?(text)
+                messageSpan.end()
             }
             return true
 
@@ -429,11 +437,17 @@ extension CodeMirrorEditor.Coordinator {
         guard let segmentsData = body["segments"] as? [[String: Any]],
               let requestId = body["requestId"] as? Int else { return }
         let segments = parseSpellcheckSegments(segmentsData)
+        // Round M2 measurement: one `md-speed ... spellcheck.check` span per call (segment count and characters in its end line) and one
+        // `spellcheck.deliver` span for the results' JSON encode and the script call; the call count is the number of spans in the window.
         self.spellcheckTask?.cancel()
         self.spellcheckTask = Task {
+            let checkSpan = MdSpeed.span("spellcheck.check")
             let results = await SpellCheckService.shared.check(segments: segments)
+            checkSpan.end("segments=\(segments.count) chars=\(segments.reduce(0) { $0 + $1.text.utf16.count })")
             guard !Task.isCancelled else { return }
+            let deliverSpan = MdSpeed.span("spellcheck.deliver")
             self.deliverSpellcheckResults(results, requestId: requestId)
+            deliverSpan.end()
         }
     }
 

@@ -1222,7 +1222,11 @@ class EditorViewState {
         // chained ahead of us, which is the common case. See the INVARIANT above: this is what
         // keeps `performSectionsRefresh`'s generation snapshot exactly as immediate as it was
         // before the chain existed.
-        await previous?.wait()
+        if let previous {
+            let chainWaitSpan = MdSpeed.span("refreshSections.chainWait")   // round M2 measurement: an await behind an earlier refresh
+            await previous.wait()
+            chainWaitSpan.end()
+        }
 
         if pendingRefreshToken == token {
             pendingRefreshToken = nil
@@ -1248,19 +1252,25 @@ class EditorViewState {
         }
         let generationAtFetch = outlineGeneration
         do {
+            let fetchSpan = MdSpeed.span("refreshSections.outlineFetch")   // round M2 measurement: an await; the read runs off the main thread
             let fetchedOutlineBlocks = try await Task.detached(priority: .userInitiated) {
                 try db.fetchOutlineBlocks(projectId: pid)
             }.value
+            fetchSpan.end()
             // Same filter as the live observation loop (plan D1.6): a section an editor-first delete just removed stays out.
             let outlineBlocks = withoutPendingRemovals(fetchedOutlineBlocks)
 
             let blockIds = outlineBlocks.map(\.id)
             let needsAggregate = Set(outlineBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
+            let countsSpan = MdSpeed.span("refreshSections.wordCounts")   // an await; the read runs off the main thread
             let counts = await Self.fetchBatchWordCounts(
                 database: db,
                 blockIds: blockIds,
                 needsAggregate: needsAggregate
             )
+            countsSpan.end()
+            let applySpan = MdSpeed.span("refreshSections.apply")   // main thread: the merge, the assignment and the sidebar callback
+            defer { applySpan.end() }
 
             // MUST-FIX 1 (task plan): `sections` may have been reassigned by another writer
             // (the live observation loop, a structural-undo sequence, hierarchy enforcement)

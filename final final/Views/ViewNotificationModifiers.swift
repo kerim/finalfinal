@@ -20,6 +20,7 @@ struct ContentSyncServices {
     let footnoteSync: FootnoteSyncService
     let autoBackup: AutoBackupService
     let documentManager: DocumentManager
+    let scanMemo: MarkdownScanMemo   // t-2fbe4c9b: the editor's handler scan memo; no default, so a site that omits it does not compile
 }
 
 /// Hosts the content/editor-mode/zoom `.onChange` observers (plus the annotation-mode and
@@ -62,14 +63,9 @@ struct ContentSyncObserverHost<Content: View>: View {
             .onChange(of: editorState.content) { _, newValue in
                 Self.handleContentChange(newValue, editorState: editorState, services: services)
             }
-            .onChange(of: editorState.editorMode) { _, _ in
-                editorState.blockReparseTask?.cancel()
-                editorState.blockReparseTask = nil
-                // Phase 4a: the Markdown per-block writer's baseline belongs to the editor that just went away. A write in
-                // flight is not cancelled (its reserved sequence must settle): it lands before the switch's own whole-document
-                // flush, or Milkdown's `configure` skips it (`skippedConsumed`); either way its completion sees the new
-                // version and leaves the baseline alone.
-                editorState.markdownWriter.reset()
+            .onChange(of: editorState.editorMode) { _, newMode in
+                // The pending re-parse and the Markdown writer's reset, then (for Markdown) the load prewarm again: all in the method.
+                editorState.handleEditorModeChange(to: newMode, documentManager: services.documentManager)
             }
             .onChange(of: editorState.zoomedSectionId) { _, newValue in
                 services.sectionSync.isContentZoomed = (newValue != nil)
@@ -100,8 +96,8 @@ struct ContentSyncObserverHost<Content: View>: View {
         // scan for changed citations and the page work happen later, off this path. Before the idle guard below, so text assigned
         // during a transition (zoom in or out, project open or close) reaches the scheduler too and its next background fill never
         // works from an older text; and so a zoomed editor's text (the zoomed section, which is what a switch to Rich Text would
-        // load) counts as well.
-        EditorPreloader.shared.noteDocumentChanged(newValue)
+        // load) counts as well. (Round M1: each part of this handler is an `md-speed` span, MdSpeed.swift.)
+        MdSpeed.timed("contentChange.noteDocumentChanged") { EditorPreloader.shared.noteDocumentChanged(newValue) }
 
         guard editorState.contentState == .idle else {
             FootnoteDiag.log("content change IGNORED by handleContentChange: contentState=\(editorState.contentState) length=\(newValue.utf8.count)")
@@ -125,11 +121,15 @@ struct ContentSyncObserverHost<Content: View>: View {
 
         // BlockSyncService handles content -> block DB sync via polling
         // SectionSyncService syncs the section table (used by version history snapshots)
-        services.sectionSync.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds, suppressReconcile: suppressReconcile)
-        services.annotationSync.contentChanged(newValue)
+        MdSpeed.timed("contentChange.sectionSync") {
+            services.sectionSync.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds, suppressReconcile: suppressReconcile)
+        }
+        MdSpeed.timed("contentChange.annotationSync") { services.annotationSync.contentChanged(newValue) }
 
         // When in source mode, re-parse blocks (BlockSyncService only works with Milkdown)
-        scheduleSourceModeReparse(newValue: newValue, editorState: editorState, services: services)
+        MdSpeed.timed("contentChange.scheduleSourceModeReparse") {
+            scheduleSourceModeReparse(newValue: newValue, editorState: editorState, services: services)
+        }
 
         // Skip bibliography sync when zoomed - we don't have full document context
         // Bibliography will be synced when user zooms out and full content is rebuilt
@@ -140,10 +140,10 @@ struct ContentSyncObserverHost<Content: View>: View {
 
         // Check for citation changes and update bibliography if needed
         // Always call even when citekeys is empty - this triggers bibliography removal
-        syncCitationsAndFootnotes(newValue: newValue, services: services)
+        MdSpeed.timed("contentChange.syncCitationsAndFootnotes") { syncCitationsAndFootnotes(newValue: newValue, services: services) }
 
         // Trigger auto-backup timer on content change
-        services.autoBackup.contentDidChange()
+        MdSpeed.timed("contentChange.autoBackup") { services.autoBackup.contentDidChange() }
     }
 
     /// Dispatches the source-mode block re-parse to the zoomed or non-zoomed path.
@@ -198,17 +198,19 @@ struct ContentSyncObserverHost<Content: View>: View {
             DebugLog.log(.lifecycle, "[SourceReparse] full re-parse not scheduled: a close/switch/quit holds the editor")
             return
         }
-        guard let db = services.documentManager.projectDatabase,
-              let pid = services.documentManager.projectId else { return }
+        guard let db = services.documentManager.projectDatabase, let pid = services.documentManager.projectId else { return }
         editorState.blockReparseTask?.cancel()
         editorState.blockReparseGeneration += 1
         let myGeneration = editorState.blockReparseGeneration
         let debounce = editorState.sourceReparseDebounce
+        editorState.markdownWriter.prewarmParseAfterTypingPause(raw: editorState.content, projectId: pid, database: db)   // t-2fbe4c9b (ii)
         editorState.blockReparseTask = Task {
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
             guard editorState.blockReparseGeneration == myGeneration else { return }
             if editorState.markdownWriter.isEnabled {
+                // t-2fbe4c9b (C8): wait (at most 0.8 s) for this text's typing-pause parse, so the fire's step finds it; see `ensure`.
+                await editorState.markdownWriter.parseCache.ensure(raw: editorState.content, projectId: pid, database: db)
                 while let inFlight = editorState.markdownWriter.inFlight {
                     await inFlight.value
                 }
@@ -271,19 +273,21 @@ struct ContentSyncObserverHost<Content: View>: View {
     @MainActor
     private static func syncCitationsAndFootnotes(newValue: String, services: ContentSyncServices) {
         guard let projectId = services.documentManager.projectId else { return }
-        let citekeys = BibliographySyncService.extractCitekeys(from: newValue)
-        services.bibliographySync.checkAndUpdateBibliography(
-            currentCitekeys: citekeys,
-            projectId: projectId
-        )
+        // t-2fbe4c9b: the scans come from the scan memo for this exact text (byte for byte), else it runs the same scan; same turn, same values.
+        let citekeys = MdSpeed.timed("contentChange.extractCitekeys") { services.scanMemo.citekeys(for: newValue, projectId: projectId) }
+        MdSpeed.timed("contentChange.checkAndUpdateBibliography") {
+            services.bibliographySync.checkAndUpdateBibliography(currentCitekeys: citekeys, projectId: projectId)
+        }
 
         // Check for footnote changes and update #Notes section
-        let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: newValue)
-        services.footnoteSync.checkAndUpdateFootnotes(
-            footnoteRefs: footnoteRefs,
-            projectId: projectId,
-            fullContent: newValue
-        )
+        let footnoteRefs = MdSpeed.timed("contentChange.extractFootnoteRefs") { services.scanMemo.footnoteRefs(for: newValue, projectId: projectId) }
+        MdSpeed.timed("contentChange.checkAndUpdateFootnotes") {
+            services.footnoteSync.checkAndUpdateFootnotes(
+                footnoteRefs: footnoteRefs,
+                projectId: projectId,
+                fullContent: newValue
+            )
+        }
     }
 }
 

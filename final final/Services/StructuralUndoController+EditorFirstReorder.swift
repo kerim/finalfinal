@@ -216,6 +216,7 @@ extension StructuralUndoController {
         ownsPendingJobCount: Bool = false
     ) async -> Bool {
         guard let editorState else { return false }
+        let setupSpan = MdSpeed.span("jobStart.setup")   // round M2: the synchronous setup on the main thread, up to the Task's creation
         efSlots.open(opId)
         let registry = editorState.efJobRegistry
         registry.register(opId)
@@ -255,23 +256,30 @@ extension StructuralUndoController {
                 self?.notifyMarkdownJobEnded(key: opId, outcome: .abandoned)   // a Markdown reorder's hold continuation (no-op in Rich Text)
                 return
             }
+            let performSpan = MdSpeed.span("job.perform")   // round M2: the job's whole run (steps 1 to 8 of the system write)
             let result = await job.perform(
                 on: blockSync, identity: identity, registry: registry,
                 onReserved: {
                     StructuralTrace.log("onReserved fired")
                     reserved.fireReserved()
                 })
+            performSpan.end()
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
             // A Markdown reorder's hold continuation waits on this (a no-op for a job without a step-8 gate, i.e. every Rich Text job).
             // WITHOUT it the Markdown writer's hold would stay up for good (t-4a8fd8af slice 2).
+            let notifySpan = MdSpeed.span("job.notifyEnded")   // synchronous: resolves the step-8 gate, whose waiter then needs the main thread
             self?.notifyMarkdownJobEnded(key: opId, outcome: JobOutcome(result.outcome))
+            notifySpan.end()
             await self?.editorFirstJobSettled(
                 opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: [], epoch: epochAtClick, jobKey: nil,
                 kind: .sectionReorder)
         }
         efSettleTasks[opId] = settleTask
+        setupSpan.end()
+        let reservedWaitSpan = MdSpeed.span("jobStart.reservedWait")   // await: the main thread is free; the job's Task runs meanwhile
         await reserved.wait()
+        reservedWaitSpan.end()
         return reserved.didReserve
     }
 

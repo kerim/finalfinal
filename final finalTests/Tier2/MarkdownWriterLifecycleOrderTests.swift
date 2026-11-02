@@ -62,7 +62,8 @@ struct MarkdownWriterLifecycleOrderTests {
             bibliographySync: BibliographySyncService(),
             footnoteSync: FootnoteSyncService(),
             autoBackup: AutoBackupService(),
-            documentManager: documentManager
+            documentManager: documentManager,
+            scanMemo: MarkdownScanMemo()
         )
         ContentSyncObserverHost<EmptyView>.scheduleSourceModeReparse(
             newValue: text, editorState: rig.editorState, services: services)

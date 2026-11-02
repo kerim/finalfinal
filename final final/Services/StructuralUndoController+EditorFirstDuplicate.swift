@@ -198,6 +198,7 @@ extension StructuralUndoController {
         jobKey: UUID? = nil, ownsPendingJobCount: Bool = false, copiesAreLeadersOnly: Bool = false
     ) async -> Bool {
         guard let editorState else { return false }
+        let setupSpan = MdSpeed.span("jobStart.setup")   // round M2: the synchronous setup on the main thread, up to the Task's creation
         efSlots.open(opId)
         let registry = editorState.efJobRegistry
         let registryKey = jobKey ?? opId
@@ -240,16 +241,20 @@ extension StructuralUndoController {
                 self?.notifyMarkdownJobEnded(key: registryKey, outcome: .abandoned)   // a Markdown duplicate's hold continuation
                 return
             }
+            let performSpan = MdSpeed.span("job.perform")   // round M2: the job's whole run (steps 1 to 8 of the system write)
             let result = await job.perform(
                 on: blockSync, identity: identity, registry: registry,
                 onReserved: {
                     StructuralTrace.log("onReserved fired")
                     reserved.fireReserved()
                 })
+            performSpan.end()
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
             // A Markdown duplicate's hold continuation waits for this (t-4a8fd8af slice 3); a no-op for a job without a gate (Rich Text).
+            let notifySpan = MdSpeed.span("job.notifyEnded")   // synchronous: resolves the step-8 gate, whose waiter then needs the main thread
             self?.notifyMarkdownJobEnded(key: registryKey, outcome: JobOutcome(result.outcome))
+            notifySpan.end()
             var idsDisagree = false
             if case .applied(let output) = result.outcome, let mismatch = output.copiesMismatch {
                 if copiesAreLeadersOnly {
@@ -277,7 +282,10 @@ extension StructuralUndoController {
                 kind: .sectionDuplicate, pushesDatabaseBlockIds: idsDisagree)
         }
         efSettleTasks[opId] = settleTask
+        setupSpan.end()
+        let reservedWaitSpan = MdSpeed.span("jobStart.reservedWait")   // await: the main thread is free; the job's Task runs meanwhile
         await reserved.wait()
+        reservedWaitSpan.end()
         return reserved.didReserve
     }
 
@@ -338,9 +346,11 @@ extension StructuralUndoController {
         let projectId = editorState.currentProjectId ?? ""
         let sourceByNew = Dictionary(copies.map { ($0.newId, $0.sourceId) }, uniquingKeysWith: { first, _ in first })
         let sourceIds = insertedSections.compactMap { sourceByNew[$0.id] }.filter { !$0.isEmpty && !$0.hasPrefix("temp-") }
+        let originalsSpan = MdSpeed.span("sidebar.originalsRead")   // round M1 measurement: the one database read on the main thread
         let originals: [String: Block] = sourceIds.isEmpty ? [:] : Dictionary(
             ((try? database.read { try Block.filter(keys: sourceIds).fetchAll($0) }) ?? []).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first })
+        originalsSpan.end()
         let sections = editorState.sections
         let rootSort = sections.first { $0.id == rootId }?.sortOrder ?? 0
         var leaders: [Block] = []
@@ -363,9 +373,13 @@ extension StructuralUndoController {
         if let anchor { editorState.pendingRestoreAnchors[opId] = anchor }
         editorState.pendingRestoreSections[opId] = leaders
         let restored = PendingRestore(leaders: leaders.map { SectionViewModel(from: $0) }, anchor: anchor)
+        let mergeSpan = MdSpeed.span("sidebar.mergeAssign")   // round M1 measurement: overlay merge + sections assignment + parent recalculation
         editorState.sections = SidebarRestoreOverlay.merging([restored], into: sections)
         editorState.recalculateParentRelationships()
+        mergeSpan.end()
+        let refreshSpan = MdSpeed.span("sidebar.refreshSections")   // returns at once: the read runs off the main thread
         editorState.refreshSections()
+        refreshSpan.end()
     }
 
     /// The anchor for a copy of the section rooted at `rootId`: right after the last entry of the sidebar's list that belongs to that

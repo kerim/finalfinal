@@ -198,6 +198,7 @@ extension ContentView {
                 editorState.flushContentToDatabase(overrideContent: overrideContent)
                 return
             }
+            let writeNowSpan = MdSpeed.span("writer.writeNow.bibliographyFlush")   // round M2: names the caller of this writeNow
             let outcome = await editorState.markdownWriter.writeNow(
                 overrideContent: overrideContent,
                 editorState: editorState,
@@ -210,6 +211,7 @@ extension ContentView {
                     editorState.lifecycleHost?.scheduleSourceModeReparse(editorState.content)
                 }
             )
+            writeNowSpan.end()
             if outcome == .fallBackToDirectWrite {
                 editorState.flushContentToDatabase(overrideContent: overrideContent)
             }
@@ -448,6 +450,8 @@ extension ContentView {
             // Markdown per-block writer compares with the stored rows from here. (CodeMirror's `onWebViewReady` and every
             // later Swift push into it do the same; calling it more often than needed only costs one re-align.)
             editorState.markdownWriter.noteLoaded(text: editorState.content, pid: pid)
+            // t-2fbe4c9b trigger (i): a project opened while the editor is already in Markdown mode (the close tail's `reset()` came first).
+            if editorState.editorMode == .source { editorState.markdownWriter.prewarmParse(raw: editorState.content, projectId: pid, database: db) }
         } catch {
             DebugLog.log(.lifecycle, "[ContentView] Failed to load content: \(error.localizedDescription)")
         }

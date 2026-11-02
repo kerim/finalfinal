@@ -36,6 +36,12 @@ extension ContentView {
         guard writer.isEnabled else { return }
         writer.noteLoaded(text: editorState.sourceContent, pid: editorState.currentProjectId)
         guard let database = documentManager.projectDatabase, let projectId = documentManager.projectId else { return }
+        // t-2fbe4c9b trigger (i): the parse memo prepares the text this editor is about to be handed, in the background. This runs from the
+        // WebView's ready callback, which on a Rich Text -> Markdown switch can come BEFORE the `editorMode` onChange's `writer.reset()` of the
+        // same switch (the preloaded WebView is ready inside `makeNSView`, in the update that changes the mode; the onChange action runs after
+        // it), and that reset wipes this request. So the onChange asks again right after its reset (ViewNotificationModifiers.swift); a second
+        // request for the same text costs about a millisecond. A request made here is not lost when the callback comes after the reset.
+        editorState.requestMarkdownLoadPrewarm(documentManager: documentManager)
         blockSyncService.ensureWriter(
             database: database,
             projectId: projectId,

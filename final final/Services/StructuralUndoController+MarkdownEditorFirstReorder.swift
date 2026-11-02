@@ -84,11 +84,20 @@ extension StructuralUndoController {
               blockSync.writer?.database === db, blockSync.writer?.projectId == pid else { return nil }
         let writer = editorState.markdownWriter
 
+        // Round M1 measurement (MdSpeed.swift): the drag's timeline starts at the DROP (`ContentView.reorderSection` calls `beginOp`), so
+        // nothing is begun here; `noteOpId` below gives it the op's short id. This mark says the gate turn reached the Markdown click.
+        MdSpeed.mark("entered")
+        let clickSpan = MdSpeed.span("click")
+        defer { clickSpan.end() }
+
         // Step 2: an earlier Markdown command finishes saving first. Held, never refused; past one second the notice shows
-        // (UX contract 4.2: "Finishing the last change…").
+        // (UX contract 4.2: "Finishing the last change…"). t-2fbe4c9b: ONE notice belongs to the whole click, as for Duplicate: it stays
+        // through the page call and the reply turn and the `defer` takes it down (`stop()` is idempotent) on every way out.
         let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
+        defer { waiting.stop() }
+        let holdWaitSpan = MdSpeed.span("holdWait")
         await writer.awaitStructuralHoldReleased()
-        waiting.stop()
+        holdWaitSpan.end()
 
         // Step 3: the wait can span a lifecycle or a zoom (zoom is not on the structural gate): the page then holds the zoomed text, which
         // this click must not move; the old body, which knows the zoomed state, gets the press.
@@ -115,7 +124,7 @@ extension StructuralUndoController {
         efOpEpoch[opId] = 1
         let click = MarkdownReorderClick(opId: opId, rootId: rootId, plan: plan, changedLevels: changedLevels)
         let trace = StructTrace(label: "sectionReorder", opId: String(opId.uuidString.prefix(8)))
-        StructuralTrace.beginOp(label: "sectionReorder", opId: trace.opId)
+        StructuralTrace.noteOpId(trace.opId)   // round M1: the timeline began at the drop (`reorderSection`), so only the id is given here
         trace.log("start (editor-first) mode=markdown")
 
         // Step 8: the page call, with the leadersMismatch flush-and-retry once.
@@ -153,7 +162,9 @@ extension StructuralUndoController {
         efEditorKind[opId] = .markdown
         unifiedUndoService.record(StructuralEntry(id: opId, kind: .sectionReorder, title: "Reorder Sections", undoSnapshotId: nil))
         spy("efRecorded")
+        let descriptorSpan = MdSpeed.span("pushDescriptor")
         await pushDescriptor()
+        descriptorSpan.end()
         trace.log("performed")
         return .performed
     }
@@ -172,14 +183,19 @@ extension StructuralUndoController {
     private func sendMarkdownReorder(
         _ click: MarkdownReorderClick, database: ProjectDatabase, projectId: String
     ) async -> MarkdownStructuralReply? {
-        guard let rows = try? database.fetchBlocks(projectId: projectId) else { return nil }
-        let map = MarkdownLeaderMap(rows: rows)
-        guard let json = map.reorderRequest(
-            opId: click.opId, rootId: click.rootId, order: click.plan.map(\.id), changedLevels: click.changedLevels
-        )?.json else { return nil }
-        guard let answer = await evalString("JSON.stringify(window.FinalFinal.markdownStructuralReorder(\(json)))"),
-              let data = answer.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(MarkdownStructuralReply.self, from: data)
+        guard let rows = try? MdSpeed.timed("fetchBlocks", { try database.fetchBlocks(projectId: projectId) }) else { return nil }
+        let map = MdSpeed.timed("leaderMap") { MarkdownLeaderMap(rows: rows) }
+        guard let json = MdSpeed.timed("requestJson", {
+            map.reorderRequest(opId: click.opId, rootId: click.rootId, order: click.plan.map(\.id), changedLevels: click.changedLevels)?.json
+        }) else { return nil }
+        let pageCallSpan = MdSpeed.span("pageCall")
+        let answer = await evalString("JSON.stringify(window.FinalFinal.markdownStructuralReorder(\(json)))")
+        pageCallSpan.end("chars=\(answer?.utf16.count ?? 0)")
+        guard let answer else { return nil }
+        let decodeSpan = MdSpeed.span("replyDecode")
+        let reply = answer.data(using: .utf8).flatMap { try? JSONDecoder().decode(MarkdownStructuralReply.self, from: $0) }
+        decodeSpan.end()
+        return reply
     }
 
     /// The page call with the B1 flush-and-retry once, as the Delete's (`sendMarkdownDeleteWithRetry`): a leader the page found does not
@@ -210,31 +226,48 @@ extension StructuralUndoController {
     ) async {
         let editorState = context.editorState
         let writer = editorState.markdownWriter
+        let replyTurnSpan = MdSpeed.span("replyTurn")   // round M1 measurement: the whole reply turn, and each step inside it
+        defer { replyTurnSpan.end() }
+        // t-2fbe4c9b trigger (iii): the parse memo prepares the post-click text in the background while the wait below runs; step 8 reads it.
+        writer.prewarmParse(raw: postRaw, projectId: context.projectId, database: context.database)
         // What the sidebar shows at once: the planned order with the ids the page held no leader for taken out of the job's order. The
         // page has already moved, so this comes BEFORE the wait for the writer's last write (it can sit behind a book-length typing batch
         // or the previous command's flush for hundreds of ms: the card would snap back and sidebar and page would disagree). It needs
         // only the plan, the levels and the page's skippedIds; the put-back lifts it if the job fails.
+        let sidebarSpan = MdSpeed.span("sidebar")
         let working = showReorderInSidebar(
             opId: click.opId, plan: click.plan, changedLevels: click.changedLevels, skippedIds: skippedIds)
+        sidebarSpan.end()
+        let inFlightSpan = MdSpeed.span("inFlightWait")
         while let pending = writer.inFlight { await pending.value }
+        inFlightSpan.end()
+        let preText = MdSpeed.timed("recordText.pre") { MarkdownLeaderMap.recordText(fromRaw: preRaw) }
+        let prepareClickSpan = MdSpeed.span("prepareStructuralClick")
         writer.prepareStructuralClick(
-            text: MarkdownLeaderMap.recordText(fromRaw: preRaw), database: context.database, projectId: context.projectId,
+            text: preText, database: context.database, projectId: context.projectId,
             service: context.blockSync,
             refire: { [weak editorState] in editorState?.lifecycleHost?.scheduleSourceModeReparse(editorState?.content ?? "") })
+        prepareClickSpan.end()
         writer.noteQueuedStructuralJob()
+        let adoptSpan = MdSpeed.span("adopt")
         editorState.adoptMarkdownPageText(postRaw)   // O11: the record takes the page's text in this turn; nothing is pushed back
+        adoptSpan.end()
 
         run.countHandedToJob = true   // the job's task brings `pendingEditorFirstJobs` down once its future has resolved
         let gate = MarkdownStep8Gate()
         writer.structuralHoldState.step8Gates[click.opId] = gate
         efEditorKind[click.opId] = .markdown
+        let jobStartSpan = MdSpeed.span("jobStart")
         let reserved = await startEditorFirstReorderJob(
             opId: click.opId, rootId: click.rootId, leaderIds: working.leaderIds, levels: working.levels,
             database: context.database, projectId: context.projectId, ownsPendingJobCount: true)
+        jobStartSpan.end()
         // O21: the hand-off is the same synchronous turn as the starter's return, no `await` in between.
         if reserved {
             run.handedOff = true
+            let handOffSpan = MdSpeed.span("holdHandOff")
             startMarkdownHoldContinuation(hold: hold, opId: click.opId)
+            handOffSpan.end()
         } else {
             gate.finish()   // no continuation will run step 8
         }

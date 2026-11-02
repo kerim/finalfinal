@@ -56,9 +56,13 @@ extension StructuralUndoController {
         defer { writer.structuralHoldState.step8Gates[key]?.finish() }
         guard let outcome, outcome != .abandoned else { return }
         spy("md8Begin")
+        let step8Span = MdSpeed.span("step8")   // round M1 measurement: step 8 as a whole, and each step inside it
+        defer { step8Span.end() }
 
         // (a) D1: wait for the write in flight FIRST. No other Markdown write can start meanwhile: the hold is still up.
+        let inFlightSpan = MdSpeed.span("step8.inFlightWait")
         while let pending = writer.inFlight { await pending.value }
+        inFlightSpan.end()
         spy("md8InFlightDone")
 
         // (a2) B8: a failed job. If the document is still the one the click made, the editor puts the section back.
@@ -68,7 +72,9 @@ extension StructuralUndoController {
 
         // (b) the live text, read AFTER the wait.
         let live: String?
+        let readSpan = MdSpeed.span("step8.getContentRaw")
         if let readLive { live = await readLive() } else { live = await evalString("window.FinalFinal.getContentRaw()") }
+        readSpan.end("chars=\(live?.utf16.count ?? 0)")
         spy("md8Read")
 
         // (c) one synchronous turn (the helper has no `await`).
@@ -76,24 +82,37 @@ extension StructuralUndoController {
         spy("md8Reserved")
 
         // (d) the flush has applied.
+        let flushSpan = MdSpeed.span("step8.flushWait")
         await flush?.value
+        flushSpan.end()
         spy("md8FlushApplied")
     }
 
     /// Step 8 (c): reserve the flush, adopt the live text into the content record, release the hold. Always releases the hold (the token
     /// is idempotent), also when nothing can be flushed (no answer from the page, a lifecycle armed, the mode or the project changed).
     private func markdownStep8Turn(live: String?, hold: MarkdownStructuralHold) -> Task<Void, Never>? {
-        defer { hold.release() }
+        let turnSpan = MdSpeed.span("step8.turn")   // round M1 measurement: the whole synchronous turn (ends after the hold's release below)
+        defer { turnSpan.end() }
+        defer {
+            let releaseSpan = MdSpeed.span("step8.holdRelease")
+            hold.release()
+            releaseSpan.end()
+        }
         guard let editorState, let live, let blockSync = blockSyncService, let db = editorState.projectDatabase,
               let pid = editorState.currentProjectId, editorState.activeLifecycle == nil, editorState.editorMode == .source,
               editorState.zoomedSectionId == nil else {
             DebugLog.alwaysPersisted("[MdWrite] step 8: no live text or the editor state changed; nothing flushed (the next save writes it)")
             return nil
         }
+        let liveText = MdSpeed.timed("step8.recordText") { MarkdownLeaderMap.recordText(fromRaw: live) }
+        let flushSpan = MdSpeed.span("step8.reserveStructuralFlush")
         let flush = editorState.markdownWriter.reserveStructuralFlush(
-            text: MarkdownLeaderMap.recordText(fromRaw: live), database: db, projectId: pid, service: blockSync,
+            text: liveText, database: db, projectId: pid, service: blockSync,
             refire: { [weak editorState] in editorState?.lifecycleHost?.scheduleSourceModeReparse(editorState?.content ?? "") })
+        flushSpan.end()
+        let adoptSpan = MdSpeed.span("step8.adopt")
         editorState.adoptMarkdownPageText(live)   // O25
+        adoptSpan.end()
         return flush
     }
 

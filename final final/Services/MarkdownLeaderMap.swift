@@ -364,7 +364,9 @@ struct MarkdownLeaderMap: Equatable {
 
     /// The text of the content record for a raw page text: the section anchors and the bibliography opening marker removed (the end
     /// marker stays, as in `editorState.content`). What the click hands the writer as "the text up to the click".
-    @MainActor
+    ///
+    /// Callable from any thread (t-2fbe4c9b): `SectionSyncService.anchorPattern` and `stripBibliographyMarker` are both `nonisolated`, and the
+    /// parse memo's background task (`MarkdownParseCache`) strips the page text with this same function.
     static func recordText(fromRaw raw: String) -> String {
         let anchorless = SectionSyncService.anchorPattern.stringByReplacingMatches(
             in: raw, options: [], range: NSRange(raw.startIndex..., in: raw), withTemplate: "")

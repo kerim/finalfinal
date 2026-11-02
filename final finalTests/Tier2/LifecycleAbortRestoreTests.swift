@@ -117,7 +117,8 @@ extension LifecycleEntryStatic {
                     bibliographySync: BibliographySyncService(),
                     footnoteSync: FootnoteSyncService(),
                     autoBackup: AutoBackupService(),
-                    documentManager: documentManager
+                    documentManager: documentManager,
+                    scanMemo: MarkdownScanMemo()
                 )
                 ContentSyncObserverHost<EmptyView>.scheduleSourceModeReparse(
                     newValue: content, editorState: rig.editorState, services: services)

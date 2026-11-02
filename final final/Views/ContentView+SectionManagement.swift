@@ -166,6 +166,12 @@ extension ContentView {
     }
 
     func reorderSection(_ request: SectionReorderRequest) {
+        // Round M1 measurement (MdSpeed.swift): in Markdown mode the drop is the drag's click. The timeline begins here, so every
+        // `md-speed drag ...` span reads its `+timeline=` offset from the drop. Silent unless tracing is on.
+        if editorState.editorMode == .source {
+            StructuralTrace.beginOp(label: "sectionReorder")
+            MdSpeed.mark("drop-received")
+        }
         sectionSyncService.cancelPendingSync()
 
         // The 3 validation guards (newParentId == sectionId; section not found;
@@ -199,9 +205,10 @@ extension ContentView {
         // answers `.noOp` (performed, no entry) and `.failed` (refused: one silent retry, then the toast) on the right list, so a
         // busy gate sends the request on instead of deciding here.
         let gateBusy = structuralGateIsBusy
-        switch SectionReorderPlanner.plan(
-            request: request, in: editorState.sections, syncService: sectionSyncService
-        ) {
+        let dropPlanSpan = MdSpeed.span("dropPlan")   // round M1 measurement: the drop-time plan, made on the main thread before the gate
+        let dropPlan = SectionReorderPlanner.plan(request: request, in: editorState.sections, syncService: sectionSyncService)
+        dropPlanSpan.end()
+        switch dropPlan {
         case .plan(let sections):
             // This plan only tells us the drop is real (neither a no-op nor a failure). The controller plans AGAIN under its
             // structural gate, from the sidebar list as it is when its turn comes, and carries that plan out: editor-first in Rich

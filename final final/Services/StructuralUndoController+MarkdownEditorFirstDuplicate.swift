@@ -136,6 +136,13 @@ extension StructuralUndoController {
               editorFirstRootIsEligible(rootId: rootId, database: db, projectId: pid) else { return nil }
         let writer = editorState.markdownWriter
 
+        // Round M1 measurement (MdSpeed.swift): the timeline starts here, at the menu click (it used to start after the hold wait and the
+        // page preparation, which left those two steps outside it); `noteOpId` below gives it the op's short id. Silent unless tracing is on.
+        StructuralTrace.beginOp(label: "sectionDuplicate")
+        MdSpeed.mark("entered")
+        let clickSpan = MdSpeed.span("click")
+        defer { clickSpan.end() }
+
         // Step 2: an earlier Markdown command finishes saving first. Held, never refused. Duplicate, then Duplicate the copy at once, waits
         // here. ONE notice belongs to the whole click (UX contract 4.2: "Finishing the last change…"; floor 3: past one second the app
         // shows it is working): it is counted from the press, not from the end of the wait, and it stays through the page call and the
@@ -144,7 +151,9 @@ extension StructuralUndoController {
         // changed timeline.
         let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
         defer { waiting.stop() }
+        let holdWaitSpan = MdSpeed.span("holdWait")
         await writer.awaitStructuralHoldReleased()
+        holdWaitSpan.end()
         // The wait can span a lifecycle, a zoom (zoom is not on the structural gate: the page then holds the zoomed text, which this click
         // must not copy a section of) or a mode switch; the old body, which knows the state, gets the press.
         guard editorState.activeLifecycle == nil, editorState.zoomedSectionId == nil, editorState.editorMode == .source else { return nil }
@@ -167,7 +176,7 @@ extension StructuralUndoController {
         let opId = UUID()
         efOpEpoch[opId] = 1
         let trace = StructTrace(label: "sectionDuplicate", opId: String(opId.uuidString.prefix(8)))
-        StructuralTrace.beginOp(label: "sectionDuplicate", opId: trace.opId)
+        StructuralTrace.noteOpId(trace.opId)   // round M1: `beginOp` moved to the top of the click, so only the id is given here
         trace.log("start (editor-first) mode=markdown")
         let attempt = await sendMarkdownDuplicateWithRetry(opId: opId, rootId: rootId, database: db, projectId: pid)
         guard let attempt, attempt.reply.succeeded, let preRaw = attempt.reply.preRaw, let postRaw = attempt.reply.postRaw else {
@@ -181,8 +190,10 @@ extension StructuralUndoController {
             return nil
         }
         let copies = attempt.copyIds.map { DuplicatedBlock(sourceId: $0.source, newId: $0.new) }
+        let insertedSpan = MdSpeed.span("insertedSections+crossCheck")
         let insertedSections = attempt.map.duplicateInsertedSections(rootId: rootId, copyIds: attempt.copyIds)
         crossCheckMarkdownDuplicate(reply: attempt.reply, copyIds: attempt.copyIds, sections: insertedSections, opId: opId)
+        insertedSpan.end()
         DebugLog.log(.undo, "[STRUCT-TRACE] sectionDuplicate-editor-first opId=\(trace.opId) ok=true mode=markdown copies=\(copies.count)")
 
         // Step 6: the reply turn (shared with the quick redo): the writer's last write is awaited, then nothing suspends until the job holds
@@ -207,7 +218,9 @@ extension StructuralUndoController {
         efEditorKind[opId] = .markdown
         unifiedUndoService.record(StructuralEntry(id: opId, kind: .sectionDuplicate, title: "Duplicate Section", undoSnapshotId: nil))
         spy("efRecorded")
+        let descriptorSpan = MdSpeed.span("pushDescriptor")
         await pushDescriptor()
+        descriptorSpan.end()
         trace.log("performed")
         return .performed
     }
@@ -220,12 +233,20 @@ extension StructuralUndoController {
     private func sendMarkdownDuplicate(
         opId: UUID, rootId: String, minted: inout [String: String], database: ProjectDatabase, projectId: String
     ) async -> MarkdownDuplicateAttempt? {
-        guard let rows = try? database.fetchBlocks(projectId: projectId) else { return nil }
-        let map = MarkdownLeaderMap(rows: rows)
-        let copyIds = map.mintDuplicateCopyIds(rootId: rootId, minted: &minted)
-        guard !copyIds.isEmpty, let json = map.duplicateRequest(opId: opId, rootId: rootId, copyIds: copyIds)?.json,
-              let answer = await evalString("JSON.stringify(window.FinalFinal.markdownStructuralDuplicate(\(json)))"),
-              let reply = try? JSONDecoder().decode(MarkdownDuplicateReply.self, from: Data(answer.utf8)) else { return nil }
+        guard let rows = try? MdSpeed.timed("fetchBlocks", { try database.fetchBlocks(projectId: projectId) }) else { return nil }
+        let map = MdSpeed.timed("leaderMap") { MarkdownLeaderMap(rows: rows) }
+        let copyIds = MdSpeed.timed("mintCopyIds") { map.mintDuplicateCopyIds(rootId: rootId, minted: &minted) }
+        guard !copyIds.isEmpty, let json = MdSpeed.timed("requestJson", {
+            map.duplicateRequest(opId: opId, rootId: rootId, copyIds: copyIds)?.json
+        }) else { return nil }
+        let pageCallSpan = MdSpeed.span("pageCall")
+        let answer = await evalString("JSON.stringify(window.FinalFinal.markdownStructuralDuplicate(\(json)))")
+        pageCallSpan.end("chars=\(answer?.utf16.count ?? 0)")
+        guard let answer else { return nil }
+        let decodeSpan = MdSpeed.span("replyDecode")
+        let reply = try? JSONDecoder().decode(MarkdownDuplicateReply.self, from: Data(answer.utf8))
+        decodeSpan.end()
+        guard let reply else { return nil }
         return MarkdownDuplicateAttempt(reply: reply, map: map, copyIds: copyIds)
     }
 
@@ -289,32 +310,49 @@ extension StructuralUndoController {
     ) async {
         let editorState = context.editorState
         let writer = editorState.markdownWriter
+        let replyTurnSpan = MdSpeed.span("replyTurn")   // round M1 measurement: the whole reply turn, and each step inside it
+        defer { replyTurnSpan.end() }
+        // t-2fbe4c9b trigger (iii): the parse memo prepares the post-click text in the background while the wait below runs; step 8 reads it.
+        writer.prewarmParse(raw: postRaw, projectId: context.projectId, database: context.database)
+        let inFlightSpan = MdSpeed.span("inFlightWait")
         while let pending = writer.inFlight { await pending.value }
+        inFlightSpan.end()
+        let preText = MdSpeed.timed("recordText.pre") { MarkdownLeaderMap.recordText(fromRaw: preRaw) }
+        let prepareClickSpan = MdSpeed.span("prepareStructuralClick")
         writer.prepareStructuralClick(
-            text: MarkdownLeaderMap.recordText(fromRaw: preRaw), database: context.database, projectId: context.projectId,
+            text: preText, database: context.database, projectId: context.projectId,
             service: context.blockSync,
             refire: { [weak editorState] in editorState?.lifecycleHost?.scheduleSourceModeReparse(editorState?.content ?? "") })
+        prepareClickSpan.end()
         writer.noteQueuedStructuralJob()
+        let adoptSpan = MdSpeed.span("adopt")
         editorState.adoptMarkdownPageText(postRaw)   // O11: the record takes the page's text in this turn; nothing is pushed back
+        adoptSpan.end()
 
         // The copy's leaders leave the removal filter a quick undo put them in (a redo; nothing to subtract for the click) and show in the
         // sidebar at once, kept by the overlay until the job has put their rows into the database.
+        let sidebarSpan = MdSpeed.span("sidebar")
         editorState.pendingRemovalIds.subtract((efHolders[opId]?.snapshot().clickLeaderIds ?? []).union(copies.map(\.newId)))
         efDuplicateCopies[opId] = copies
         showDuplicateInSidebar(opId: opId, rootId: rootId, copies: copies, insertedSections: insertedSections, database: context.database)
+        sidebarSpan.end()
 
         run.countHandedToJob = true   // the job's task brings `pendingEditorFirstJobs` down once its future has resolved
         let gate = MarkdownStep8Gate()
         writer.structuralHoldState.step8Gates[jobKey ?? opId] = gate
         efEditorKind[opId] = .markdown
         if jobKey != nil { efSlots.markReserved(opId) }   // the quick redo's fresh job, as the Rich Text redo
+        let jobStartSpan = MdSpeed.span("jobStart")
         let reserved = await startEditorFirstDuplicateJob(
             opId: opId, rootId: rootId, copies: copies, database: context.database, projectId: context.projectId, jobKey: jobKey,
             ownsPendingJobCount: true, copiesAreLeadersOnly: true)
+        jobStartSpan.end()
         // D2/O21: the hand-off is the same synchronous turn as the starter's return, no `await` in between.
         if reserved {
             run.handedOff = true
+            let handOffSpan = MdSpeed.span("holdHandOff")
             startMarkdownHoldContinuation(hold: hold, opId: opId, jobKey: jobKey)
+            handOffSpan.end()
         } else {
             gate.finish()   // no continuation will run step 8
         }

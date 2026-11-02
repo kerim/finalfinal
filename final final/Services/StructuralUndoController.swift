@@ -1168,6 +1168,7 @@ final class StructuralUndoController {
             await waitForSidebarPaintWindow(editorState)
 
             // 2. Re-plan against the list as it is now.
+            let gatePlanSpan = MdSpeed.span("gatePlan")   // round M1 measurement: steps 2 to 6, the plan made again under the gate
             var plan = sections
             if let request {
                 if let sectionSyncService {
@@ -1192,6 +1193,7 @@ final class StructuralUndoController {
             // 6. The headings whose level the plan changed (a section break, Notes or Bibliography never has its level written).
             let levelsBefore = Dictionary(editorState.sections.map { ($0.id, $0.headerLevel) }, uniquingKeysWith: { first, _ in first })
             let changedLevels = Self.changedHeadingLevels(plan: plan, levelsBefore: levelsBefore)
+            gatePlanSpan.end()
             if changedLevels.isEmpty, plan.map(\.id) == editorState.sections.map(\.id) {
                 DebugLog.log(.undo, "[StructuralUndoController] performSectionReorder: the plan changes nothing -- no entry, no job")
                 return (.performed, false)

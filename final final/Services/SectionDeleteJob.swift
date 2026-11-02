@@ -89,11 +89,17 @@ struct SectionDeleteJob: Sendable {
     func run(db: Database, idMap: IdMap) throws -> SystemWriteBody<Output> {
         bodyHold?()
         // The snapshot first: it must hold the section that the next statement deletes.
-        let written = try SnapshotService.writeUndoPointSnapshot(
-            db: db, projectId: projectId, fallbackBibliographyTitle: fallbackBibliographyTitle)
+        // (Round M2 measurement: the three heavy steps of the body are spans; the body runs inside the database write, off the main thread.)
+        let written = try MdSpeed.timed("job.snapshot") {
+            try SnapshotService.writeUndoPointSnapshot(
+                db: db, projectId: projectId, fallbackBibliographyTitle: fallbackBibliographyTitle)
+        }
 
         let rootId = idMap[rootBlockId] ?? rootBlockId
-        guard let subtree = try ProjectDatabase.deleteSections(db: db, rootId: rootId, projectId: projectId) else {
+        let deleted = try MdSpeed.timed("job.deleteSections") {
+            try ProjectDatabase.deleteSections(db: db, rootId: rootId, projectId: projectId)
+        }
+        guard let subtree = deleted else {
             // Rolls the whole transaction back, the snapshot included.
             throw JobError.rootNotDeletable(rootId)
         }

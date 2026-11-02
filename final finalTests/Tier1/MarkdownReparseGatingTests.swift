@@ -126,7 +126,8 @@ struct MarkdownReparseGatingTests {
             bibliographySync: BibliographySyncService(),
             footnoteSync: FootnoteSyncService(),
             autoBackup: AutoBackupService(),
-            documentManager: documentManager
+            documentManager: documentManager,
+            scanMemo: MarkdownScanMemo()
         )
         ContentSyncObserverHost<EmptyView>.scheduleSourceModeReparse(
             newValue: content, editorState: fixture.editorState, services: services)

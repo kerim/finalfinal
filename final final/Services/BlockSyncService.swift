@@ -2022,8 +2022,10 @@ class BlockSyncService {
             prepare?()
             let prepareRan = prepare != nil
 
-            // Step 6: wait.
+            // Step 6: wait. (Round M2: the `md-speed systemWrite.<kind>.waitForTurn` and `.apply` spans; the main thread is free in both.)
+            let waitSpan = MdSpeed.span("systemWrite.\(kind).waitForTurn")
             let turnResult = await reservation.ticket.writer.waitForTurnAsync(reservation.ticket.seq)
+            waitSpan.end()
             if turnResult == .skipped {
                 let reason = reservation.ticket.writer.systemSkipReason(reservation.ticket.seq) ?? .writerReplaced
                 // `systemSkipReason` only peeks (see its doc comment) -- this call is
@@ -2042,8 +2044,10 @@ class BlockSyncService {
             }
 
             // Step 8: apply.
+            let applySpan = MdSpeed.span("systemWrite.\(kind).apply")   // hop to the writer actor, the database write, the hop back
             let outcome = await reservation.ticket.writer.applySystemWrite(
                 reservation.ticket.seq, kind: kind, identity: identity, body: body)
+            applySpan.end()
             switch outcome {
             case .applied, .failed:
                 // The writer itself already removed the phase entry on both these paths.

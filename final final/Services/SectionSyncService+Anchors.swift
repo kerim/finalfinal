@@ -11,7 +11,9 @@ extension SectionSyncService {
 
     /// Regex pattern for section anchor comments
     /// Anchors are on the same line as headers (no newline in pattern)
-    static let anchorPattern: NSRegularExpression = {
+    /// nonisolated: an immutable `NSRegularExpression` (`Sendable` in this SDK), so any thread may read it (t-2fbe4c9b: the parse
+    /// memo's background task strips anchors with `MarkdownLeaderMap.recordText`).
+    nonisolated static let anchorPattern: NSRegularExpression = {
         do {
             return try NSRegularExpression(
                 pattern: #"<!-- @sid:([0-9a-fA-F-]+) -->"#,

@@ -400,6 +400,8 @@ extension EditorViewState {
             }
             if !callerManagedState {
                 contentState = .idle
+                // t-2fbe4c9b: the full text is back and no reset() follows: ask the parse memo for it (not for zoomToSection's own zoom-out).
+                if editorMode == .source { markdownWriter.prewarmParse(raw: sourceContent, projectId: pid, database: db) }
                 NotificationCenter.default.post(name: .didZoomOut, object: nil)
             }
         } catch {
@@ -417,9 +419,7 @@ extension EditorViewState {
             // behind the mutex via `acquireZoomRestore()`, so this introduces no new race.
             DebugLog.log(.zoom, "[EditorViewState] Zoom out error: \(error)")
             isZoomingContent = false
-            if !callerManagedState {
-                contentState = .idle
-            }
+            if !callerManagedState { contentState = .idle }
             clearZoomFlagsSafely()
         }
     }

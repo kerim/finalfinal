@@ -2667,7 +2667,9 @@ actor DocumentWriter {
         }
 
         do {
+            let dbWriteSpan = MdSpeed.span("systemWrite.\(kind).dbWrite")   // round M2 measurement: runs on the writer actor, off the main thread
             let bodyResult = try database.dbWriter.write { db in try body(db, admittedIdMap) }
+            dbWriteSpan.end()
             let signal = state.withLock { writerState -> Signal in
                 var sig = Signal(handler: writerState.testEventHandler)
                 // Addendum A2 §2's own merge rule, reused here unmodified: only

@@ -94,6 +94,9 @@ final class StructuralTraceRecorder: @unchecked Sendable {
     /// Start of the most recent op's timeline, nil before the first.
     var startMs: Int? { timeline.withLock { $0.startMs } }
 
+    /// Label of the most recent op's timeline (`"none"` before the first). Read by `MdSpeed` to name a step after its command.
+    var currentLabel: String { timeline.withLock { $0.label } }
+
     /// Called when a section command's context-menu action fires. `click` is evaluated only while tracing is on. Logs the
     /// click as the op's start (see `StructuralTrace.noteCommandClick`).
     func noteCommandClick(label: String, click: @autoclosure () -> StructuralTraceClick?) {

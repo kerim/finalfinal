@@ -24,7 +24,8 @@ extension ContentView {
             bibliographySync: bibliographySyncService,
             footnoteSync: footnoteSyncService,
             autoBackup: autoBackupService,
-            documentManager: documentManager
+            documentManager: documentManager,
+            scanMemo: editorState.scanMemo
         )
     }
 

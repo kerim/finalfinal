@@ -68,7 +68,8 @@ final class MarkdownWriterRig {
             bibliographySync: BibliographySyncService(),
             footnoteSync: FootnoteSyncService(),
             autoBackup: AutoBackupService(),
-            documentManager: DocumentManager.shared
+            documentManager: DocumentManager.shared,
+            scanMemo: editorState.scanMemo
         )
         let events = events
         sync.testWriterEventHandler = { events.append($0) }

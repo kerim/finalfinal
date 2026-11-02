@@ -178,6 +178,16 @@ enum TestMode {
         isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_MD_LEGACY_REPARSE"] == "1"
     }
 
+    /// UI-test-only (t-2fbe4c9b, Phase 4c job 3): `FF_UI_TESTING_NO_PARSE_MEMO=1` turns the writer's parse memo and the handler scan memo OFF
+    /// for the whole process, so a UI test can run the same build with and without the job-3 background work, back to back on one host:
+    /// every `prepare` parses on the main thread (`[MdWrite] ... cache=miss`), nothing is prepared in the background, `ensure` returns at
+    /// once, and the content-change handlers scan as they did before. `MarkdownBlockWriter` reads this once, when it is created
+    /// (`MarkdownParseCache.isDisabled`). Same `isUITesting &&` guard as every sibling flag here, so a value left in a shell profile can
+    /// never switch the memo off for a real user, and a unit-test run can never set it.
+    static var isUITestingNoParseMemo: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_NO_PARSE_MEMO"] == "1"
+    }
+
     /// UI-test-only (t-94369a83 Phase 4b slice 2a): `FF_UI_TESTING_STRUCT_LEGACY_DELETE=1` makes Delete Section take today's whole
     /// sequence (flush the editor, undo-point copy, delete the rows, push the whole document back) instead of the editor-first
     /// path, so a UI test can time old and new in one session. Mirrors `isUITestingMarkdownLegacyReparse`: same `isUITesting &&`
@@ -261,6 +271,42 @@ enum TestMode {
         guard let milliseconds = uiTestingEFSettleHoldMs, efSettleHoldsGranted < uiTestingEFSettleHoldFirstN else { return }
         efSettleHoldsGranted += 1
         DebugLog.alwaysPersisted("[EF-SETTLE-HOLD] editor first settle hold begins for \(milliseconds) milliseconds")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+    }
+
+    /// UI-test-only (t-2fbe4c9b, Phase 4c job 3): `FF_UI_TESTING_MD_PAGE_PREPARE_HOLD_MS=<n>` makes the first Markdown structural command's
+    /// page preparation (`prepareMarkdownPageForStructuralCommand`, steps 3 and 4 of the click) wait `n` milliseconds in a plain
+    /// suspension, so a real-app test can make a click last longer than the "Finishing the last change…" notice's one-second delay. The
+    /// wait holds no writer and no hold of its own beyond the one the click already holds. `nil` (unset, unparseable, <= 0, or
+    /// `isUITesting` false) means no hold. Same `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingMdPagePrepareHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_MD_PAGE_PREPARE_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// UI-test-only (t-2fbe4c9b): `FF_UI_TESTING_MD_PAGE_PREPARE_HOLD_FIRST_N=<n>` limits the `FF_UI_TESTING_MD_PAGE_PREPARE_HOLD_MS` wait to
+    /// the first `n` page preparations of this launch; every later one runs without it. The default is ONE (unset, unparseable or <= 0),
+    /// like `FF_UI_TESTING_EF_SETTLE_HOLD_FIRST_N`. Same `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingMdPagePrepareHoldFirstN: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_MD_PAGE_PREPARE_HOLD_FIRST_N"],
+              let value = Int(raw), value > 0 else { return 1 }
+        return value
+    }
+
+    /// How many page preparations `holdMarkdownPagePrepare()` has held so far in this launch.
+    private static var mdPagePrepareHoldsGranted = 0
+
+    /// Waits `uiTestingMdPagePrepareHoldMs` milliseconds (a plain suspension) while fewer than `uiTestingMdPagePrepareHoldFirstN` page
+    /// preparations have been held in this launch; returns at once otherwise (every normal launch and every non-UI-test run: the first
+    /// guard). Called first in `prepareMarkdownPageForStructuralCommand`. Persists one `[MD-PREPARE-HOLD]` line when a hold begins.
+    @MainActor
+    static func holdMarkdownPagePrepare() async {
+        guard let milliseconds = uiTestingMdPagePrepareHoldMs, mdPagePrepareHoldsGranted < uiTestingMdPagePrepareHoldFirstN else { return }
+        mdPagePrepareHoldsGranted += 1
+        DebugLog.alwaysPersisted("[MD-PREPARE-HOLD] markdown page preparation hold begins for \(milliseconds) milliseconds")
         try? await Task.sleep(for: .milliseconds(milliseconds))
     }
 

@@ -313,6 +313,7 @@ extension StructuralUndoController {
         database: ProjectDatabase, projectId: String, jobKey: UUID? = nil, ownsPendingJobCount: Bool = false
     ) async -> Bool {
         guard let editorState else { return false }
+        let setupSpan = MdSpeed.span("jobStart.setup")   // round M2: the synchronous setup on the main thread, up to the Task's creation
         efSlots.open(opId)
         let registry = editorState.efJobRegistry
         let registryKey = jobKey ?? opId
@@ -356,15 +357,19 @@ extension StructuralUndoController {
                 self?.notifyMarkdownJobEnded(key: registryKey, outcome: .abandoned)
                 return
             }
+            let performSpan = MdSpeed.span("job.perform")   // round M2: the job's whole run (steps 1 to 8 of the system write)
             let result = await job.perform(
                 on: blockSync, identity: identity, registry: registry,
                 onReserved: {
                     StructuralTrace.log("onReserved fired")   // slice 0 measurement
                     reserved.fireReserved()
                 })
+            performSpan.end()
             releasePendingCount()   // the job has ended: the settle's own rebuilds read the table after it and must stamp as current
             reserved.fire()   // `perform` returned without reserving (refused before step 4): never leave the click waiting
+            let notifySpan = MdSpeed.span("job.notifyEnded")   // synchronous; the gate's waiter then needs the main thread
             self?.notifyMarkdownJobEnded(key: registryKey, outcome: JobOutcome(result.outcome))   // a Markdown job's hold continuation
+            notifySpan.end()
             if case .applied(let output) = result.outcome, let mismatch = output.removedIdsMismatch {
                 // The editor and the database disagree about which rows belong to the section (fix round 2a, item 10): the rules are
                 // meant to be identical, so this means the screen and the saved copy are drifting apart. Log only: no behaviour change.
@@ -377,7 +382,10 @@ extension StructuralUndoController {
                 opId: opId, outcome: JobOutcome(result.outcome), removedLeaders: removedLeaders, epoch: epochAtClick, jobKey: jobKey)
         }
         efSettleTasks[opId] = settleTask
+        setupSpan.end()
+        let reservedWaitSpan = MdSpeed.span("jobStart.reservedWait")   // await: the main thread is free; the job's Task runs meanwhile
         await reserved.wait()
+        reservedWaitSpan.end()
         return reserved.didReserve
     }
 
@@ -423,8 +431,12 @@ extension StructuralUndoController {
         guard let editorState else { return }
         let epoch = epoch ?? (efOpEpoch[opId] ?? 0)
         spy("efJobSettled")
+        let settleSpan = MdSpeed.span("settle")   // round M1 measurement: the whole settle after the job, and each step inside it
+        defer { settleSpan.end() }
         // Markdown only (t-4a8fd8af round 6; a no-op for any other entry): nothing of the settle starts before step 8 has flushed the typing.
+        let step8WaitSpan = MdSpeed.span("settle.step8GateWait")
         await awaitMarkdownStep8(opId: opId, jobKey: jobKey, keepsGateForPutBack: !outcome.isApplied)
+        step8WaitSpan.end()
         // (Round 2d-i, review A15: the registry's `.abandoned` outcome never arrives here -- both callers pass `JobOutcome(result.outcome)`
         // of the system write, which is applied, failed or refused -- so there is no arm for it.)
         guard outcome.isApplied else {
@@ -451,7 +463,9 @@ extension StructuralUndoController {
         let sidebarIsOurs = isLatestJob() && (epochUnmoved || !kind.usesSidebarOverlay)
         if sidebarIsOurs { editorState.pendingRemovalIds.subtract(removedLeaders) }
         if kind.usesSidebarOverlay, sidebarIsOurs {
+            let overlayRefreshSpan = MdSpeed.span("settle.refreshSectionsAwaiting")
             await editorState.refreshSectionsAwaiting()
+            overlayRefreshSpan.end()
             if isLatestJob(), (efOpEpoch[opId] ?? epoch) == epoch { editorState.pendingRestoreSections[opId] = nil }
         }
         #if DEBUG
@@ -548,35 +562,53 @@ extension StructuralUndoController {
         func skipped(_ step: String) {
             DebugLog.log(.undo, "[StructuralUndoController] delete settle \(opId): \(step) skipped (a quick undo or redo took the entry)")
         }
+        // Round M1 (MdSpeed.swift): each resync step is a span; the two whole-text extracts are timed apart (main thread).
         if let pid = projectId {
             if wanted() {
                 let content = editorState.content
-                await bibliographySyncService?.resyncNow(
-                    citekeys: BibliographySyncService.extractCitekeys(from: content), projectId: pid, stillWanted: wanted)
+                let citekeys = MdSpeed.timed("settle.extractCitekeys") { editorState.scanMemo.citekeys(for: content, projectId: pid) }
+                let bibliographySpan = MdSpeed.span("settle.bibliographyResync")
+                await bibliographySyncService?.resyncNow(citekeys: citekeys, projectId: pid, stillWanted: wanted)
+                bibliographySpan.end()
             } else { skipped("bibliography resync") }
             if wanted() {
                 let content = editorState.content
                 markMarkdownSettle(opId: opId)   // Markdown only (B5/O10): the page's settle flag around the renumber this resync posts
                 defer { unmarkMarkdownSettle(opId: opId) }
+                let footnoteRefs = MdSpeed.timed("settle.extractFootnoteRefs") { editorState.scanMemo.footnoteRefs(for: content, projectId: pid) }
+                let footnoteSpan = MdSpeed.span("settle.footnoteResync")
                 await footnoteSyncService?.resyncNow(
-                    footnoteRefs: FootnoteSyncService.extractFootnoteRefs(from: content), projectId: pid, fullContent: content,
+                    footnoteRefs: footnoteRefs, projectId: pid, fullContent: content,
                     stillWanted: wanted, forgetCommittedHash: forgetsCommittedNotes)
+                footnoteSpan.end()
             } else { skipped("footnote resync") }
         }
         if wanted() {
             if DocumentManager.shared.projectId == editorState.currentProjectId {
+                let sectionSyncSpan = MdSpeed.span("settle.sectionSync")
                 await sectionSyncService?.syncNow(editorState.content)
+                sectionSyncSpan.end()
             }
         } else { skipped("section sync") }
-        if wanted() { await annotationSyncService?.syncNow(editorState.content) } else { skipped("annotation sync") }
+        if wanted() {
+            let annotationSyncSpan = MdSpeed.span("settle.annotationSync")
+            await annotationSyncService?.syncNow(editorState.content)
+            annotationSyncSpan.end()
+        } else { skipped("annotation sync") }
+        let refreshSpan = MdSpeed.span("settle.refreshSections")
         editorState.refreshSections()
+        refreshSpan.end()
         // The resyncs above write the database's Notes and Bibliography and so start the background rebuilds that carry them into the
         // editor. The settle is over only when those have landed (fix round 5, part A1): the undo, the close and quit wait, and the
         // zoom, mode-switch, Save Version and export waits all wait for the settle, and a rebuild whose push lands after they have
         // started would put the post-delete document back over theirs. (A rebuild the lifecycle deferred has no Task to wait for.)
+        let rebuildsSpan = MdSpeed.span("settle.awaitNoRunningRebuilds")
         await editorState.awaitNoRunningRebuilds(label: "delete follow-up", showsNotice: false)
+        rebuildsSpan.end()
         if wanted() {
+            let regionsSpan = MdSpeed.span("settle.managedRegions")
             await settleManagedRegionsAtEndOfEditorFirstSettle(editorState: editorState, projectId: projectId)
+            regionsSpan.end()
         } else { skipped("managed-regions push") }
     }
 
