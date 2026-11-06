@@ -186,6 +186,8 @@ declare global {
       insertCitation: () => void;
       // Block-based API (Phase B)
       getBlockChanges: () => BlockChanges;
+      // Phase 5 job B2: `getBlockChanges` plus the number of the `drain` report this drain posted (report-outbox.ts).
+      getBlockChangesReported: () => BlockChanges & { reportThrough?: number; reportSession?: string };
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
       syncBlockIds: (orderedIds: string[], zoomMode: boolean, expected?: ExpectedBlockMeta[]) => void;

@@ -1835,6 +1835,12 @@ actor DocumentWriter {
         perform(signal)
     }
 
+    /// Phase 5 job B2: a copy of the temp-id -> permanent-id map, read-only, so `ReportIntake`'s comparison resolves the ids of
+    /// both sides the same way whatever the timing of a confirmation.
+    nonisolated func tempIdMapSnapshot() -> [String: String] {
+        state.withLock { $0.tempIdMap }
+    }
+
     // MARK: - Barrier (Phase 3a-1a, t-94369a83 §2.1) and lifecycle-loss counter (§2.3)
 
     /// Reserves a barrier sequence: a marker that is "reached" once everything reserved before it has

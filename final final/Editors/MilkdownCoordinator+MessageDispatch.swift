@@ -145,6 +145,13 @@ extension MilkdownEditor.Coordinator {
             }
             return true
 
+        case "blockReport":
+            // Phase 5 job B2: a shadow block report. Recorded synchronously, here in the delegate callback with no `Task` hop
+            // (b2-b4-design.md correction 5), so reports are recorded in delivery order; nothing is reserved or applied from it.
+            let body = message.body
+            MainActor.assumeIsolated { ReportIntake.shared.receive(body: body) }
+            return true
+
         case "selectionChanged":
             guard let text = message.body as? String else { return true }
             Task { @MainActor in

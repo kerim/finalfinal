@@ -36,10 +36,12 @@ import {
   getBlockChanges as getBlockChangesPlugin,
   hasPendingChanges,
   hasPendingUpdateForId,
+  isSyncPaused,
   reconcilePendingQueueAfterManagedRebuild,
   resetAndSnapshot,
   setSyncPaused,
   snapshotBlocks,
+  takeLastDrainReportSequence,
   updateSnapshotIds,
 } from './block-sync-plugin';
 import { resetCAYWState } from './cayw';
@@ -60,6 +62,7 @@ import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { getRecentUserEditSpan } from './recent-edit-span';
 import { dispatchDerivedCorrection } from './redo-branch';
+import { reportSession, reportsEnabled, setReportHoldProbe } from './report-outbox';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
@@ -2347,11 +2350,27 @@ export function flushPendingBlockChanges(): void {
   flushPendingBlockChangesPlugin();
 }
 
+// Phase 5 job B2: a shadow report (report-outbox.ts) waits while sync is paused or the typing is held back from the polls.
+setReportHoldProbe(() => isSyncPaused() || isTypingPushHeld());
+
 export function getBlockChangesApi(): BlockChanges {
   // Held while a press is latched, see `hasBlockChanges`. The routes call block-sync-plugin's `getBlockChanges` directly and so still
   // take the held typing as their batch N.
   if (isTypingPushHeld()) return { updates: [], inserts: [], deletes: [] };
   return getBlockChangesPlugin();
+}
+
+/**
+ * Phase 5 job B2: the poll's fetch with reporting on. EXACTLY `getBlockChangesApi` (the same drain, the same batch), plus two fields
+ * naming the `drain` report this drain posted, so Swift can compare the reports up to it with the batch (`ReportIntake`). Swift's
+ * `BlockChanges` decoding ignores the two extra keys. When this call did not drain (held typing) they are left out.
+ */
+export function getBlockChangesReportedApi(): BlockChanges & { reportThrough?: number; reportSession?: string } {
+  takeLastDrainReportSequence();
+  const changes = getBlockChangesApi();
+  const through = takeLastDrainReportSequence();
+  if (!reportsEnabled() || through === null) return changes;
+  return { ...changes, reportThrough: through, reportSession: reportSession() };
 }
 
 /**

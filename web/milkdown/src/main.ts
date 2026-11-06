@@ -44,6 +44,7 @@ import {
   flushPendingBlockChanges,
   getBlockAtCursor,
   getBlockChangesApi,
+  getBlockChangesReportedApi,
   getContent,
   hasBlockChanges,
   insertImage,
@@ -682,6 +683,8 @@ window.FinalFinal = {
   insertCitation: insertCitationAtCursor,
   // Block-based API (Phase B)
   getBlockChanges: getBlockChangesApi,
+  // Phase 5 job B2: the poll's fetch with reporting on (the same drain, plus the `drain` report's number).
+  getBlockChangesReported: getBlockChangesReportedApi,
   applyBlocks,
   confirmBlockIds: confirmBlockIdsApi,
   syncBlockIds,

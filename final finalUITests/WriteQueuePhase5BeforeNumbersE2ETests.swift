@@ -1298,3 +1298,227 @@ extension WriteQueuePhase5BeforeNumbersE2ETests {
         return Phase5CaretSwitch(ended: ended && reads, note: summary, row: row)
     }
 }
+
+// MARK: - Job B2: the editor's shadow block reports agree with the poll, and cost no typing speed (b2-b4-design.md section 2)
+
+/// What the app's `[PUSH-CMP]` verdict lines in one window said (ReportIntake.swift).
+struct Phase5PushVerdicts {
+    var agree = 0
+    var disagree: [String] = []
+    var gaps: [String] = []
+    var explainedGaps = 0
+    /// The reports the agree / DISAGREE lines folded, summed: proof the reports really arrive.
+    var reportsFolded = 0
+    /// `received=` summed: every report message Swift recorded in the window.
+    var received = 0
+    var recvMs = 0.0
+
+    init(lines: [String]) {
+        for text in lines where text.contains("[PUSH-CMP] ") {
+            if text.contains("[PUSH-CMP] agree ") {
+                agree += 1
+            } else if text.contains("[PUSH-CMP] DISAGREE ") {
+                disagree.append(String(text.suffix(400)))
+            } else if text.contains("explained: before a restart") {
+                explainedGaps += 1
+            } else if text.contains("[PUSH-CMP] gap ") {
+                gaps.append(String(text.suffix(200)))
+            }
+            reportsFolded += Phase4bDelTypingParser.intAfter("reports=", in: text) ?? 0
+            received += Phase4bDelTypingParser.intAfter("received=", in: text) ?? 0
+            if let range = text.range(of: "recvMs=") {
+                recvMs += Double(text[range.upperBound...].prefix(while: { $0.isNumber || $0 == "." })) ?? 0
+            }
+        }
+    }
+
+    var text: String {
+        "agree \(agree), DISAGREE \(disagree.count), unexplained gap \(gaps.count), explained gap \(explainedGaps), reports folded "
+            + "\(reportsFolded), report messages received \(received), main-thread receive time \(String(format: "%.1f", recvMs)) ms"
+    }
+}
+
+/// The merged `[LAG] hist` lines of one window (MainLagSampler.swift): main-run-loop answer times in whole milliseconds.
+struct Phase5LagHistogram {
+    var buckets: [Int: Int] = [:]
+    var maxMs = 0
+
+    init(lines: [String]) {
+        for text in lines where text.contains("[LAG] hist ") {
+            maxMs = max(maxMs, Phase4bDelTypingParser.intAfter("max=", in: text) ?? 0)
+            guard let range = text.range(of: " b=") else { continue }
+            for pair in text[range.upperBound...].prefix(while: { !$0.isWhitespace }).split(separator: ",") {
+                let parts = pair.split(separator: ":")
+                if parts.count == 2, let bucket = Int(parts[0]), let count = Int(parts[1]) { buckets[bucket, default: 0] += count }
+            }
+        }
+    }
+
+    var count: Int { buckets.values.reduce(0, +) }
+
+    func percentile(_ fraction: Double) -> Int? {
+        let total = count
+        guard total > 0 else { return nil }
+        let wanted = Int((Double(total) * fraction).rounded(.up))
+        var seen = 0
+        for bucket in buckets.keys.sorted() {
+            seen += buckets[bucket] ?? 0
+            if seen >= wanted { return bucket }
+        }
+        return buckets.keys.max()
+    }
+
+    var text: String {
+        "samples \(count), p50 \(percentile(0.5).map(String.init) ?? "n/a") ms, p95 \(percentile(0.95).map(String.init) ?? "n/a") ms, "
+            + "p99 \(percentile(0.99).map(String.init) ?? "n/a") ms, max \(maxMs) ms"
+    }
+}
+
+extension WriteQueuePhase5BeforeNumbersE2ETests {
+    /// Words typed at person pace (one `typeText` per character; the driver's own call takes about 0.1 to 0.2 s, about a typist's gap).
+    static let b2Words = ["shadow", "report", "agrees", "with", "the", "poll", "every", "time", "words", "keep", "coming"]
+
+    // The comparison runs: every `[PUSH-CMP]` line must be agree or an explained gap, with no DISAGREE, and reports must really arrive.
+    func testReportsAgreeWithPoll_article() throws { try runReportsAgree(method: #function, size: .article) }
+    func testReportsAgreeWithPoll_book12() throws { try runReportsAgree(method: #function, size: .book12) }
+
+    // The timing runs (same build, run one after another in ONE VM run): typing echo and main-run-loop lag while typing for 60 s on the
+    // twelve-chapter book, with the shadow reports off (`FF_UI_TESTING_LEGACY_POLL=1`) and on at R = 100, 250 and 500 ms. XCTest runs a
+    // class's methods in name order, so the letters interleave the arms (off, on, off, on, ...): the VM's speed drifts during a run (the
+    // validity probes of run-1793969140-61494 doubled between its second and third method), and an arm run only at the end would carry it.
+    func testReportTimingA_LegacyPoll_book12() throws { try runReportTiming(method: #function, legacy: true, intervalMs: nil) }
+    func testReportTimingB_R250_book12() throws { try runReportTiming(method: #function, legacy: false, intervalMs: 250) }
+    func testReportTimingC_R100_book12() throws { try runReportTiming(method: #function, legacy: false, intervalMs: 100) }
+    func testReportTimingD_LegacyPoll_book12() throws { try runReportTiming(method: #function, legacy: true, intervalMs: nil) }
+    func testReportTimingE_R500_book12() throws { try runReportTiming(method: #function, legacy: false, intervalMs: 500) }
+    func testReportTimingF_R250_book12() throws { try runReportTiming(method: #function, legacy: false, intervalMs: 250) }
+    func testReportTimingG_LegacyPoll_book12() throws { try runReportTiming(method: #function, legacy: true, intervalMs: nil) }
+
+    /// Types `seconds` worth of words into whatever has focus; returns the words typed. Each word starts with three digits, so the editor's
+    /// sentence capitalisation cannot change it (run-1793968295-57126 saved "Ashadow0q" for "ashadow0q") and no word is inside another.
+    /// `perKey` types one key per driver call (about 0.15 s apart in a small document, slower on a book: the driver waits for the app);
+    /// otherwise one call per word (a quick typist's burst), then the space.
+    @discardableResult
+    func typeAtPersonPace(seconds: TimeInterval, prefix: String, perKey: Bool = true) -> [String] {
+        let deadline = Date(timeIntervalSinceNow: seconds)
+        var typed: [String] = []
+        var index = 0
+        while Date() < deadline {
+            let word = String(format: "%03d", index) + prefix + Self.b2Words[index % Self.b2Words.count]
+            if perKey {
+                for character in " " + word { typeNow(String(character)) }
+            } else {
+                typeNow(" " + word)
+            }
+            typed.append(word)
+            index += 1
+        }
+        return typed
+    }
+
+    /// The app's log lines from `index` on (texts).
+    func logTexts(from index: Int) -> [String] {
+        tail.poll()
+        return tail.lines[min(index, tail.lines.count)...].map(\.text)
+    }
+
+    func runReportsAgree(method: String, size: Phase4bDelSize) throws {
+        guard startScenario(method: method, size: size, preloader: false, lossLines: true) else { return }
+        let from = tail.lines.count
+        firstTriggerIndex = from
+        // 1. Typing through several polls.
+        guard placeCaretAtAnchorEnd(paragraph: "Loss01", exactLine: Self.lossLine(1)) else { return }
+        let first = typeAtPersonPace(seconds: 8, prefix: "a")
+        guard let rows = b2StructuralSteps(size: size) else { return }
+        // 5. More typing elsewhere, then two more polls with nothing typed.
+        guard placeCaretAtAnchorEnd(paragraph: "Loss02", exactLine: Self.lossLine(2)) else { return }
+        let last = typeAtPersonPace(seconds: 8, prefix: "c")
+        pollTail(until: Date(timeIntervalSinceNow: 5))
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 60)
+        _ = waitForBlocksToSettle()
+        judgeReportsAgree(size: size, from: from, first: first.first ?? "-", last: last.last ?? "-", rows: rows)
+    }
+
+    /// Steps 2 to 4 of `runReportsAgree`: Enter, Backspace, a zoom in and out with typing inside, a section delete and its Cmd-Z. Returns the
+    /// heading rows of the deleted chapter before the delete and after the undo; nil (reported) when a step did not happen.
+    func b2StructuralSteps(size: Phase4bDelSize) -> (before: Int, restored: Int)? {
+        // 2. Enter (an insert), typing into the new block (an update merged into the insert), Backspace joining it back (a delete and an
+        //    update), more typing.
+        app.typeKey(.return, modifierFlags: [])
+        for character in "b2new" { typeNow(String(character)) }
+        for _ in 0..<5 { app.typeKey(.leftArrow, modifierFlags: []) }
+        app.typeKey(.delete, modifierFlags: [])
+        typeAtPersonPace(seconds: 3, prefix: "j")
+        // 3. A zoom in, typing inside the zoomed chapter, a zoom out.
+        guard perform(.zoomIn) != nil else { return nil }
+        guard placeCaretAtAnchorEnd(paragraph: "Zone01", exactLine: Self.zoneLine(1)) else { return nil }
+        typeAtPersonPace(seconds: 4, prefix: "z")
+        guard perform(.zoomOut) != nil else { return nil }
+        // 4. A section delete and its Cmd-Z.
+        let before = headingRows(size.deleteTitle)
+        guard deleteAndWait(before: before) != nil, pressAndWait(label: "undo", flags: .command) != nil else { return nil }
+        let restored = waitForHeadingRows(size.deleteTitle, equalTo: before, timeout: capped(size.operationTimeout))
+        return (before, restored)
+    }
+
+    func judgeReportsAgree(size: Phase4bDelSize, from: Int, first firstWord: String, last lastWord: String, rows: (before: Int, restored: Int)) {
+        let (before, restored) = rows
+        let verdicts = Phase5PushVerdicts(lines: logTexts(from: from))
+        let saved = (markerOccurrences(firstWord), markerOccurrences(lastWord))
+        emit("B2-AGREE \(size.identifier): \(verdicts.text); heading rows after the undo \(restored) of \(before); first word \(firstWord) "
+            + "saved \(saved.0) time(s), last word \(lastWord) saved \(saved.1) time(s) (TEST VM)")
+        for line in verdicts.disagree { emit("B2-AGREE DISAGREE \(line)") }
+        for line in verdicts.gaps { emit("B2-AGREE GAP \(line)") }
+        assertCheck(verdicts.agree >= 5, "at least five poll fetches were compared with the reports and agreed (agree \(verdicts.agree))")
+        assertCheck(
+            verdicts.reportsFolded > verdicts.agree, "reports really arrive (\(verdicts.reportsFolded) folded, \(verdicts.received) received)")
+        assertCheck(verdicts.disagree.isEmpty, "no DISAGREE: \(verdicts.disagree.joined(separator: " | "))")
+        assertCheck(verdicts.gaps.isEmpty, "no unexplained gap: \(verdicts.gaps.joined(separator: " | "))")
+        assertCheck(saved.0 == 1 && saved.1 == 1, "the typing was saved by the poll as before (first word \(saved.0), last word \(saved.1))")
+        assertCheck(restored == before, "the Cmd-Z put the deleted chapter back (\(restored) of \(before) heading rows)")
+    }
+
+    func runReportTiming(method: String, legacy: Bool, intervalMs: Int?) throws {
+        app.launchEnvironment["FF_UI_TESTING_LAG_SAMPLER"] = "1"
+        if legacy { app.launchEnvironment["FF_UI_TESTING_LEGACY_POLL"] = "1" }
+        if let intervalMs { app.launchEnvironment["FF_UI_TESTING_REPORT_INTERVAL_MS"] = String(intervalMs) }
+        let label = legacy ? "reports OFF (legacy poll)" : "reports ON, R=\(intervalMs ?? 250) ms"
+        let seam = legacy ? " FF_UI_TESTING_LEGACY_POLL=1" : " FF_UI_TESTING_REPORT_INTERVAL_MS=\(intervalMs ?? 250)"
+        note("SEAM FF_UI_TESTING_LAG_SAMPLER=1" + seam)
+        guard startScenario(method: method, size: .book12, preloader: false, lossLines: true) else { return }
+        _ = measureProbes(label: "before")
+        guard placeCaretAtAnchorEnd(paragraph: "Loss01", exactLine: Self.lossLine(1)) else { return }
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 30)
+        let from = tail.lines.count
+        firstTriggerIndex = from
+        let started = Date()
+        let words = typeAtPersonPace(seconds: 60, prefix: legacy ? "l" : "r", perKey: false)
+        let typedSeconds = Date().timeIntervalSince(started)
+        _ = waitForQuietLog(quiet: 1.5, cap: 30)   // every echo of the typing has arrived
+        pollTail(until: Date(timeIntervalSinceNow: 6))   // the sampler's last 5 s histogram and the last poll's verdict line
+        _ = measureProbes(label: "after")
+
+        let lines = logTexts(from: from)
+        let keys = lines.compactMap { Phase4bDelTypingParser.key($0) }.filter(WriteQueuePhase4bDeleteE2ETests.isTypedKey)
+        let echoes = lines.compactMap { Phase4bDelTypingParser.echo($0) }
+        let echo = Phase4bDelKeyStats(keys: keys, echoes: echoes)
+        let lag = Phase5LagHistogram(lines: lines)
+        let verdicts = Phase5PushVerdicts(lines: lines)
+        let reportsPerSecond = typedSeconds > 0 ? Double(verdicts.received) / typedSeconds : 0
+        let perReportMs = verdicts.received > 0 ? verdicts.recvMs / Double(verdicts.received) : 0
+        emit("B2-TIMING \(label): typed \(words.count) words in \(String(format: "%.1f", typedSeconds)) s; ECHO \(echo.text); LAG \(lag.text); "
+            + "REPORTS \(verdicts.text); \(String(format: "%.2f", reportsPerSecond)) reports/s, "
+            + "\(String(format: "%.3f", perReportMs)) ms main-thread per report (TEST VM)")
+        assertCheck(echo.keys > 60, "the typing reached the editor (\(echo.keys) editor keys)")
+        assertCheck(lag.count > 1_000, "the lag sampler ran (\(lag.count) samples)")
+        if legacy {
+            assertCheck(verdicts.received == 0 && verdicts.agree == 0, "with FF_UI_TESTING_LEGACY_POLL=1 no report is recorded (\(verdicts.text))")
+        } else {
+            assertCheck(verdicts.received > 0 && verdicts.agree > 0, "the reports arrived and were compared (\(verdicts.text))")
+            assertCheck(verdicts.disagree.isEmpty, "no DISAGREE while typing: \(verdicts.disagree.joined(separator: " | "))")
+        }
+        let lastWord = words.last ?? "-"
+        _ = waitForBlocksToSettle()
+        assertCheck(markerOccurrences(lastWord) == 1, "the last word typed (\(lastWord)) was saved once (\(markerOccurrences(lastWord)))")
+    }
+}

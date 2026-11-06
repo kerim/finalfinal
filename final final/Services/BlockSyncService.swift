@@ -55,6 +55,10 @@ class BlockSyncService {
     nonisolated static let pollInterval: TimeInterval = 2.0
     private let pollInterval: TimeInterval = BlockSyncService.pollInterval
 
+    /// Phase 5 job B2: the shadow-report comparison the poll's fetch feeds (`ReportIntake.shared` unless a test sets its own).
+    @ObservationIgnored var reportIntakeOverride: ReportIntake?
+    var reportIntake: ReportIntake { reportIntakeOverride ?? .shared }
+
     private(set) var projectDatabase: ProjectDatabase?
     private(set) var projectId: String?
     /// Internal (was private) only so the DEBUG accessors in `BlockSyncService+Lifecycle.swift` can reach it.
@@ -1705,18 +1709,28 @@ class BlockSyncService {
 
     /// Get block changes from the editor
     private func getBlockChanges(webView: WKWebView) async -> GetBlockChangesResult {
-        guard let jsonString = try? await evaluateJS(
-            "JSON.stringify(window.FinalFinal.getBlockChanges())", in: webView
-        ) as? String,
+        // Phase 5 job B2: with reporting on, the script also returns the number of the `drain` report this drain posted (the same
+        // drain, the same batch; `BlockChanges` decoding ignores the two extra keys). `FF_UI_TESTING_LEGACY_POLL=1` runs the old script.
+        guard let jsonString = try? await evaluateJS(ReportIntake.pollFetchScript, in: webView) as? String,
               let data = jsonString.data(using: .utf8) else {
             return .noData
         }
         do {
-            return .success(try JSONDecoder().decode(BlockChanges.self, from: data))
+            let changes = try JSONDecoder().decode(BlockChanges.self, from: data)
+            compareWithReports(changes, replyData: data)
+            return .success(changes)
         } catch {
             DebugLog.log(.sync, "[BlockSyncService] Failed to decode block changes: \(error)")
             return .decodeFailed
         }
+    }
+
+    /// Phase 5 job B2: hands the fetched batch to the shadow-report comparison (`ReportIntake`). Synchronous, read-only: it changes
+    /// nothing the poll does with the batch.
+    private func compareWithReports(_ changes: BlockChanges, replyData: Data) {
+        guard let window = try? JSONDecoder().decode(ReportIntake.PollWindow.self, from: replyData),
+              let through = window.reportThrough, let session = window.reportSession else { return }
+        reportIntake.compare(drained: changes, through: through, session: session, idMap: writer?.tempIdMapSnapshot() ?? [:])
     }
 
     /// Retries a deferred `blockWriteEpoch` bump, reads the current write epoch, and

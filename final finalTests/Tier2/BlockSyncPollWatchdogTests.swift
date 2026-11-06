@@ -500,8 +500,8 @@ struct BlockSyncPollWatchdogTests {
         #expect(textForId[blockB.id] == "X beta text",
                 // swiftlint:disable:next line_length
                 "block B is X's unique edit and was already consumed JS-side: the orphan's batch must still land — got \(String(describing: textForId[blockB.id]))")
-        // A14: freeze the getBlockChanges wire script.
-        #expect(js.scripts.contains("JSON.stringify(window.FinalFinal.getBlockChanges())"),
+        // A14: freeze the getBlockChanges wire script (Phase 5 job B2: the reported fetch, the same drain plus the drain report number).
+        #expect(js.scripts.contains("JSON.stringify((window.FinalFinal.getBlockChangesReported || window.FinalFinal.getBlockChanges)())"),
                 "the getBlockChanges wire script changed — got \(js.scripts)")
         _ = (pid, blockA, blockB, editorState)
     }
@@ -725,7 +725,8 @@ struct BlockSyncPollWatchdogTests {
                 "flushPendingJSChanges wire script changed — got \(js.scripts)")
         #expect(js.scripts.contains("window.FinalFinal.hasBlockChanges()"),
                 "checkForChanges wire script changed — got \(js.scripts)")
-        #expect(js.scripts.contains("JSON.stringify(window.FinalFinal.getBlockChanges())"),
+        // Phase 5 job B2: the reported fetch (the same drain, plus the drain report number); FF_UI_TESTING_LEGACY_POLL=1 runs the old one.
+        #expect(js.scripts.contains("JSON.stringify((window.FinalFinal.getBlockChangesReported || window.FinalFinal.getBlockChanges)())"),
                 "getBlockChanges wire script changed — got \(js.scripts)")
 
         let afterBlocks = try TestFixtureFactory.fetchBlocks(from: db)

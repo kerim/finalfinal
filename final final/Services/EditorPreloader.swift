@@ -161,6 +161,7 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(errorScript)
+        configuration.userContentController.addUserScript(ReportIntake.configUserScript())   // Phase 5 job B2
         // userContentController.add retains the handler (self) strongly, creating a
         // preloader<->webview reference cycle until claimMilkdownView() removes it below.
         // Intentional and acceptable for a short-lived preload window, not a leak.

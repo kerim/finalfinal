@@ -70,6 +70,8 @@ extension ContentView {
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
         sectionSyncService.editorState = editorState
+        // Phase 5 job B3-0: the section sync's write goes through the same ordered queue (SectionSyncService+Queued.swift).
+        sectionSyncService.systemWriter = SystemWriter(blockSync: blockSyncService)
         annotationSyncService.configure(database: db, contentId: cid)
         annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)

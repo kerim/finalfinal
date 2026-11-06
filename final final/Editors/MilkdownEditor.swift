@@ -49,6 +49,8 @@ private let errorCaptureScript = WKUserScript(
 /// avoid keeping two copies of this list in sync by hand.
 private func registerMilkdownMessageHandlers(on controller: WKUserContentController, coordinator: MilkdownEditor.Coordinator) {
     controller.add(coordinator, name: "contentChanged")
+    // Phase 5 job B2: the editor's shadow block reports (web/milkdown/src/report-outbox.ts), recorded and compared by `ReportIntake`.
+    controller.add(coordinator, name: "blockReport")
     controller.add(coordinator, name: "sectionChanged")
     controller.add(coordinator, name: "errorHandler")
     controller.add(coordinator, name: "openCitationPicker")
@@ -217,6 +219,7 @@ struct MilkdownEditor: NSViewRepresentable {
 
         // === PHASE 4: Add error handler script to capture JS errors ===
         configuration.userContentController.addUserScript(errorCaptureScript)
+        configuration.userContentController.addUserScript(ReportIntake.configUserScript())   // Phase 5 job B2
         registerMilkdownMessageHandlers(on: configuration.userContentController, coordinator: context.coordinator)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)

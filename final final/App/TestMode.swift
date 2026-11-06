@@ -317,6 +317,25 @@ enum TestMode {
     /// twelve-chapter book, VM figures), so a real-app test can press a section command inside it on purpose instead of racing it. A plain
     /// suspension: nothing is held, the badge and the mode have already flipped. `nil` (unset, unparseable, <= 0, or `isUITesting` false)
     /// means no hold and the mount runs synchronously, as always. Same `isUITesting &&` guard as every sibling flag here.
+    /// UI-test-only (Phase 5 job B2): `FF_UI_TESTING_LEGACY_POLL=1` turns the editor's shadow block reports off (the page posts nothing,
+    /// Swift ignores `blockReport`, the poll fetches with its old script): the A/B switch for every Part B timing. Removed in B4.
+    static var isUITestingLegacyPoll: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_LEGACY_POLL"] == "1"
+    }
+
+    /// UI-test-only (Phase 5 job B2): `FF_UI_TESTING_REPORT_INTERVAL_MS=<n>` sets R, the least time between two block reports
+    /// (report-outbox.ts, default 250), for the coalescing measurement.
+    static var uiTestingReportIntervalMs: Int? {
+        guard isUITesting, let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_REPORT_INTERVAL_MS"],
+              let value = Int(raw), value >= 0 else { return nil }
+        return value
+    }
+
+    /// UI-test-only (Phase 5 job B2): `FF_UI_TESTING_LAG_SAMPLER=1` starts the main-run-loop lag sampler (`MainLagSampler`).
+    static var isUITestingLagSampler: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_LAG_SAMPLER"] == "1"
+    }
+
     static var uiTestingMdPageReadyHoldMs: Int? {
         guard isUITesting,
               let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_MD_PAGE_READY_HOLD_MS"],

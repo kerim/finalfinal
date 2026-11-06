@@ -236,10 +236,11 @@ extension EditorViewState {
         let reply = await applySwitchCarry(page: page, from: text, to: carried, cursor: cursor)
         if reply.contains("\"ok\":true") {
             markdownWriter.noteLoaded(text: carried, pid: pid)
-            DebugLog.alwaysPersisted("[TRANS] carried kind=switch to markdown drained=\(drained) reply=\(reply.prefix(120))")
+            // Metadata only: the page's reply can echo the user's text, and this line is persisted.
+            DebugLog.alwaysPersisted("[TRANS] carried kind=switch to markdown drained=\(drained) ok=true replyBytes=\(reply.utf8.count)")
         } else {
             // The one catch-up: the rows' text pushed the old way (keys typed on the new page in the last moments may be overwritten).
-            DebugLog.alwaysPersisted("[TRANS] catchup=1 kind=switch to markdown reply=\(reply.prefix(200))")
+            DebugLog.alwaysPersisted("[TRANS] catchup=1 kind=switch to markdown ok=false replyBytes=\(reply.utf8.count)")
             _ = try? await page.evaluateJavaScript("JSON.stringify(window.FinalFinal.finishIncomingSwitch('discard'))")
             sourceContent = carried
             forcedPushGeneration += 1
