@@ -23,7 +23,9 @@
 //    - fallback arm: the control's write is the legacy whole-document write: the line says `mode=legacy`.
 //
 //  and the "does not write" runs additionally show that nothing was reserved and no `[MdWrite]` line was produced.
-//  The ZOOMED branch is untouched by Phase 4a: its control proves it still writes directly (no sequence reserved).
+//  The ZOOMED branch was untouched by Phase 4a; Phase 5 job A8 moved its write onto the queue too
+//  (`MarkdownBlockWriter.writeZoomedNow`), behind the same fire-time gates: its control proves one sequence is reserved,
+//  and the armed run reserves none.
 //
 //  Every "does not write" test has a CONTROL: the identical run, unarmed, DOES write. Without it a test that
 //  merely never reached the write would pass.
@@ -227,11 +229,11 @@ struct MarkdownReparseGatingTests {
         try expectNothingHappened(fixture, before: before)
     }
 
-    // MARK: - Zoomed branch (untouched by Phase 4a)
+    // MARK: - Zoomed branch (through the queue since Phase 5 job A8)
 
     @Test("""
         zoomed re-parse, scheduled BEFORE arm, firing inside the window: does NOT write (control: the identical \
-        run, unarmed, does -- directly, with no sequence reserved: the zoomed branch is untouched by Phase 4a)
+        run, unarmed, does -- through the queue since Phase 5 job A8: exactly one sequence reserved)
         """)
     func zoomedReparse_scheduledBeforeArm_firingDuringLifecycle_doesNotWrite() async throws {
         let zoomedEdit = "# Alpha\n\nZOOMED re-parse edit.\n"
@@ -241,9 +243,11 @@ struct MarkdownReparseGatingTests {
         schedule(control, content: zoomedEdit)
         let controlTask = try #require(control.editorState.blockReparseTask, "precondition: a zoomed re-parse was scheduled")
         await controlTask.value
+        await settle(control)
         #expect(try paragraphTexts(control).contains("ZOOMED re-parse edit."), "control: the unarmed zoomed re-parse must write")
-        #expect(control.sync?.testWriterHandle?.nextSequence == control.sequenceBefore, "the zoomed write is direct: nothing reserved")
-        #expect(control.editorState.markdownWriter.lastTimingLine == nil, "the zoomed branch has no [MdWrite] line")
+        #expect(control.sync?.testWriterHandle?.nextSequence == (control.sequenceBefore ?? 0) + 1,
+                "the zoomed write went through the queue (A8, MarkdownBlockWriter.writeZoomedNow): exactly one sequence reserved")
+        #expect(control.editorState.markdownWriter.lastTimingLine == nil, "the zoomed branch has no [MdWrite] timing line")
 
         let fixture = try makeFixture(withWriter: true)
         try zoomOntoAlpha(fixture)
@@ -252,8 +256,10 @@ struct MarkdownReparseGatingTests {
         let task = try #require(fixture.editorState.blockReparseTask, "precondition: a zoomed re-parse was scheduled")
         _ = try #require(arm(fixture.editorState))
         await task.value
+        await settle(fixture)
 
         #expect(try paragraphTexts(fixture) == before, "a zoomed re-parse firing inside the window must not write")
+        #expect(fixture.sync?.testWriterHandle?.nextSequence == fixture.sequenceBefore, "and reserves no turn on the queue")
     }
 
     @Test("zoomed re-parse: while a lifecycle is armed nothing is scheduled")

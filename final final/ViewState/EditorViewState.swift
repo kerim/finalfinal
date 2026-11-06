@@ -24,6 +24,19 @@ class EditorViewState {
         Date().timeIntervalSince(lastToggleRequestTime) >= Self.toggleDebounceInterval
     }
 
+    // MARK: - The Markdown page's readiness (t-633df056, Phase 5 job A5)
+
+    /// True from the moment `toggleEditorMode()` makes the mode Markdown until the new CodeMirror page has been mounted (its
+    /// `onWebViewReady`, which moves the app's web-view pointers to it, then `markMarkdownPageReady()`). In that window the status-bar
+    /// badge already says Markdown but the pointers still name the outgoing Rich Text page, so a Markdown section command waits for the
+    /// page (`awaitMarkdownPage`, EditorViewState+MarkdownPageReadiness.swift) instead of asking the wrong page and quietly taking the
+    /// slow route. False again when the mode leaves Markdown. A plain `editorMode = .source` (the unit-test rigs, which have no page)
+    /// never sets it, so nothing waits in them.
+    @ObservationIgnored var markdownPageLoading = false
+
+    /// The commands waiting in `awaitMarkdownPage`, by waiter id, each with the task that times it out.
+    @ObservationIgnored var markdownPageWaiters: [UUID: MarkdownPageWaiter] = [:]
+
     /// Focus mode state - persists across app launches via UserDefaults
     var focusModeEnabled: Bool = AppDefaults.store.bool(forKey: "focusModeEnabled") {
         didSet {
@@ -148,6 +161,8 @@ class EditorViewState {
                     // its own contentState transition back to .idle on every exit path (M1,
                     // judge fix round).
                     guard !self.isZoomRestoreInProgress else { return }
+                    // Phase 5 job A9/A10: a carried switch owns its return to `.idle` on every exit (EditorViewState+SwitchTransition.swift).
+                    guard !self.transitionHolds.switchRunning else { return }
                     // Phase 2 (t-94369a83), §2.8: wait out an in-flight system write
                     // rather than force-resetting contentState from under it -- see
                     // `systemWriteInFlight`'s own doc comment.
@@ -239,6 +254,8 @@ class EditorViewState {
     /// (`holdModeToggleUntilStructuralWorkEnds`, fix round 2a item 4). At most one.
     @ObservationIgnored
     var heldModeToggleTask: Task<Void, Never>?
+    /// Phase 5 job A7: a zoom transition in progress and the zoom held behind a transition (EditorViewState+ZoomTransition.swift).
+    let transitionHolds = TransitionHoldState()
 
     /// Bumped by every write to the block table that does not go through the writer's queue (`flushContentToDatabase`, the
     /// whole-document row writes, the old-path structural ops' mutations, and `awaitPendingStructuralJobs`). A structural entry

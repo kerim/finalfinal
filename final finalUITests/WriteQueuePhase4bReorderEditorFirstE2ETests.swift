@@ -1098,10 +1098,13 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
 // MARK: - E7 A drag in Markdown mode is editor first (flipped by t-4a8fd8af slice 2)
 
 extension WriteQueuePhase4bStructuralQueueE2ETests {
-    /// Switches to Markdown mode (the status-bar badge reads "Markdown") with Cmd-/ and waits until the app's log is quiet (the editor swap).
+    /// Switches to Markdown mode (the status-bar badge reads "Markdown") with Cmd-/, waits for the page itself (`waitForMarkdownPageReady`:
+    /// the badge flips before the page exists, t-55b63c87) and then until the app's log is quiet (the editor swap).
     func rqSwitchToMarkdown() -> Bool {
         let mode = app.buttons["status-bar-editor-mode"]
         guard mode.waitForExistence(timeout: 10) else { fail("the editor-mode button never appeared"); return false }
+        tail.poll()
+        let switchFrom = tail.lines.count
         var toggled = false
         for _ in 1...5 {
             if mode.label == "Markdown" { toggled = true; break }
@@ -1110,6 +1113,7 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
             if mode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
         }
         guard toggled else { fail("the editor-mode button never reported Markdown after the toggle keystroke"); return false }
+        guard waitForMarkdownPageReady(from: switchFrom) else { return false }
         let quiet = waitForLogQuiet(quiet: 3, cap: capped(60))
         note("MODE: Markdown; the app's log was quiet for 3 s after the switch: \(Self.yesNo(quiet))")
         return true

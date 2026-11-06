@@ -82,8 +82,10 @@ describe('one serialisation for the outgoing Rich Text read', () => {
     editor.action((ctx) => {
       const original = ctx.get(serializerCtx);
       uncountedSerializer = original;
+      // Only the whole document counts: `getCursorPosition()` also serialises the caret's own block, alone, to measure its column
+      // exactly (cursor-atom-column.test.ts); that is one paragraph, not the document this file is about.
       ctx.set(serializerCtx, (doc) => {
-        serialisations++;
+        if (doc === ctx.get(editorViewCtx).state.doc) serialisations++;
         return original(doc);
       });
     });

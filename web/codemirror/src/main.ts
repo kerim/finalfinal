@@ -87,6 +87,14 @@ import { markdownStructuralEditorFirst, markdownStructuralSwap } from './api-str
 import { markdownStructuralDuplicate } from './api-structural-markdown-duplicate';
 import { markdownStructuralReorder } from './api-structural-markdown-reorder';
 import { markdownStructuralRestore } from './api-structural-markdown-restore';
+import { applySwitchCarry, finishIncomingSwitch, noteSwitchTransaction, prepareIncomingSwitch } from './api-switch';
+import {
+  beginTransition,
+  endTransition,
+  noteTransitionTransaction,
+  swapTransition,
+  takeTransitionText,
+} from './api-transition';
 import { caywRemapPlugin } from './cayw-remap-plugin';
 import { updateCitationAddButton } from './citations';
 import {
@@ -452,6 +460,11 @@ export function buildExtensions(): Extension[] {
         // Phase 4c job 2: while a Cmd-Z / Cmd-Shift-Z press is latched or queued, every change is recorded (typing-rebase.ts) so the
         // typing done meanwhile can be put back on top of the undone document. Records nothing when no press is waiting.
         noteTypingTransaction(tr);
+        // Phase 5 job A8: while a zoom transition holds, every change is recorded (api-transition.ts) so the swap can put it back on top.
+        noteTransitionTransaction(tr);
+        // Phase 5 job A9: on the incoming page of a switch to Markdown, every change typed here is tracked (api-switch.ts) so the carry
+        // can be mapped over it.
+        noteSwitchTransaction(tr);
       }
     }),
     // Debounced push-based content messaging to Swift (replaces 500ms polling as primary).
@@ -719,6 +732,16 @@ window.FinalFinal = {
   markdownReplaceManagedRegion,
   // How many Cmd-Z / Cmd-Shift-Z presses are held behind the in-flight structural request (O19); Swift reads it when a close starts.
   heldUndoPressCount,
+  // Phase 5 job A8 (api-transition.ts): the zoom transition (begin: live text + hold + recording; swap: target + replay; end: a lost hold).
+  beginTransition,
+  swapTransition,
+  endTransition,
+  // Phase 5 job A10 (api-transition.ts): the switch to Rich Text reads the held page's text without ending the hold.
+  takeTransitionText,
+  // Phase 5 job A9 (api-switch.ts): the incoming page of a switch to Markdown.
+  prepareIncomingSwitch,
+  applySwitchCarry,
+  finishIncomingSwitch,
 
   // Combined poll data for batched 3s fallback polling
   getPollData() {

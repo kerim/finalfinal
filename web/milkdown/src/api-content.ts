@@ -200,7 +200,7 @@ export function clearEditorHistory(view: EditorView): void {
  * only consults it inside its `docChanged` branch, so on a stepless transaction the meta is inert,
  * and adding it would imply to a reader that it is load-bearing here.
  */
-function redecorateBlockIds(view: EditorView): void {
+export function redecorateBlockIds(view: EditorView): void {
   try {
     view.dispatch(view.state.tr);
   } catch (e) {
@@ -253,7 +253,7 @@ function redecorateBlockIds(view: EditorView): void {
  * is not part of `toMarkdown` (see the `figureNode` schema in image-plugin.ts), so block-sync's
  * markdown/text-based diff can never observe a pure blockId-attr change as an update or insert.
  */
-function syncFigureBlockIdAttrs(view: EditorView): void {
+export function syncFigureBlockIdAttrs(view: EditorView): void {
   const { doc } = view.state;
   let tr: Transaction | null = null;
   doc.forEach((node, pos) => {
@@ -513,6 +513,17 @@ function deferredSnapshotAndUnpause(
  * undo/redo restore, which are re-pushes of the SAME document.
  */
 let typewriterDocumentLoaded = false;
+
+/** The typewriter-scrolling readiness lines of `setContentWithBlockIds`, for a content load that runs outside this file (the zoom
+ * transition's swap, api-transition.ts): a first load clears the readiness, a re-push of the same document does not; the ready mark
+ * is scheduled before the dispatches and runs after them. */
+export function noteTypewriterContentLoad(): void {
+  if (!typewriterDocumentLoaded) {
+    typewriterDocumentLoaded = true;
+    clearDocumentReadiness();
+  }
+  queueMicrotask(() => markDocumentReady());
+}
 
 /**
  * Reports whether the live editor currently holds no text. Kept exported for tests and for
@@ -2250,7 +2261,7 @@ export function replayPendingPreMountContent(): void {
  * (e.g. a position outside the current document) -- callers treat null as "can't resolve,
  * fall back."
  */
-function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
+export function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
   const blockIds = getAllBlockIds();
 
   let targetPos: number | null = null;

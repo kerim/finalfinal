@@ -292,18 +292,22 @@ extension WriteQueuePhase4bMdRestoreEFE2ETests {
         return true
     }
 
-    /// Cmd-/ (the View menu's "Switch to Markdown"), pressed once, then the wait for the badge (a condition).
+    /// Cmd-/ (the View menu's "Switch to Markdown"), pressed once, then the wait for the badge (a condition) and for the page itself
+    /// (`waitForMarkdownPageReady`: the badge flips before the page exists, t-55b63c87).
     func mdRstSwitchToMarkdown() -> Bool {
         let mode = app.buttons["status-bar-editor-mode"]
         guard mode.waitForExistence(timeout: 10) else { fail("TEST-SETUP: the editor-mode button never appeared"); return false }
         if mode.label != "Markdown" {
             app.activateAndWaitForForeground()
+            tail.poll()
+            let switchFrom = tail.lines.count
             app.typeKey("/", modifierFlags: .command)
             let modeTimeout = mdRstAppWait(size.operationTimeout * 2, before: "the mode button reads Markdown")
             guard mode.waitForLabel("== 'Markdown'", timeout: modeTimeout) else {
                 fail("TEST-SETUP: the editor-mode button never reported Markdown after the toggle keystroke (it reads \(mode.label))")
                 return false
             }
+            guard waitForMarkdownPageReady(from: switchFrom) else { return false }
         }
         let quiet = waitForLogQuiet(quiet: 3, cap: capped(60))
         note("MODE: Markdown; the app's log was quiet for 3 s after the switch: \(Self.yesNo(quiet))")

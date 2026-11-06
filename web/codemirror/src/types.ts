@@ -213,6 +213,24 @@ declare global {
       ) => import('./api-managed-region').MarkdownManagedRegionResult;
       // O19 (t-4a8fd8af): presses held behind the in-flight structural request.
       heldUndoPressCount: () => number;
+      // Phase 5 job A8 (api-transition.ts): the zoom transition. `beginTransition` returns the live raw text and starts holding and
+      // recording in one turn; `swapTransition` replaces the text with the target and puts the recorded typing back on top in one turn
+      // (typing outside a zoomed chapter comes back as `outside`), or refuses with the live text as `raw`; `endTransition` ends a hold
+      // whose swap never came (`null`: any hold).
+      beginTransition: () => import('./api-transition').MarkdownTransitionBeginResult;
+      swapTransition: (
+        token: number,
+        options: import('./api-transition').MarkdownSwapOptions
+      ) => import('./api-transition').MarkdownSwapResult;
+      endTransition: (token: number | null, mode?: 'send' | 'discard') => { ended: boolean };
+      // Phase 5 job A10 (api-transition.ts): the Markdown -> Rich Text switch reads the held page's live text without ending the hold.
+      takeTransitionText: (token: number) => import('./api-transition').MarkdownTransitionTakeResult;
+      // Phase 5 job A9 (api-switch.ts): the incoming Markdown page of a Rich Text -> Markdown switch (tracking, the carry, the end).
+      prepareIncomingSwitch: () => { ok: boolean; chars: number };
+      applySwitchCarry: (
+        options: import('./api-switch').SwitchCarryOptions
+      ) => import('./api-switch').SwitchCarryResult;
+      finishIncomingSwitch: (mode?: 'send' | 'discard') => { ended: boolean };
       // Combined poll data
       getPollData: () => string;
       // Test snapshot hook

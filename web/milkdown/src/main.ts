@@ -186,6 +186,7 @@ import {
 } from './api-section-undo';
 import { redoReplaceRangeEditorFirst, replaceRangeEditorFirst } from './api-structural-replace';
 import { structuralSwapEditorFirst } from './api-structural-swap';
+import { beginTransition, endTransition, swapTransition, takeTransitionBatch } from './api-transition';
 import { cancelCitationEdit, isCitationEditPopupOpen } from './citation-edit-popup';
 import { pushLiveContentToSwift } from './content-push';
 import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
@@ -775,6 +776,14 @@ window.FinalFinal = {
   releaseHeldTypingPushes,
   // F7: the same release, plus the pending batch in the same call, for a press handed to the old whole-document body.
   releaseHeldTypingAndGetBatch,
+  // Phase 5 job A7 (api-transition.ts): the zoom transition. `beginTransition` drains the pending batch and starts holding and recording
+  // in one turn; `swapTransition` replaces the document with the recorded typing put back on top, in one turn; `endTransition` ends a
+  // hold whose swap never came (Swift's failure paths).
+  beginTransition,
+  swapTransition,
+  endTransition,
+  // Phase 5 job A9 (api-transition.ts): the switch to Markdown drains the held typing without ending the hold.
+  takeTransitionBatch: (token: number) => takeTransitionBatch(token, getCursorPosition),
   // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift at the
   // audited op-sequence/undo-sequence boundaries (plan §4.4).
   beginStructuralOp,

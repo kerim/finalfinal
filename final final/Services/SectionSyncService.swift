@@ -201,6 +201,12 @@ class SectionSyncService {
         lastSyncedContent = ""
     }
 
+    /// Phase 5 job A7: `markdown` is what the section rows already describe (a carried zoom just put the rows' own text into the editor),
+    /// so the content observer's call for it is skipped, as it is for any text this service has just synced.
+    func noteContentAlreadySynced(_ markdown: String) {
+        lastSyncedContent = markdown
+    }
+
     /// Force immediate sync (e.g., before app quit).
     /// - Parameter fromEditorChange: Pass `true` when this flush represents the user's real,
     ///   settled editor content (e.g. `handleSaveVersion`'s "flush before snapshot" — the

@@ -69,6 +69,11 @@ extension StructuralUndoController {
         let writer = editorState.markdownWriter
         let timelineEpoch = unifiedUndoService.generation
 
+        // t-633df056 (Phase 5 job A5): a press right after View > Switch to Markdown, before the new page is mounted, waits for the page
+        // first (the press's own "Undoing…" / "Redoing…" notice covers it); a timed-out wait or a mode that changed gives it to the old
+        // body, as before.
+        guard await awaitMarkdownPageForStructuralCommand(label: "queued \(label)") else { return nil }
+
         // A7: the previous Markdown job (a delete, a reinsert, another swap) finishes first; its step 8 has saved the typing. No notice of
         // its own here (review DR-2): this route only runs inside `performUndo` / `performRedo`, whose "Undoing…" / "Redoing…" toast
         // belongs to the whole press from its first line, and a second delayed toast would replace it and leave the slot empty when it
@@ -80,10 +85,11 @@ extension StructuralUndoController {
         // job (review F15). Before this press raises its own writer hold, so it is a plain suspension of the gate turn. No wait when off.
         await TestMode.holdSlowUndoPress(opId: String(entry.id.uuidString.prefix(8)))
         if editorState.structuralGate.isClosedToNewWork { return .cancelled }
+        // Then the plan: the rows the job will write, read (last in this guard, so only once the checks before it pass) now that the
+        // previous job has applied (ids prepared against the rows in the table).
         guard editorState.activeLifecycle == nil, editorState.editorMode == .source, editorState.zoomedSectionId == nil,
-              unifiedUndoService.generation == timelineEpoch else { return nil }
-        // The plan: the rows the job will write, read now that the previous job has applied (ids prepared against the rows in the table).
-        guard let plan = readSwapPlan(snapshotId: snapshotId, kind: kind, database: db, projectId: pid) else { return nil }
+              unifiedUndoService.generation == timelineEpoch,
+              let plan = readSwapPlan(snapshotId: snapshotId, kind: kind, database: db, projectId: pid) else { return nil }
         let trace = StructTrace(label: label, opId: String(opId.uuidString.prefix(8)))
         StructuralTrace.beginOp(label: label, opId: trace.opId)
         trace.log("start (markdown queued \(label)) rows=\(plan.rows.count)")

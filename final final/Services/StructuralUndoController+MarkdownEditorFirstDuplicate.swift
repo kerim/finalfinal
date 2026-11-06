@@ -136,6 +136,18 @@ extension StructuralUndoController {
               editorFirstRootIsEligible(rootId: rootId, database: db, projectId: pid) else { return nil }
         let writer = editorState.markdownWriter
 
+        // ONE notice belongs to the whole click (UX contract 4.2: "Finishing the last change…"; floor 3: past one second the app shows it
+        // is working): it is counted from the press, not from the end of a wait, and it stays through the page wait below, the hold wait,
+        // the page call and the reply turn, which on a book take seconds. Under a second nothing shows. The `defer` takes it down by id
+        // (`stop()` is idempotent) on every way out: performed, a nil return for the old body (whose own notices are made after this
+        // return), a refused page, a changed timeline.
+        let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
+        defer { waiting.stop() }
+
+        // t-633df056 (Phase 5 job A5): pressed right after View > Switch to Markdown, before the new page is mounted, the press waits for
+        // the page here, before the click begins; a timed-out wait or a mode that changed gives it to the old body, as before.
+        guard await awaitMarkdownPageForStructuralCommand(label: "editor-first duplicate") else { return nil }
+
         // Round M1 measurement (MdSpeed.swift): the timeline starts here, at the menu click (it used to start after the hold wait and the
         // page preparation, which left those two steps outside it); `noteOpId` below gives it the op's short id. Silent unless tracing is on.
         StructuralTrace.beginOp(label: "sectionDuplicate")
@@ -144,13 +156,7 @@ extension StructuralUndoController {
         defer { clickSpan.end() }
 
         // Step 2: an earlier Markdown command finishes saving first. Held, never refused. Duplicate, then Duplicate the copy at once, waits
-        // here. ONE notice belongs to the whole click (UX contract 4.2: "Finishing the last change…"; floor 3: past one second the app
-        // shows it is working): it is counted from the press, not from the end of the wait, and it stays through the page call and the
-        // reply turn, which on a book take seconds. Under a second nothing shows. The `defer` takes it down by id (`stop()` is idempotent) on
-        // every way out: performed, a nil return for the old body (whose own notices are made after this return), a refused page, a
-        // changed timeline.
-        let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
-        defer { waiting.stop() }
+        // here; past one second the notice above shows.
         let holdWaitSpan = MdSpeed.span("holdWait")
         await writer.awaitStructuralHoldReleased()
         holdWaitSpan.end()

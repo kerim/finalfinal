@@ -485,6 +485,28 @@ enum ToastFactory {
         )
     }
 
+    // MARK: Zoom Cancelled (Phase 5 job A7)
+
+    /// A zoom in or out gave up because the save queue did not finish an earlier change within its bound (a stuck writer: a fault, not
+    /// everyday use). The editor stays as it was and the typing done meanwhile is saved as usual. No UX-contract 4.3 row covers a zoom yet;
+    /// this is the cancelled-command shape of the rows above (design a7-a10-design.md, section 0 (b), proposes it).
+    static func zoomCancelledBehindEarlierChange() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't zoom while an earlier change was still finishing.",
+            fadeDelayOverride: .seconds(9)
+        )
+    }
+
+    /// Phase 5 job A9/A10: a switch between Rich Text and Markdown abandoned because the writer did not settle (a stuck writer, a fault).
+    static func switchCancelledBehindEarlierChange() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't switch while an earlier change was still finishing.",
+            fadeDelayOverride: .seconds(9)
+        )
+    }
+
     // MARK: Zoom Root Lost (rename-empties-sidebar plan, M5 judge fix round)
 
     /// The "lost the zoom root entirely" auto-recovery (`EditorViewState.clearZoomRestoringEditor()`)

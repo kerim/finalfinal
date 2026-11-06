@@ -2,6 +2,9 @@
 //  WriteQueuePhase5BeforeNumbersE2ETests.swift
 //  final finalUITests
 //
+// swiftlint:disable file_length
+// (Phase 5 job A8: its methods were asked for in this class, not a new file; the class's parts are kept together, one MARK per job.)
+//
 //  PHASE 5, JOB A1 (docs/architecture/write-queue-plan/phase5/a1-before-numbers.md). TESTS ONLY: nothing here changes how the app behaves
 //  (the app gained one log line, `[ZoomClick] performUserZoomIn tail complete in <s>s`, the zoom-in twin of the zoom-out line).
 //
@@ -22,6 +25,9 @@
 //    testBeforeNumbersPreloader_article / _book6 / _book12         preloader on, 4.5 s or more between two switches
 //    testLossWindow_article / testLossWindow_book12                the loss reproducer (24 markers: 4 actions x 6 delays)
 //    testPhase5Helpers_handWorkedExample                           no app: the pure judge, parser and marker names on canned input
+//    testMarkdownDeleteRightAfterSwitchIsHeldThenFast_book12       job A5 (board t-633df056): Delete Section pressed the moment the badge says
+//                                                                  Markdown, before the page is there, is HELD and then takes the fast route
+//                                                                  (an app-side check with an assertion; see its own MARK at the end)
 //  Example: scripts/vmtest/vmtest run --detach --timeout 2400 \
 //             --scope "final finalUITests/WriteQueuePhase5BeforeNumbersE2ETests/testBeforeNumbers_article"
 //
@@ -87,6 +93,10 @@ enum Phase5Limits {
     static let slashKeyCode = 44
     /// Arrow keys (123 to 126) are never marker keys.
     static let arrowKeyCodes = 123...126
+    /// Job A5: how long the app's UI-test seam `FF_UI_TESTING_MD_PAGE_READY_HOLD_MS` keeps the first Markdown page from being mounted, so
+    /// the Delete pressed right after the switch lands inside the window for certain (the real window is about 1 s idle, 2.5 s busy on the
+    /// twelve-chapter book, VM figures; the driver's trigger reaches the app a few hundred milliseconds after the badge flips).
+    static let pageReadyHoldMs = 3_000
 }
 
 // MARK: - The four actions
@@ -362,14 +372,20 @@ extension WriteQueuePhase5BeforeNumbersE2ETests {
     }
 
     /// Begins the method, seeds (with the loss test's lines when asked), sets the preloader, launches and waits for the load to settle.
-    func startScenario(method: String, size: Phase4bDelSize, preloader: Bool, lossLines: Bool) -> Bool {
+    func startScenario(method: String, size: Phase4bDelSize, preloader: Bool, lossLines: Bool, caretParagraph: Bool = false) -> Bool {
         begin(method: method, size: size)
         preloaderOn = preloader
         if lossLines {
             guard let generated = doc,
-                  let seeded = Self.withLossLines(generated, headingMarks: size == .article ? "## " : "# ", title: size.deleteTitle) else {
+                  var seeded = Self.withLossLines(generated, headingMarks: size == .article ? "## " : "# ", title: size.deleteTitle) else {
                 fail("TEST-SETUP: the loss lines could not be put into the document (Anchor14 or the heading \"\(size.deleteTitle)\" missing)")
                 return false
+            }
+            if caretParagraph {
+                let last = Self.lossLine(Self.lossLineCount)
+                let text = seeded.markdown.replacingOccurrences(of: last, with: last + "\n\n" + Self.caretParagraphText)
+                seeded = Phase4bDoc(markdown: text, cslJSON: seeded.cslJSON, counts: Phase4bGenerator.count(text))
+                note("SEED: the caret paragraph after \(String(last.prefix(6))): \(Self.caretParagraphText)")
             }
             doc = seeded
             note("SEED: \(Self.lossLineCount) loss lines after Anchor14, \(Self.zoneLineCount) zone lines under \"\(size.deleteTitle)\"; "
@@ -821,5 +837,464 @@ extension WriteQueuePhase5BeforeNumbersE2ETests {
         let problems = failures.joined(separator: " | ")
         assertCheck(clean, "LOSS WINDOW: every marker survived exactly once; problems: \(problems)")
         if clean { try skipIfInvalid() }
+    }
+}
+
+// MARK: - Job A5: a Delete pressed before the Markdown page is ready is held, then fast (board t-633df056)
+
+extension WriteQueuePhase5BeforeNumbersE2ETests {
+    /// The app's log lines this test reads. The first three are written by StructuralUndoController+MarkdownPageWait.swift (the third also
+    /// by the old route's own fallback line); the hold marker by `TestMode.holdMarkdownPageReady`; the trigger line by
+    /// UITestingDeleteTrigger; the fast-route mark by the editor-first Delete (`MdSpeed.mark("entered")`); the notice lines by ToastCenter.
+    static let pageWaitHeldLine = "the Markdown page is still loading -- held until it is ready"
+    static let pageWaitReadyLine = "the Markdown page is ready after"
+    static let oldPathLine = "old path for this press"
+    static let pageReadyHoldLine = "[MD-PAGE-READY-HOLD]"
+    static let deleteTriggerLine = "deleteSection received title="
+    static let fastRouteLine = "md-speed delete entered"
+    static let noticeShownLine = "[toast] show style=progress message=Finishing the last change"
+    static let noticeDismissedLine = "[toast] dismiss message=Finishing the last change"
+
+    /// Board t-633df056. The twelve-chapter book opens in Rich Text; Cmd-/; and Delete Section is pressed the moment the badge says
+    /// Markdown, BEFORE the Markdown page is mounted (the app's UI-test seam holds the mount for `Phase5Limits.pageReadyHoldMs`, so the
+    /// press lands inside the window for certain; the real window is about 1 s idle and 2.5 s busy on this book). The app must HOLD the
+    /// Delete until the page is ready (UX contract 4.2: held, never refused), show "Finishing the last change…" after a second, and then
+    /// take the editor-first (fast) route, never the old whole-document body it quietly took in that window before job A5; and the delete
+    /// must work (the heading is gone from the block table). FAILS on the code before A5: there the Delete asked the Rich Text page, got
+    /// no answer and logged "the page refused or failed (no answer) -- old path for this press" (the diagnosis of run-1793546972-92411).
+    func testMarkdownDeleteRightAfterSwitchIsHeldThenFast_book12() {
+        app.launchEnvironment["FF_UI_TESTING_MD_PAGE_READY_HOLD_MS"] = String(Phase5Limits.pageReadyHoldMs)
+        note("SEAM FF_UI_TESTING_MD_PAGE_READY_HOLD_MS=\(Phase5Limits.pageReadyHoldMs)")
+        guard startScenario(method: #function, size: .book12, preloader: false, lossLines: false) else { return }
+        let title = size.deleteTitle
+        let mode = app.buttons["status-bar-editor-mode"]
+        guard mode.waitForExistence(timeout: 10) else { fail("the editor-mode button never appeared"); return }
+        app.activateAndWaitForForeground()
+        tail.poll()
+        let switchFrom = tail.lines.count
+        firstTriggerIndex = switchFrom
+        let pressedAt = Date()
+        app.typeKey("/", modifierFlags: .command)
+        guard mode.waitForLabel("== 'Markdown'", timeout: size.operationTimeout * 2) else {
+            fail("the editor-mode button never reported Markdown after the toggle keystroke (it reads \(mode.label))")
+            return
+        }
+        let badgeAt = Date()
+        // The press, AT ONCE: the app's UI-testing Delete trigger (UITestingDeleteTrigger.swift), the same entry point the sidebar's Delete
+        // Section runs. Not a menu click: the driver's own accessibility queries behind one take seconds on a book and would miss the window.
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("com.kerim.final-final.uitest.deleteSection"), object: nil, userInfo: ["title": title], deliverImmediately: true)
+        let triggerAt = Date()
+        emit("A5 DRIVER: Cmd-/ to badge \(Phase5Parse.ms(from: pressedAt, to: badgeAt)) ms; badge to Delete trigger "
+            + "\(Phase5Parse.ms(from: badgeAt, to: triggerAt)) ms (test clock)")
+
+        // What the app did, read from its log. Every wait is bounded; the verdicts come after them all, so one failure cannot hide the rest.
+        let held = waitForLog(containing: Self.pageWaitHeldLine, from: switchFrom, timeout: 20)
+        guard waitForMarkdownPageReady(from: switchFrom) else { return }
+        let wentOn = waitForLog(containing: Self.pageWaitReadyLine, from: switchFrom, timeout: 20)
+        let fast = waitForLog(containing: Self.fastRouteLine, from: switchFrom, timeout: 20)
+        let rowsAfter = waitForHeadingRows(title, equalTo: 0, timeout: capped(size.operationTimeout * 2))
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 60)
+        tail.poll()
+        let window = Array(tail.lines[min(switchFrom, tail.lines.count)...])
+        func stamp(_ needle: String) -> Date? { window.first { $0.text.contains(needle) }?.date }
+        let oldPath = window.filter { $0.text.contains(Self.oldPathLine) }.map { String($0.text.suffix(140)) }
+        let holdBegan = window.contains { $0.text.contains(Self.pageReadyHoldLine) }
+        let noticeShown = window.contains { $0.text.contains(Self.noticeShownLine) }
+        let noticeDismissed = window.contains { $0.text.contains(Self.noticeDismissedLine) }
+        let placed: String
+        if let triggerStamp = stamp(Self.deleteTriggerLine), let readyStamp = stamp(Self.markdownPageReadyLogLine) {
+            let gap = Phase5Parse.ms(from: triggerStamp, to: readyStamp)
+            placed = gap > 0
+                ? "the Delete reached the app \(gap) ms BEFORE the page was ready"
+                : "the Delete reached the app \(-gap) ms AFTER the page was ready (TEST-SETUP: the hold was too short for this host)"
+        } else {
+            placed = "the trigger line or the page-ready line is missing from the log, so the press cannot be placed against the page"
+        }
+        let heldMs = stamp(Self.pageWaitHeldLine).flatMap { began in stamp(Self.pageWaitReadyLine).map { Phase5Parse.ms(from: began, to: $0) } }
+        emit("A5 APP: \(placed); held for \(heldMs.map(String.init) ?? "-") ms; notice shown \(Self.yesNo(noticeShown)), "
+            + "taken down \(Self.yesNo(noticeDismissed)); heading rows after the delete: \(rowsAfter) (TEST VM figures)")
+
+        assertCheck(holdBegan, "TEST-SETUP: the page-ready hold began (a \(Self.pageReadyHoldLine) line is in the log)")
+        assertCheck(held, "the Delete pressed before the Markdown page was ready was HELD for the page (\"\(Self.pageWaitHeldLine)\"); \(placed)")
+        assertCheck(wentOn, "the held Delete went on once the page was ready (\"\(Self.pageWaitReadyLine)\")")
+        assertCheck(
+            fast && oldPath.isEmpty,
+            "the Delete took the editor-first (fast) route: its `\(Self.fastRouteLine)` line is there (\(Self.yesNo(fast))) and no "
+                + "`\(Self.oldPathLine)` line is; old-path lines: \(oldPath)")
+        assertCheck(rowsAfter == 0, "the delete worked: the heading \"\(title)\" is gone from the block table (rows: \(rowsAfter))")
+        assertCheck(
+            noticeShown && noticeDismissed,
+            "the held Delete showed \"Finishing the last change…\" after a second and took it down when done (UX contract 4.2)")
+    }
+}
+
+// MARK: - Job A7: typing inside a Rich Text zoom's window is carried across (design a7-a10-design.md, sections 1, 6 and 7)
+
+/// What one zoom with a marker typed inside its held window showed in the app's log.
+struct Phase5ZoomTyping { let holdSeen: Bool; let swapped: Bool; let keysInEditor: Int }
+
+extension WriteQueuePhase5BeforeNumbersE2ETests {
+    /// The app's seam (`FF_UI_TESTING_TRANS_HOLD_MS`) widens the window of the first two transitions (the zoom in, then the zoom out). New
+    /// path: after the barrier, the page holding and recording. Legacy path: after the cached-copy flush, before the push.
+    static let transHoldMs = 3_000
+    static let transSwappedLine = "[TRANS] swapped kind="
+    /// Typed in chapter 1 during the zoom INTO chapter 6 (outside the range); typed in chapter 6 during the zoom OUT (inside the window).
+    static let outsideMarker = "p7out"
+    static let insideMarker = "p7zin"
+    /// Job A7, the new path: both markers survive exactly once, each in its own line (`Loss01` in chapter 1, `Zone01` in chapter 6).
+    func testZoomTypingInsideHeldWindow_book12() throws { try runZoomTypingInsideHeldWindow(method: #function, legacy: false) }
+    /// The must-fail twin on today's path (`FF_UI_TESTING_LEGACY_TRANSITION=zoom`): EXPECTED TO FAIL, the push overwrites the typing.
+    func testZoomTypingInsideHeldWindowLegacy_book12() throws { try runZoomTypingInsideHeldWindow(method: #function, legacy: true) }
+    func testBeforeNumbersLegacyZoom_article() throws { try runLegacyZoomBeforeNumbers(method: #function, size: .article) }
+    func testBeforeNumbersLegacyZoom_book6() throws { try runLegacyZoomBeforeNumbers(method: #function, size: .book6) }
+    func testBeforeNumbersLegacyZoom_book12() throws { try runLegacyZoomBeforeNumbers(method: #function, size: .book12) }
+    func runLegacyZoomBeforeNumbers(method: String, size: Phase4bDelSize) throws {
+        app.launchEnvironment["FF_UI_TESTING_LEGACY_TRANSITION"] = "zoom"
+        emit("A7 PATH legacy zoom (today's path), SEAM FF_UI_TESTING_LEGACY_TRANSITION=zoom")
+        try runBeforeNumbers(method: method, size: size, preloader: false)
+    }
+    /// Caret at the end of `line`, the zoom triggered, the marker typed as soon as the app logs that the hold began, the zoom waited out.
+    private func zoomTypingInsideHold(_ action: Phase5Action, caretPrefix: String, line: String, marker: String) -> Phase5ZoomTyping? {
+        guard placeCaretAtAnchorEnd(paragraph: caretPrefix, exactLine: line), let prepared = prepare(action) else { return nil }
+        app.activateAndWaitForForeground()
+        tail.poll()
+        let from = tail.lines.count
+        if firstTriggerIndex == nil { firstTriggerIndex = from }
+        fire(action, card: prepared.card)
+        let holdSeen = waitForLog(containing: "[TRANS-HOLD]", from: from, timeout: size.operationTimeout)
+        typeNow(marker)
+        let end = Self.endNeedle(action)
+        guard waitForLog(containing: end, from: from, timeout: size.operationTimeout * 2) else { fail("no \"\(end)\" line"); return nil }
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 60)
+        tail.poll()
+        let window = tail.lines[min(from, tail.lines.count)...]
+        return Phase5ZoomTyping(
+            holdSeen: holdSeen, swapped: window.contains { $0.text.contains(Self.transSwappedLine) },
+            keysInEditor: window.compactMap { Phase4bDelTypingParser.key($0.text) }.filter(\.inEditor).count)
+    }
+    private func audit(_ marker: String, _ label: String, _ zoom: Phase5ZoomTyping) -> (count: Int, row: String) {
+        let count = waitForMarker(marker)
+        let row = count > 0 ? markerLocation(marker) : "-"
+        emit("A7 \(label): hold seen \(Self.yesNo(zoom.holdSeen)), swapped \(Self.yesNo(zoom.swapped)), keys in the editor "
+            + "\(zoom.keysInEditor); \(marker) in the rows \(count) time(s), at \"\(row)\"")
+        return (count, row)
+    }
+    func runZoomTypingInsideHeldWindow(method: String, legacy: Bool) throws {
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_MS"] = String(Self.transHoldMs)
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_FIRST_N"] = "2"
+        if legacy { app.launchEnvironment["FF_UI_TESTING_LEGACY_TRANSITION"] = "zoom" }
+        note("SEAM FF_UI_TESTING_TRANS_HOLD_MS=\(Self.transHoldMs) FIRST_N=2" + (legacy ? " LEGACY_TRANSITION=zoom (EXPECTED TO FAIL)" : ""))
+        guard startScenario(method: method, size: .book12, preloader: false, lossLines: true) else { return }
+        emit("A7 PATH \(legacy ? "legacy zoom (today's path)" : "carried zoom (the new path)")")
+        let zoomIn = zoomTypingInsideHold(.zoomIn, caretPrefix: "Loss01", line: Self.lossLine(1), marker: Self.outsideMarker)
+        guard let zoomIn else { return }
+        let outside = audit(Self.outsideMarker, "ZOOM IN", zoomIn)
+        let zoomOut = zoomTypingInsideHold(.zoomOut, caretPrefix: "Zone01", line: Self.zoneLine(1), marker: Self.insideMarker)
+        guard let zoomOut else { return }
+        let inside = audit(Self.insideMarker, "ZOOM OUT", zoomOut)
+        _ = waitForBlocksToSettle()
+        let outsideFinal = markerOccurrences(Self.outsideMarker)
+        let insideFinal = markerOccurrences(Self.insideMarker)
+        emit("A7 AUDIT final: \(Self.outsideMarker)=\(outsideFinal), \(Self.insideMarker)=\(insideFinal)")
+        assertCheck(zoomIn.holdSeen && zoomOut.holdSeen, "TEST-SETUP: both zooms logged [TRANS-HOLD] (the window was widened)")
+        assertCheck(zoomIn.keysInEditor >= 5 && zoomOut.keysInEditor >= 5,
+                    "TEST-SETUP: the marker keys reached the editor (zoom in \(zoomIn.keysInEditor), zoom out \(zoomOut.keysInEditor))")
+        if !legacy { assertCheck(zoomIn.swapped && zoomOut.swapped, "both zooms took the carried path (a \(Self.transSwappedLine) line)") }
+        assertCheck(outside.count == 1 && outsideFinal == 1 && outside.row.contains("Loss01"),
+                    "chapter-1 typing during the zoom into chapter 6 saved once, in its line (\(outside.count), final \(outsideFinal))")
+        assertCheck(inside.count == 1 && insideFinal == 1 && inside.row.contains("Zone01"),
+                    "chapter-6 typing during the zoom out saved once, in its line (\(inside.count), final \(insideFinal))")
+    }
+}
+
+// MARK: - Job A8: typing inside a Markdown zoom's window is carried across (design a7-a10-design.md, sections 2, 6 and 7)
+
+extension WriteQueuePhase5BeforeNumbersE2ETests {
+    /// Job A8, the new path, typing INSIDE the zoomed chapter in both windows: the zoom into chapter 6 with the caret in chapter 6 (`Zone01`),
+    /// then the zoom out with the caret on `Zone02`. Both markers survive exactly once, each in its own line.
+    func testMarkdownZoomTypingInside_book12() throws { try runMarkdownZoomTyping(method: #function, legacy: false, outside: false) }
+    /// The must-fail twin on today's path (`FF_UI_TESTING_LEGACY_TRANSITION=zoom`): EXPECTED TO FAIL, the push overwrites the typing.
+    func testMarkdownZoomTypingInsideLegacy_book12() throws { try runMarkdownZoomTyping(method: #function, legacy: true, outside: false) }
+    /// Job A8, typing OUTSIDE the zoomed span: the zoom into chapter 6 with the caret in chapter 1 (`Loss01`); then the zoom out, inside.
+    func testMarkdownZoomTypingOutside_book12() throws { try runMarkdownZoomTyping(method: #function, legacy: false, outside: true) }
+    /// Its must-fail twin on today's path: EXPECTED TO FAIL (the zoom out's push overwrites the typing done in its window).
+    func testMarkdownZoomTypingOutsideLegacy_book12() throws { try runMarkdownZoomTyping(method: #function, legacy: true, outside: true) }
+    /// The A/B timing of the zooms in Markdown, the same build with and without the change (`legacy`).
+    func testMarkdownZoomNumbers_article() throws { try runMarkdownZoomNumbers(method: #function, size: .article, legacy: false) }
+    func testMarkdownZoomNumbers_book6() throws { try runMarkdownZoomNumbers(method: #function, size: .book6, legacy: false) }
+    func testMarkdownZoomNumbers_book12() throws { try runMarkdownZoomNumbers(method: #function, size: .book12, legacy: false) }
+    func testMarkdownZoomNumbersLegacy_article() throws { try runMarkdownZoomNumbers(method: #function, size: .article, legacy: true) }
+    func testMarkdownZoomNumbersLegacy_book6() throws { try runMarkdownZoomNumbers(method: #function, size: .book6, legacy: true) }
+    func testMarkdownZoomNumbersLegacy_book12() throws { try runMarkdownZoomNumbers(method: #function, size: .book12, legacy: true) }
+
+    /// The Markdown page draws only the lines in view: a single click on the zoom chapter's Outline card scrolls it there (UX contract 2).
+    private func showZoomChapter() -> Bool {
+        guard let card = bringZoomCardIntoView() else { return false }
+        card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click() // as `fire` does: the card's text is not hittable
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 30)
+        return true
+    }
+
+    /// Starts the scenario and switches to Markdown (waited out like every action).
+    private func startInMarkdown(method: String, size: Phase4bDelSize, lossLines: Bool, legacy: Bool) -> Bool {
+        if legacy { app.launchEnvironment["FF_UI_TESTING_LEGACY_TRANSITION"] = "zoom" }
+        guard startScenario(method: method, size: size, preloader: false, lossLines: lossLines), perform(.toMarkdown) != nil else { return false }
+        let path = legacy ? "legacy zoom (today's path), SEAM FF_UI_TESTING_LEGACY_TRANSITION=zoom" : "carried zoom (the new path)"
+        emit("A8 PATH \(path) in Markdown")
+        return true
+    }
+
+    func runMarkdownZoomNumbers(method: String, size: Phase4bDelSize, legacy: Bool) throws {
+        guard startInMarkdown(method: method, size: size, lossLines: false, legacy: legacy) else { return }
+        _ = measureProbes(label: "before")
+        for number in 1...Phase5Limits.repetitions {
+            for action in [Phase5Action.zoomIn, .zoomOut] {
+                guard let done = perform(action) else { return }
+                reps.append((number, done))
+                emitRep(number, done)
+            }
+        }
+        _ = measureProbes(label: "after")
+        emitSummary()
+        try skipIfInvalid()
+    }
+
+    func runMarkdownZoomTyping(method: String, legacy: Bool, outside: Bool) throws {
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_MS"] = String(Self.transHoldMs)
+        // Three: the carried switch to Markdown that starts the scenario takes the first hold (A9's seam sits in the switch too;
+        // run-1793952798-94205 logged no hold for the zoom out with two), then the zoom in and the zoom out.
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_FIRST_N"] = "3"
+        note("SEAM FF_UI_TESTING_TRANS_HOLD_MS=\(Self.transHoldMs) FIRST_N=3" + (legacy ? " LEGACY_TRANSITION=zoom (EXPECTED TO FAIL)" : ""))
+        guard startInMarkdown(method: method, size: .book12, lossLines: true, legacy: legacy) else { return }
+        let firstMarker = outside ? "m8out" : "m8zin"
+        let (firstPrefix, firstLine) = outside ? ("Loss01", Self.lossLine(1)) : ("Zone01", Self.zoneLine(1))
+        if !outside { guard showZoomChapter() else { return } }
+        guard let zoomIn = zoomTypingInsideHold(.zoomIn, caretPrefix: firstPrefix, line: firstLine, marker: firstMarker) else { return }
+        let first = audit(firstMarker, "MARKDOWN ZOOM IN", zoomIn)
+        // After the zoom in the chapter's top was out of view (run-1793900955-66664: the push is the same `setContent` on both paths); the
+        // person clicks the chapter's card to get there.
+        guard showZoomChapter(),
+              let zoomOut = zoomTypingInsideHold(.zoomOut, caretPrefix: "Zone02", line: Self.zoneLine(2), marker: "m8zot") else { return }
+        let second = audit("m8zot", "MARKDOWN ZOOM OUT", zoomOut)
+        _ = waitForBlocksToSettle()
+        let firstFinal = markerOccurrences(firstMarker)
+        let secondFinal = markerOccurrences("m8zot")
+        emit("A8 AUDIT final: \(firstMarker)=\(firstFinal), m8zot=\(secondFinal)")
+        assertCheck(zoomIn.holdSeen && zoomOut.holdSeen, "TEST-SETUP: both zooms logged [TRANS-HOLD] (the window was widened)")
+        assertCheck(zoomIn.keysInEditor >= 5 && zoomOut.keysInEditor >= 5,
+                    "TEST-SETUP: the marker keys reached the editor (zoom in \(zoomIn.keysInEditor), zoom out \(zoomOut.keysInEditor))")
+        if !legacy { assertCheck(zoomIn.swapped && zoomOut.swapped, "both zooms took the carried path (a \(Self.transSwappedLine) line)") }
+        assertCheck(first.count == 1 && firstFinal == 1 && first.row.contains(firstPrefix),
+                    "typing during the zoom in saved once, in its line \(firstPrefix) (\(first.count), final \(firstFinal))")
+        assertCheck(second.count == 1 && secondFinal == 1 && second.row.contains("Zone02"),
+                    "typing during the zoom out saved once, in its line Zone02 (\(second.count), final \(secondFinal))")
+    }
+}
+
+// MARK: - Jobs A9 and A10: typing inside the Rich Text / Markdown switch is carried across (design a7-a10-design.md, sections 3, 4, 6, 7)
+
+extension WriteQueuePhase5BeforeNumbersE2ETests {
+    /// Job A9 then A10, the new path: the caret on `Loss01` in Rich Text, Cmd-/ (to Markdown), a marker typed as soon as the app logs that the
+    /// switch's window was widened (`FF_UI_TESTING_TRANS_HOLD_MS`: the incoming page is ready, the outgoing page still on screen); then Cmd-/
+    /// back (to Rich Text) with a second marker typed the same way at the caret, which is still in that line. Both survive exactly once, in
+    /// the `Loss01` row.
+    func testSwitchTypingInsideHeldWindow_article() throws { try runSwitchTypingInsideHeldWindow(method: #function, legacy: false) }
+    /// The must-fail twin on today's path (`FF_UI_TESTING_LEGACY_TRANSITION=switch`; the same hold sits between the flip and the new page's
+    /// text): EXPECTED TO FAIL, the keys reach no editor or are overwritten when the new page gets its text.
+    func testSwitchTypingInsideHeldWindowLegacy_article() throws { try runSwitchTypingInsideHeldWindow(method: #function, legacy: true) }
+    /// The A/B timing of both switches on today's path (`FF_UI_TESTING_LEGACY_TRANSITION=switch`), the same steps as `testBeforeNumbers_*`
+    /// and `testBeforeNumbersPreloader_*`.
+    func testBeforeNumbersLegacySwitch_article() throws { try runLegacySwitchBeforeNumbers(method: #function, size: .article, preloader: false) }
+    func testBeforeNumbersLegacySwitch_book6() throws { try runLegacySwitchBeforeNumbers(method: #function, size: .book6, preloader: false) }
+    func testBeforeNumbersLegacySwitch_book12() throws { try runLegacySwitchBeforeNumbers(method: #function, size: .book12, preloader: false) }
+    func testBeforeNumbersPreloaderLegacySwitch_article() throws {
+        try runLegacySwitchBeforeNumbers(method: #function, size: .article, preloader: true)
+    }
+    func testBeforeNumbersPreloaderLegacySwitch_book6() throws {
+        try runLegacySwitchBeforeNumbers(method: #function, size: .book6, preloader: true)
+    }
+    func testBeforeNumbersPreloaderLegacySwitch_book12() throws {
+        try runLegacySwitchBeforeNumbers(method: #function, size: .book12, preloader: true)
+    }
+
+    /// Diagnosis (a9-notes.md, 04:45 entry): the loss window with today's switch and the carried zooms, to tell whether the zoom-in typing
+    /// that becomes a delete plus an insert comes from the carried switch's prepared page or from the carried zoom itself.
+    func testLossWindowLegacySwitch_book12() throws {
+        app.launchEnvironment["FF_UI_TESTING_LEGACY_TRANSITION"] = "switch"
+        emit("A9/A10 PATH legacy switch (today's path), carried zooms, SEAM FF_UI_TESTING_LEGACY_TRANSITION=switch")
+        try runLossWindow(method: #function, size: .book12)
+    }
+
+    func runLegacySwitchBeforeNumbers(method: String, size: Phase4bDelSize, preloader: Bool) throws {
+        app.launchEnvironment["FF_UI_TESTING_LEGACY_TRANSITION"] = "switch"
+        emit("A9/A10 PATH legacy switch (today's path), SEAM FF_UI_TESTING_LEGACY_TRANSITION=switch")
+        try runBeforeNumbers(method: method, size: size, preloader: preloader)
+    }
+
+    /// One switch with a marker typed inside its held window, at the caret wherever it is. Nil after a reported failure.
+    private func switchTypingInsideHold(_ action: Phase5Action, marker: String) -> Phase5ZoomTyping? {
+        guard let prepared = prepare(action) else { return nil }
+        app.activateAndWaitForForeground()
+        tail.poll()
+        let from = tail.lines.count
+        if firstTriggerIndex == nil { firstTriggerIndex = from }
+        fire(action, card: prepared.card)
+        let holdSeen = waitForLog(containing: "[TRANS-HOLD]", from: from, timeout: size.operationTimeout)
+        typeNow(marker)
+        let end = Self.endNeedle(action)
+        guard waitForLog(containing: end, from: from, timeout: size.operationTimeout * 2) else { fail("no \"\(end)\" line"); return nil }
+        let wanted = action.wantedMode ?? ""
+        let reads = app.buttons["status-bar-editor-mode"].waitForLabel("== '\(wanted)'", timeout: 10)
+        assertCheck(reads, "after the \(action.title) the badge reads \(wanted)")
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 60)
+        tail.poll()
+        let window = tail.lines[min(from, tail.lines.count)...]
+        return Phase5ZoomTyping(
+            holdSeen: holdSeen, swapped: window.contains { $0.text.contains("[TRANS] swapped kind=switch") },
+            keysInEditor: window.compactMap { Phase4bDelTypingParser.key($0.text) }.filter(\.inEditor).count)
+    }
+
+    func runSwitchTypingInsideHeldWindow(method: String, legacy: Bool) throws {
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_MS"] = String(Self.transHoldMs)
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_FIRST_N"] = "2"
+        if legacy { app.launchEnvironment["FF_UI_TESTING_LEGACY_TRANSITION"] = "switch" }
+        note("SEAM FF_UI_TESTING_TRANS_HOLD_MS=\(Self.transHoldMs) FIRST_N=2" + (legacy ? " LEGACY_TRANSITION=switch (EXPECTED TO FAIL)" : ""))
+        guard startScenario(method: method, size: .article, preloader: false, lossLines: true) else { return }
+        emit("A9/A10 PATH \(legacy ? "legacy switch (today's path)" : "carried switch (the new path)")")
+        guard placeCaretAtAnchorEnd(paragraph: "Loss01", exactLine: Self.lossLine(1)),
+              let toMarkdown = switchTypingInsideHold(.toMarkdown, marker: "s9md") else { return }
+        let first = audit("s9md", "SWITCH TO MARKDOWN", toMarkdown)
+        guard let toRichText = switchTypingInsideHold(.toRichText, marker: "s10rt") else { return }
+        let second = audit("s10rt", "SWITCH TO RICH TEXT", toRichText)
+        _ = waitForBlocksToSettle()
+        let firstFinal = markerOccurrences("s9md")
+        let secondFinal = markerOccurrences("s10rt")
+        emit("A9/A10 AUDIT final: s9md=\(firstFinal), s10rt=\(secondFinal)")
+        assertCheck(toMarkdown.holdSeen && toRichText.holdSeen, "TEST-SETUP: both switches logged [TRANS-HOLD] (the window was widened)")
+        if !legacy { assertCheck(toMarkdown.swapped && toRichText.swapped, "both switches took the carried path (a [TRANS] swapped line)") }
+        assertCheck(first.count == 1 && firstFinal == 1 && first.row.contains("Loss01"),
+                    "typing during the switch to Markdown saved once, in its line (\(first.count), final \(firstFinal))")
+        assertCheck(second.count == 1 && secondFinal == 1 && second.row.contains("Loss01"),
+                    "typing during the switch to Rich Text saved once, in its line (\(second.count), final \(secondFinal))")
+    }
+}
+
+// MARK: - Hand test 2026-11-06: the caret across the switch, with citations before it (a9-notes.md, "Cursor fix and switch notice")
+
+/// One switch of `testSwitchCaretFollowsTyping_article`: whether it ended, what the log said, and the paragraph's row afterwards.
+struct Phase5CaretSwitch { let ended: Bool; let note: String; let row: String }
+
+extension WriteQueuePhase5BeforeNumbersE2ETests {
+    /// A body paragraph with three citations before its end (one Rich Text atom each, many characters in Markdown), seeded after the loss
+    /// lines. Short enough to sit on one line, so Cmd-Right after the click is the paragraph's end.
+    static var caretParagraphText: String {
+        let keys = Phase4bGenerator.citekeys
+        return "Caret01 ledger [@\(keys[0]), {p. 12}; @\(keys[1]), {p. 40}] harbour [@\(keys[2])] closes."
+    }
+
+    /// The owner's hand test of 2026-11-06, made exact: the caret at the END of a paragraph with citations before it, a few letters typed,
+    /// Cmd-/, and the rest of a long string typed straight on (in two-letter pieces, so the flip falls in the middle of it: some keys reach
+    /// the outgoing page, the rest the incoming one), then a closing word once the switch is over. The paragraph must end with the whole
+    /// string, contiguous, followed by the closing word: the caret ended where the typing went on. Then the same back to Rich Text.
+    /// Before the fix the keys typed on the new Markdown page landed in the middle of the paragraph: the caret came over at a column
+    /// computed with each citation counted as one character.
+    func testSwitchCaretFollowsTyping_article() throws {
+        guard startScenario(method: #function, size: .article, preloader: false, lossLines: true, caretParagraph: true),
+              placeCaretInCaretParagraph(wordsBack: 0) else { return }
+        let first = switchWhileTyping(.toMarkdown, head: " the qu", tail: "ick brown fox jumps over the lazy dog", closing: " zq9one")
+        let firstText = " the quick brown fox jumps over the lazy dog zq9one"
+        let second = switchWhileTyping(.toRichText, head: " pack my", tail: " box with five dozen liquor jugs", closing: " zq9two")
+        let secondText = " pack my box with five dozen liquor jugs zq9two"
+        _ = waitForBlocksToSettle()
+        let after = caretRow()
+        emit("CARET-SWITCH final row: \"\(after)\"")
+        assertCheck(first.ended && second.ended, "TEST-SETUP: both switches ended (to Markdown \(first.note); to Rich Text \(second.note))")
+        assertCheck(first.row.hasSuffix("closes." + firstText),
+                    "after the switch to Markdown the paragraph ends with the typing, contiguous, then the closing word: \"\(first.row)\"")
+        assertCheck(after.hasSuffix("closes." + firstText + secondText),
+                    "after the switch back to Rich Text the paragraph ends with both typings, contiguous: \"\(after)\"")
+    }
+
+    /// The same in the middle of the paragraph, after the two citations of its first line: Option-Down then Option-Left after the click leave
+    /// the caret right before "harbour" in the test VM's window (run-1793949042-67803). The typing, all of it after Cmd-/, starts with the
+    /// letter that follows the caret ("hot" before "harbour"): the text difference then finds the carried keys one letter later than they
+    /// were typed, and keys typed on the new page went BEFORE them (run-1793947506-54633, run-1793948299-61623). The check does not depend
+    /// on where the caret landed: each typing must be in the row whole and in order, the second right after the first.
+    func testSwitchCaretFollowsTypingMidParagraph_article() throws {
+        guard startScenario(method: #function, size: .article, preloader: false, lossLines: true, caretParagraph: true),
+              placeCaretInCaretParagraph(wordsBack: 1) else { return }
+        let first = switchWhileTyping(.toMarkdown, head: "", tail: "hot dark night falls ", closing: "zq9one ")
+        let second = switchWhileTyping(.toRichText, head: "", tail: "hazy morning air comes ", closing: "zq9two ")
+        _ = waitForBlocksToSettle()
+        let after = caretRow()
+        emit("CARET-SWITCH final row: \"\(after)\"")
+        assertCheck(first.ended && second.ended, "TEST-SETUP: both switches ended (to Markdown \(first.note); to Rich Text \(second.note))")
+        assertCheck(first.row.contains("hot dark night falls zq9one "),
+                    "after the switch to Markdown the typing is in the row whole and in order: \"\(first.row)\"")
+        assertCheck(after.contains("hot dark night falls zq9one hazy morning air comes zq9two "),
+                    "after the switch back to Rich Text both typings are whole, in order, one after the other: \"\(after)\"")
+    }
+
+    /// The caret in the Caret01 paragraph: its end (`wordsBack` 0; the paragraph wraps in the test window, so Cmd-Right after the click
+    /// stops at the end of its first line), or the middle (Option-Down, then `wordsBack` words back with Option-Left). Checks the row.
+    private func placeCaretInCaretParagraph(wordsBack: Int) -> Bool {
+        let placed = app.placeCaretByClicking(paragraphStartingWith: "Caret01", atEnd: true, runProbe: false, findTimeout: capped(90))
+        note("CARET in the Caret01 paragraph: \(placed.attempts)")
+        guard !placed.attempts.isEmpty else { fail("the Caret01 paragraph could not be clicked (probe \(placed.probe))"); return false }
+        if wordsBack == 0 {
+            // The end: the paragraph is two lines in the test VM's window; Down then Cmd-Right is the end of its second line.
+            app.typeKey(.downArrow, modifierFlags: [])
+            app.typeKey(.rightArrow, modifierFlags: .command)
+        } else {
+            // run-1793949466-70869: this leaves the caret right before "harbour" in the test VM's window.
+            app.typeKey(.downArrow, modifierFlags: .option)
+            for _ in 0..<wordsBack { app.typeKey(.leftArrow, modifierFlags: .option) }
+        }
+        let before = caretRow()
+        guard before.hasPrefix("Caret01"), before.hasSuffix("closes.") else {
+            fail("TEST-SETUP: the Caret01 row reads \"\(before)\"")
+            return false
+        }
+        return true
+    }
+
+    /// The Caret01 row's text from the database (one line).
+    private func caretRow() -> String {
+        dbText("SELECT markdownFragment FROM block WHERE markdownFragment LIKE 'Caret01%' ORDER BY sortOrder LIMIT 1;")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// `head`, the switch key, `typed` in two-letter pieces straight on, the switch waited out, then `closing`; the row once it settled.
+    private func switchWhileTyping(_ action: Phase5Action, head: String, tail typed: String, closing: String)
+        -> Phase5CaretSwitch {
+        guard prepare(action) != nil else { return Phase5CaretSwitch(ended: false, note: "not prepared", row: caretRow()) }
+        tail.poll()
+        let from = tail.lines.count
+        if firstTriggerIndex == nil { firstTriggerIndex = from }
+        if !head.isEmpty { typeNow(head) }
+        let pressed = Date()
+        fire(action, card: nil)
+        var rest = Substring(typed)
+        while !rest.isEmpty {
+            typeNow(String(rest.prefix(2)))
+            rest = rest.dropFirst(2)
+        }
+        let typedMs = Phase5Parse.ms(from: pressed, to: Date())
+        let end = Self.endNeedle(action)
+        let ended = waitForLog(containing: end, from: from, timeout: size.operationTimeout * 2)
+        let reads = app.buttons["status-bar-editor-mode"].waitForLabel("== '\(action.wantedMode ?? "")'", timeout: 10)
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 60)
+        typeNow(closing)
+        _ = waitForQuietLog(quiet: Phase5Limits.quietSeconds, cap: 60)
+        _ = waitForBlocksToSettle()
+        tail.poll()
+        let flip = tail.lines[min(from, tail.lines.count)...].first { $0.text.contains("[TRANS] swapped kind=switch") }
+        let flipMs = flip?.date.map { Phase5Parse.ms(from: pressed, to: $0) }
+        let row = caretRow()
+        let summary = "ended \(Self.yesNo(ended)), badge \(Self.yesNo(reads)), flip at \(flipMs.map(String.init) ?? "-") ms, "
+            + "typing ended at \(typedMs) ms (test clock)"
+        emit("CARET-SWITCH \(action.title): \(summary); row \"\(row)\"")
+        return Phase5CaretSwitch(ended: ended && reads, note: summary, row: row)
     }
 }

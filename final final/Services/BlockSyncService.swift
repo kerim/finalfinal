@@ -55,8 +55,8 @@ class BlockSyncService {
     nonisolated static let pollInterval: TimeInterval = 2.0
     private let pollInterval: TimeInterval = BlockSyncService.pollInterval
 
-    private var projectDatabase: ProjectDatabase?
-    private var projectId: String?
+    private(set) var projectDatabase: ProjectDatabase?
+    private(set) var projectId: String?
     /// Internal (was private) only so the DEBUG accessors in `BlockSyncService+Lifecycle.swift` can reach it.
     weak var webView: WKWebView?
 
