@@ -36,12 +36,10 @@ import {
   getBlockChanges as getBlockChangesPlugin,
   hasPendingChanges,
   hasPendingUpdateForId,
-  isSyncPaused,
   reconcilePendingQueueAfterManagedRebuild,
   resetAndSnapshot,
   setSyncPaused,
   snapshotBlocks,
-  takeLastDrainReportSequence,
   updateSnapshotIds,
 } from './block-sync-plugin';
 import { resetCAYWState } from './cayw';
@@ -62,7 +60,6 @@ import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { getRecentUserEditSpan } from './recent-edit-span';
 import { dispatchDerivedCorrection } from './redo-branch';
-import { reportSession, reportsEnabled, setReportHoldProbe } from './report-outbox';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
@@ -203,7 +200,7 @@ export function clearEditorHistory(view: EditorView): void {
  * only consults it inside its `docChanged` branch, so on a stepless transaction the meta is inert,
  * and adding it would imply to a reader that it is load-bearing here.
  */
-export function redecorateBlockIds(view: EditorView): void {
+function redecorateBlockIds(view: EditorView): void {
   try {
     view.dispatch(view.state.tr);
   } catch (e) {
@@ -256,7 +253,7 @@ export function redecorateBlockIds(view: EditorView): void {
  * is not part of `toMarkdown` (see the `figureNode` schema in image-plugin.ts), so block-sync's
  * markdown/text-based diff can never observe a pure blockId-attr change as an update or insert.
  */
-export function syncFigureBlockIdAttrs(view: EditorView): void {
+function syncFigureBlockIdAttrs(view: EditorView): void {
   const { doc } = view.state;
   let tr: Transaction | null = null;
   doc.forEach((node, pos) => {
@@ -516,17 +513,6 @@ function deferredSnapshotAndUnpause(
  * undo/redo restore, which are re-pushes of the SAME document.
  */
 let typewriterDocumentLoaded = false;
-
-/** The typewriter-scrolling readiness lines of `setContentWithBlockIds`, for a content load that runs outside this file (the zoom
- * transition's swap, api-transition.ts): a first load clears the readiness, a re-push of the same document does not; the ready mark
- * is scheduled before the dispatches and runs after them. */
-export function noteTypewriterContentLoad(): void {
-  if (!typewriterDocumentLoaded) {
-    typewriterDocumentLoaded = true;
-    clearDocumentReadiness();
-  }
-  queueMicrotask(() => markDocumentReady());
-}
 
 /**
  * Reports whether the live editor currently holds no text. Kept exported for tests and for
@@ -2264,7 +2250,7 @@ export function replayPendingPreMountContent(): void {
  * (e.g. a position outside the current document) -- callers treat null as "can't resolve,
  * fall back."
  */
-export function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
+function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
   const blockIds = getAllBlockIds();
 
   let targetPos: number | null = null;
@@ -2350,27 +2336,11 @@ export function flushPendingBlockChanges(): void {
   flushPendingBlockChangesPlugin();
 }
 
-// Phase 5 job B2: a shadow report (report-outbox.ts) waits while sync is paused or the typing is held back from the polls.
-setReportHoldProbe(() => isSyncPaused() || isTypingPushHeld());
-
 export function getBlockChangesApi(): BlockChanges {
   // Held while a press is latched, see `hasBlockChanges`. The routes call block-sync-plugin's `getBlockChanges` directly and so still
   // take the held typing as their batch N.
   if (isTypingPushHeld()) return { updates: [], inserts: [], deletes: [] };
   return getBlockChangesPlugin();
-}
-
-/**
- * Phase 5 job B2: the poll's fetch with reporting on. EXACTLY `getBlockChangesApi` (the same drain, the same batch), plus two fields
- * naming the `drain` report this drain posted, so Swift can compare the reports up to it with the batch (`ReportIntake`). Swift's
- * `BlockChanges` decoding ignores the two extra keys. When this call did not drain (held typing) they are left out.
- */
-export function getBlockChangesReportedApi(): BlockChanges & { reportThrough?: number; reportSession?: string } {
-  takeLastDrainReportSequence();
-  const changes = getBlockChangesApi();
-  const through = takeLastDrainReportSequence();
-  if (!reportsEnabled() || through === null) return changes;
-  return { ...changes, reportThrough: through, reportSession: reportSession() };
 }
 
 /**

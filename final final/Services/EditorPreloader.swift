@@ -37,16 +37,6 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
     /// Not `private(set)`: `installCitationPrefillScheduler()` lives in `EditorPreloader+CitationPrefill.swift`, a different file.
     var citationPrefillScheduler: CitationPrefillScheduler?
 
-    /// Phase 5 jobs A9 / A10 (EditorPreloader+Prepare.swift): fresh pages loaded for a switch (no standby was ready), waiting for their
-    /// load to finish, keyed by the web view's identity.
-    var prepareLoads: [ObjectIdentifier: CheckedContinuation<Bool, Never>] = [:]
-    /// Phase 5 jobs A9 / A10: the incoming page a switch has filled and handed over at the flip, claimed by the editor's `makeNSView`.
-    var stagedCodeMirror: StagedSwitchPage?
-    var stagedMilkdown: StagedSwitchPage?
-    /// Phase 5 jobs A9 / A10: set when a staged page is handed over; the outgoing editor's `dismantleNSView` consumes it and skips its
-    /// caret save (EditorPreloader+Prepare.swift).
-    var suppressOutgoingCursorSave = false
-
     private override init() {
         super.init()
     }
@@ -110,20 +100,6 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         guard case .idle = milkdownState else { return }
         milkdownState = .loading
 
-        guard let webView = makeLoadingMilkdownWebView() else {
-            assertionFailure("[EditorPreloader] Invalid Milkdown preload URL")
-            milkdownState = .idle
-            return
-        }
-
-        DebugLog.log(.editor, "[EditorPreloader] Starting Milkdown preload")
-        preloadedMilkdownView = webView
-        milkdownSpareGeneration += 1
-    }
-
-    /// A Milkdown page as the standby is made (error script, scheme handlers, this object as its navigation delegate), already loading.
-    /// Also the fresh page a switch to Rich Text fills when no standby is ready (EditorPreloader+Prepare.swift). Nil for a bad URL.
-    func makeLoadingMilkdownWebView() -> WKWebView? {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
@@ -161,19 +137,25 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(errorScript)
-        configuration.userContentController.addUserScript(ReportIntake.configUserScript())   // Phase 5 job B2
         // userContentController.add retains the handler (self) strongly, creating a
         // preloader<->webview reference cycle until claimMilkdownView() removes it below.
         // Intentional and acceptable for a short-lived preload window, not a leak.
         configuration.userContentController.add(self, name: "errorHandler")
 
-        // Phase 5 job A10: a page that takes keyboard focus the moment it is attached, if a switch asks it to (EditorPreloader+Prepare.swift).
-        let webView = FocusOnAttachWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
         webView.navigationDelegate = self
 
-        guard let url = URL(string: "editor://milkdown/milkdown.html") else { return nil }
+        guard let url = URL(string: "editor://milkdown/milkdown.html") else {
+            assertionFailure("[EditorPreloader] Invalid Milkdown preload URL")
+            milkdownState = .idle
+            return
+        }
+
+        DebugLog.log(.editor, "[EditorPreloader] Starting Milkdown preload")
+
         webView.load(URLRequest(url: url))
-        return webView
+        preloadedMilkdownView = webView
+        milkdownSpareGeneration += 1
     }
 
     // MARK: - CodeMirror Preloading
@@ -182,19 +164,6 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         guard case .idle = codemirrorState else { return }
         codemirrorState = .loading
 
-        guard let webView = makeLoadingCodeMirrorWebView() else {
-            assertionFailure("[EditorPreloader] Invalid CodeMirror preload URL")
-            codemirrorState = .idle
-            return
-        }
-
-        DebugLog.log(.editor, "[EditorPreloader] Starting CodeMirror preload")
-        preloadedCodeMirrorView = webView
-    }
-
-    /// A CodeMirror page as the standby is made (error script, scheme handlers, this object as its navigation delegate), already loading.
-    /// Also the fresh page a switch to Markdown fills when no standby is ready (EditorPreloader+Prepare.swift). Nil for a bad URL.
-    func makeLoadingCodeMirrorWebView() -> WKWebView? {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
@@ -237,13 +206,19 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         // Intentional and acceptable for a short-lived preload window, not a leak.
         configuration.userContentController.add(self, name: "errorHandler")
 
-        // Phase 5 job A9: a page that takes keyboard focus the moment it is attached, if a switch asks it to (EditorPreloader+Prepare.swift).
-        let webView = FocusOnAttachWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: preloadFrameSize), configuration: configuration)
         webView.navigationDelegate = self
 
-        guard let url = URL(string: "editor://codemirror/codemirror.html") else { return nil }
+        guard let url = URL(string: "editor://codemirror/codemirror.html") else {
+            assertionFailure("[EditorPreloader] Invalid CodeMirror preload URL")
+            codemirrorState = .idle
+            return
+        }
+
+        DebugLog.log(.editor, "[EditorPreloader] Starting CodeMirror preload")
+
         webView.load(URLRequest(url: url))
-        return webView
+        preloadedCodeMirrorView = webView
     }
 
     // MARK: - WKNavigationDelegate
@@ -261,8 +236,6 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         } else if webView === preloadedCodeMirrorView {
             codemirrorState = .ready
             DebugLog.log(.editor, "[EditorPreloader] CodeMirror preload complete")
-        } else {
-            finishPrepareLoad(webView, loaded: true)
         }
     }
 
@@ -273,8 +246,6 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         } else if webView === preloadedCodeMirrorView {
             codemirrorState = .failed(error)
             DebugLog.log(.editor, "[EditorPreloader] CodeMirror preload failed: \(error.localizedDescription)")
-        } else {
-            finishPrepareLoad(webView, loaded: false)
         }
     }
 
@@ -285,8 +256,6 @@ final class EditorPreloader: NSObject, WKNavigationDelegate, WKScriptMessageHand
         } else if webView === preloadedCodeMirrorView {
             codemirrorState = .failed(error)
             DebugLog.log(.editor, "[EditorPreloader] CodeMirror navigation failed: \(error.localizedDescription)")
-        } else {
-            finishPrepareLoad(webView, loaded: false)
         }
     }
 

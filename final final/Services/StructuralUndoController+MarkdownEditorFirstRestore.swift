@@ -143,11 +143,6 @@ extension StructuralUndoController {
               blockSync.writer?.database === db, blockSync.writer?.projectId == pid else { return nil }
         let writer = editorState.markdownWriter
 
-        // t-633df056 (Phase 5 job A5): a restore right after View > Switch to Markdown, before the new page is mounted, waits for the page
-        // here, before the click begins (the perform function's notice covers this wait too); a timed-out wait or a mode that changed
-        // gives it to the old body, as before.
-        guard await awaitMarkdownPageForStructuralCommand(label: "editor-first restore") else { return nil }
-
         // Step 2: an earlier Markdown command finishes saving first. Held, never refused (the perform function's notice covers the wait).
         await writer.awaitStructuralHoldReleased()
         guard editorState.activeLifecycle == nil, editorState.zoomedSectionId == nil, editorState.editorMode == .source else { return nil }

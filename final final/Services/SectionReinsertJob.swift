@@ -186,7 +186,7 @@ struct SectionReinsertJob: Sendable {
                 loggedRows += 1
                 DebugLog.alwaysPersisted(
                     "[SectionReinsertJob] reinsert removed a row not in the pre-\(operationLabel) document: id=\(row.id) "
-                    + "type=\(row.blockType.rawValue) textLength=\(row.textContent.count)")   // length only: the diagnostic log must not carry document text
+                    + "type=\(row.blockType.rawValue) text=\(String(row.textContent.prefix(200)))")
             }
         }
         if output.deletedUserRows - output.deletedReidentifiedRows > Self.perRowLogCap {

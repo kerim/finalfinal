@@ -199,40 +199,12 @@ export function getInFlightPress(): number | undefined {
 /** The press whose typing pushes Swift's lifecycle flush asked to be released (`releaseHeldTypingPushes`); null when none. */
 let holdReleasedForPress: number | null = null;
 
-// === A transition (Phase 5 job A7, api-transition.ts): a zoom's "send what you have, and start holding" ===
-// The token of the transition in progress (drawn from `pressCounter`, so the collector's tags stay ordered with the presses), or null.
-// While it is set the polls' pushes are held exactly as they are while a press is latched (`isTypingPushHeld`): what the user types
-// between `beginTransition` and `swapTransition` is recorded by the collector and put back on top of the swapped-in document by the
-// replay, which block-sync then reports as new typing. Kept here, not in api-transition.ts, because `isTypingPushHeld` reads it and this
-// module cannot import a module that imports it. A latched press and a transition never coexist: the zoom waits for structural work first.
-let transitionToken: number | null = null;
-export function getTransitionToken(): number | null {
-  return transitionToken;
-}
-export function setTransitionToken(token: number | null): void {
-  transitionToken = token;
-  transitionConfirms.clear();
-}
-/** Swift's temp -> permanent id confirmations that arrived while the transition held (the begin's batch is written during the barrier,
- * and its inserts are confirmed back then). The swap maps both sides of the rebase through it (`canonical`), so a block the begin saw
- * under a temp id and the rows hold under its permanent id is one block, and typing in it is carried, not dropped. */
-const transitionConfirms = new Map<string, string>();
-export function getTransitionConfirms(): ReadonlyMap<string, string> {
-  return transitionConfirms;
-}
-/** The next press number. A transition draws its token here, so the collector's tags stay ordered with the presses. */
-export function allocatePressNumber(): number {
-  return ++pressCounter;
-}
-
 /** True while a press is latched: the block-sync pushes Swift's polls fetch (`hasBlockChanges`, `getBlockChanges` of the bridge,
  * api-content.ts) hold back what the user types, so that typing is saved exactly once, by the replay, behind the undo's database
  * work (amendment 4). Every way the latch ends (reply, `cancelled`, `failed`, the 30 s timeout, a barrier clear) ends the hold in
  * the same line, and the held edits are then the ordinary pending edits of the next poll. The routes read `getBlockChanges` of
- * block-sync-plugin.ts directly, so they still take the held typing as batch N. Also true while a transition holds (above): the
- * model's `pend' = {}` from `TransBegin` to `TransPush`. */
+ * block-sync-plugin.ts directly, so they still take the held typing as batch N. */
 export function isTypingPushHeld(): boolean {
-  if (transitionToken !== null) return true;
   return latched && inFlightPress !== undefined && holdReleasedForPress !== inFlightPress;
 }
 
@@ -241,13 +213,6 @@ export function isTypingPushHeld(): boolean {
  * is refused (`changed`), because that typing has already been sent. Returns true when a hold was released. */
 export function releaseHeldTypingPushes(): boolean {
   if (!isTypingPushHeld()) return false;
-  // A zoom transition's hold (Phase 5 job A7) ends too: the closing save must see the typing, and the zoom is abandoned (Swift checks
-  // for a close, quit or switch before it swaps; a swap that still comes finds its token stale and refuses, holding nothing).
-  if (transitionToken !== null) {
-    setTransitionToken(null);
-    typingCollector?.reset();
-    if (!latched || inFlightPress === undefined) return true;
-  }
   holdReleasedForPress = inFlightPress ?? null;
   return true;
 }
@@ -365,8 +330,6 @@ export function clearRegistry(): void {
  * `confirmLog`, so a quick undo can put the permanent id back on the restored block. Costs one property read when the registry
  * is empty and one set lookup per pair per entry holding temp ids, which in practice is none or a handful. */
 function recordConfirmationsInRegistry(mapping: Record<string, string>): void {
-  if (transitionToken !== null)
-    for (const [tempId, permanentId] of Object.entries(mapping)) transitionConfirms.set(tempId, permanentId);
   if (registry.size === 0) return;
   for (const entry of registry.values()) {
     const temps = entry.tempIds;
@@ -500,7 +463,6 @@ export function resetUndoCoordinatorState(): void {
   pressCounter = 0;
   inFlightPress = undefined;
   holdReleasedForPress = null;
-  transitionToken = null;
 }
 
 // === Structural-operation diagnostics (permanent) ===

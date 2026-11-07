@@ -149,9 +149,6 @@ enum SystemWriteKind: Sendable, Equatable {
     case sectionDuplicate
     case structuralReplace
     case sectionReorder
-    /// Phase 5 job B3-0: `SectionSyncService`'s debounced write of the `section` table and the content row (the text Version History
-    /// snapshots read), queued so two runs land in order and a run overtaken by a newer one writes nothing. Stamps and bumps nothing.
-    case sectionSync
 }
 
 // MARK: - No nesting (§1.3)

@@ -90,17 +90,6 @@ extension StructuralUndoController {
               editorFirstRootIsEligible(rootId: rootId, database: db, projectId: pid) else { return nil }
         let writer = editorState.markdownWriter
 
-        // The notice (UX contract 4.2: a held structural command shows "Finishing the last change…" after one second). t-2fbe4c9b: ONE
-        // notice belongs to the whole click, as for Duplicate: it is counted from the press, it stays through the page wait below, the
-        // hold wait, the page call and the reply turn (seconds on a book), and the `defer` takes it down on every way out.
-        let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
-        defer { waiting.stop() }
-
-        // t-633df056 (Phase 5 job A5): pressed right after View > Switch to Markdown, before the new page is mounted, the press waits for
-        // the page here, at the entry, before the click begins; a timed-out wait or a mode that changed meanwhile gives it to the old
-        // body, as before (StructuralUndoController+MarkdownPageWait.swift).
-        guard await awaitMarkdownPageForStructuralCommand(label: "editor-first delete") else { return nil }
-
         // Round M1 measurement (MdSpeed.swift): the Markdown Delete had no timeline of its own; this starts it at the menu click, so every
         // `md-speed delete ...` span below reads its `+timeline=` offset from the click. Silent unless tracing is on.
         StructuralTrace.beginOp(label: "sectionDelete")
@@ -109,7 +98,11 @@ extension StructuralUndoController {
         defer { clickSpan.end() }
 
         // Step 1 (A7): an earlier Markdown command finishes saving first. Delete, then Delete again at once, waits here (the gate came free
-        // at the first one's step 7, its writer hold stays up until step 8), so past one second the notice above shows (review DR-1).
+        // at the first one's step 7, its writer hold stays up until step 8), so past one second the existing notice shows (review DR-1,
+        // UX contract 4.2: a held structural command shows "Finishing the last change…"). t-2fbe4c9b: ONE notice belongs to the whole
+        // click, as for Duplicate: it stays through the page call and the reply turn (seconds on a book) and the `defer` takes it down.
+        let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
+        defer { waiting.stop() }
         let holdWaitSpan = MdSpeed.span("holdWait")
         await writer.awaitStructuralHoldReleased()
         holdWaitSpan.end()

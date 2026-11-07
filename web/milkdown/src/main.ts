@@ -44,7 +44,6 @@ import {
   flushPendingBlockChanges,
   getBlockAtCursor,
   getBlockChangesApi,
-  getBlockChangesReportedApi,
   getContent,
   hasBlockChanges,
   insertImage,
@@ -102,6 +101,7 @@ import {
   setFocusMode,
   setTheme,
 } from './api-modes';
+import { logReplacementResult, logReplacementTarget, logUnusualInput } from './autocorrect-diag';
 import { autolinkPlugin } from './autolink-plugin';
 import { bibliographyEndMarkerPlugin } from './bibliography-end-marker-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
@@ -187,7 +187,6 @@ import {
 } from './api-section-undo';
 import { redoReplaceRangeEditorFirst, replaceRangeEditorFirst } from './api-structural-replace';
 import { structuralSwapEditorFirst } from './api-structural-swap';
-import { beginTransition, endTransition, swapTransition, takeTransitionBatch } from './api-transition';
 import { cancelCitationEdit, isCitationEditPopupOpen } from './citation-edit-popup';
 import { pushLiveContentToSwift } from './content-push';
 import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
@@ -501,6 +500,7 @@ async function initEditor() {
   // causing headings to lose their content. By handling it manually through ProseMirror's
   // transaction system, we preserve the document structure.
   view.dom.addEventListener('beforeinput', (e: InputEvent) => {
+    logUnusualInput(view, e);
     if (e.inputType === 'insertReplacementText') {
       e.preventDefault();
 
@@ -576,8 +576,10 @@ async function initEditor() {
       if (ranges.length === 0) {
         // Fallback: use current selection
         const { from, to } = view.state.selection;
+        logReplacementTarget(view, 'selection', from, to, replacement);
         const tr = view.state.tr.replaceWith(from, to, view.state.schema.text(replacement));
         view.dispatch(tr);
+        logReplacementResult(view, from, replacement);
         return;
       }
 
@@ -587,8 +589,10 @@ async function initEditor() {
       const endPos = view.posAtDOM(range.endContainer, range.endOffset);
 
       // Perform the replacement through ProseMirror
+      logReplacementTarget(view, 'targetRange', startPos, endPos, replacement);
       const tr = view.state.tr.replaceWith(startPos, endPos, view.state.schema.text(replacement));
       view.dispatch(tr);
+      logReplacementResult(view, startPos, replacement);
     }
   });
 
@@ -683,8 +687,6 @@ window.FinalFinal = {
   insertCitation: insertCitationAtCursor,
   // Block-based API (Phase B)
   getBlockChanges: getBlockChangesApi,
-  // Phase 5 job B2: the poll's fetch with reporting on (the same drain, plus the `drain` report's number).
-  getBlockChangesReported: getBlockChangesReportedApi,
   applyBlocks,
   confirmBlockIds: confirmBlockIdsApi,
   syncBlockIds,
@@ -779,14 +781,6 @@ window.FinalFinal = {
   releaseHeldTypingPushes,
   // F7: the same release, plus the pending batch in the same call, for a press handed to the old whole-document body.
   releaseHeldTypingAndGetBatch,
-  // Phase 5 job A7 (api-transition.ts): the zoom transition. `beginTransition` drains the pending batch and starts holding and recording
-  // in one turn; `swapTransition` replaces the document with the recorded typing put back on top, in one turn; `endTransition` ends a
-  // hold whose swap never came (Swift's failure paths).
-  beginTransition,
-  swapTransition,
-  endTransition,
-  // Phase 5 job A9 (api-transition.ts): the switch to Markdown drains the held typing without ending the hold.
-  takeTransitionBatch: (token: number) => takeTransitionBatch(token, getCursorPosition),
   // Structural op lifecycle (Phase 3) -- called by StructuralUndoController.swift at the
   // audited op-sequence/undo-sequence boundaries (plan §4.4).
   beginStructuralOp,

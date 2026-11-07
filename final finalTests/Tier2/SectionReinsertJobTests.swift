@@ -212,10 +212,7 @@ struct SectionReinsertJobTests {
         #expect(output.deletedUserRows == 2, "the stray row and the copy are the user's; the Notes row is not: \(output.deletedUserRows)")
         #expect(output.deletedReidentifiedRows == 1, "the copy only repeats a payload row")
         let lines = capture.captured.filter { $0.contains("reinsert removed a row not in the pre-delete document") }
-        // Logged by type and text LENGTH only: the persisted diagnostic log must not carry the user's text (security review 2026-11-06).
-        #expect(
-            lines.count == 1 && lines.first?.contains("textLength=14") == true && lines.first?.contains("STRAY-USER-ROW") == false,
-            "only the stray user row is logged, by length and never with its text: \(lines)")
+        #expect(lines.count == 1 && lines.first?.contains("STRAY-USER-ROW") == true, "only the stray user row is logged, with its text: \(lines)")
     }
 
     @Test("testHolderFailedDoesNothing: when the delete job did not apply, the reinsert writes nothing")
@@ -347,9 +344,7 @@ struct SectionReinsertJobTests {
         #expect(output.deletedExpectedRows == 2, "the operation's own two rows are counted as expected: \(output.deletedExpectedRows)")
         #expect(output.deletedUserRows == 1, "only the unexpected row counts as a lost user row: \(output.deletedUserRows)")
         let mine = capture.captured.filter { $0.contains("COPYTEST-") || $0.contains(stray.id) }   // the sink is shared with other suites
-        #expect(
-            mine.count == 1 && mine.first?.contains("textLength=25") == true && mine.first?.contains("COPYTEST-STRAY-UNEXPECTED") == false,
-            "only the unexpected row is logged, by length and never with its text: \(mine)")
+        #expect(mine.count == 1 && mine.first?.contains("COPYTEST-STRAY-UNEXPECTED") == true, "only the unexpected row is logged: \(mine)")
         #expect(
             mine.first?.contains("not in the pre-duplicate document") == true,
             "the wording names the operation that was undone: \(mine.first ?? "no line")")

@@ -75,9 +75,6 @@ extension EditorViewState {
 
     func toggleEditorMode() {
         editorMode = editorMode == .wysiwyg ? .source : .wysiwyg
-        // t-633df056 (Phase 5 job A5): the page-readiness record follows the mode, here, where the mode flips (the badge flips with it,
-        // but the new Markdown page is mounted only later, in its `onWebViewReady`). See EditorViewState+MarkdownPageReadiness.swift.
-        if editorMode == .source { beginMarkdownPageLoad() } else { endMarkdownPageLoadOnLeavingMarkdown() }
     }
 
     /// Markdown -> Rich Text, the text half of the switch (everything `handleEditorModeToggle` does before `toggleEditorMode()`): takes
@@ -126,7 +123,7 @@ extension EditorViewState {
             DebugLog.log(.lifecycle, "[\(label)] not run: the project is closing or switching")
             return nil
         }
-        guard structuralGate.isIdle, !efJobRegistry.hasUnsettledWork, !transitionHolds.switchRunning else {
+        guard structuralGate.isIdle, !efJobRegistry.hasUnsettledWork else {
             return Task { @MainActor [weak self] in
                 guard let self else { return }
                 // A toggle held behind a slow command shows "Finishing the last change..." after one second (fix round 2a, item 4),
@@ -134,18 +131,9 @@ extension EditorViewState {
                 var waitToast: DelayedProgressToast?
                 defer { waitToast?.stop() }
                 let toastCenter = self.toastCenter
-                var result = await self.structuralGate.acquire(onQueued: {
+                let result = await self.structuralGate.acquire(onQueued: {
                     waitToast = DelayedProgressToast(toastCenter: toastCenter, message: DelayedProgressToast.finishingMessage)
                 })
-                // Phase 5 (A9/A10): a carried switch started by the toggle ahead of this one takes the gate on its own task, after its
-                // body has returned, so this toggle can be granted the gate first. Run now, it would see the old mode and start the
-                // same switch again, which then finds the mode already flipped and does nothing: the press would be lost. Give the
-                // gate back and queue again until that switch is over, so this toggle switches back.
-                while result == .granted, self.transitionHolds.switchRunning {
-                    self.structuralGate.release()
-                    try? await Task.sleep(for: Self.sectionOperationPollInterval)
-                    result = await self.structuralGate.acquire()
-                }
                 guard result == .granted else {
                     DebugLog.log(.lifecycle, "[\(label)] cancelled: the project is closing or switching")
                     return
@@ -182,12 +170,8 @@ extension EditorViewState {
     /// save is two web calls (about half a second on a book-length document), the press passed phase one while everything was
     /// idle, and the command set `.structuralUndo` before the save replied. Phase two used to drop the switch there without a word.
     ///
-    /// A zoom in progress (`.zoomTransition`, or the first steps of a carried zoom, `transitionHolds.zoomRunning`) holds the press too
-    /// (Phase 5 job A7, design section 5): a zoom takes 1.4 to 2.6 s on the twelve-chapter book, so Cmd-/ pressed right after a zoom
-    /// is everyday use. Refusing it, as before, left the badge on the old mode without a word.
-    /// What the held switch waits out: a structural command, or a zoom (Phase 5 job A7).
-    var modeToggleHoldMustWait: Bool { contentState == .structuralUndo || modeToggleMustWaitForZoom }
-
+    /// `.zoomTransition` is deliberately still refused: zoom waits for the delete job BEFORE it sets that state
+    /// (`performUserZoomIn`), so the state lasts only the zoom itself, a few tenths of a second.
     func holdModeToggleUntilStructuralWorkEnds() {
         guard heldModeToggleTask == nil else {
             DebugLog.log(.editor, "[EditorModeToggle] a toggle is already held behind the running structural command")
@@ -227,8 +211,8 @@ extension EditorViewState {
                     self.heldModeToggleTask = nil
                     return
                 }
-                if self.modeToggleHoldMustWait { try? await Task.sleep(for: Self.sectionOperationPollInterval) }
-            } while self.modeToggleHoldMustWait
+                if self.contentState == .structuralUndo { try? await Task.sleep(for: Self.sectionOperationPollInterval) }
+            } while self.contentState == .structuralUndo
             // The task is over before it asks again: the request below may hold again (a command queued behind this press has
             // taken the gate), and that new hold must be the one `heldModeToggleTask` names. (A `defer` that cleared it here would
             // clear the new one instead.)
@@ -263,19 +247,14 @@ extension EditorViewState {
         // WebView StructuralUndoController is still operating on
         // (docs/architecture/unified-undo.md).
         switch contentState {
-        case .projectSwitch:
+        case .projectSwitch, .zoomTransition:
             return
-        case .structuralUndo, .zoomTransition:
-            // Held, not dropped: runs again when the structural command (and any queued behind it), or the zoom, has finished.
+        case .structuralUndo:
+            // Held, not dropped: runs again when the structural command (and any queued behind it) has finished.
             holdModeToggleUntilStructuralWorkEnds()
             return
         default:
             break
-        }
-        // Phase 5 job A7: a carried zoom keeps the state `.idle` for its first steps; the press is held behind it all the same.
-        if transitionHolds.zoomRunning {
-            holdModeToggleUntilStructuralWorkEnds()
-            return
         }
         // A structural command that is still waiting for its first step (an undo that waits for a delete's saving job holds the gate
         // while `contentState` is still `.idle`) or commands queued behind it: hold the press now rather than start a cursor save that

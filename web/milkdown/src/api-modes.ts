@@ -1,9 +1,8 @@
 // Editor mode, cursor, and misc API method implementations for window.FinalFinal
 
-import { type Editor, editorViewCtx, parserCtx, serializerCtx } from '@milkdown/kit/core';
+import { editorViewCtx, parserCtx } from '@milkdown/kit/core';
 import { Slice } from '@milkdown/kit/prose/model';
 import { Selection } from '@milkdown/kit/prose/state';
-import type { EditorView } from '@milkdown/kit/prose/view';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
@@ -263,107 +262,6 @@ function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPo
   return line;
 }
 
-// The caret's Markdown column, exactly (hand test 2026-11-06, docs/architecture/write-queue-plan/phase5/a9-notes.md, "Cursor fix and
-// switch notice"). A citation, a footnote reference, a math or annotation node is ONE ProseMirror position but many Markdown characters;
-// the text-offset estimate (cursor-mapping.ts) counted it as one, so a caret at the end of a paragraph with citations came over to the
-// Markdown page dozens of columns too early, and the next keys landed in the middle of a word earlier in the paragraph. Instead, the
-// caret's textblock alone is serialised with a marker character at the caret, by the editor's own serializer, and the marker's place in
-// that text is the column. One block, not the document: cheap at any document size.
-
-const CARET_MARKER = '';
-const SYNTAX_PREFIX = /^(#+\s*|\s*[-*+]\s*|\s*\d+\.\s*|\s*>\s*)/;
-
-function syntaxPrefixLength(line: string): number {
-  const match = line.match(SYNTAX_PREFIX);
-  return match ? match[0].length : 0;
-}
-
-function leadingSpaces(line: string): number {
-  return line.length - line.trimStart().length;
-}
-
-/** The textblock holding `pos` serialised alone with the caret marker at `pos`; null in a table, a code block, or on any failure. */
-function textblockWithMarker(editorInstance: Editor, view: EditorView, pos: number): string | null {
-  const $pos = view.state.doc.resolve(pos);
-  if (!$pos.parent.isTextblock || $pos.parent.type.spec.code) return null;
-  for (let depth = $pos.depth; depth > 0; depth--) {
-    if ($pos.node(depth).type.name === 'table') return null;
-  }
-  try {
-    const doc = view.state.tr.insertText(CARET_MARKER, pos).doc;
-    const block = doc.resolve(pos).parent;
-    const markdown = editorInstance.ctx.get(serializerCtx)(view.state.schema.topNodeType.create(null, block));
-    return markdown.includes(CARET_MARKER) ? markdown : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Where the marker is in `blockMarkdown`: the line of the block (0 = its first) and the column in that line. */
-function markerPlace(blockMarkdown: string): { lineInBlock: number; column: number; blockLines: string[] } {
-  const index = blockMarkdown.indexOf(CARET_MARKER);
-  const before = blockMarkdown.slice(0, index);
-  return {
-    lineInBlock: before.split('\n').length - 1,
-    column: index - (before.lastIndexOf('\n') + 1),
-    blockLines: blockMarkdown.replace(/\n+$/, '').split('\n'),
-  };
-}
-
-/** The caret at `head` as a Markdown line and column, `line` being the block's first line in `mdLines`. Null when not exact. */
-function caretInMarkdownLine(
-  editorInstance: Editor,
-  view: EditorView,
-  head: number,
-  line: number,
-  mdLines: string[]
-): { line: number; column: number } | null {
-  const blockMarkdown = textblockWithMarker(editorInstance, view, head);
-  if (blockMarkdown === null) return null;
-  const place = markerPlace(blockMarkdown);
-  const blockLine = place.blockLines[place.lineInBlock] ?? '';
-  const fullLine = mdLines[line - 1 + place.lineInBlock] ?? '';
-  // The block alone has no list marker or quote prefix (its container is not serialised); the document's line has. The first line's prefix
-  // is the syntax prefix, a following line's is its indentation.
-  const shift =
-    place.lineInBlock === 0
-      ? syntaxPrefixLength(fullLine) - syntaxPrefixLength(blockLine.replace(CARET_MARKER, ''))
-      : leadingSpaces(fullLine) - leadingSpaces(blockLine.replace(CARET_MARKER, ''));
-  return { line: line + place.lineInBlock, column: Math.max(0, place.column + shift) };
-}
-
-/**
- * The offset in the textblock starting at `contentStart` whose Markdown column (the block's first line, after its syntax prefix) is the
- * first at or past `contentColumn`. The inverse of `caretInMarkdownLine` for one-line blocks; null when the block serialises to more than
- * one line or cannot be serialised.
- */
-function offsetForMarkdownColumn(
-  editorInstance: Editor,
-  view: EditorView,
-  contentStart: number,
-  contentColumn: number
-): number | null {
-  const size = view.state.doc.resolve(contentStart).parent.content.size;
-  const columnAt = (offset: number): number | null => {
-    const blockMarkdown = textblockWithMarker(editorInstance, view, contentStart + offset);
-    if (blockMarkdown === null) return null;
-    const place = markerPlace(blockMarkdown);
-    if (place.blockLines.length !== 1) return null;
-    return place.column - syntaxPrefixLength(place.blockLines[0].replace(CARET_MARKER, ''));
-  };
-  if (columnAt(size) === null) return null;
-  let low = 0;
-  let high = size;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    const column = columnAt(middle);
-    if (column === null) return null;
-    if (column >= contentColumn) high = middle;
-    else low = middle + 1;
-  }
-  return low;
-}
-
 export function getCursorPosition(): {
   line: number;
   column: number;
@@ -384,22 +282,18 @@ export function getCursorPosition(): {
     const markdown = getRawSerialisedMarkdown(editorInstance);
     const mdLines = markdown.split('\n');
 
-    let line = pmPosToMdLine(view, head, mdLines);
+    const line = pmPosToMdLine(view, head, mdLines);
 
-    // The column: exact from the caret's own block serialised with a marker at the caret (citations, footnote references and every
-    // other inline node counted as the Markdown characters they are); the old text-offset estimate only where that cannot be had.
-    const exact = caretInMarkdownLine(editorInstance, view, head, line, mdLines);
-    let column: number;
-    if (exact) {
-      line = exact.line;
-      column = exact.column;
-    } else {
-      const $head = view.state.doc.resolve(head);
-      const offsetInBlock = head - $head.start($head.depth);
-      const lineContent = mdLines[line - 1] || '';
-      const syntaxLength = syntaxPrefixLength(lineContent);
-      column = syntaxLength + textToMdOffset(lineContent.slice(syntaxLength), offsetInBlock);
-    }
+    // Calculate column with inline markdown offset mapping
+    const $head = view.state.doc.resolve(head);
+    const blockStart = $head.start($head.depth);
+    const offsetInBlock = head - blockStart;
+    const lineContent = mdLines[line - 1] || '';
+
+    const syntaxMatch = lineContent.match(/^(#+\s*|\s*[-*+]\s*|\s*\d+\.\s*|\s*>\s*)/);
+    const syntaxLength = syntaxMatch ? syntaxMatch[0].length : 0;
+    const afterSyntax = lineContent.slice(syntaxLength);
+    const column = syntaxLength + textToMdOffset(afterSyntax, offsetInBlock);
 
     const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
     const scrollFraction = maxScroll > 0 ? Math.min(1, window.scrollY / maxScroll) : 0;
@@ -556,21 +450,6 @@ export function setCursorPosition(lineCol: { line: number; column: number }): vo
         }
         return true;
       });
-    }
-
-    // The exact offset in the matched textblock (see `caretInMarkdownLine`): the text-offset estimate above counts a citation's or a
-    // footnote reference's Markdown characters as text, so a column after one went too far into the paragraph.
-    if (found && !isTableLine(targetLine)) {
-      let node = view.state.doc.nodeAt(matchedBlockStart);
-      let contentStart = matchedBlockStart + 1;
-      while (node && !node.isTextblock && node.firstChild) {
-        node = node.firstChild;
-        contentStart += 1;
-      }
-      if (node?.isTextblock && !node.type.spec.code) {
-        const exact = offsetForMarkdownColumn(editorInstance, view, contentStart, mdColumnInContent);
-        if (exact !== null) pmPos = contentStart + exact;
-      }
     }
 
     (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({

@@ -211,16 +211,24 @@ extension CodeMirrorEditor.Coordinator {
             DebugLog.log(.editor, "[CodeMirrorEditor] window.FinalFinal type: \(result ?? "nil")")
         }
 
-        // The mount itself (ready flag, mount reset, `onWebViewReady`, `batchInitialize`, polling) is `mountLoadedPage` in
-        // CodeMirrorCoordinator+PageMount.swift; this call runs it right here, synchronously, except under the UI-test seam
-        // FF_UI_TESTING_MD_PAGE_READY_HOLD_MS (t-633df056), which holds the first page of the launch first.
-        mountLoadedPageAfterTestHold(webView)
+        isEditorReady = true
+        // Mount reset (undo-mode-switch-focus fix): a freshly mounted instance has no local
+        // edits of its own -- without this, a timestamp carried over from typing in the
+        // OUTGOING editor (this Coordinator's own fields default-init fresh per instance,
+        // but this reset is defense-in-depth against any future reuse) would suppress this
+        // new editor's own legitimate mount push, landing the user in an empty/stale Source
+        // editor. See `shouldPushContent`'s settle-window guard.
+        lastLocalEditAt = .distantPast
+        applyPersistedToggleStates()
+        onWebViewReady?(webView)    // Push image meta first (FIFO guarantees execution order)
+        batchInitialize()            // Then push content (decorations build with metadata present)
+        startPolling()
     }
 
     /// Called when using a preloaded WebView (navigation already finished)
     func handlePreloadedView() {
         isEditorReady = true
-        // Mount reset -- see the matching comment in `mountLoadedPage` (CodeMirrorCoordinator+PageMount.swift).
+        // Mount reset -- see the matching comment in `webView(_:didFinish:)` above.
         lastLocalEditAt = .distantPast
         applyPersistedToggleStates()
         if let webView { onWebViewReady?(webView) }    // Push image meta first
@@ -271,9 +279,6 @@ extension CodeMirrorEditor.Coordinator {
         """
 
         webView.evaluateJavaScript(script) { [weak self] _, error in
-            // Phase 5 job A9: the moment today's handover has put the text in the page (the A/B timing compares it with the carried
-            // switch's flip; the line above is written before the page has the text).
-            DebugLog.log(.sync, "[CodeMirrorEditor] text in place (len=\(content.count))")
             if let error {
                 let nsError = error as NSError
                 DebugLog.log(.editor, "[CodeMirrorEditor] Initialize error: \(nsError.localizedDescription)")

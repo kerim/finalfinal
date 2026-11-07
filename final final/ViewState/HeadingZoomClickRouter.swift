@@ -13,9 +13,6 @@ enum HeadingZoomClickAction: Equatable {
     case zoomIn(id: String, mode: ZoomMode)
     case zoomOut
     case drop(reason: String)
-    /// Phase 5 job A7: a switch between Rich Text and Markdown or a zoom is running; the click is held and decided again afterwards
-    /// (`EditorViewState.holdZoomUntilTransitionEnds`), never dropped.
-    case hold(reason: String)
 }
 
 /// Minimal per-section metadata `decide` needs -- deliberately NOT `SectionViewModel`
@@ -41,14 +38,8 @@ enum HeadingZoomClickRouter {
         blockId: String,
         zoomedSectionId: String?,
         contentState: EditorContentState,
-        transitionRunning: Bool = false,
         sections: [HeadingZoomClickSectionInfo]
     ) -> HeadingZoomClickAction {
-        // Phase 5 job A7: during a switch or a zoom (`transitionRunning` also covers a carried zoom's first steps, while the state is
-        // still `.idle`, and the Markdown page of a switch that is not mounted yet) the click is held, not dropped.
-        if transitionRunning || contentState == .editorTransition || contentState == .zoomTransition {
-            return .hold(reason: "a switch or a zoom is running (content state \(contentState))")
-        }
         if contentState != .idle {
             return .drop(reason: "content state is \(contentState), not idle")
         }

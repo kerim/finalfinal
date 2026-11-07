@@ -99,8 +99,7 @@ struct ContentSyncObserverHost<Content: View>: View {
         // load) counts as well. (Round M1: each part of this handler is an `md-speed` span, MdSpeed.swift.)
         MdSpeed.timed("contentChange.noteDocumentChanged") { EditorPreloader.shared.noteDocumentChanged(newValue) }
 
-        // Phase 5 job A8: the text a carried Markdown zoom put in with nothing replayed is ignored here once, as today's zoom text is.
-        guard editorState.contentState == .idle, !editorState.transitionHolds.consumeSettledContent(newValue) else {
+        guard editorState.contentState == .idle else {
             FootnoteDiag.log("content change IGNORED by handleContentChange: contentState=\(editorState.contentState) length=\(newValue.utf8.count)")
             return
         }
@@ -265,8 +264,7 @@ struct ContentSyncObserverHost<Content: View>: View {
                   editorState.editorMode == .source else { return }
             // Does not wait for a pending section-delete job (plan D7): Markdown mode only, and the switch into Markdown already
             // waited for every delete job (an editor-first delete cannot start in Markdown mode).
-            // Phase 5 job A8: through the ordered queue (MarkdownBlockWriter+ZoomedWrite.swift); today's direct write is its fallback.
-            await editorState.saveZoomedMarkdownText(projectId: pid)
+            editorState.flushContentToDatabase()
         }
     }
 
@@ -326,8 +324,7 @@ extension View {
                     editorState: editorState,
                     sectionSyncService: sectionSyncService,
                     findBarState: findBarState,
-                    unifiedUndoService: unifiedUndoService,
-                    cursorRestore: cursorRestore
+                    unifiedUndoService: unifiedUndoService
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSaveCursorPosition)) { notification in
@@ -575,16 +572,19 @@ extension View {
     ///     cursor save, which is two web calls long): `holdModeToggleUntilStructuralWorkEnds` makes the request again from the top
     ///     when the command and everything queued behind it have finished. Dropping it here, as this receiver used to, left the
     ///     mode button on the old mode without a word (judge item 4: a switch pressed during a slow Cmd-Z is held, never dropped).
-    ///   - `.zoomTransition` holds it too (Phase 5 job A7). `.projectSwitch` still drops it: the project is going away.
+    ///   - `.projectSwitch` and `.zoomTransition` still drop it: the content is being replaced and the toggle could flush stale data.
     @MainActor
     func handleDidSaveCursorPosition(
         _ notification: Notification, editorState: EditorViewState, cursorRestore: Binding<CursorPosition?>
     ) {
-        guard editorState.contentState != .projectSwitch else { return }  // Content is being replaced — toggle could flush stale data
-        // A structural command or (Phase 5 job A7) a zoom, a carried zoom's `.idle` first steps included: held, not dropped.
-        if editorState.modeToggleHoldMustWait {
+        switch editorState.contentState {
+        case .projectSwitch, .zoomTransition:
+            return  // Content is being replaced — toggle could flush stale data
+        case .structuralUndo:
             editorState.holdModeToggleUntilStructuralWorkEnds()
             return
+        default:
+            break  // Allow toggle during .idle, .editorTransition, .bibliographyUpdate, .annotationEdit, .hierarchyEnforcement
         }
         // Handle cursor position restoration during mode switch
         if let position = notification.userInfo?["position"] as? CursorPosition {
@@ -607,8 +607,7 @@ extension View {
         editorState: EditorViewState,
         sectionSyncService: SectionSyncService,
         findBarState: FindBarState,
-        unifiedUndoService: UnifiedUndoService,
-        cursorRestore: Binding<CursorPosition?>? = nil
+        unifiedUndoService: UnifiedUndoService
     ) {
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): the switch waits for pending editor-first delete jobs BEFORE it
         // changes anything (before the timeline barrier and before `contentState` leaves `.idle`), so the Rich Text editor stays
@@ -619,7 +618,7 @@ extension View {
         editorState.runAfterPendingStructuralWork(label: "editor mode toggle") {
             performEditorModeToggle(
                 editorState: editorState, sectionSyncService: sectionSyncService,
-                findBarState: findBarState, unifiedUndoService: unifiedUndoService, cursorRestore: cursorRestore)
+                findBarState: findBarState, unifiedUndoService: unifiedUndoService)
         }
     }
 
@@ -629,8 +628,7 @@ extension View {
         editorState: EditorViewState,
         sectionSyncService: SectionSyncService,
         findBarState: FindBarState,
-        unifiedUndoService: UnifiedUndoService,
-        cursorRestore: Binding<CursorPosition?>? = nil
+        unifiedUndoService: UnifiedUndoService
     ) {
         // Barrier (plan §4.5, Phase 5 backlog -- "neither is wired anywhere"): mode switch
         // destroys the outgoing editor's WebView and claims a fresh preloaded one for the
@@ -647,30 +645,106 @@ extension View {
         findBarState.clearSearch()
 
         if editorState.editorMode == .wysiwyg {
-            // Phase 5 job A9: the carried switch (EditorViewState+SwitchTransition.swift): the Rich Text page stays on screen and typeable
-            // until the Markdown page has its text, and what was typed meanwhile is carried across. Today's body is its fallback.
-            if editorState.usesCarriedSwitch {
-                editorState.startCarriedSwitchToMarkdown(
-                    sectionSync: sectionSyncService, cursor: cursorRestore?.wrappedValue,
-                    legacy: { performLegacySwitchToMarkdown(editorState: editorState, sectionSyncService: sectionSyncService) },
-                    consumeCursor: {
-                        DebugLog.alwaysPersisted("[TRANS] switch consumes the saved caret (binding \(cursorRestore == nil ? "absent" : "present"))")
-                        cursorRestore?.wrappedValue = nil
-                    })
+            // Switching TO source mode - inject anchors
+            editorState.contentState = .editorTransition
+            DebugLog.log(.editor, "[SWITCH→CM] Starting. content length=\(editorState.content.count)")
+
+            // When zoomed, only inject anchors for zoomed sections
+            let sectionsToInject: [SectionViewModel]
+            if let zoomedIds = editorState.zoomedSectionIds {
+                sectionsToInject = editorState.sections.filter { zoomedIds.contains($0.id) }
             } else {
-                performLegacySwitchToMarkdown(editorState: editorState, sectionSyncService: sectionSyncService)
+                sectionsToInject = editorState.sections
             }
-        } else if editorState.usesCarriedSwitchToRichText {
-            // Phase 5 job A10: the carried switch (EditorViewState+SwitchTransitionRichText.swift); today's body below is its fallback.
-            editorState.startCarriedSwitchToRichText(
-                sectionSync: sectionSyncService, cursor: cursorRestore?.wrappedValue,
-                legacy: { performLegacySwitchToRichText(editorState: editorState, sectionSyncService: sectionSyncService) },
-                consumeCursor: {
-                    DebugLog.alwaysPersisted("[TRANS] switch consumes the saved caret (binding \(cursorRestore == nil ? "absent" : "present"))")
-                    cursorRestore?.wrappedValue = nil
-                })
+
+            // Flush editor content to blocks DB before computing offsets.
+            // Without this, recently-inserted nodes (e.g. images via editor-first
+            // approach) may not be in the blocks table yet, causing wrong offsets
+            // and anchor injection corruption.
+            // `skipUnchangedWrite`: when the stored rows already are what this flush would store (no edit since
+            // the last save), nothing is written, so every row keeps its id. A zoomed flush ignores the flag.
+            editorState.flushContentToDatabase(overrideContent: editorState.content, skipUnchangedWrite: true)
+            DebugLog.log(.editor, "[SWITCH→CM] After flush")
+
+            // Compute offsets from blocks (same data that produced editorState.content)
+            var adjustedSections: [SectionViewModel] = []
+            if let db = editorState.projectDatabase,
+               let pid = editorState.currentProjectId {
+                do {
+                    let fetchedBlocks: [Block]
+                    if let zoomedIds = editorState.zoomedSectionIds {
+                        let allBlocks = try db.fetchBlocks(projectId: pid)
+                        fetchedBlocks = ContentView.filterBlocksForZoomStatic(
+                            allBlocks, zoomedIds: zoomedIds,
+                            zoomedBlockRange: editorState.zoomedBlockRange)
+                    } else {
+                        fetchedBlocks = try db.fetchBlocks(projectId: pid)
+                    }
+                    DebugLog.log(.editor, "[SWITCH→CM] Fetched \(fetchedBlocks.count) blocks")
+                    let sorted = fetchedBlocks.sorted { a, b in
+                        let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
+                        let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
+                        return aKey < bKey
+                    }
+                    // MUST stay in sync with BlockParser.assembleMarkdown filtering
+                    let nonEmpty = sorted.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
+                    var blockOffset: [String: Int] = [:]
+                    var offset = 0
+                    for (i, block) in nonEmpty.enumerated() {
+                        if i > 0 { offset += 2 }
+                        blockOffset[block.id] = offset
+                        offset += block.markdownFragment.count
+                    }
+                    for section in sectionsToInject.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                        if let off = blockOffset[section.id] {
+                            adjustedSections.append(section.withUpdates(startOffset: off))
+                        }
+                    }
+                    DebugLog.log(.editor, "[SWITCH→CM] Sections with offsets: \(adjustedSections.count)")
+                } catch {
+                    DebugLog.log(.editor, "[SWITCH→CM] ERROR fetching blocks: \(error)")
+                }
+            }
+
+            let withAnchors = sectionSyncService.injectSectionAnchors(
+                markdown: editorState.content,
+                sections: adjustedSections
+            )
+            DebugLog.log(.editor, "[SWITCH→CM] After anchors: length=\(withAnchors.count)")
+            // Also inject bibliography marker for source mode
+            let withBibMarker = sectionSyncService.injectBibliographyMarker(
+                markdown: withAnchors,
+                sections: sectionsToInject
+            )
+            // DERIVED REFRESH (default) -- but not a gap: this writes the freshly-mounted
+            // CodeMirror instance's OWN mount content, composed just before
+            // toggleEditorMode() below actually mounts it. That new instance's
+            // `lastLocalEditAt` starts (and is defensively reset to) `.distantPast` on its
+            // own mount (CodeMirrorCoordinator.shouldPushContent's undo-mode-switch-focus
+            // fix), so the settle-window guard can never suppress THIS push -- no
+            // `forcedPushGeneration` bump needed here.
+            editorState.sourceContent = withBibMarker
+            editorState.toggleEditorMode()
+            // Phase 4a: Swift just handed the Markdown editor its text, assembled from the stored rows (the flush above wrote
+            // them, or found them unchanged): the per-block writer compares with the stored rows from here. The editorMode
+            // `onChange` resets it too at the next render; both leave the baseline on the rows, so their order does not matter.
+            editorState.markdownWriter.noteLoaded(text: withBibMarker, pid: editorState.currentProjectId)
+            editorState.contentState = .idle
         } else {
-            performLegacySwitchToRichText(editorState: editorState, sectionSyncService: sectionSyncService)
+            // Switching FROM source mode TO WYSIWYG - set state BEFORE flush
+            editorState.contentState = .editorTransition
+            DebugLog.log(.editor, "[SWITCH→MW] Starting. sourceContent length=\(editorState.sourceContent.count)")
+            // Extract the anchors and the bibliography marker from the text the Markdown editor holds NOW, save that text and hand it
+            // to Rich Text. (It used to save `editorState.content`, which lags the page by its 50 ms push timer, so keys typed just
+            // before the switch were not saved.)
+            editorState.commitMarkdownTextForRichTextSwitch(sectionSyncService: sectionSyncService)
+            editorState.toggleEditorMode()
+
+            // No fixed wait here. contentState stays .editorTransition until the new Rich Text editor has been handed its
+            // content: onWebViewReady (ContentView+EditorPresentation.swift) sets .idle right after setContentWithBlockIds
+            // returns and before block polling starts. Backstop: the 5 s contentState watchdog (EditorViewState).
+            // History: a 1.5 s Task.sleep stood here (added 2026-02-04 for a "missing # from headers" claim, no
+            // reproduction on file); removed in the faster-switch work after VM runs showed headings survive without it.
         }
     }
 

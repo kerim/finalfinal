@@ -42,35 +42,16 @@ struct HeadingZoomClickRouterTests {
         #expect(action == .zoomOut)
     }
 
-    @Test("non-idle content state other than a switch or a zoom drops the click")
+    @Test("non-idle content state drops the click")
     func nonIdleStateDrops() {
         let action = HeadingZoomClickRouter.decide(
             blockId: "h1",
             zoomedSectionId: nil,
-            contentState: .bibliographyUpdate,
+            contentState: .zoomTransition,
             sections: [section("h1"), section("h2")]
         )
         guard case .drop = action else {
             Issue.record("expected .drop, got \(action)")
-            return
-        }
-    }
-
-    @Test("Phase 5 A7: a click during a switch or a zoom is held, not dropped")
-    func switchOrZoomHolds() {
-        for state in [EditorContentState.zoomTransition, .editorTransition] {
-            let action = HeadingZoomClickRouter.decide(
-                blockId: "h1", zoomedSectionId: nil, contentState: state, sections: [section("h1"), section("h2")])
-            guard case .hold = action else {
-                Issue.record("expected .hold for \(state), got \(action)")
-                continue
-            }
-        }
-        // A carried zoom's first steps keep the state `.idle`: the flag holds the click all the same.
-        let action = HeadingZoomClickRouter.decide(
-            blockId: "h1", zoomedSectionId: nil, contentState: .idle, transitionRunning: true, sections: [section("h1")])
-        guard case .hold = action else {
-            Issue.record("expected .hold while a transition runs, got \(action)")
             return
         }
     }

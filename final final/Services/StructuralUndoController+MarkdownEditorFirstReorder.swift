@@ -84,23 +84,17 @@ extension StructuralUndoController {
               blockSync.writer?.database === db, blockSync.writer?.projectId == pid else { return nil }
         let writer = editorState.markdownWriter
 
-        // The notice (UX contract 4.2: "Finishing the last change…" past one second). t-2fbe4c9b: ONE notice belongs to the whole click,
-        // as for Duplicate: counted from the drop, it stays through the page wait below, the hold wait, the page call and the reply turn,
-        // and the `defer` takes it down (`stop()` is idempotent) on every way out.
-        let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
-        defer { waiting.stop() }
-
-        // t-633df056 (Phase 5 job A5): a drop right after View > Switch to Markdown, before the new page is mounted, waits for the page
-        // here, before the click begins; a timed-out wait or a mode that changed gives it to the old body, as before.
-        guard await awaitMarkdownPageForStructuralCommand(label: "editor-first reorder") else { return nil }
-
         // Round M1 measurement (MdSpeed.swift): the drag's timeline starts at the DROP (`ContentView.reorderSection` calls `beginOp`), so
         // nothing is begun here; `noteOpId` below gives it the op's short id. This mark says the gate turn reached the Markdown click.
         MdSpeed.mark("entered")
         let clickSpan = MdSpeed.span("click")
         defer { clickSpan.end() }
 
-        // Step 2: an earlier Markdown command finishes saving first. Held, never refused; past one second the notice above shows.
+        // Step 2: an earlier Markdown command finishes saving first. Held, never refused; past one second the notice shows
+        // (UX contract 4.2: "Finishing the last change…"). t-2fbe4c9b: ONE notice belongs to the whole click, as for Duplicate: it stays
+        // through the page call and the reply turn and the `defer` takes it down (`stop()` is idempotent) on every way out.
+        let waiting = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
+        defer { waiting.stop() }
         let holdWaitSpan = MdSpeed.span("holdWait")
         await writer.awaitStructuralHoldReleased()
         holdWaitSpan.end()

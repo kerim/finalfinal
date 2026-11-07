@@ -1082,28 +1082,6 @@ extension Phase4bDelHarness {
         return true
     }
 
-    /// The line the CodeMirror coordinator logs right after it calls `onWebViewReady` (the same synchronous step, `webView(_:didFinish:)` or
-    /// `handlePreloadedView`): by the time it is in the log, the app's `structuralUndoController.activeWebView` is the Markdown page. Only the
-    /// stable prefix is matched (the line ends with the content length).
-    static let markdownPageReadyLogLine = "[CodeMirrorEditor] batchInitialize: setting lastPushedContent"
-
-    /// Waits until the new Markdown (CodeMirror) page has finished loading, reading the app's log from `index` (take it BEFORE the toggle
-    /// keystroke, so a line written right after the keystroke cannot be missed). Reports a failure and returns false on a timeout.
-    ///
-    /// WHY THE BADGE ALONE IS NOT ENOUGH: the status-bar badge flips with `editorMode`, which is set the moment the toggle is handled, BEFORE
-    /// the Markdown page exists. Until that page's `onWebViewReady`, `structuralUndoController.activeWebView` still points at the old Rich Text
-    /// page. Since Phase 5 job A5 (t-633df056) the app HOLDS a section command pressed in that gap until the page is ready (so nothing is
-    /// measured on the wrong path any more), but a test that waits only for the badge would still time the page load as part of its command,
-    /// and a test of the held case must know the page was not there yet. On a busy host the gap is seconds long. Every test wait for the
-    /// Markdown mode that is followed by a structural command goes through this helper (board t-55b63c87 listed the six that did not).
-    func waitForMarkdownPageReady(from index: Int) -> Bool {
-        guard waitForLog(containing: Self.markdownPageReadyLogLine, from: index, timeout: capped(size.operationTimeout * 2)) else {
-            fail("the Markdown page never finished loading after the switch (no \"\(Self.markdownPageReadyLogLine)\" line in the app's log)")
-            return false
-        }
-        return true
-    }
-
     /// As `waitForLog(containing:timeout:)`, but only lines at or after log index `index` count (a relaunch must not be answered by a line the
     /// first run wrote: the follower keeps every line of the whole test).
     func waitForLog(containing needle: String, from index: Int, timeout: TimeInterval) -> Bool {

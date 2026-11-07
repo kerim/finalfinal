@@ -549,8 +549,27 @@ extension Phase4bDelHarness {
         return true
     }
 
-    // `markdownPageReadyLogLine` and `waitForMarkdownPageReady(from:)` moved to the shared harness (`Phase4bDelHarness`,
-    // WriteQueuePhase4bDeleteE2ETests.swift) in Phase 5 job A5, so every class that switches to Markdown can wait for the page (t-55b63c87).
+    /// The line the CodeMirror coordinator logs right after it calls `onWebViewReady` (the same synchronous step, `webView(_:didFinish:)` or
+    /// `handlePreloadedView`): by the time it is in the log, the app's `structuralUndoController.activeWebView` is the Markdown page. Only the
+    /// stable prefix is matched (the line ends with the content length).
+    static let markdownPageReadyLogLine = "[CodeMirrorEditor] batchInitialize: setting lastPushedContent"
+
+    /// Waits until the new Markdown (CodeMirror) page has finished loading, reading the app's log from `index` (take it BEFORE the toggle
+    /// keystroke, so a line written right after the keystroke cannot be missed). Reports a failure and returns false on a timeout.
+    ///
+    /// WHY THE BADGE ALONE IS NOT ENOUGH: the status-bar badge flips with `editorMode`, which is set the moment the toggle is handled, BEFORE
+    /// the Markdown page exists. Until that page's `onWebViewReady`, `structuralUndoController.activeWebView` still points at the old Rich Text
+    /// page, which has no `markdownStructuralEditorFirst`; a Delete / Duplicate / drag clicked in that gap is answered by nothing from the
+    /// page and runs the old slow body (an app-side gap in base code, board item t-633df056), so the test would measure or assert the wrong
+    /// path. On a busy host the gap is seconds long. Every wait for the Markdown mode that is followed by a structural command goes through
+    /// this helper (or `mdSpeedSwitchToMarkdown`, which uses it).
+    func waitForMarkdownPageReady(from index: Int) -> Bool {
+        guard waitForLog(containing: Self.markdownPageReadyLogLine, from: index, timeout: capped(size.operationTimeout * 2)) else {
+            fail("the Markdown page never finished loading after the switch (no \"\(Self.markdownPageReadyLogLine)\" line in the app's log)")
+            return false
+        }
+        return true
+    }
 
     /// Switches the editor to Markdown with Cmd-/ (the View menu's "Switch to Markdown"), pressed ONCE, then waits for the badge and for the
     /// Markdown page to finish loading (`waitForMarkdownPageReady`).

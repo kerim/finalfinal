@@ -450,8 +450,8 @@ struct ModeSwitchWaitsFirstTests {
         jobMayRun.signal()
         let bothRan = await gateWaitUntil { rig.unifiedUndo.generation == generationBefore + 2 }
         #expect(bothRan, "both presses ran, one after the other, none dropped: generation \(rig.unifiedUndo.generation)")
-        // Two switches end where they started: Rich Text. (Held and run one after the other, not in parallel: the second waits
-        // behind the first on the gate, and since Phase 5 also until the first's carried switch to Markdown is over.)
+        // Two switches end where they started: Rich Text. (Held and run one after the other, not in parallel: each is one
+        // synchronous body on the main actor, and the second waits behind the first on the gate.)
         #expect(rig.editorState.editorMode == .wysiwyg, "two switches leave the editor in Rich Text")
         let settled = await gateWaitUntil { rig.editorState.structuralGate.isIdle }
         #expect(settled)
@@ -559,9 +559,7 @@ struct ModeSwitchWaitsFirstTests {
         Color.clear.handleEditorModeToggle(
             editorState: rig.editorState, sectionSyncService: SectionSyncService(),
             findBarState: FindBarState(), unifiedUndoService: rig.unifiedUndo)
-        // Phase 5 job A9: the switch to Markdown is the carried switch, which flips the mode on its own task, not inside this call.
-        let flipped = await gateWaitUntil { rig.editorState.editorMode == .source }
-        #expect(flipped, "the switch happened")
+        #expect(rig.editorState.editorMode == .source, "the switch happened")
         #expect(rig.unifiedUndo.generation == generationBefore + 1, "and exactly once")
 
         // Nothing else is pending: no second request, no second flip.

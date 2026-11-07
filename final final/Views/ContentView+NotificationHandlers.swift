@@ -605,13 +605,6 @@ extension ContentView {
     /// no Focus Mode gate) shares this instead of risking a second, drifting copy.
     @MainActor
     func performUserZoomIn(_ sectionId: String, mode: ZoomMode, reason: String) {
-        // Phase 5 job A7: a close, quit or project switch is saving the project: the zoom is ignored, like the mode switch (the model's
-        // `P5_Abort_Switch_Zoom`); a zoom pressed while a switch or another zoom runs is held and runs afterwards.
-        guard zoomMayStart(direction: "in") else { return }
-        if editorState.zoomMustWaitForTransition {
-            editorState.holdZoomUntilTransitionEnds { performUserZoomIn(sectionId, mode: mode, reason: reason) }
-            return
-        }
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): an editor-first section delete's job is still pending. Wait for it
         // BEFORE any state change below, so the editor stays live (and typing keeps being saved) during the wait; then start the
         // zoom exactly as usual. Nothing pending (the normal case) takes the unchanged synchronous path. In Markdown mode "pending"
@@ -636,19 +629,12 @@ extension ContentView {
         // zoomToSection() itself -- matches the zoom-out barrier's placement below.
         unifiedUndoService.invalidateAll(reason: reason)
         findBarState.clearSearch()
-        let zoomInStart = Date()
-        // Phase 5 job A7: Rich Text takes the carried path (ContentView+ZoomTransition.swift); it falls back to the lines below itself.
-        if editorState.usesCarriedZoom {
-            runCarriedZoomIn(sectionId, mode: mode, started: zoomInStart)
-            return
-        }
         editorState.contentState = .zoomTransition
         Task {
             await editorState.zoomToSection(sectionId, mode: mode)
             await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
             await annotationSyncService.syncNow(editorState.content)
             editorState.contentState = .idle
-            DebugLog.log(.zoom, "[ZoomClick] performUserZoomIn tail complete in \(Date().timeIntervalSince(zoomInStart))s")
         }
     }
 
@@ -688,12 +674,6 @@ extension ContentView {
     /// been fixed there too; see that call site's own comment in StructuralUndoController.swift.
     @MainActor
     func performUserZoomOut(reason: String) {
-        // Phase 5 job A7: ignored during a close, quit or project switch; held behind a switch or another zoom (see `performUserZoomIn`).
-        guard zoomMayStart(direction: "out") else { return }
-        if editorState.zoomMustWaitForTransition {
-            editorState.holdZoomUntilTransitionEnds { performUserZoomOut(reason: reason) }
-            return
-        }
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): wait for a pending editor-first delete job before any state
         // change, as `performUserZoomIn` does. Delete is refused while zoomed, so this is almost never taken; it is the plan's
         // listed wait site for zoom out. It waits for the Markdown writer's structural hold too (see `performUserZoomIn`).
@@ -712,24 +692,12 @@ extension ContentView {
         unifiedUndoService.invalidateAll(reason: reason)
         let savedSectionId = editorState.zoomedSectionId
         findBarState.clearSearch()
-        let carried = editorState.usesCarriedZoom
-        // Today's path sets the state at once; the carried path (Phase 5 job A7) sets it only after its barrier.
-        if !carried { editorState.contentState = .zoomTransition }
+        editorState.contentState = .zoomTransition
         let zoomOutStart = Date()
         Task {
-            // The carried zoom out (EditorViewState+ZoomTransition.swift); false = the page could not begin: today's path, unchanged.
-            // A carried zoom out is back to `.idle` itself (a rebuild may have started since), so the state is not touched after it.
-            var setsIdle = true
-            if !carried {
-                await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
-            } else if await editorState.zoomOutCarried(restoreScrollToSectionId: savedSectionId) {
-                setsIdle = false
-            } else {
-                editorState.contentState = .zoomTransition
-                await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
-            }
+            await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
             DebugLog.log(.zoom, "[ZoomClick] zoomOut() settled in \(Date().timeIntervalSince(zoomOutStart))s")
-            if setsIdle { editorState.contentState = .idle }
+            editorState.contentState = .idle
             NotificationCenter.default.post(name: .didZoomOut, object: nil)
             if let sectionId = savedSectionId {
                 // KEPT even though zoomOut() above already resolved and landed on this same
@@ -764,7 +732,6 @@ extension ContentView {
             blockId: blockId,
             zoomedSectionId: editorState.zoomedSectionId,
             contentState: editorState.contentState,
-            transitionRunning: editorState.zoomMustWaitForTransition,
             sections: editorState.sections.map {
                 HeadingZoomClickSectionInfo(
                     id: $0.id,
@@ -777,10 +744,6 @@ extension ContentView {
         switch action {
         case .drop(let reason):
             DebugLog.log(.zoom, "[ZoomClick] ignored Cmd-click on \(blockId): \(reason)")
-        case .hold(let reason):
-            // Phase 5 job A7: a switch or a zoom is running. The click is decided again, from the top, once it is over.
-            DebugLog.log(.zoom, "[ZoomClick] Cmd-click on \(blockId) held: \(reason)")
-            editorState.holdZoomUntilTransitionEnds { handleZoomHeadingClicked(notification) }
         case .zoomIn(let id, let mode):
             performUserZoomIn(id, mode: mode, reason: "user zoomed in (heading Cmd-click)")
         case .zoomOut:

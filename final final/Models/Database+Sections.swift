@@ -422,46 +422,40 @@ extension ProjectDatabase {
     /// This replaces the previous DELETE ALL + INSERT ALL pattern to prevent race conditions
     func applySectionChanges(_ changes: [SectionChange], for projectId: String) throws {
         try write { db in
-            try Self.applySectionChanges(db: db, changes)
-        }
-    }
+            for change in changes {
+                switch change {
+                case .insert(var section):
+                    try section.insert(db)
 
-    /// `applySectionChanges` on an open `Database` handle, for use INSIDE one write transaction (Phase 5 job B3-0: the queued
-    /// section-sync write applies these changes and the content row in the writer's one transaction).
-    static func applySectionChanges(db: Database, _ changes: [SectionChange]) throws {
-        for change in changes {
-            switch change {
-            case .insert(var section):
-                try section.insert(db)
+                case .update(let id, let updates):
+                    guard var section = try Section.fetchOne(db, key: id) else { continue }
+                    Self.applyFields(updates, to: &section)
+                    try section.update(db)
 
-            case .update(let id, let updates):
-                guard var section = try Section.fetchOne(db, key: id) else { continue }
-                Self.applyFields(updates, to: &section)
-                try section.update(db)
+                case .delete(let id):
+                    try Section
+                        .filter(Section.Columns.id == id)
+                        .deleteAll(db)
 
-            case .delete(let id):
-                try Section
-                    .filter(Section.Columns.id == id)
-                    .deleteAll(db)
+                case .deleteDuplicate(let loserId, let survivorId, let survivorUpdates):
+                    // Reassign the loser's annotations onto the survivor BEFORE deleting the
+                    // loser -- annotation.sectionId's `onDelete: .setNull` FK trigger would
+                    // otherwise fire first and null them out, disconnecting real user
+                    // annotations from any section entirely.
+                    try db.execute(
+                        sql: "UPDATE annotation SET sectionId = ?, updatedAt = ? WHERE sectionId = ?",
+                        arguments: [survivorId, Date(), loserId]
+                    )
 
-            case .deleteDuplicate(let loserId, let survivorId, let survivorUpdates):
-                // Reassign the loser's annotations onto the survivor BEFORE deleting the
-                // loser -- annotation.sectionId's `onDelete: .setNull` FK trigger would
-                // otherwise fire first and null them out, disconnecting real user
-                // annotations from any section entirely.
-                try db.execute(
-                    sql: "UPDATE annotation SET sectionId = ?, updatedAt = ? WHERE sectionId = ?",
-                    arguments: [survivorId, Date(), loserId]
-                )
+                    if var survivor = try Section.fetchOne(db, key: survivorId) {
+                        Self.applyFields(survivorUpdates, to: &survivor)
+                        try survivor.update(db)
+                    }
 
-                if var survivor = try Section.fetchOne(db, key: survivorId) {
-                    Self.applyFields(survivorUpdates, to: &survivor)
-                    try survivor.update(db)
+                    try Section
+                        .filter(Section.Columns.id == loserId)
+                        .deleteAll(db)
                 }
-
-                try Section
-                    .filter(Section.Columns.id == loserId)
-                    .deleteAll(db)
             }
         }
     }

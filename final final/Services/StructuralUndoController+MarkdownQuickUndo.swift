@@ -107,9 +107,6 @@ extension StructuralUndoController {
         // by id on every way out: performed, refused by the page, failed, cancelled by a lifecycle, or sent to the slow path.
         let notice = DelayedProgressToast(toastCenter: editorState.toastCenter, message: DelayedProgressToast.finishingMessage)
         defer { notice.stop() }
-        // t-633df056 (Phase 5 job A5): a press right after View > Switch to Markdown, before the new page is mounted, waits for the page
-        // first (the notice above covers it); a timed-out wait or a mode that changed sends it to the slow path, as before.
-        guard await awaitMarkdownPageForStructuralCommand(label: "quick \(redo ? "redo" : "undo")") else { return nil }
         await editorState.markdownWriter.awaitStructuralHoldReleased()
         // The wait is long enough for the world to change: a close began, the delete job failed and was put back, a barrier ran.
         if editorState.structuralGate.isClosedToNewWork { return .cancelled }

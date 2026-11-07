@@ -6,12 +6,6 @@ import type { ReorderOrderEntry, ReorderSectionsResult } from './api-section-reo
 import type { QuickResumeResult, QuickUndoResult } from './api-section-undo';
 import type { ReplaceRangePayload, ReplaceRangeResult } from './api-structural-replace';
 import type { StructuralSwapPayload, StructuralSwapResult } from './api-structural-swap';
-import type {
-  SwapTransitionOptions,
-  SwapTransitionResult,
-  TransitionBeginResult,
-  TransitionTakeResult,
-} from './api-transition';
 import type { BlockChanges } from './block-sync-plugin';
 import type { CSLItem } from './citation-plugin';
 import type { PrefillBeginResult, PrefillStepResult } from './citation-prefill';
@@ -186,8 +180,6 @@ declare global {
       insertCitation: () => void;
       // Block-based API (Phase B)
       getBlockChanges: () => BlockChanges;
-      // Phase 5 job B2: `getBlockChanges` plus the number of the `drain` report this drain posted (report-outbox.ts).
-      getBlockChangesReported: () => BlockChanges & { reportThrough?: number; reportSession?: string };
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
       syncBlockIds: (orderedIds: string[], zoomMode: boolean, expected?: ExpectedBlockMeta[]) => void;
@@ -320,16 +312,6 @@ declare global {
       releaseHeldTypingPushes: () => boolean;
       // F7: releases the hold AND returns the pending batch in one call, for a press Swift hands to the old whole-document body.
       releaseHeldTypingAndGetBatch: () => { released: boolean; batch: BlockChanges };
-      // Phase 5 job A7 (api-transition.ts): the zoom transition. `beginTransition` drains the pending batch and starts holding and
-      // recording in ONE turn (Swift reads it as JSON.stringify(...) and writes the batch through the queue before the barrier);
-      // `swapTransition` replaces the document with the recorded typing put back on top in ONE turn and returns the typing in blocks
-      // the target lacks as `outside` (an ordinary batch), or refuses with the held typing as `batch`; `endTransition` ends a hold
-      // whose swap never came.
-      beginTransition: () => TransitionBeginResult;
-      swapTransition: (token: number, options: SwapTransitionOptions) => SwapTransitionResult;
-      endTransition: (token: number | null) => { ended: boolean };
-      // Phase 5 job A9 (api-transition.ts): the switch to Markdown drains the typing held since the begin without ending the hold.
-      takeTransitionBatch: (token: number) => TransitionTakeResult;
       // Structural op lifecycle (Phase 3, plan §4.4) -- called by StructuralUndoController.swift.
       beginStructuralOp: (opId: string) => boolean;
       finalizeStructuralOpPostOpDoc: (opId: string) => boolean;

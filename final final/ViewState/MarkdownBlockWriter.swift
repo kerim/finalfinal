@@ -334,19 +334,6 @@ final class MarkdownBlockWriter {
     }
 }
 
-// MARK: - A write started outside `prepare` (Phase 5 job A8)
-
-extension MarkdownBlockWriter {
-    /// Publishes `task` (the queued zoomed range write) as the write in flight, so a fire and `writeNow` wait for it; returns its token.
-    func publishInFlight(_ task: Task<Void, Never>) -> Int {
-        inFlightToken += 1
-        inFlight = task
-        return inFlightToken
-    }
-    /// The published write has ended: `inFlight` is cleared unless a later write replaced it.
-    func clearInFlight(token: Int) { if inFlightToken == token { inFlight = nil } }
-}
-
 // MARK: - The synchronous core
 
 extension MarkdownBlockWriter {

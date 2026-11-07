@@ -10,16 +10,6 @@ import { type Align, formatTable, type ParsedTable } from '../../shared/format-t
 import { getAllBlockIds, getBlockIdZoomMode, SYNC_DIAG_DETAIL } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
-import {
-  applyOps,
-  type BlockOp,
-  noteSettled as noteReportSettled,
-  postDrain as postReportDrain,
-  postRebase as postReportRebase,
-  setRealMapsProbe,
-  shadowApplyOps,
-  shadowRekey,
-} from './report-outbox';
 import { syncLog } from './sync-debug';
 import { isTraceTypingOn, noteRebuildReplacedPending } from './typing-trace';
 
@@ -108,14 +98,6 @@ let syncPaused = false;
  */
 export function setSyncPaused(paused: boolean): void {
   syncPaused = paused;
-}
-
-// Phase 5 job B2: report-outbox.ts reads the real maps for the rebase it posts after a report could not be delivered.
-setRealMapsProbe(() => currentState);
-
-/** Phase 5 job B2: a shadow report is not posted while sync is paused (report-outbox.ts). */
-export function isSyncPaused(): boolean {
-  return syncPaused;
 }
 
 // ---------------------------------------------------------------------------
@@ -704,15 +686,6 @@ export function nodeToMarkdownFragment(node: Node): string {
   }
 }
 
-/** Phase 5 job B2: the `es` of the `drain` report the latest drain posted (null with reporting off). The poll's reply names it. */
-let lastDrainReportEs: number | null = null;
-/** Returns the `es` of the latest drain's report and forgets it, so a caller can tell whether ITS call drained. */
-export function takeLastDrainReportSequence(): number | null {
-  const es = lastDrainReportEs;
-  lastDrainReportEs = null;
-  return es;
-}
-
 /**
  * Get pending block changes and clear them
  * Called by Swift polling
@@ -721,10 +694,6 @@ export function getBlockChanges(): BlockChanges {
   if (!currentState) {
     return { updates: [], inserts: [], deletes: [] };
   }
-
-  // Phase 5 job B2: every drain ends a report window. The unposted shadow leaves as the window's `drain` report BEFORE the real maps
-  // are read and cleared below; nothing here touches the real maps (report-outbox.ts never sees them on this path).
-  lastDrainReportEs = postReportDrain();
 
   const changes: BlockChanges = {
     updates: Array.from(currentState.pendingUpdates.values()),
@@ -846,49 +815,14 @@ export function detectChanges(
   newSnapshot: Map<string, BlockSnapshot>,
   state: BlockSyncPluginState
 ): void {
-  applyDetectedOps(state, computeChangeOps(oldSnapshot, newSnapshot));
-}
-
-/** Applies detected ops to the real maps (with the plugin's own log line for an update merged into a pending insert). */
-function applyDetectedOps(state: BlockSyncPluginState, ops: readonly BlockOp[]): void {
-  applyOps(state, ops, (id) => {
-    const insert = state.pendingInserts.get(id);
-    syncLog(
-      'BlockSync:detect',
-      `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${(insert?.textContent ?? '').slice(0, 40)}"`
-    );
-  });
-}
-
-/** Phase 5 job B2: detection into the real maps AND the report shadow (report-outbox.ts), with the same ops, so the reports fold
- * to exactly what the real maps hold. Every detection that feeds the real maps the poll drains goes through here. */
-function detectIntoQueues(
-  oldSnapshot: Map<string, BlockSnapshot>,
-  newSnapshot: Map<string, BlockSnapshot>,
-  state: BlockSyncPluginState
-): void {
-  const ops = computeChangeOps(oldSnapshot, newSnapshot);
-  applyDetectedOps(state, ops);
-  if (state === currentState) shadowApplyOps(ops);
-}
-
-/** Phase 5 job B2: the real maps were changed other than by detection; the reports' fold restarts from what they hold now. */
-function rebaseReports(): void {
-  if (currentState) postReportRebase(currentState);
-}
-
-/**
- * The detection itself, as an ordered list of operations (no state is read or written): deletes and updates in the old snapshot's
- * order, then inserts. `applyOps` (report-outbox.ts) applies them with the merge rules this function used to apply inline.
- */
-function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: Map<string, BlockSnapshot>): BlockOp[] {
-  const ops: BlockOp[] = [];
   // Detect updates and deletes
   for (const [id, oldBlock] of oldSnapshot) {
     const newBlock = newSnapshot.get(id);
     if (!newBlock) {
-      // Block was deleted (applyOps also removes a pending update of it)
-      ops.push({ kind: 'delete', id });
+      // Block was deleted
+      state.pendingDeletes.add(id);
+      // Remove from updates if pending
+      state.pendingUpdates.delete(id);
       syncLog(
         'BlockSync:detect',
         `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} "${oldBlock.textContent.slice(0, 40)}"`
@@ -902,34 +836,45 @@ function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: 
       oldBlock.blockType !== newBlock.blockType ||
       getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock)
     ) {
-      // Block was updated — lazily compute markdownFragment only for changed blocks. If this block is already pending as an
-      // insert, applyOps merges the update into the insert instead of adding a separate update (prevents INSERT+UPDATE overlap
-      // → orphan blocks).
-      ops.push({
-        kind: 'update',
-        id,
-        update: {
+      // If this block is already pending as an insert, update the insert's content
+      // instead of adding a separate update (prevents INSERT+UPDATE overlap → orphan blocks)
+      if (state.pendingInserts.has(id)) {
+        const existing = state.pendingInserts.get(id)!;
+        state.pendingInserts.set(id, {
+          ...existing,
+          blockType: newBlock.blockType,
+          textContent: newBlock.textContent,
+          markdownFragment: getMarkdownFragment(newBlock),
+          headingLevel: newBlock.headingLevel,
+        });
+        syncLog(
+          'BlockSync:detect',
+          `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${newBlock.textContent.slice(0, 40)}"`
+        );
+      } else {
+        // Block was updated — lazily compute markdownFragment only for changed blocks
+        state.pendingUpdates.set(id, {
           id,
           textContent: newBlock.textContent,
           markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
           blockType: newBlock.blockType,
-        },
-      });
-      if (SYNC_DIAG_DETAIL) {
-        const changes: string[] = [];
-        if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
-        if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
-        if (oldBlock.headingLevel !== newBlock.headingLevel)
-          changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
-        const typeStr =
-          oldBlock.blockType !== newBlock.blockType
-            ? `type:${oldBlock.blockType}→${newBlock.blockType}`
-            : `type=${newBlock.blockType}`;
-        syncLog(
-          'BlockSync:detect',
-          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
-        );
+        });
+        if (SYNC_DIAG_DETAIL) {
+          const changes: string[] = [];
+          if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
+          if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
+          if (oldBlock.headingLevel !== newBlock.headingLevel)
+            changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
+          const typeStr =
+            oldBlock.blockType !== newBlock.blockType
+              ? `type:${oldBlock.blockType}→${newBlock.blockType}`
+              : `type=${newBlock.blockType}`;
+          syncLog(
+            'BlockSync:detect',
+            `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
+          );
+        }
       }
     }
   }
@@ -954,17 +899,14 @@ function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: 
         }
       }
 
-      ops.push({
-        kind: 'insert',
-        insert: {
-          tempId: id,
-          blockType: newBlock.blockType,
-          textContent: newBlock.textContent,
-          markdownFragment: getMarkdownFragment(newBlock),
-          headingLevel: newBlock.headingLevel,
-          afterBlockId,
-          atDocumentStart,
-        },
+      state.pendingInserts.set(id, {
+        tempId: id,
+        blockType: newBlock.blockType,
+        textContent: newBlock.textContent,
+        markdownFragment: getMarkdownFragment(newBlock),
+        headingLevel: newBlock.headingLevel,
+        afterBlockId,
+        atDocumentStart,
       });
       syncLog(
         'BlockSync:detect',
@@ -972,7 +914,6 @@ function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: 
       );
     }
   }
-  return ops;
 }
 
 // Debounce state for detectChanges() — keeps snapshotBlocks() synchronous
@@ -1024,13 +965,11 @@ function runPendingDetectChanges(): void {
   if (currentState && pendingOldSnapshot && pendingNewSnapshot) {
     const resolvedOld = remapSnapshot(pendingOldSnapshot, pendingIdRemap);
     const resolvedNew = remapSnapshot(pendingNewSnapshot, pendingIdRemap);
-    detectIntoQueues(resolvedOld, resolvedNew, currentState);
+    detectChanges(resolvedOld, resolvedNew, currentState);
   }
   pendingOldSnapshot = null;
   pendingNewSnapshot = null;
   pendingIdRemap.clear();
-  // Phase 5 job B2: a settled detection; report-outbox.ts posts the shadow now or at R.
-  noteReportSettled();
 }
 
 /**
@@ -1157,7 +1096,6 @@ export function resetBlockSyncState(): void {
     currentState.pendingDeletes.clear();
     currentState.lastSnapshot.clear();
   }
-  rebaseReports();
   // Don't null out currentState here - it will be recreated on next editor init
 }
 
@@ -1202,8 +1140,6 @@ export function updateSnapshotIds(mapping: Map<string, string>): void {
       currentState.pendingDeletes.add(newId);
     }
   }
-  // Phase 5 job B2: the same re-key on the report shadow (posted reports keep the temp id; Swift resolves it).
-  shadowRekey(mapping);
 }
 
 /**
@@ -1243,7 +1179,6 @@ export function resetAndSnapshot(doc: Node): void {
   currentState.pendingInserts.clear();
   currentState.pendingDeletes.clear();
   currentState.lastSnapshot = snapshotBlocks(doc);
-  rebaseReports();
 }
 
 /**
@@ -1286,8 +1221,6 @@ export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, Bl
   const newSnapshot = snapshotBlocks(doc);
   detectChanges(baseline, newSnapshot, currentState);
   currentState.lastSnapshot = newSnapshot;
-  // Phase 5 job B2: the maps were cleared, then refilled: the reports' fold restarts from them.
-  rebaseReports();
 }
 
 /**
@@ -1329,9 +1262,8 @@ export function detectPausedEditsKeepingPending(doc: Node, baseline: Map<string,
   pendingIdRemap.clear();
 
   const newSnapshot = snapshotBlocks(doc);
-  detectIntoQueues(baseline, newSnapshot, currentState);
+  detectChanges(baseline, newSnapshot, currentState);
   currentState.lastSnapshot = newSnapshot;
-  noteReportSettled();
 }
 
 /**
@@ -1389,14 +1321,7 @@ export function reconcilePendingQueueAfterManagedRebuild(
     currentState.pendingUpdates.delete(id);
     currentState.pendingDeletes.delete(id);
   }
-  repointPendingInsertsAfterManagedRebuild(mergedIds);
-  // Phase 5 job B2: entries were dropped and re-pointed other than by detection: the reports' fold restarts from the maps.
-  rebaseReports();
-}
-
-/** The second correction of `reconcilePendingQueueAfterManagedRebuild` (its doc comment, item 2). */
-function repointPendingInsertsAfterManagedRebuild(mergedIds: readonly string[]): void {
-  if (!currentState || currentState.pendingInserts.size === 0) return;
+  if (currentState.pendingInserts.size === 0) return;
   const survivingSet = new Set(mergedIds);
   for (const [tempId, insert] of currentState.pendingInserts) {
     if (insert.afterBlockId === undefined || survivingSet.has(insert.afterBlockId)) continue;
@@ -1451,6 +1376,5 @@ export function destroyBlockSyncState(): void {
     currentState.pendingDeletes.clear();
     currentState.lastSnapshot.clear();
   }
-  rebaseReports();
   currentState = null;
 }
