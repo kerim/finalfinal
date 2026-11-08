@@ -58,20 +58,16 @@ struct LifecycleFlushGuardTests {
 
     // MARK: - Step 0
 
-    @Test("Step 0: polling is stopped and the Markdown re-parse task is cancelled, before anything else")
-    func armStopsPollingAndCancelsTheReparse() async throws {
+    @Test("Step 0: the Markdown re-parse task is cancelled, before anything else")
+    func armCancelsTheReparse() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
-        rig.sync.startPolling()
-        #expect(rig.sync.testPollTimerIsArmed, "precondition: the poll timer is running")
         let reparse = Task<Void, Never> { try? await Task.sleep(for: .seconds(30)) }
         rig.editorState.blockReparseTask = reparse
 
         _ = await rig.run()
 
-        #expect(!rig.sync.testPollTimerIsArmed, "step 0 must stop polling (and the sequence must not restart it)")
         #expect(reparse.isCancelled, "step 0 must cancel the pending re-parse, in both modes")
         #expect(rig.editorState.blockReparseTask == nil)
     }
@@ -82,7 +78,6 @@ struct LifecycleFlushGuardTests {
     func closeProceeds_whenTheOperationClearsInTime(signal: OperationSignal) async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         beginOperation(signal, rig)
         let clearer = Task { @MainActor in
@@ -107,7 +102,6 @@ struct LifecycleFlushGuardTests {
     func closeIsCancelled_whenTheOperationNeverClears(signal: OperationSignal) async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         let frontierBefore = try #require(rig.sync.testWriterHandle).testFrontier
         beginOperation(signal, rig)
@@ -137,7 +131,6 @@ struct LifecycleFlushGuardTests {
     func quitContinues_withOpStillRunning_noFB() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         rig.editorState.contentState = .structuralUndo
         defer { rig.editorState.contentState = .idle }
@@ -160,7 +153,6 @@ struct LifecycleFlushGuardTests {
     func captureIsTakenAfterTheGuard_soAModeToggleDuringTheWaitIsSeen() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         rig.editorState.editorMode = .source
         rig.editorState.contentState = .structuralUndo
@@ -183,7 +175,6 @@ struct LifecycleFlushGuardTests {
     func runningRebuild_isAwaited_andLandsBeforeF() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         let gate = LifecycleEntryHarness.Gate()
         rig.editorState.registerRebuildTask(Task { @MainActor in
@@ -212,7 +203,6 @@ struct LifecycleFlushGuardTests {
     func everyRunningRebuild_isAwaited() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         let gateA = LifecycleEntryHarness.Gate()
         let gateB = LifecycleEntryHarness.Gate()
@@ -238,7 +228,6 @@ struct LifecycleFlushGuardTests {
     func aRebuildThatNeverFinishes_isWaitedForOnlyUpToItsBound() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         let neverOpened = LifecycleEntryHarness.Gate()
         rig.editorState.registerRebuildTask(Task { @MainActor in await neverOpened.wait() })

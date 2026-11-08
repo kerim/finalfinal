@@ -29,7 +29,6 @@ struct EditorFirstLifecycleGuardTests {
     private func makeRig() throws -> EditorFirstRig {
         let rig = try EditorFirstRig(markdown: Self.smallDocument)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in try? rig.assembledMarkdown() }
         return rig
     }

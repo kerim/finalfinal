@@ -31,18 +31,19 @@ enum SwitchFlushTestSupport {
     struct PendingEditObservation {
         /// The editor's Markdown (`window.FinalFinal.getContent()`).
         var content: String
-        /// `window.FinalFinal.hasBlockChanges()`: nil if the JS call answered something else.
-        var hasPendingChanges: Bool?
+        /// Whether the page still held a report of it not yet acknowledged (informational: with the editor's reports, Phase 5
+        /// B3/B4, an edit leaves the page within about half a second and is acknowledged once applied; before that it was held
+        /// as a pending change until the 2-second poll took it). nil if the JS call answered something else.
+        var heldInOutbox: Bool?
         /// The caller's expectation held on `content`.
         var contentMatches: Bool
 
-        /// Both halves hold: the editor shows the edit AND block-sync still has it pending.
-        var isReady: Bool { contentMatches && hasPendingChanges == true }
+        /// The editor shows the edit.
+        var isReady: Bool { contentMatches }
     }
 
-    /// Waits (bounded, polling every 100ms) until the editor shows the typed edit (`isExpected(content)`) AND block-sync
-    /// still holds it as a pending change, instead of sleeping a fixed time and probing once. It only READS
-    /// (`getContent`, `hasBlockChanges`), so it never consumes or clears the pending change. Returns the last
+    /// Waits (bounded, polling every 100ms) until the editor shows the typed edit (`isExpected(content)`), instead of sleeping a
+    /// fixed time and probing once. It only READS (`getContent`, `reportOutboxSince`), so it never consumes anything. Returns the last
     /// observation either way; the caller reports which half failed. The expectation is about the Markdown the editor
     /// SERIALIZES (a bullet list comes back as `* item`, not `- item`), so state it as the shape, not as the keys typed.
     static func waitForPendingEdit(
@@ -51,15 +52,20 @@ enum SwitchFlushTestSupport {
         isExpected: (String) -> Bool
     ) async throws -> PendingEditObservation {
         let end = Date().addingTimeInterval(timeout)
-        var observation = PendingEditObservation(content: "", hasPendingChanges: nil, contentMatches: false)
+        var observation = PendingEditObservation(content: "", heldInOutbox: nil, contentMatches: false)
         while true {
             let content = try await helper.getContent()
-            let pending = try await helper.webView.evaluateJavaScript("window.FinalFinal.hasBlockChanges()") as? Bool
-            observation = PendingEditObservation(content: content, hasPendingChanges: pending, contentMatches: isExpected(content))
+            let held = try await helper.webView.evaluateJavaScript(Self.outboxNotEmptyScript) as? Bool
+            observation = PendingEditObservation(content: content, heldInOutbox: held, contentMatches: isExpected(content))
             if observation.isReady || Date() >= end { return observation }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
     }
+
+    /// True when the Rich Text page holds a report not yet acknowledged.
+    static let outboxNotEmptyScript =
+        "(() => { const o = window.FinalFinal.reportOutboxSince ? window.FinalFinal.reportOutboxSince(null, 0) : null; "
+        + "return !!(o && o.entries.length > 0); })()"
 
     /// The close / switch save sequence under the armed `token`, production bounds. A rebuild task already running
     /// when this is called is what step 3 awaits to completion before F.

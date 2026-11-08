@@ -47,14 +47,9 @@ struct QuickUndoMustFailTests {
         return run
     }
 
-    /// One routine poll cycle, in a child task (it fetches what `typeIntoEditor` queued and applies it through the writer).
-    private func poll(_ rig: EditorFirstRig) -> QuickUndoChildRun {
-        let run = QuickUndoChildRun()
-        Task { @MainActor in
-            await rig.sync.pollBlockChangesForTest()
-            run.done = true
-        }
-        return run
+    /// The page reports what `typeIntoEditor` queued, in a child task (the intake applies it through the writer).
+    private func report(_ rig: EditorFirstRig) -> QuickUndoChildRun {
+        rig.startReport()
     }
 
     /// Waits at most 5 s for every run to end.
@@ -129,7 +124,7 @@ struct QuickUndoMustFailTests {
         // waiting for the job, and this wait just ends after a second.
         _ = await gateWaitUntil({ undo.done }, iterations: 200)
         rig.typeIntoEditor(paragraph, appending: " TYPED-Q2")
-        let typing = poll(rig)
+        let typing = report(rig)
         rig.release(blocker)
         let ended = await allEnd([undo, typing])
         #expect(ended, "the press and the poll did not both end within 5 s of the job being released")
@@ -192,7 +187,7 @@ struct QuickUndoMustFailTests {
         // is still queued. (Today's code is still running the undo, and ignores it.)
         await rig.controller.handleHistoryEdited()
         rig.typeIntoEditor(elsewhere, appending: " KEPT-S1")
-        let typing = poll(rig)
+        let typing = report(rig)
         rig.release(blocker)
         let ended = await allEnd([undo, typing])
         #expect(ended, "the press and the poll did not both end within 5 s of the job being released")
@@ -238,7 +233,7 @@ struct QuickUndoMustFailTests {
         let undo = press(rig, entry)
         _ = await gateWaitUntil({ undo.done }, iterations: 200)
         rig.typeIntoEditor(elsewhere, appending: " KEPT-S3")
-        let typing = poll(rig)
+        let typing = report(rig)
         rebuildMayLand.open()
         let ended = await allEnd([undo, typing])
         #expect(ended, "the press and the poll did not both end within 5 s")

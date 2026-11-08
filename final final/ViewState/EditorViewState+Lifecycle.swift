@@ -229,9 +229,10 @@ struct LifecycleFlushResult {
     var capturedEditorMode: EditorMode?
     /// Step 3's wait for running rebuilds ran out of time (the rebuilds are accepted as orphans).
     var rebuildWaitTimedOut = false
-    /// Step 4: a poll cycle ended at its own watchdog, so the editor just proved wedged and the fetch is skipped.
+    /// Step 4: the page did not answer `flushAndAck` (no page, or not within its bound), so the editor just proved wedged and the
+    /// fetch is skipped. (The name is the poll watchdog's, which this replaced in Phase 5 B3/B4.)
     var watchdogHit = false
-    var drainTimedOut = false
+    /// Step 4: the page answered `flushAndAck`, but the writer did not decide every report up to its answer within the bound.
     var forcedPollTimedOut = false
     /// Step 5: what the editor answered. nil = no valid answer; `""` IS a valid answer (N28).
     var fetchedContent: String?
@@ -328,14 +329,14 @@ extension EditorViewState {
     /// already armed `token` and captured `host` and the structural-undo controller into
     /// `LifecycleEntry.current`, and hands exactly those in (N26: never re-read from this state).
     ///
-    /// 0. stop polling, cancel the Markdown re-parse task (both modes), suspend the two sync services;
+    /// 0. cancel the Markdown re-parse task (both modes), suspend the two sync services;
     /// 1. wait for a running section operation: close/switch cancel at the bound, a quit goes on with
     ///    `opStillRunning`;
     /// 2. capture the editor (after step 1, N24);
     /// 3. await every running rebuild Task to completion;
-    /// 4. F: drain the in-flight poll, then force one (skipped after a watchdog hit or a timeout). RICH TEXT
-    ///    ONLY. In Markdown there is no F: nothing was polled from CodeMirror (block-sync's poll belongs to the
-    ///    Milkdown editor), its edits reach Swift only through the 50ms-debounced content push, and the debounced
+    /// 4. F: `flushAndAck` on the captured page (Phase 5 B3/B4: the page posts what it has, the save waits until the writer has
+    ///    decided every report up to it). RICH TEXT ONLY. In Markdown there is no F: CodeMirror sends no block reports (they
+    ///    belong to the Milkdown editor), its edits reach Swift only through the 50ms-debounced content push, and the debounced
     ///    re-parse that would have written them was cancelled at step 0. (A per-block Markdown write the
     ///    re-parse had ALREADY reserved before step 0 is not cancelled: it sits in the queue ahead of FB and lands
     ///    first, Phase 4a.) The fresh fetch at step 5 asks
@@ -376,7 +377,7 @@ extension EditorViewState {
         DebugLog.log(.lifecycle, "[LifecycleFlush] \(token.kind) token=\(token.id): start, \(deadline.remaining)s left")
 
         // Step 0
-        stopPollingAndReparseForLifecycle()
+        cancelReparseAndSuspendSyncForLifecycle()
 
         // Step 1 (t-94369a83 Phase 4b slice 2a, plan D8 and addendum A1/A21)
         //
@@ -502,7 +503,7 @@ extension EditorViewState {
 
     // MARK: Step 0
 
-    /// Step 0's editor-side half: stop the poll timer and cancel the debounced Markdown re-parse (both modes). A Markdown write
+    /// Step 0's editor-side half: cancel the debounced Markdown re-parse (both modes). A Markdown write
     /// the re-parse already RESERVED (`MarkdownBlockWriter`, Phase 4a) is not cancelled: its sequence is in the queue before
     /// FB and the barrier, and lands first.
     /// The token and `LifecycleEntry.current` were set by `LifecycleEntry.run`.
@@ -512,8 +513,7 @@ extension EditorViewState {
     /// its own generation check) and record "dirty" instead of scheduling while armed. A completed close or
     /// switch un-suspends them through the tail's `reset()`; a cancelled one through
     /// `resumeSyncServicesForLifecycle()`.
-    private func stopPollingAndReparseForLifecycle() {
-        blockSyncService?.stopPolling()
+    private func cancelReparseAndSuspendSyncForLifecycle() {
         blockReparseTask?.cancel()
         blockReparseTask = nil
         footnoteSyncService?.suspendForLifecycle()
@@ -624,7 +624,10 @@ extension EditorViewState {
         let webView = host.activeWebView()
         let blockSync = blockSyncService
         let fetch: (@MainActor (TimeInterval) async -> String?)?
-        if let webView, let blockSync {
+        if let webView, let blockSync, editorMode == .wysiwyg {
+            // Phase 5 job B3 (design 3.6): the live read also holds the reports, in the same page turn, and covers them.
+            fetch = { bound in await blockSync.fetchContentHoldingReports(timeout: .seconds(bound), webView: webView) }
+        } else if let webView, let blockSync {
             fetch = { bound in await blockSync.fetchContentFromWebView(timeout: .seconds(bound), webView: webView) }
         } else {
             fetch = nil
@@ -659,9 +662,9 @@ extension EditorViewState {
 
     // MARK: Step 4 (F)
 
-    /// F: drain the poll cycle already in flight, then run one forced poll of the CAPTURED WebView, so the
-    /// user's last keystrokes are in the database before FB. A watchdog hit or a timeout means the editor is
-    /// not answering; the forced poll is then not attempted.
+    /// F: `flushAndAck` on the CAPTURED WebView, so the user's last keystrokes are in the database before FB (Phase 5 B3/B4, design
+    /// 3.4: the page posts what it has and the save waits until the writer has decided every report up to the number it answered).
+    /// A page that does not answer counts as a watchdog hit: the fetch is then skipped.
     private func forceSendForLifecycle(
         capture: LifecycleCapture,
         deadline: LifecycleDeadline,
@@ -671,26 +674,30 @@ extension EditorViewState {
     ) async {
         guard let blockSync = capture.blockSync else { return }
         // t-d2061b27 (judge D1): while a Cmd-Z or Cmd-Shift-Z is latched on the Rich Text editor, the page holds back the typing it
-        // would report to the polls (the press's swap puts it back on top of the undone document). F must see that typing, so the hold
-        // is released first, on the captured view, once. (Whole-document FB reads the editor's own content, so the typing reaches the
-        // database either way; the release is what lets the drain and the forced poll below see it too.) Markdown has no F.
+        // would report (the press's swap puts it back on top of the undone document). F must see that typing, so the hold is
+        // released first, on the captured view, once. (Whole-document FB reads the editor's own content, so the typing reaches the
+        // database either way; the release is what lets `flushAndAck` below post it too.) Markdown has no F.
         if let webView = capture.webView {
             await blockSync.releaseHeldTypingPushes(webView: webView, bound: deadline.bound(own: bounds.forcedPoll, floor: floor))
         }
-        switch await blockSync.raceDrain(bound: deadline.bound(own: bounds.drain, floor: floor)) {
-        case .finished(let hitWatchdog): result.watchdogHit = hitWatchdog
-        case .timedOut: result.drainTimedOut = true
-        }
-        guard !result.watchdogHit, !result.drainTimedOut, let webView = capture.webView else {
-            DebugLog.log(
-                .lifecycle,
-                "[LifecycleFlush] F: forced poll not attempted (watchdogHit=\(result.watchdogHit) drainTimedOut=\(result.drainTimedOut))")
-            return
-        }
-        switch await blockSync.raceForcedPoll(webView: webView, bound: deadline.bound(own: bounds.forcedPoll, floor: floor)) {
-        case .finished(let polled): result.watchdogHit = polled.hitWatchdog
+        await flushAndAckForLifecycle(
+            blockSync: blockSync, webView: capture.webView, bound: deadline.bound(own: bounds.forcedPoll, floor: floor), result: &result)
+    }
+
+    /// Step F (Phase 5 job B3, design 3.4): `flushAndAck` on the captured view. A bound passed with
+    /// reports still undecided counts as the forced poll's timeout; a page that did not answer as a watchdog hit (the fetch is skipped).
+    private func flushAndAckForLifecycle(
+        blockSync: BlockSyncService, webView: WKWebView?, bound: TimeInterval, result: inout LifecycleFlushResult
+    ) async {
+        guard let webView else { return }
+        switch await blockSync.flushAndAck(on: webView, bound: bound) {
+        case .settled: break
         case .timedOut: result.forcedPollTimedOut = true
+        case .pageSilent: result.watchdogHit = true
         }
+        DebugLog.log(
+            .lifecycle,
+            "[LifecycleFlush] F: flushAndAck (timedOut=\(result.forcedPollTimedOut) pageSilent=\(result.watchdogHit))")
     }
 
     // MARK: Step 5

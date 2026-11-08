@@ -36,7 +36,6 @@ struct LifecycleFlushSequenceTests {
     func freshContentOverStaleContent_isWrittenThroughFB() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh                                  // the editor's live document
         #expect(rig.editorState.content == LifecycleFlushHarness.seed, "precondition: the content on hand is stale")
 
@@ -52,43 +51,36 @@ struct LifecycleFlushSequenceTests {
         let texts = try rig.paragraphTexts()
         #expect(texts.contains("fresh Y paragraph."), "the fresh content must be in the database; got \(texts)")
         #expect(!texts.contains("one two three."), "the stale paragraph must be gone; got \(texts)")
-        // F ran before the fetch: the forced poll's JS calls precede getContent.
+        // F ran before the fetch: its `flushReports` call precedes the read.
         let firstFetch = try #require(rig.log.firstIndex(of: "fetch"))
         let firstPoll = try #require(rig.log.firstIndex(of: "poll"))
         #expect(firstPoll < firstFetch)
-        #expect(rig.sync.testPollTimerIsArmed == false, "step 0 stopped polling, and the sequence must not restart it")
     }
 
     // MARK: - U2(b)
 
     @Test("""
-        U2(b): a poll cycle wedged inside a JS call is ended by its watchdog, the fetch is skipped, and FB is STILL \
-        applied, with the fallback content (margins: 0.2s watchdog against an 8s drain bound)
+        U2(b): a page that never answers step F's flushReports is given up on at F's bound, the fetch is skipped, and FB is \
+        STILL applied, with the fallback content
         """)
-    func wedgedPoll_stillAppliesFB_withFallbackContent() async throws {
+    func wedgedPage_stillAppliesFB_withFallbackContent() async throws {
         let rig = try LifecycleFlushHarness()
-        rig.js.answer("hasBlockChanges", false)
-        rig.js.wedgeOn("hasBlockChanges")
+        rig.js.wedgeOn("flushReports")
         rig.fetchAnswer = "THE FETCH MUST NOT HAPPEN"
         let fallback = "# Alpha\n\nfallback paragraph.\n\n# Beta\n\nfour five six.\n"
         rig.editorState.content = fallback
 
-        let sync = rig.sync
-        let cycle = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
-        await rig.js.waitUntilEnteredWedge()
+        let result = await rig.run(bounds: LifecycleBounds.production.scaled(0.25))
 
-        let result = await rig.run()
-
-        #expect(result.watchdogHit, "the drain must report that the in-flight cycle ended at its own watchdog")
+        #expect(result.watchdogHit, "flushAndAck must report that the page did not answer")
         #expect(result.usedFallback, "after a watchdog hit the content on hand is the fallback")
         #expect(result.fetchedContent == nil)
         #expect(!rig.log.contains("fetch"), "the fetch is skipped after a watchdog hit; log: \(rig.log)")
-        #expect(result.fbOutcome == .applied, "FB must still be applied after a wedged poll")
+        #expect(result.fbOutcome == .applied, "FB must still be applied after a wedged page")
         #expect(rig.sync.testWriterLedger.lifecycleWholeDocumentApplied == 1)
         #expect(try rig.paragraphTexts().contains("fallback paragraph."))
 
         try await rig.releaseWedgeAndSettle()
-        await cycle.value
     }
 
     // MARK: - U8
@@ -100,7 +92,6 @@ struct LifecycleFlushSequenceTests {
     func capturedWebView_survivesEveryOtherReferenceBeingReleased() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         // The service's own view reference is cleared by a DEBUG seam (no waiting for ARC); the host hands
         // out a DIFFERENT view, which the sequence alone keeps alive once the harness lets go of it.
@@ -134,8 +125,7 @@ struct LifecycleFlushSequenceTests {
         #expect(!rig.editorState.content.isEmpty, "precondition: the stale content on hand is NON-empty")
         // The forced poll carries the user's deletion of both paragraphs (2 of 4 blocks: not a 100% delete).
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", true)
-        rig.js.answer("getBlockChanges", try blockChangesJSON(deletes: paragraphIds))
+        rig.js.reportOnFlush(BlockChanges(deletes: paragraphIds), to: rig.sync)
         rig.fetchAnswer = ""
 
         let result = await rig.run()
@@ -157,7 +147,6 @@ struct LifecycleFlushSequenceTests {
     func nilFetch_fallsBackToContentOnHand() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = nil
         let onHand = "# Alpha\n\non-hand paragraph.\n\n# Beta\n\nfour five six.\n"
         rig.editorState.content = onHand
@@ -179,7 +168,6 @@ struct LifecycleFlushSequenceTests {
     func fbLosingItsRace_isNotALoss_andIsNeverCancelled() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         // An editor sequence reserved and never settled: FB is queued behind it and cannot start.
         let blocker = try #require(rig.sync.testWriterHandle).reserve()
@@ -210,7 +198,6 @@ struct LifecycleFlushSequenceTests {
     func zoomedWithoutRange_isRefusedAndCountedLost() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
         let alpha = try #require(try rig.blocks().first { $0.blockType == .heading && $0.textContent == "Alpha" })
         rig.editorState.zoomedSectionId = alpha.id
@@ -236,7 +223,6 @@ struct LifecycleFlushSequenceTests {
         sections.configure(database: rig.db, projectId: rig.pid)
         rig.editorState.sectionSyncService = sections
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh + "\n# Gamma\n\nnew section.\n"
 
         let result = await rig.run()

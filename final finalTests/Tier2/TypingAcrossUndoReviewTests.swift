@@ -273,7 +273,6 @@ struct TypingAcrossUndoReviewTests: QuickUndoFixtures {
     private func closeRig() throws -> EditorFirstRig {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in try? rig.assembledMarkdown() }
         return rig
     }
@@ -313,8 +312,7 @@ struct TypingAcrossUndoReviewTests: QuickUndoFixtures {
         #expect(result.outcome == .flushed, "the close did not run to the end: \(result.outcome)")
         #expect(elapsed < .seconds(8), "the close waited for an editor that did not answer the release (\(elapsed))")
         #expect(rig.releaseHeldPushesCalls == 1)
-        let scripts = rig.js.scripts
-        #expect(scripts.contains { $0.contains("BlockChanges") }, "the forced poll did not run after the release timed out")
+        #expect(rig.flushReportsCalls >= 1, "step F (flushAndAck) did not run after the release timed out")
     }
 
     // T-b: TA-1's premise. The stand-in editor honours `liveDiffersOverride`: with it false and NO flag, a quick undo keeps the redo branch

@@ -131,7 +131,6 @@ extension LifecycleEntryStatic {
         private func rigWithRunningOperation() throws -> (rig: LifecycleFlushHarness, toasts: ToastCenter) {
             let rig = try LifecycleFlushHarness()
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = "# Alpha\n\nfresh Y paragraph.\n\n# Beta\n\nfour five six.\n"
             let toasts = ToastCenter()
             rig.editorState.toastCenter = toasts

@@ -87,7 +87,6 @@ extension LifecycleEntryStatic {
             let rig = try LifecycleFlushHarness(content: dbContent)
             rig.editorState.content = editorContent
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = fetch
             return rig
         }

@@ -39,7 +39,7 @@ struct QuickUndoRebuildGuardTests: QuickUndoFixtures {
         let undo = rig.startPress(deleted.entry)
         #expect(await rig.awaitRuns([undo]), "the quick restore is not held by the running rebuild")
         rig.typeIntoEditor(typedIn, appending: " KEPT-RB")
-        let typing = rig.startPoll()
+        let typing = rig.startReport()
         #expect(await rig.awaitRuns([typing]))
         // G-T2: the rebuild lands only after the reinsert's settle has had every chance to push ahead of it. A settle that WAITS for the
         // running rebuild (`awaitNoRunningRebuilds`) is still waiting after the reinsert is applied; one that does not wait pushes within

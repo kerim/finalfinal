@@ -18,7 +18,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyBlocks, getBlockChangesApi, setContent, setContentWithBlockIds } from '../api-content';
+import { applyBlocks, setContent, setContentWithBlockIds } from '../api-content';
 import { deleteSectionEditorFirst, setTestAfterRemovalHook } from '../api-section-delete';
 import { bibliographyEndMarkerPlugin } from '../bibliography-end-marker-plugin';
 import { bibliographyPlugin } from '../bibliography-plugin';
@@ -36,6 +36,7 @@ import {
   runUndoTrackedDispatch,
   setUndoDescriptor,
 } from '../undo-coordinator';
+import { takePendingAsReport } from './pending-for-test';
 
 // === Documents ===
 
@@ -169,7 +170,7 @@ async function load(kind: PushKind, specs: Spec[]): Promise<Map<string, string>>
     applyBlocks(blocks);
   }
   await waitForRAF();
-  getBlockChangesApi(); // whatever the push itself left pending is not what these tests are about
+  takePendingAsReport(); // whatever the push itself left pending is not what these tests are about
   const ids = idsInOrder();
   expect(ids.length, `${kind}: one block id per spec`).toBe(specs.length);
   return new Map(specs.map((s, i) => [s.name, ids[i]]));
@@ -405,7 +406,7 @@ describe('W1: deleteSectionEditorFirst takes out exactly the section the shared 
     const ids = ['a', 'a-p1', 'z', 'z-p1', 'bib-h', 'bib-p'];
     setContentWithBlockIds(markdown, ids);
     await waitForRAF();
-    getBlockChangesApi();
+    takePendingAsReport();
     const typesBefore: string[] = [];
     view.state.doc.forEach((node) => {
       typesBefore.push(node.type.name);
@@ -467,7 +468,7 @@ describe('W1: deleteSectionEditorFirst takes out exactly the section the shared 
     typeIntoParagraph(view, 'Alpha', ' AFTER');
     await sleep(160);
     expect(
-      getBlockChangesApi()
+      takePendingAsReport()
         .updates.map((u) => u.textContent)
         .join('|')
     ).toContain('AFTER');
@@ -495,7 +496,7 @@ describe('deleteSectionEditorFirst: what block-sync and the undo registry see', 
     expect(result.ok).toBe(true);
     await sleep(150);
 
-    const queued = getBlockChangesApi();
+    const queued = takePendingAsReport();
     for (const id of result.removedIds) expect(queued.deletes).not.toContain(id);
     expect(queued).toEqual({ updates: [], inserts: [], deletes: [] });
   });
@@ -505,12 +506,12 @@ describe('deleteSectionEditorFirst: what block-sync and the undo registry see', 
     const idOf = await load('setContentWithBlockIds', SPECS);
     deleteSectionEditorFirst(OP_ID, idOf.get('b') as string, []);
     await sleep(150);
-    getBlockChangesApi();
+    takePendingAsReport();
 
     typeIntoParagraph(view, 'Gamma', ' AFTER-REMOVAL');
     await sleep(150);
 
-    const queued = getBlockChangesApi();
+    const queued = takePendingAsReport();
     expect(queued.updates.map((u) => u.id)).toEqual([idOf.get('c-p1')]);
     expect(queued.updates[0].textContent).toContain('AFTER-REMOVAL');
     expect(queued.inserts).toEqual([]);
@@ -532,7 +533,7 @@ describe('deleteSectionEditorFirst: what block-sync and the undo registry see', 
     ).toBe(true);
     // Consumed: after the call it is not queued a second time.
     await sleep(150);
-    expect(getBlockChangesApi().updates).toEqual([]);
+    expect(takePendingAsReport().updates).toEqual([]);
   });
 
   it('W3 variant: an edit whose 100 ms detection has already run (it is already a pending change) is consumed too', async () => {
@@ -545,7 +546,7 @@ describe('deleteSectionEditorFirst: what block-sync and the undo registry see', 
 
     expect(result.ok).toBe(true);
     expect(result.batch.updates.map((u) => u.textContent).join('|')).toContain('TYPED-EARLY');
-    expect(getBlockChangesApi().updates).toEqual([]);
+    expect(takePendingAsReport().updates).toEqual([]);
   });
 
   it('W5: postOpDoc is the document after the removal, preOpDoc the one before it, and the entry is no longer mid-op', async () => {
@@ -740,13 +741,13 @@ describe('W10 failureAfterDispatchRestoresSection', () => {
     // No half-finished op is left behind, and block-sync queued nothing.
     expect(getRegistry().has(OP_ID)).toBe(false);
     await sleep(150);
-    expect(getBlockChangesApi()).toEqual({ updates: [], inserts: [], deletes: [] });
+    expect(takePendingAsReport()).toEqual({ updates: [], inserts: [], deletes: [] });
 
     // Block-sync is running again, against the restored document: a new edit is detected as exactly one update.
     setTestAfterRemovalHook(null);
     typeIntoParagraph(view, 'Beta one', ' AFTER-W10');
     await sleep(150);
-    const next = getBlockChangesApi();
+    const next = takePendingAsReport();
     expect(next.updates.map((u) => u.id)).toEqual([idOf.get('b-p1')]);
     expect(next.inserts).toEqual([]);
     expect(next.deletes).toEqual([]);
@@ -815,7 +816,7 @@ describe('deleteSectionEditorFirst on generated documents', () => {
       expect(idsInOrder().slice(-3)).toEqual(MANAGED_TAIL.map((n) => idOf.get(n)));
       expect(result.batch.updates.map((u) => u.textContent).join('|')).toContain('TYPED-BIG');
       await sleep(150);
-      expect(getBlockChangesApi()).toEqual({ updates: [], inserts: [], deletes: [] });
+      expect(takePendingAsReport()).toEqual({ updates: [], inserts: [], deletes: [] });
       expect(getRegistry().get(OP_ID)?.postOpDoc.eq(view.state.doc)).toBe(true);
     });
   }

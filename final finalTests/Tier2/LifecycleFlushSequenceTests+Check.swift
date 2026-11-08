@@ -31,7 +31,6 @@ extension LifecycleFlushSequenceTests {
 
     private func primeCheck(_ rig: LifecycleFlushHarness, fetch: String?) {
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = fetch
     }
 
@@ -260,11 +259,10 @@ extension LifecycleFlushSequenceTests {
                 zoomedRange: range, zoomedSectionId: section, fetch: nil)
         }
         func result(
-            watchdog: Bool = false, drain: Bool = false, forced: Bool = false, fetched: String? = "x", fallback: Bool = false
+            watchdog: Bool = false, forced: Bool = false, fetched: String? = "x", fallback: Bool = false
         ) -> LifecycleFlushResult {
             var value = LifecycleFlushResult()
             value.watchdogHit = watchdog
-            value.drainTimedOut = drain
             value.forcedPollTimedOut = forced
             value.fetchedContent = fetched
             value.usedFallback = fallback
@@ -280,9 +278,8 @@ extension LifecycleFlushSequenceTests {
         #expect(!open(capture(range: (start: 1, end: 5)), result()), "zoomed with a block range")
         #expect(!open(capture(section: "some-heading"), result()), "zoom in flight: the section id alone closes the gate (N15)")
         #expect(!open(capture(range: (start: 1, end: nil), section: "some-heading"), result()), "zoomed, both set")
-        #expect(!open(capture(), result(watchdog: true)), "a poll watchdog hit")
-        #expect(!open(capture(), result(drain: true)), "a drain timeout")
-        #expect(!open(capture(), result(forced: true)), "a forced-poll timeout")
+        #expect(!open(capture(), result(watchdog: true)), "the page did not answer flushAndAck")
+        #expect(!open(capture(), result(forced: true)), "flushAndAck's writer wait timed out")
         #expect(!open(capture(), result(fetched: nil)), "no fetch answer")
         #expect(!open(capture(), result(fallback: true)), "the content on hand stood in for the fetch")
     }
@@ -378,24 +375,19 @@ extension LifecycleFlushSequenceTests {
         withExtendedLifetime(noWriter) {}
     }
 
-    @Test("U-C5: a wedged poll (watchdog hit) never skips, even when the content on hand equals the stored document")
-    func wedgedPoll_neverSkips() async throws {
+    @Test("U-C5: a wedged page (flushAndAck unanswered) never skips, even when the content on hand equals the stored document")
+    func wedgedPage_neverSkips() async throws {
         let rig = try LifecycleFlushHarness()
-        rig.js.answer("hasBlockChanges", false)
-        rig.js.wedgeOn("hasBlockChanges")
+        rig.js.wedgeOn("flushReports")
         rig.fetchAnswer = LifecycleFlushHarness.seed
         let epochBefore = try epoch(rig)
-        let sync = rig.sync
-        let cycle = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
-        await rig.js.waitUntilEnteredWedge()
 
-        let result = await rig.run()
+        let result = await rig.run(bounds: LifecycleBounds.production.scaled(0.25))
 
         #expect(result.watchdogHit)
         #expect(result.fbOutcome == .applied)
         #expect(try epoch(rig) == epochBefore + 1)
 
         try await rig.releaseWedgeAndSettle()
-        await cycle.value
     }
 }

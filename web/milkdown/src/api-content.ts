@@ -34,8 +34,8 @@ import {
   detectPausedEditsKeepingPending,
   flushPendingBlockChanges as flushPendingBlockChangesPlugin,
   getBlockChanges as getBlockChangesPlugin,
-  hasPendingChanges,
   hasPendingUpdateForId,
+  isSyncPaused,
   reconcilePendingQueueAfterManagedRebuild,
   resetAndSnapshot,
   setSyncPaused,
@@ -60,6 +60,19 @@ import { clearSearch } from './find-replace';
 import { consumePendingDropPos, consumePendingPastePos } from './image-plugin';
 import { getRecentUserEditSpan } from './recent-edit-span';
 import { dispatchDerivedCorrection } from './redo-branch';
+import {
+  beginReportCover,
+  endReportCover,
+  flushReportsNow,
+  holdReportsForSave,
+  outboxSince,
+  pruneOutbox,
+  releaseReportHold,
+  reportSession,
+  reportsEnabled,
+  setReportHoldProbe,
+  startNewReportSession,
+} from './report-outbox';
 import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import type { Block, ExpectedBlockMeta, ImageBlockMeta } from './types';
@@ -200,7 +213,7 @@ export function clearEditorHistory(view: EditorView): void {
  * only consults it inside its `docChanged` branch, so on a stepless transaction the meta is inert,
  * and adding it would imply to a reader that it is load-bearing here.
  */
-function redecorateBlockIds(view: EditorView): void {
+export function redecorateBlockIds(view: EditorView): void {
   try {
     view.dispatch(view.state.tr);
   } catch (e) {
@@ -253,7 +266,7 @@ function redecorateBlockIds(view: EditorView): void {
  * is not part of `toMarkdown` (see the `figureNode` schema in image-plugin.ts), so block-sync's
  * markdown/text-based diff can never observe a pure blockId-attr change as an update or insert.
  */
-function syncFigureBlockIdAttrs(view: EditorView): void {
+export function syncFigureBlockIdAttrs(view: EditorView): void {
   const { doc } = view.state;
   let tr: Transaction | null = null;
   doc.forEach((node, pos) => {
@@ -513,6 +526,17 @@ function deferredSnapshotAndUnpause(
  * undo/redo restore, which are re-pushes of the SAME document.
  */
 let typewriterDocumentLoaded = false;
+
+/** The typewriter-scrolling readiness lines of `setContentWithBlockIds`, for a content load that runs outside this file (the zoom
+ * transition's swap, api-transition.ts): a first load clears the readiness, a re-push of the same document does not; the ready mark
+ * is scheduled before the dispatches and runs after them. */
+export function noteTypewriterContentLoad(): void {
+  if (!typewriterDocumentLoaded) {
+    typewriterDocumentLoaded = true;
+    clearDocumentReadiness();
+  }
+  queueMicrotask(() => markDocumentReady());
+}
 
 /**
  * Reports whether the live editor currently holds no text. Kept exported for tests and for
@@ -885,6 +909,8 @@ export function resetForProjectSwitch(cloakToken?: number): void {
   // Reset block-related state
   resetBlockIdState();
   destroyBlockSyncState();
+  // Phase 5 job B3: the old project's reports belong to a session Swift has revoked; this project's reports start a new one.
+  startNewReportSession();
   setCurrentContent('');
   // MF2: a pre-mount pendingBlockContent stash left over from the PREVIOUS project must not
   // survive into this one -- otherwise the editor mounting later (or a delayed replay) would
@@ -2250,7 +2276,7 @@ export function replayPendingPreMountContent(): void {
  * (e.g. a position outside the current document) -- callers treat null as "can't resolve,
  * fall back."
  */
-function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
+export function blockScrollTargetTop(view: EditorView, blockId: string): number | null {
   const blockIds = getAllBlockIds();
 
   let targetPos: number | null = null;
@@ -2326,21 +2352,61 @@ export function getBlockAtCursor(): { blockId: string; offset: number } | null {
   }
 }
 
-/** Swift's cheap pre-check before a poll. While a Cmd-Z waits (a press is latched) what the user types is held back from the polls
- * (undo-coordinator.ts `isTypingPushHeld`): the replay saves it, once, behind the undo's database work. */
-export function hasBlockChanges(): boolean {
-  return isTypingPushHeld() ? false : hasPendingChanges();
-}
-
 export function flushPendingBlockChanges(): void {
   flushPendingBlockChangesPlugin();
 }
 
-export function getBlockChangesApi(): BlockChanges {
-  // Held while a press is latched, see `hasBlockChanges`. The routes call block-sync-plugin's `getBlockChanges` directly and so still
-  // take the held typing as their batch N.
-  if (isTypingPushHeld()) return { updates: [], inserts: [], deletes: [] };
-  return getBlockChangesPlugin();
+// Phase 5: a report (report-outbox.ts) waits while sync is paused or the typing is held back from Swift (a latched Cmd-Z: the replay
+// saves the held typing, once, behind the undo's database work). Phase 5 B4 removed the poll bridge (`hasBlockChanges`,
+// `getBlockChanges`) that held it back the same way; the routes call block-sync-plugin's `getBlockChanges` directly and so still take
+// the held typing as their batch N.
+setReportHoldProbe(() => isSyncPaused() || isTypingPushHeld());
+
+/**
+ * Phase 5 job B3 (b2-b4-design.md 3.4): `flushAndAck`'s page half. In one page turn: run the pending 100 ms detection, post what is
+ * pending as one report (not while the typing is held back), and answer the highest report number posted and the session.
+ */
+export function flushReportsApi(): { session: string; through: number; held: boolean; enabled: boolean } {
+  flushPendingBlockChangesPlugin();
+  return { ...flushReportsNow(), enabled: reportsEnabled() };
+}
+
+/** Phase 5 job B3 (design 3.3): Swift's cover around a route's page call (report-outbox.ts, "The cover"). */
+export function beginReportCoverApi(swiftSession: string | null, since: number): void {
+  beginReportCover(swiftSession, since);
+}
+
+export function endReportCoverApi(): ReturnType<typeof endReportCover> {
+  return endReportCover();
+}
+
+/**
+ * Phase 5 job B3 (design 3.2): Swift applied (or gave up on) every report of `session` up to `through`. In one call it confirms the
+ * temporary block ids those reports' inserts were given (exactly as `confirmBlockIds` does) and drops the reports from the outbox.
+ * A call for another session (the page was reset for another project since) changes nothing.
+ */
+export function ackReportsApi(payload: {
+  session: string;
+  through: number;
+  idMapping?: Record<string, string>;
+}): number {
+  if (!payload || payload.session !== reportSession()) return 0;
+  if (payload.idMapping && Object.keys(payload.idMapping).length > 0) confirmBlockIdsApi(payload.idMapping);
+  return pruneOutbox(payload.session, payload.through);
+}
+
+/** Phase 5 job B3: the reports not yet acknowledged after `since` (Swift's gap fetch and `flushAndAck`'s fetch). */
+export function reportOutboxSinceApi(swiftSession: string | null, since: number): ReturnType<typeof outboxSince> {
+  return outboxSince(swiftSession, since);
+}
+
+/** Phase 5 job B3 (design 3.6): the lifecycle save's live read holds the reports in the same page turn as it reads the document. */
+export function holdReportsForSaveApi(): ReturnType<typeof holdReportsForSave> {
+  return holdReportsForSave();
+}
+
+export function releaseReportHoldApi(): void {
+  releaseReportHold();
 }
 
 /**

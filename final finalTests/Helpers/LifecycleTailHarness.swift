@@ -66,9 +66,9 @@ final class LifecycleTailRig {
         webView = stub
         sync.configure(database: db, projectId: pid, webView: stub)
         sync.editorState = editorState
-        sync.testPollWatchdogSeconds = 0.2
         sync.testWriterEventHandler = { [writerEvents] event in writerEvents.append(event) }
         sync.testJSEvaluator = { [unowned self] script in
+            if script.contains("holdReportsForSave") { return heldReadAnswer(content: self.fetchAnswer) }
             if script.contains("getContent()") { return self.fetchAnswer }
             return try await self.js.evaluate(script)
         }
@@ -90,13 +90,21 @@ final class LifecycleTailRig {
 
         if mountedEditor { view.findBarState.activeWebView = stub }
         js.answer("flushPendingBlockChanges", true)
-        js.answer("hasBlockChanges", false)
+    }
+
+    /// Whether the editor's reports were let flow again (`releaseReportHold`, which the abort routine sends without awaiting it):
+    /// waits a bounded while (1 s) for the call. Replaces the poll-timer check (`testPollTimerIsArmed`) of before Phase 5 B4.
+    func reportHoldReleased() async -> Bool {
+        for _ in 0..<100 {
+            if js.callCount("releaseReportHold") > 0 { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return js.callCount("releaseReportHold") > 0
     }
 
     /// Stops everything a test that did NOT run a tail started (timers), so nothing outlives the test. Safe after a
     /// tail has already reset the services.
     func shutdown() {
-        sync.stopPolling()
         backup.reset()
         view.bibliographySyncService.reset()
         view.footnoteSyncService.reset()

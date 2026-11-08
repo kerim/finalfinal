@@ -258,10 +258,21 @@ extension ContentView {
                            let pid = documentManager.projectId {
                             blockSyncService.configure(database: db, projectId: pid, webView: webView)
                             blockSyncService.editorState = editorState
+                            // Phase 5 job A10: a page a switch to Rich Text filled before the flip already holds its text and ids
+                            // (EditorViewState+SwitchTransition.swift); the switch carries the typing and ends `.editorTransition` itself.
+                            if editorState.transitionHolds.preparedRichTextPage {
+                                editorState.transitionHolds.preparedRichTextPage = false
+                                return
+                            }
                             // Prevent updateNSView race during initial content push
                             editorState.isResettingContent = true
                             // Atomic push: content + block IDs in one JS call (no temp ID warnings)
                             Task {
+                                // Phase 5 job A10: under the legacy switch (`FF_UI_TESTING_LEGACY_TRANSITION=switch`) the transition hold
+                                // (`FF_UI_TESTING_TRANS_HOLD_MS`) sits here, between the flip and the page's text, where today's switch loses typing.
+                                if editorState.contentState == .editorTransition, TestMode.isUITestingLegacyTransition(for: .modeSwitch) {
+                                    await TestMode.holdTransition("switch to rich text (legacy)")
+                                }
                                 if let result = fetchBlocksWithIds() {
                                     await blockSyncService.setContentWithBlockIds(
                                         markdown: result.markdown, blockIds: result.blockIds,
@@ -279,14 +290,13 @@ extension ContentView {
                                 }
                                 editorState.isResettingContent = false
                                 // End of a switch to Rich Text: the editor now holds its content (or there was none to set), so
-                                // .editorTransition ends here, on both paths above and before polling starts. Only if still in
+                                // .editorTransition ends here, on both paths above. Only if still in
                                 // that state: this closure also runs for project open, which owns its own state. Zoom never reaches
                                 // it: zoom pushes through plain setContent on the editor that is already mounted.
                                 // Replaces the fixed 1.5 s wait that used to end the transition in ViewNotificationModifiers.swift.
                                 if editorState.contentState == .editorTransition {
                                     editorState.contentState = .idle
                                 }
-                                blockSyncService.startPolling()
                             }
                         }
                     }
@@ -386,6 +396,11 @@ extension ContentView {
                         // Phase 4a: the freshly-mounted Markdown editor is about to be handed its text (`batchInitialize`),
                         // which comes from the stored rows, and the per-block Markdown writer needs a writer on the queue.
                         prepareMarkdownBlockWriter()
+                        // t-633df056 (Phase 5 job A5): the three pointers above now name this page and the writer is on the queue, so a
+                        // Markdown section command pressed since the switch (held in `awaitMarkdownPage`, EditorViewState+
+                        // MarkdownPageReadiness.swift) may go on; it resumes in a later turn, after `batchInitialize` below has queued
+                        // the page's text (the page's calls run in order).
+                        editorState.markMarkdownPageReady()
                         // Sync current annotation display state - see annotationDisplayModesJSON's
                         // doc comment for why this fresh WebView wouldn't otherwise learn it.
                         if let json = annotationDisplayModesJSON(editorState) {

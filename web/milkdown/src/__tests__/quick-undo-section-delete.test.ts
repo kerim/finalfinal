@@ -23,7 +23,7 @@ import { gfm } from '@milkdown/kit/preset/gfm';
 import { undo, undoDepth } from '@milkdown/kit/prose/history';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { confirmBlockIdsApi, getBlockChangesApi, setContentWithBlockIds, syncBlockIds } from '../api-content';
+import { confirmBlockIdsApi, setContentWithBlockIds, syncBlockIds } from '../api-content';
 import { deleteSectionEditorFirst } from '../api-section-delete';
 import {
   quickUndoLiveDiffersFromRestored,
@@ -57,6 +57,7 @@ import {
   setUndoDescriptor,
   typingCollectorPlugin,
 } from '../undo-coordinator';
+import { takePendingAsReport } from './pending-for-test';
 
 // === Documents ===
 
@@ -181,7 +182,7 @@ async function load(specs: Spec[]): Promise<void> {
     specs.map((s) => s.name)
   );
   await waitForRAF();
-  getBlockChangesApi(); // whatever the push itself left pending is not what these tests are about
+  takePendingAsReport(); // whatever the push itself left pending is not what these tests are about
   expect(idsInOrder()).toEqual(specs.map((s) => s.name));
 }
 
@@ -300,7 +301,7 @@ describe('quick undo of an editor-first section delete', () => {
       'the edit pending before the press is consumed and returned as the batch on success'
     ).toEqual(['c-p1']);
     expect(result.batch.updates[0].textContent).toContain('(pending-qu2)');
-    expect(getBlockChangesApi(), 'and it is consumed, not queued a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'and it is consumed, not queued a second time').toEqual(EMPTY_BATCH);
     const expectedIds = idsBeforeDelete.map((id) => (id === tempId ? 'perm-qu2' : id));
     expect(idsInOrder(), 'the restored blocks hold the confirmed permanent id, not the temp id').toEqual(expectedIds);
     expect(result.restoredIds).toEqual(['b', 'b-p1', 'b-p2', 'perm-qu2']);
@@ -319,7 +320,7 @@ describe('quick undo of an editor-first section delete', () => {
     typeInto(view, 'Beta one', ' TYPED-QU3-IN'); // into the restored section
     typeInto(view, 'Gamma', ' TYPED-QU3-OUT'); // elsewhere
     await sleep(160);
-    expect(getBlockChangesApi(), 'block-sync is paused: a poll in this window gets nothing').toEqual({
+    expect(takePendingAsReport(), 'block-sync is paused: a poll in this window gets nothing').toEqual({
       updates: [],
       inserts: [],
       deletes: [],
@@ -330,9 +331,9 @@ describe('quick undo of an editor-first section delete', () => {
     expect(resumed.ok).toBe(true);
     expect(resumed.resumed).toBe(true);
     // Swift's polls get nothing while the press is latched (phase 4c job 2); the reply ends the hold and the queued edits go out.
-    expect(getBlockChangesApi(), 'held until the reply').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'held until the reply').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP_A, 'performed');
-    const queued = getBlockChangesApi();
+    const queued = takePendingAsReport();
     const text = (id: string) => queued.updates.find((u) => u.id === id)?.textContent ?? '';
     expect(text('b-p1'), 'the word typed into the restored paragraph is queued at resume').toContain('TYPED-QU3-IN');
     expect(text('c-p1'), 'the word typed elsewhere during the pause is queued at resume').toContain('TYPED-QU3-OUT');
@@ -341,7 +342,7 @@ describe('quick undo of an editor-first section delete', () => {
     // Block-sync runs again after the resume: a later edit is one ordinary update.
     typeInto(view, 'Alpha', ' AFTER-RESUME');
     await sleep(160);
-    expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['a-p1']);
+    expect(takePendingAsReport().updates.map((u) => u.id)).toEqual(['a-p1']);
   });
 
   it('QU3b: resume sends the contentChanged notification, off the call, with the live restored text', async () => {
@@ -395,10 +396,10 @@ describe('quick undo of an editor-first section delete', () => {
     // Block-sync was never paused and the edit was never consumed: it is queued by the normal detection, and goes out once the reply has
     // ended the hold on Swift's polls (phase 4c job 2).
     await sleep(160);
-    expect(getBlockChangesApi(), 'held while the press is latched').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'held while the press is latched').toEqual(EMPTY_BATCH);
     expect(resumeSyncAfterQuickUndo()).toMatchObject({ ok: true, resumed: false });
     receiveUndoOutcome(OP_A, 'failed');
-    const queued = getBlockChangesApi();
+    const queued = takePendingAsReport();
     expect(queued.updates.map((u) => u.id)).toEqual(['c-p1']);
     expect(queued.updates[0].textContent).toContain('TYPED-QU4');
   });
@@ -411,7 +412,7 @@ describe('quick undo of an editor-first section delete', () => {
     // through the ordinary poll.
     automaticRewrite(view, 'Gamma', ' (renumbered)');
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
     const checkpointDoc = getRegistry().get(OP_A)?.checkpoint.doc;
     expect(pressUndo(view, OP_A)).toBe(true);
 
@@ -424,12 +425,12 @@ describe('quick undo of an editor-first section delete', () => {
     expect(view.state.doc.eq(checkpointDoc as NonNullable<typeof checkpointDoc>)).toBe(true);
     swiftFinishesUndo(OP_A, { redoTopOpId: OP_A });
     expect(
-      getBlockChangesApi(),
+      takePendingAsReport(),
       'right after the restore and the resume, before any typing, nothing is queued'
     ).toEqual(EMPTY_BATCH);
     await sleep(160);
     expect(
-      getBlockChangesApi(),
+      takePendingAsReport(),
       'the restore itself queues no block changes (the reinsert carries it to the database)'
     ).toEqual({ updates: [], inserts: [], deletes: [] });
   });
@@ -445,7 +446,7 @@ describe('quick undo of an editor-first section delete', () => {
     // After the undo an automatic rewrite lands (the renumber of the restored section's footnotes, say) and is absorbed.
     automaticRewrite(view, 'Gamma', ' (renumbered-2)');
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
     expect(pressRedo(view, OP_A)).toBe(true);
     expect(requestedOps(posted, 'structuralRedoRequested')).toEqual([{ opId: OP_A }]);
 
@@ -488,7 +489,7 @@ describe('quick undo of an editor-first section delete', () => {
     swiftFinishesUndo(OP_A, { redoTopOpId: OP_A });
     automaticRewrite(view, 'Gamma', ' (renumbered-7)');
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
     const docBeforeRedo = view.state.doc;
     expect(pressRedo(view, OP_A)).toBe(true);
     expect(redoSectionDeleteEditorFirst(OP_A, 'b', []).ok).toBe(true);
@@ -532,7 +533,7 @@ describe('quick undo of an editor-first section delete', () => {
     expect(undo(view.state, view.dispatch)).toBe(true);
     expect(view.state.doc.textContent).not.toContain('TYPED-QU7B');
     expect(view.state.doc.textContent).toContain('(rewritten)');
-    getBlockChangesApi();
+    takePendingAsReport();
 
     expect(pressUndo(view, OP_A), "A's next Cmd-Z routes to the section delete, not to a refusal").toBe(true);
     expect(requestedOps(posted, 'structuralUndoRequested').at(-1)).toEqual({ opId: OP_A });
@@ -624,9 +625,9 @@ describe('quick undo of an editor-first section delete', () => {
     // Block-sync runs, against the live document: an edit is exactly one update.
     typeInto(view, 'Gamma', ' AFTER-QU10');
     await sleep(160);
-    expect(getBlockChangesApi(), 'held while the press is latched (phase 4c job 2)').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'held while the press is latched (phase 4c job 2)').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP_A, 'failed');
-    const queued = getBlockChangesApi();
+    const queued = takePendingAsReport();
     expect(queued.updates.map((u) => u.id)).toEqual(['c-p1']);
     expect(queued.inserts).toEqual([]);
     expect(queued.deletes).toEqual([]);
@@ -648,7 +649,7 @@ describe('quick undo of an editor-first section delete', () => {
     });
 
     // Before any further typing: what the user typed during the pause is already queued (the barrier diffed it).
-    const atBarrier = getBlockChangesApi();
+    const atBarrier = takePendingAsReport();
     expect(
       atBarrier.updates.find((u) => u.id === 'b-p1')?.textContent ?? '',
       'the typing done during the pause is queued by the barrier'
@@ -656,7 +657,7 @@ describe('quick undo of an editor-first section delete', () => {
 
     typeInto(view, 'Gamma', ' TYPED-QU12-OUT'); // after the barrier
     await sleep(160);
-    const afterwards = getBlockChangesApi();
+    const afterwards = takePendingAsReport();
     expect(
       afterwards.updates.find((u) => u.id === 'c-p1')?.textContent ?? '',
       'a barrier in the paused window ends the pause: block-sync records typing again'
@@ -678,7 +679,7 @@ describe('quick undo of an editor-first section delete', () => {
     });
     typeInto(view, 'Gamma', ' WHILE-PAUSED');
     await sleep(160);
-    expect(getBlockChangesApi().updates, "the other operation's pause is still in force: nothing is recorded").toEqual(
+    expect(takePendingAsReport().updates, "the other operation's pause is still in force: nothing is recorded").toEqual(
       []
     );
   });
@@ -756,7 +757,7 @@ describe('quick undo of an editor-first section delete', () => {
     // The typing is undone again; the redo is asked to remove a block that is not there: the removal fails after it began.
     expect(undo(view.state, view.dispatch)).toBe(true);
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
     expect(pressRedo(view, OP_A)).toBe(true);
     const docBeforeFailure = view.state.doc;
     const failed = redoSectionDeleteEditorFirst(OP_A, 'no-such-id', []);
@@ -798,7 +799,7 @@ describe('quick undo of an editor-first section delete', () => {
     receiveRedoOutcome(OP_A, 'failed');
     expect(undo(view.state, view.dispatch)).toBe(true);
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
 
     expect(find('Gamma').matchCount).toBe(1);
     expect(pressRedo(view, OP_A)).toBe(true);

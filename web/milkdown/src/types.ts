@@ -6,6 +6,12 @@ import type { ReorderOrderEntry, ReorderSectionsResult } from './api-section-reo
 import type { QuickResumeResult, QuickUndoResult } from './api-section-undo';
 import type { ReplaceRangePayload, ReplaceRangeResult } from './api-structural-replace';
 import type { StructuralSwapPayload, StructuralSwapResult } from './api-structural-swap';
+import type {
+  SwapTransitionOptions,
+  SwapTransitionResult,
+  TransitionBeginResult,
+  TransitionTakeResult,
+} from './api-transition';
 import type { BlockChanges } from './block-sync-plugin';
 import type { CSLItem } from './citation-plugin';
 import type { PrefillBeginResult, PrefillStepResult } from './citation-prefill';
@@ -178,8 +184,22 @@ declare global {
       };
       // Insert a brand-new citation at the current cursor (native toolbar "Cite" button)
       insertCitation: () => void;
-      // Block-based API (Phase B)
-      getBlockChanges: () => BlockChanges;
+      // Block-based API (Phase B). Phase 5 job B4: the poll bridge (`getBlockChanges`, `hasBlockChanges`) is gone with Swift's poll.
+      // Phase 5 job B3: the editor's reports (report-outbox.ts) and Swift's calls on them.
+      flushReports: () => { session: string; through: number; held: boolean; enabled: boolean };
+      beginReportCover: (swiftSession: string | null, since: number) => void;
+      endReportCover: () => { session: string; since: number; through: number; drained: boolean } | null;
+      ackReports: (payload: { session: string; through: number; idMapping?: Record<string, string> }) => number;
+      reportOutboxSince: (
+        swiftSession: string | null,
+        since: number
+      ) => {
+        session: string;
+        lastEs: number;
+        entries: { es: number; kind: string; json: string; detectedAt: number }[];
+      };
+      holdReportsForSave: () => { session: string; through: number };
+      releaseReportHold: () => void;
       applyBlocks: (blocks: Block[]) => void;
       confirmBlockIds: (mapping: Record<string, string>) => void;
       syncBlockIds: (orderedIds: string[], zoomMode: boolean, expected?: ExpectedBlockMeta[]) => void;
@@ -225,7 +245,6 @@ declare global {
       ) => void;
       scrollToBlock: (blockId: string) => void;
       getBlockAtCursor: () => { blockId: string; offset: number } | null;
-      hasBlockChanges: () => boolean;
       flushPendingBlockChanges: () => void;
       // Typing-latency trace switch (slice 0 measurement, typing-trace.ts). Swift turns it on at editor load when Diagnostics
       // logging is on. Default off: while off, the editor posts no `typingEcho` / `typingTrace` messages at all.
@@ -312,12 +331,22 @@ declare global {
       releaseHeldTypingPushes: () => boolean;
       // F7: releases the hold AND returns the pending batch in one call, for a press Swift hands to the old whole-document body.
       releaseHeldTypingAndGetBatch: () => { released: boolean; batch: BlockChanges };
+      // Phase 5 job A7 (api-transition.ts): the zoom transition. `beginTransition` drains the pending batch and starts holding and
+      // recording in ONE turn (Swift reads it as JSON.stringify(...) and writes the batch through the queue before the barrier);
+      // `swapTransition` replaces the document with the recorded typing put back on top in ONE turn and returns the typing in blocks
+      // the target lacks as `outside` (an ordinary batch), or refuses with the held typing as `batch`; `endTransition` ends a hold
+      // whose swap never came.
+      beginTransition: () => TransitionBeginResult;
+      swapTransition: (token: number, options: SwapTransitionOptions) => SwapTransitionResult;
+      endTransition: (token: number | null) => { ended: boolean };
+      // Phase 5 job A9 (api-transition.ts): the switch to Markdown drains the typing held since the begin without ending the hold.
+      takeTransitionBatch: (token: number) => TransitionTakeResult;
       // Structural op lifecycle (Phase 3, plan §4.4) -- called by StructuralUndoController.swift.
       beginStructuralOp: (opId: string) => boolean;
       finalizeStructuralOpPostOpDoc: (opId: string) => boolean;
       performStructuralSwap: (opId: string, direction: 'undo' | 'redo') => boolean;
       // Phase 4b part 2, slice 2a (api-section-delete.ts): the editor removes the section first, in one synchronous turn, and
-      // returns the pending-edit batch it consumed on every path. Swift reads it as JSON.stringify(...) like getBlockChanges.
+      // returns the pending-edit batch it consumed on every path. Swift reads it as JSON.stringify(...).
       // `managedIds` is the database's list of Notes/Bibliography block ids at the click.
       deleteSectionEditorFirst: (opId: string, rootBlockId: string, managedIds: string[]) => DeleteSectionResult;
       // Phase 4b slice 3 (api-section-duplicate.ts): the editor inserts the section's copy first, in one synchronous turn, with a

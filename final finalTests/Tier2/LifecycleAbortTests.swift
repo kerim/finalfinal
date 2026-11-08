@@ -42,7 +42,6 @@ extension LifecycleEntryStatic {
 
         private func prime(_ rig: LifecycleFlushHarness) {
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = Self.fresh
         }
 
@@ -67,7 +66,6 @@ extension LifecycleEntryStatic {
             let rig = try LifecycleFlushHarness()
             prime(rig)
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
             var thrown = false
 
             try await rig.withEntry {
@@ -88,13 +86,13 @@ extension LifecycleEntryStatic {
             #expect(rig.sync.testWriterLedger.lifecycleWholeDocumentApplied == 1, "precondition: FB applied before the throw")
             let push = try #require(rig.pushes.first, "the abort must re-push block ids after FB's non-preserving write")
             #expect(rig.pushes.count == 1)
-            #expect(!push.pollTimerArmed, "the ids go back BEFORE polling restarts (event order): the timer was armed at the push")
+            #expect(!push.reportHoldReleased, "the ids go back BEFORE the reports flow again (event order): they already did at the push")
             let dbIds = Set(try rig.blocks().map(\.id))
             #expect(!push.ids.isEmpty && Set(push.ids).isSubset(of: dbIds), "the pushed ids are FB's new ids: \(push.ids)")
             let perform = try #require(rig.log.firstIndex(of: "perform"))
             let pushed = try #require(rig.log.firstIndex(of: "pushBlockIds"))
             #expect(perform < pushed, "the re-push follows the failed perform; log: \(rig.log)")
-            #expect(rig.sync.testPollTimerIsArmed, "and polling is running again afterwards")
+            #expect(await rig.reportHoldReleased(), "and the reports flow again afterwards")
             #expect(rig.editorState.activeLifecycle == nil)
             #expect(rig.editorState.lifecycleFlushDoneFor == nil)
             #expect(rig.editorState.lifecycleBarrier == nil)
@@ -107,7 +105,6 @@ extension LifecycleEntryStatic {
             let rig = try LifecycleFlushHarness()
             prime(rig)
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
 
             await rig.withEntry {
                 _ = try? await LifecycleEntry.run(kind: .projectSwitch) {
@@ -132,10 +129,8 @@ extension LifecycleEntryStatic {
         func postUnchangedFBThrow_repushesNothing() async throws {
             let rig = try LifecycleFlushHarness()
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = LifecycleFlushHarness.seed         // identical to the stored document: FB is a no-op
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
             let idsBefore = try rig.blocks().map(\.id)
             let epochBefore = try rig.db.currentBlockWriteEpoch(projectId: rig.pid)
             var thrown = false
@@ -158,7 +153,7 @@ extension LifecycleEntryStatic {
             #expect(try rig.blocks().map(\.id) == idsBefore, "precondition: FB wrote nothing, so every id is still the editor's")
             #expect(rig.pushes.isEmpty, "nothing was replaced, so nothing is re-pushed; pushes: \(rig.pushes)")
             #expect(!rig.log.contains("pushBlockIds"), "log: \(rig.log)")
-            #expect(rig.sync.testPollTimerIsArmed, "polling is running again afterwards")
+            #expect(await rig.reportHoldReleased(), "the reports flow again afterwards")
             #expect(rig.editorState.activeLifecycle == nil)
             #expect(rig.editorState.lifecycleBarrier == nil)
             #expect(rig.sync.testWriterHandle?.testOpenBarrierSeq == nil, "N9: no barrier is open after a non-tail exit")
@@ -178,7 +173,6 @@ extension LifecycleEntryStatic {
             rig.controller.testSetIsPerforming(true)
             defer {
                 rig.controller.testSetIsPerforming(false)
-                rig.sync.stopPolling()
             }
             var outcome: LifecycleRunOutcome?
             var performed = 0
@@ -195,17 +189,16 @@ extension LifecycleEntryStatic {
             #expect(performed == 0)
             #expect(rig.sync.testWriterLedger.lifecycleWholeDocumentApplied == 0, "the wait timed out BEFORE FB: nothing was written")
             #expect(rig.pushes.isEmpty, "FB never ran, so there are no ids to restore")
-            #expect(rig.sync.testPollTimerIsArmed, "polling MUST be running again, FB or not (the common cancel precedes FB)")
+            #expect(await rig.reportHoldReleased(), "the reports MUST flow again, FB or not (the common cancel precedes FB)")
 
-            // The proof that matters: an edit made after the cancel is saved. The tick is simulated with an
-            // UNFORCED cycle (what the timer invokes); a barrier left held or a gate left shut would park the write.
+            // The proof that matters: an edit made after the cancel is saved. The page reports it (Phase 5 B4: it was an unforced
+            // poll cycle); a barrier left held or a gate left shut would park the write.
             rig.controller.testSetIsPerforming(false)
             let paragraph = try #require(try rig.blocks().first { $0.blockType == .paragraph && $0.textContent == "one two three." })
-            rig.js.answer("hasBlockChanges", true)
-            rig.js.answer("getBlockChanges", try blockChangesJSON(updates: [
-                BlockUpdate(id: paragraph.id, textContent: "typed after the cancel.", markdownFragment: nil, headingLevel: nil)
-            ]))
-            await rig.sync.pollBlockChangesForTest(force: false)
+            rig.sync.reportApplier.receive(IncomingReport(
+                number: 1, session: "after-cancel", changes: BlockChanges(updates: [
+                    BlockUpdate(id: paragraph.id, textContent: "typed after the cancel.", markdownFragment: nil, headingLevel: nil)
+                ]), detectedAt: 0), via: .message)
             let saved = try await waitUntil(seconds: 3) {
                 try rig.paragraphTexts().contains("typed after the cancel.")
             }
@@ -229,7 +222,6 @@ extension LifecycleEntryStatic {
             rig.editorState.toastCenter = toasts
             let writer = try #require(rig.sync.testWriterHandle)
             let foreign = try #require(writer.enqueueBarrier(), "precondition: another barrier is open")
-            defer { rig.sync.stopPolling() }
             var outcome: LifecycleRunOutcome?
             var performed = 0
 
@@ -247,7 +239,7 @@ extension LifecycleEntryStatic {
             #expect(performed == 0, "a refused barrier cancels: perform is not called")
             #expect(toasts.current?.message == ToastFactory.lifecycleBusy().message)
             #expect(rig.pushes.isEmpty, "FB had not settled when the abort gave up waiting: nothing is known to need a re-push")
-            #expect(rig.sync.testPollTimerIsArmed, "polling restarts whatever FB is doing")
+            #expect(await rig.reportHoldReleased(), "the reports flow again whatever FB is doing")
             #expect(rig.editorState.activeLifecycle == nil)
             #expect(rig.editorState.lifecycleBarrier == nil, "the lifecycle holds no barrier (only the foreign one is open)")
             #expect(rig.editorState.lifecycleFlushDoneFor == nil)
@@ -272,7 +264,6 @@ extension LifecycleEntryStatic {
             rig.pushGate = gate
             defer {
                 gate.open()
-                rig.sync.stopPolling()
             }
             let clock = ContinuousClock()
             var elapsed: Duration = .zero
@@ -289,7 +280,7 @@ extension LifecycleEntryStatic {
                 #expect(rig.editorState.lifecycleBarrier == nil)
                 #expect(rig.sync.testWriterHandle?.testOpenBarrierSeq == nil)
                 // Read BEFORE the second close: its step 0 stops polling again.
-                #expect(rig.sync.testPollTimerIsArmed, "polling restarts after the push timed out")
+                #expect(await rig.reportHoldReleased(), "the reports flow again after the push timed out")
                 second = try await LifecycleEntry.run(kind: .close) { .close }
             }
 
@@ -342,7 +333,7 @@ extension LifecycleEntryStatic {
             #expect(rig.editorState.activeLifecycle?.id == quitToken.id, "the quit's token is not cleared by the close's end")
             #expect(rig.editorState.lifecycleBarrier != nil, "a joined quit's barrier is held to exit, not released by the close")
             #expect(rig.sync.testWriterHandle?.testOpenBarrierSeq != nil, "and still open on the writer")
-            #expect(!rig.sync.testPollTimerIsArmed, "stand-down: polling is not restarted under the quit")
+            #expect(rig.js.callCount("releaseReportHold") == 0, "stand-down: the reports are not released under the quit")
             #expect(rig.pushes.isEmpty, "stand-down: no re-push")
             #expect(rig.editorState.lifecycleFlushDoneFor == closeToken?.id, "the quit sees the flush as done and does not flush again")
             footnotes.checkAndUpdateFootnotes(footnoteRefs: ["1"], projectId: rig.pid, fullContent: "x[^1]")

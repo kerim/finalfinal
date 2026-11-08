@@ -103,31 +103,20 @@ extension ContentView {
             let insertedBlockId = await footnoteSyncService.commitImmediateInsertion(
                 label: label, projectId: projectId, generation: insertionGeneration)
 
-            // Set content state BEFORE the rebuild poll below to suppress sync --
+            // Set content state BEFORE the rebuild flush below to suppress sync --
             // moved here (after the commit above) per this function's own §2.4 doc
             // comment.
             editorState.contentState = .bibliographyUpdate
-            // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump
-            // lands -- see handleBibliographySectionChanged above and
-            // BlockSyncService.checkGenerationGuard's doc comment.
-            blockSyncService.beginDatabaseRebuild()
             editorState.isResettingContent = true
 
-            // Force-flush pending JS changes to DB. This MUST complete before the
-            // fetchBlocksWithIds() read below: editorState.content above only reflects what
-            // the JS coordinator had already synced at notification-post time, but the
-            // background block poller runs on its own ~2s interval, so a just-typed edit
-            // to an existing footnote definition can still be sitting unflushed in JS when
-            // we get here. fetchBlocksWithIds reads block text straight from the DB, so if
-            // that read raced ahead of this flush it would silently rebuild the document
-            // from stale (pre-edit) text and stomp the user's edit when the result is pushed
-            // back to the editor below. Awaiting the flush makes the read see that edit in
-            // every healthy cycle (the drain waits out an in-flight cycle, then runs a fresh
-            // one), but it is BEST-EFFORT, not a guarantee: a cycle whose WebKit call never
-            // returns times out (8s) and this caller then proceeds WITHOUT its own edit in
-            // the DB (L8 in the poll-watchdog plan's loss-path table), which the
-            // unconditional timeout log states explicitly.
-            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
+            // Everything the editor holds reaches the DB first (`flushAndAck`). This MUST complete before the
+            // fetchBlocksWithIds() read below: a just-typed edit to an existing footnote definition can still be
+            // in the page (pending, or a report not yet decided), and fetchBlocksWithIds reads block text straight
+            // from the DB, so a read that raced ahead of this flush would rebuild the document from stale
+            // (pre-edit) text and stomp the user's edit when the result is pushed back to the editor below.
+            // BEST-EFFORT, not a guarantee: a page that does not answer, or a writer that does not settle within
+            // `rebuildFlushAndAckBound` (8 s), lets this caller proceed, and `flushAndAck` logs it.
+            await blockSyncService.flushForDatabaseRebuild()
             DebugLog.log(.footnotes, "[ContentView] handleFootnoteInsertedImmediate: fresh flush guaranteed " +
                 "complete for label=\(label), reading blocks from DB")
 

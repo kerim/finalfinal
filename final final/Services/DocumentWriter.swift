@@ -192,7 +192,7 @@ final class BarrierHandle: Sendable {
     }
 }
 
-/// DEBUG/telemetry seam (the `testPollTimeoutHandler` precedent): synchronous,
+/// DEBUG/telemetry seam: synchronous,
 /// instance-scoped, called AFTER the lock that produced it is released. Never gates
 /// production behaviour.
 enum WriterEvent: Sendable, Equatable {
@@ -2182,7 +2182,8 @@ actor DocumentWriter {
 
     /// Addendum A2 §1: read-only wait for every sequence <= `watermark` to settle
     /// (leave `phase` -- applied, discarded, or skipped), backing
-    /// `awaitWriterSettlementForRebuild()`'s rebuild-settlement redesign. UNLIKE
+    /// the rebuild-settlement wait (the poll's `awaitWriterSettlementForRebuild()`, removed in Phase 5 B4; the
+    /// rebuilds now wait through `flushAndAck`) and `flushAndAck`'s bounded waits. UNLIKE
     /// `drainForLifecycle(timeout:)`, this NEVER mutates writer state on timeout --
     /// no skip, no held-op drop, no ledger change, no frontier move. A rebuild that
     /// gives up waiting proceeds against whatever is in the database right now; the

@@ -203,7 +203,6 @@ struct MarkdownLifecycleSourceTests {
         // Control: the same run in Rich Text stages nothing.
         let richText = try LifecycleFlushHarness()
         richText.js.answer("flushPendingBlockChanges", true)
-        richText.js.answer("hasBlockChanges", false)
         richText.fetchAnswer = withMarker
         _ = await richText.run(.close)
         #expect(richText.editorState.switchInProgressContent == nil, "Rich Text does not stage")

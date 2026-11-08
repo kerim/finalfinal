@@ -18,7 +18,7 @@
 
 import { redo as historyRedo, redoDepth, undo } from '@milkdown/kit/prose/history';
 import { describe, expect, it } from 'vitest';
-import { getBlockChangesApi } from '../api-content';
+
 import { deleteSectionEditorFirst } from '../api-section-delete';
 import { duplicateSectionEditorFirst, redoSectionDuplicateEditorFirst } from '../api-section-duplicate';
 import {
@@ -58,6 +58,7 @@ import {
   swiftFinishesUndo,
   typeIntoNth,
 } from './editor-first-harness';
+import { takePendingAsReport } from './pending-for-test';
 import {
   endOfParagraphText,
   paragraphText,
@@ -122,12 +123,12 @@ function expectRebasedPremise(posted: Posted, press = 1): void {
 /** What the operation itself left pending is not what these tests are about. */
 async function settle(): Promise<void> {
   await sleep(160);
-  getBlockChangesApi();
+  takePendingAsReport();
 }
 
 function poll() {
   flushPendingBlockChanges();
-  return getBlockChangesApi();
+  return takePendingAsReport();
 }
 
 async function sceneWith(op: () => void | Promise<void>) {
@@ -427,9 +428,9 @@ describe('typing across a waiting Cmd-Z: the quick undo', () => {
       expect(getRegistry().get(OP), 'the entry is untouched').toBe(entryBefore);
       expect(getQuickUndoPausedOpId()).toBeNull();
       flushPendingBlockChanges();
-      expect(getBlockChangesApi(), 'held while the press is latched').toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport(), 'held while the press is latched').toEqual(EMPTY_BATCH);
       receiveUndoOutcome(OP, 'failed');
-      const batch = getBlockChangesApi();
+      const batch = takePendingAsReport();
       expect(
         batch.updates.length + batch.deletes.length,
         'the join goes out once the latch has ended'

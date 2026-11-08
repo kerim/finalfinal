@@ -67,13 +67,6 @@ export function setSpellcheckResults(requestId: number, results: SpellcheckResul
     diagLog(
       `buildDecorationSet produced ${before.find().length} decorations from ${results.length} results, docSize=${view.state.doc.content.size}`
     );
-    // t-717a0bc5: an underline drawn on the word being typed re-renders that word's DOM, which
-    // may leave a pending macOS autocorrection pointing at stale DOM. Record when that happens.
-    const caret = view.state.selection.head;
-    const atCaret = results.find((r) => r.from <= caret && caret <= r.to);
-    if (atCaret) {
-      diagLog(`UNDERLINE AT CARET caret=${caret} range=${atCaret.from}-${atCaret.to} type=${atCaret.type}`);
-    }
     view.dispatch(view.state.tr.setMeta(spellcheckPluginKey, results));
   } else {
     diagLog('DISCARDED: no editor instance available');

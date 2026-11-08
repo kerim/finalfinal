@@ -2,46 +2,13 @@
 //  BlockSyncService+Lifecycle.swift
 //  final final
 //
-//  t-94369a83 Phase 3a-1b: BlockSyncService's side of the close / project switch / quit save sequence --
-//  the poll-cycle result types the sequence reads, and the two entry points that ask the service's writer for
-//  the lifecycle barrier and retire it, plus three DEBUG-only test accessors. Split out of BlockSyncService.swift
-//  to keep that file and type from growing further; everything the sequence needs that has to live on the type
-//  itself (the changed `pollBlockChanges` / `drainInFlightPoll` / `performSystemWrite` signatures, the stored
-//  test hooks) stays there, because an extension cannot hold stored properties or reach the file's private poll
-//  internals. `writer` and `webView` are internal rather than private so the members below can reach them from
-//  this file.
+//  t-94369a83 Phase 3a-1b: BlockSyncService's side of the close / project switch / quit save sequence -- the two entry points that
+//  ask the service's writer for the lifecycle barrier and retire it, the release of typing held for a waiting Cmd-Z, plus DEBUG-only
+//  test accessors. (The poll-cycle result types the sequence used to read went with the poll in Phase 5 job B4.)
 //
 
 import Foundation
 import WebKit
-
-/// How one poll cycle ended (t-94369a83 Phase 3a-1b, coder obligation 20).
-enum PollCycleOutcome: Equatable {
-    /// The cycle ran to the end (including "no changes" and a batch the generation guard discarded).
-    case finished
-    /// The cycle was cancelled by `drainInFlightPoll()` and unwound at a pre-fetch checkpoint.
-    case cancelled
-    /// The cycle ended with an error other than a cancellation.
-    case failed
-    /// The poll watchdog expired first (a likely wedged WebKit call): the cycle's work was left to the
-    /// orphan handling in `runPollCycle`.
-    case timedOut
-    /// No cycle ran: an unforced tick found one already in flight, or back-pressure refused it.
-    case notRun
-}
-
-/// What one poll cycle reports. `hitWatchdog` is the PRODUCTION watchdog-hit outcome the lifecycle
-/// sequence needs (obligation 20): `runPollCycle` returns it, the spawner `Task` carries it, and
-/// `drainInFlightPoll()` ORs it across the iterations of its drain loop. Existing callers ignore it.
-struct PollCycleResult: Equatable {
-    let hitWatchdog: Bool
-    let outcome: PollCycleOutcome
-
-    init(outcome: PollCycleOutcome) {
-        self.outcome = outcome
-        self.hitWatchdog = outcome == .timedOut
-    }
-}
 
 extension BlockSyncService {
     /// What `requestLifecycleBarrier()` found.
@@ -75,15 +42,14 @@ extension BlockSyncService {
         writer?.retire(reason: reason)
     }
 
-    /// t-d2061b27 (Phase 4c job 2, judge D1): the Rich Text editor HOLDS the typing it would report to the polls while a Cmd-Z or
-    /// Cmd-Shift-Z is latched on it (`hasBlockChanges()` answers false and `getBlockChanges()` an empty batch from the page's request
-    /// until Swift's reply): the press's swap puts that typing back on top of the undone document, and the replay is the only
-    /// carrier. A close, quit or project switch must not wait for that: its forced poll (F) has to see the typing, or it would go
-    /// unsaved. This asks the page to release the hold, on the CAPTURED view, once, before the lifecycle's drain and forced poll
-    /// (`EditorViewState.forceSendForLifecycle`). Returns whether a hold was released (false: nothing was held, the page did not answer
-    /// within `bound` seconds, or the page has no such function). After a release a press that is still waiting on the page is answered
-    /// `docChanged` (the typing was already sent, so putting it back would save it twice). Markdown needs no such call: the lifecycle
-    /// reads CodeMirror's live document directly (step 5), and F is not run in source mode.
+    /// t-d2061b27 (Phase 4c job 2, judge D1): the Rich Text editor HOLDS the typing it would report while a Cmd-Z or Cmd-Shift-Z is
+    /// latched on it (no report leaves from the page's request until Swift's reply): the press's swap puts that typing back on top
+    /// of the undone document, and the replay is the only carrier. A close, quit or project switch must not wait for that: its step
+    /// F (`flushAndAck`) has to see the typing, or it would go unsaved. This asks the page to release the hold, on the CAPTURED
+    /// view, once, before F (`EditorViewState.forceSendForLifecycle`). Returns whether a hold was released (false: nothing was
+    /// held, the page did not answer within `bound` seconds, or the page has no such function). After a release a press that is
+    /// still waiting on the page is answered `docChanged` (the typing was already sent, so putting it back would save it twice).
+    /// Markdown needs no such call: the lifecycle reads CodeMirror's live document directly (step 5), and F is not run in source mode.
     @discardableResult
     func releaseHeldTypingPushes(webView: WKWebView, bound: TimeInterval) async -> Bool {
         let outcome = await raceAgainstTimeout(.seconds(bound)) { () -> Bool in

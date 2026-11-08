@@ -127,7 +127,7 @@ final class BibliographySyncService {
     ///
     /// Exists because in Source Mode the ONLY writer of live editor text into the block
     /// table is a 1s-debounced re-parse whose fire-time guard silently drops the write --
-    /// and this update is about to make that guard false. `BlockSyncService.pollBlockChangesNow()`,
+    /// and this update is about to make that guard false. `BlockSyncService.flushForDatabaseRebuild()`,
     /// which the bibliography rebuild relies on for the same purpose, is inert in Source Mode
     /// (its WebView is only ever assigned to the Milkdown editor).
     ///
@@ -415,7 +415,7 @@ final class BibliographySyncService {
         // `Thread.sleep` inside a `Task` risks starving Swift concurrency's
         // cooperative thread pool and delaying unrelated timers (including this
         // service's own debounce), which is exactly what made an earlier version of
-        // that test flaky. Mirrors `BlockSyncService.testPollCycleHook`. No cost in
+        // that test flaky. No cost in
         // release builds.
         await testInFlightHook?()
         #endif

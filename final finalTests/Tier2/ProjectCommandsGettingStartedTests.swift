@@ -172,7 +172,6 @@ extension LifecycleEntryStatic {
         func gettingStartedIsCancelled_performNeverCalled() async throws {
             let rig = try LifecycleFlushHarness()
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = "# Alpha\n\nfresh Y paragraph.\n\n# Beta\n\nfour five six.\n"
             let toasts = ToastCenter()
             rig.editorState.toastCenter = toasts
@@ -307,7 +306,7 @@ extension LifecycleEntryStatic {
         // MARK: - The Getting Started close
 
         @Test("""
-            the Getting Started close (no lifecycle): resets the view, stops polling, makes NO automatic version and calls \
+            the Getting Started close (no lifecycle): resets the view, makes NO automatic version and calls \
             onProjectClosed -- with no project open in DocumentManager (N7)
             """)
         func gettingStartedCloseNeedsNoLifecycleAndNoDocumentManager() async throws {
@@ -317,14 +316,11 @@ extension LifecycleEntryStatic {
             rig.view.onProjectClosed = { projectClosedCalls += 1 }
             let before = try rig.snapshotCount()
             rig.backup.contentDidChange()
-            rig.sync.startPolling()
-            #expect(rig.sync.testPollTimerIsArmed, "precondition: polling is running")
 
             await rig.view.closeGettingStartedProject()
 
             #expect(projectClosedCalls == 1, "back to the picker")
             #expect(try rig.snapshotCount() == before, "Getting Started is an ephemeral playground: no version")
-            #expect(!rig.sync.testPollTimerIsArmed, "polling stopped (a managed lifecycle stops it at arm; this one has none)")
             #expect(rig.editorState.content.isEmpty, "resetForProjectSwitch ran")
             #expect(rig.editorState.activeLifecycle == nil)
             #expect(rig.editorState.lifecycleBarrier == nil)

@@ -64,7 +64,6 @@ final class ListConversionRoundTripTests: XCTestCase {
         let stack = try await makeStack()
         let (helper, db, pid, sync, editorState) = (stack.helper, stack.db, stack.pid, stack.sync, stack.editorState)
         guard let window = hostWindow else { throw XCTSkip("no host window") }
-        defer { sync.stopPolling() }
 
         // The user puts the caret at the very start of the paragraph, types "- " (Milkdown turns the paragraph into a
         // bullet list) and a word, then closes at once.
@@ -76,7 +75,8 @@ final class ListConversionRoundTripTests: XCTestCase {
 
         // Wait on what is true, not on a fixed sleep: the editor SERIALIZES a bullet list as `* item` (Milkdown's marker),
         // never `- item`, so the converted paragraph is recognised by its SHAPE -- a list-marker line starting with the
-        // typed word -- and block-sync must still hold the conversion as a pending change. (The first version of this
+        // typed word -- (Phase 5 B4: the page reports the conversion itself; the probe no longer asks for it to be pending.)
+        // (The first version of this
         // probe looked for the literal "- " the user typed and failed on the editor's own `* ` output.)
         let typedLine = "(?m)^[ \\t]*[-*+][ \\t]+\(Self.typedWord)"
         let observed = try await SwitchFlushTestSupport.waitForPendingEdit(helper) { markdown in
@@ -85,9 +85,6 @@ final class ListConversionRoundTripTests: XCTestCase {
         XCTAssertTrue(
             observed.contentMatches,
             "the paragraph never became a bullet list starting with the typed word; editor content=\(observed.content)")
-        XCTAssertEqual(
-            observed.hasPendingChanges, true,
-            "the conversion is not held as a pending block-sync change; content=\(observed.content)")
         guard observed.isReady else { return }
 
         // Close: the save sequence (F, fresh fetch, FB, barrier), as `LifecycleEntry.run(.close)` runs it before `perform`.
@@ -119,7 +116,7 @@ final class ListConversionRoundTripTests: XCTestCase {
 
         // The rows are stable under a second poll and a re-parse of their own Markdown: the first poll after a reopen
         // sees no structural difference to turn into inserts.
-        await sync.pollBlockChangesNow()
+        _ = await sync.flushForDatabaseRebuild()
         let afterPoll = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
         XCTAssertEqual(afterPoll.count, blocks.count, "a second poll must not add or remove rows")
         let reassembled = BlockParser.assembleMarkdown(from: afterPoll)
@@ -139,7 +136,6 @@ final class ListConversionRoundTripTests: XCTestCase {
         let stack = try await makeStack()
         let (helper, db, pid, sync) = (stack.helper, stack.db, stack.pid, stack.sync)
         guard let window = hostWindow else { throw XCTSkip("no host window") }
-        defer { sync.stopPolling() }
 
         let rowsBefore = try TestFixtureFactory.fetchBlocks(from: db)
         let original = try XCTUnwrap(rowsBefore.first { $0.markdownFragment.contains("convert me please.") })
@@ -158,13 +154,10 @@ final class ListConversionRoundTripTests: XCTestCase {
         XCTAssertTrue(
             observed.contentMatches,
             "the paragraph never became a bullet list starting with the typed word; editor content=\(observed.content)")
-        XCTAssertEqual(
-            observed.hasPendingChanges, true,
-            "the conversion is not held as a pending block-sync change; content=\(observed.content)")
         guard observed.isReady else { return }
 
         // The poll alone (no close): the update lands in the table. Wait on the table, not on a fixed sleep.
-        await sync.pollBlockChangesNow()
+        _ = await sync.flushForDatabaseRebuild()
         var rows = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
         let end = Date().addingTimeInterval(5)
         while !rows.contains(where: { $0.markdownFragment.contains(Self.typedWord) }) && Date() < end {
@@ -204,9 +197,8 @@ final class ListConversionRoundTripTests: XCTestCase {
     @MainActor
     func testPlainProseSession_closeReachesUnchanged() async throws {
         let stack = try await makeStack()
-        let (helper, db, pid, sync, editorState) = (stack.helper, stack.db, stack.pid, stack.sync, stack.editorState)
+        let (helper, db, pid, editorState) = (stack.helper, stack.db, stack.pid, stack.editorState)
         guard let window = hostWindow else { throw XCTSkip("no host window") }
-        defer { sync.stopPolling() }
 
         let rowsBefore = try TestFixtureFactory.fetchBlocks(from: db)
         let idsBefore = rowsBefore.map(\.id)
@@ -227,7 +219,6 @@ final class ListConversionRoundTripTests: XCTestCase {
         XCTAssertTrue(
             observed.contentMatches,
             "the editor never showed both plain-text edits; editor content=\(observed.content)")
-        XCTAssertEqual(observed.hasPendingChanges, true, "the edits are not held as pending block-sync changes; content=\(observed.content)")
         guard observed.isReady else { return }
 
         // Close: the save sequence (F, fresh fetch, FB, barrier), as `LifecycleEntry.run(.close)` runs it before `perform`.

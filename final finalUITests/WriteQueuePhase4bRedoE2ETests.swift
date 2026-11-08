@@ -234,17 +234,21 @@ extension WriteQueuePhase4bRedoE2ETests {
     }
 
     /// Switches the editor to `wanted` ("Markdown" or "Rich Text") with Cmd-/, the shortcut of the View menu's "Switch to ..." item, pressed
-    /// ONCE, then waits for the badge (a condition).
+    /// ONCE, then waits for the badge (a condition) and, for Markdown, for the page itself (`waitForMarkdownPageReady`: the badge flips
+    /// before the page exists, t-55b63c87).
     func switchMode(to wanted: String) -> Bool {
         let mode = app.buttons["status-bar-editor-mode"]
         guard mode.waitForExistence(timeout: 10) else { fail("the editor-mode button never appeared"); return false }
         if mode.label != wanted {
             app.activateAndWaitForForeground()
+            tail.poll()
+            let switchFrom = tail.lines.count
             app.typeKey("/", modifierFlags: .command)
             guard mode.waitForLabel("== '\(wanted)'", timeout: appWait(size.operationTimeout * 2, before: "the mode button reads \(wanted)")) else {
                 fail("the editor-mode button never reported \(wanted) after the toggle keystroke (it reads \(mode.label))")
                 return false
             }
+            if wanted == "Markdown" { guard waitForMarkdownPageReady(from: switchFrom) else { return false } }
         }
         let quiet = waitForLogQuiet(quiet: 3, cap: capped(60))
         note("MODE: \(wanted); the app's log was quiet for 3 s after the switch: \(Self.yesNo(quiet))")

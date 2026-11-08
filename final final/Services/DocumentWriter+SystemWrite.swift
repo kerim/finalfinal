@@ -149,6 +149,9 @@ enum SystemWriteKind: Sendable, Equatable {
     case sectionDuplicate
     case structuralReplace
     case sectionReorder
+    /// Phase 5 job B3-0: `SectionSyncService`'s debounced write of the `section` table and the content row (the text Version History
+    /// snapshots read), queued so two runs land in order and a run overtaken by a newer one writes nothing. Stamps and bumps nothing.
+    case sectionSync
 }
 
 // MARK: - No nesting (§1.3)
@@ -164,7 +167,8 @@ enum SystemWriteScope {
     /// `performSystemWrite` call observing this already `true` (including via task
     /// inheritance) is refused `.nested` before it reserves anything.
     @TaskLocal static var active: Bool = false
-    // Set by `doPollBlockChanges` from immediately after `reserveWriterTurn` until
+    // Set by `applyReportBatch` (BlockSyncService+Reports.swift; it was `doPollBlockChanges` until Phase 5 B4) around a report's
+    // apply, from its turn until
     // `applyAndConfirm` returns (or its `defer` settles) -- wired in (Phase 2,
     // t-94369a83 §1.3): the existing fetch-to-apply body is wrapped verbatim in
     // `SystemWriteScope.$heldEditorSeq.withValue(ticket.seq) { ... }`, a synchronous

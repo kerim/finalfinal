@@ -2,209 +2,29 @@
 //  QuitFlushDuplicateInsertTests.swift
 //  final finalTests
 //
-//  Tier 2: Visible Breakage — reproduction test for TLA+ Finding #8
-//  (Calm_InsertThenQuit, docs/architecture/tla/DocSyncCurrent.tla): before
-//  quit drained the poll, it never stopped the 2s block-sync poll before flushing. A poll cycle already
-//  running (or one whose timer simply hadn't been invalidated yet) could fire
-//  after the quit-time flush had already written a freshly-typed paragraph to
-//  the database via a full re-parse, and re-apply the editor's still-pending,
-//  unconfirmed "insert" change for that same paragraph through the ordinary
-//  incremental poll path — landing it a second time as a duplicate row.
+//  Tier 2: Visible Breakage -- reproduction test for TLA+ Finding #8
+//  (Calm_InsertThenQuit, docs/architecture/tla/DocSyncCurrent.tla): a freshly typed paragraph must reach the
+//  database exactly once when the user quits, never twice (once by the quit's whole-document write, once more by
+//  the editor's own pending insert landing after it).
 //
-//  Quit fixes this by stopping and draining the poll BEFORE fetching fresh
-//  content and writing it, so any poll cycle already in flight is drained
-//  (cancelled, for an unforced cycle) before the write ever lands — no later
-//  apply can land on top of it. Since round C6 (t-94369a83 3a-1b) that drain is
-//  step 0 and step 4 of the lifecycle save sequence, which quit runs through
-//  `EditorViewState.flushForQuit(token:host:...)` (EditorViewState+Quit.swift)
-//  under a QUIT token; each test below keeps its assertion and changes only its
-//  entry (`QuitFlushTestSupport`, Helpers/).
-//
-//  WHY A SIMULATED POLL CYCLE, NOT A REAL TIMER: an earlier version of this
-//  test called the real `sync.startPolling()` and waited on a `Task.sleep`
-//  loop for its repeating `Timer` to fire naturally. That passed (1 row) even
-//  with the poll drain disabled (step 0's `stopPolling()` and step 4's
-//  `raceDrain(bound:)`) -- a vacuous pass, because a `Timer`
-//  doesn't reliably fire while this test host's MainActor is busy inside a
-//  `Task.sleep` loop rather than running the CFRunLoop that services it (the
-//  same RunLoop-dependency failure mode documented in
-//  `BibliographyHeaderNameWiringTests.swift`'s `NotificationWait` for a
-//  `DispatchQueue.main.async`-deferred callback). `BlockSyncService.
-//  testPollCycleHook` exists precisely so a test can hold a cycle
-//  deterministically suspended mid-flight without racing real timers or
-//  sleeping. This file follows that pattern (mirroring the
-//  `SwitchGate`/`StartSignal` checked-continuation idiom in
-//  `BlockSyncProjectSwitchDrainTests.swift`): it starts a real, UNFORCED poll
-//  cycle via `pollBlockChangesForTest(force: false)` -- simulating exactly
-//  what the real Timer's tick would invoke -- and parks it at the very top of
-//  its cycle, registered in `BlockSyncService`'s private `inFlightPoll` slot,
-//  via `testPollCycleHook`, so the sequence's drain (step 4's `raceDrain(bound:)`,
-//  which awaits `drainInFlightPoll()`) has a real in-flight cycle to cancel/await.
-//  `flushForQuit()` is called
-//  INLINE (not spawned concurrently) while that cycle is parked: with the fix
-//  restored, its own drain call cancels the parked cycle from the inside (see
-//  `QuitPollGate` below) before the sequence ever fetches or writes
-//  anything, so the inline `await` only returns once the parked cycle has
-//  actually unwound.
-//
-//  Test 1's harness carries three safety nets, each guarding against a
-//  specific false pass: the poll watchdog is pushed out to 60s
-//  (`sync.testPollWatchdogSeconds`), well past `flushForQuit()`'s own worst
-//  case, so only the fix's own drain cancellation or the test's 15s
-//  safety-net task can unpark the cycle -- a watchdog firing first would look
-//  identical to the fix working, so that is asserted against explicitly.
-//  `QuitPollGate` is cancellation-aware so the fix's drain cancellation
-//  resumes the parked continuation instead of hanging forever (see its own
-//  doc comment for why it can't be a plain `@MainActor` class). The 15s
-//  safety-net task fails loudly (`XCTFail`) rather than silently unwedging if
-//  nothing ever releases the parked cycle, so a hang is reported as a
-//  failure, not swallowed. See `placeCursorAtEndOfHeading`'s own doc comment
-//  below for why the insert is anchored to the heading rather than the
-//  trailing paragraph -- that anchor choice is itself load-bearing.
-//
-//  Drives the real editor -> block-sync -> DB chain with a real Milkdown
-//  WKWebView, and types the reproducing edit via real NSEvent keyDown/keyUp
-//  (not execCommand — this codebase's "execCommand doesn't replicate real
-//  keyboard input" rule; see CAYWConcurrentInsertTests.swift /
-//  LinkTrailingTextTests.swift for the same technique). `makeStack`,
-//  `totalWordCount`-style DB helpers, and the rAF shim follow
-//  ZoomWordCountSyncTests.swift's established Tier2 harness pattern.
-//
-//  Uses XCTest (not Swift Testing) because WKWebView requires a run loop —
-//  same reasoning as ZoomWordCountSyncTests.swift.
-//
-//  Test 3 covers a SECOND, distinct trigger for the same duplicate-paragraph shape as
-//  test 1 -- not the periodic-poll-drain race, but `flushForQuit()` forcing an
-//  already-scheduled bibliography/Notes rebuild via
-//  `flushPendingBibliographyAndFootnoteSync()`, whose notification handler
-//  (`ContentView.handleNotesSectionChanged()` / `handleBibliographySectionChanged()`)
-//  would otherwise spawn its own forced `pollBlockChangesNowForDatabaseRebuild()` and
-//  re-apply the same still-pending insert a second time. Test 3 drives the Notes/
-//  footnote half (the bibliography half needs a live Zotero connection -- see
-//  `performBibliographyUpdate`'s `zoteroService.isConnected` guard -- so isn't a fit
-//  for a self-contained unit test); see that test's own doc comment for the full
-//  mechanism and why it needs no `QuitPollGate`-style hook the way test 1 does.
+//  Phase 5 job B4: the 2-second block poll is gone. The editor reports each settled change itself, and the
+//  lifecycle's save read holds the reports and covers every report it read (`registerSaveCover`), so a report of
+//  the typed paragraph that reaches Swift after the whole-document write is dropped. Test 1 types and quits at
+//  once (the report may still be on its way); test 3 drives the forced Notes rebuild the quit token defers. The
+//  old test 2 (quit disarms the poll timer) went with the timer. The precise ordering case (a report posted before
+//  the save read, arriving after it) is `ReportApplierTests.lifecycleFlushAndSaveCover`.
 //
 
 import XCTest
 import WebKit
-import os
 @testable import final_final
-
-/// Lock-protected state shared between `QuitPollGate.waitAtGate()`'s
-/// continuation installer and its `withTaskCancellationHandler`'s `onCancel`
-/// closure. `onCancel` may run from ANY execution context -- not necessarily
-/// MainActor, and not necessarily after the continuation has even been
-/// installed (a "cancel-before-park" race) -- so every field here is reached
-/// only through `QuitPollGate`'s single `OSAllocatedUnfairLock`, never through
-/// a bare `@MainActor` stored property.
-private struct GateState: Sendable {
-    var parkContinuation: CheckedContinuation<Void, Never>?
-    var reachedContinuation: CheckedContinuation<Void, Never>?
-    var reached = false
-    var released = false
-    var cancelled = false
-}
-
-/// Checked-continuation gate (no sleep) that lets a test hold an in-flight,
-/// UNFORCED poll cycle deterministically suspended at the very top of its
-/// cycle -- before it has read `contentState`, checked for changes, or fetched
-/// anything -- via `BlockSyncService.testPollCycleHook`, confirm via
-/// `waitUntilReached()` that it's genuinely stuck there (not merely about to
-/// run), then release it with `open()`. File-private equivalent of
-/// `BlockSyncProjectSwitchDrainTests.swift`'s `SwitchGate` (that one is
-/// private to its own file and can't be reused directly from here).
-///
-/// CANCELLATION-AWARE: once `flushForQuit()`'s poll drain (step 4's
-/// `raceDrain(bound:)`) is in place, quitting cancels this parked cycle's own work task WHILE it is
-/// sitting inside `waitAtGate()` -- `BlockSyncService.runPollCycle`'s
-/// `withTaskCancellationHandler` calls `work.cancel()` on it directly.
-/// `waitAtGate()` installs its own `withTaskCancellationHandler` so that
-/// cancellation resumes the parked continuation instead of hanging forever.
-/// Because `onCancel` runs non-isolated and may run from a different
-/// execution context than the parked task, this is deliberately NOT a plain
-/// `@MainActor` class with unguarded stored properties -- every mutable field
-/// lives behind a single `OSAllocatedUnfairLock<GateState>`, and the
-/// continuation is resumed EXACTLY ONCE, whether via `open()` or via
-/// cancellation, with a cancel-before-park race (cancellation observed before
-/// the continuation is even installed) handled by checking the
-/// cancelled/released flags inside the same locked section that installs it.
-private final class QuitPollGate: @unchecked Sendable {
-    private let state = OSAllocatedUnfairLock(initialState: GateState())
-
-    /// Call from inside the poll cycle (via `testPollCycleHook`).
-    func waitAtGate() async {
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                // Extract the waiter under the lock, resume it AFTER releasing --
-                // matching `open()` and `onCancel` below, neither of which ever calls
-                // `.resume()` from inside `state.withLock { }`.
-                let (reachedWaiter, resumeImmediately):
-                    (CheckedContinuation<Void, Never>?, Bool) = state.withLock { gateState in
-                    gateState.reached = true
-                    let waiter = gateState.reachedContinuation
-                    gateState.reachedContinuation = nil
-                    guard !gateState.released, !gateState.cancelled else { return (waiter, true) }
-                    gateState.parkContinuation = continuation
-                    return (waiter, false)
-                }
-                reachedWaiter?.resume()
-                if resumeImmediately {
-                    continuation.resume()
-                }
-            }
-        } onCancel: {
-            let toResume: CheckedContinuation<Void, Never>? = state.withLock { gateState in
-                guard !gateState.released, !gateState.cancelled else { return nil }
-                gateState.cancelled = true
-                defer { gateState.parkContinuation = nil }
-                return gateState.parkContinuation
-            }
-            toResume?.resume()
-        }
-    }
-
-    /// Suspends until some poll cycle has actually reached the gate.
-    ///
-    /// Supports exactly ONE waiter: a second call made before the gate is reached would
-    /// overwrite `gateState.reachedContinuation` with its own continuation, silently
-    /// leaking the first caller's (it would never be resumed). Not a concern for this
-    /// file's own single-waiter usage, but not enforced by the type either -- callers
-    /// must not call this a second time until the first call has returned.
-    func waitUntilReached() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let resumeImmediately: Bool = state.withLock { gateState in
-                precondition(gateState.reachedContinuation == nil, "waitUntilReached() supports only one waiter")
-                if gateState.reached { return true }
-                gateState.reachedContinuation = continuation
-                return false
-            }
-            if resumeImmediately {
-                continuation.resume()
-            }
-        }
-    }
-
-    /// Releases whatever is parked at the gate; future arrivals pass straight
-    /// through. No-op if the gate was already released, or the parked cycle
-    /// was already cancelled out from under it.
-    func open() {
-        let toResume: CheckedContinuation<Void, Never>? = state.withLock { gateState in
-            guard !gateState.released, !gateState.cancelled else { return nil }
-            gateState.released = true
-            defer { gateState.parkContinuation = nil }
-            return gateState.parkContinuation
-        }
-        toResume?.resume()
-    }
-}
 
 final class QuitFlushDuplicateInsertTests: XCTestCase {
 
     /// Distinctive marker text for the reproducing paragraph — never appears
     /// anywhere else in the fixture, so any row containing it must have come
-    /// from either the quit-time flush's fresh parse or a late poll cycle
-    /// re-applying the same still-pending insert.
+    /// from either the quit-time flush's fresh parse or the paragraph's own
+    /// report landing again after it.
     private static let marker = "zebra quokka marmot"
 
     private static let doc = """
@@ -226,170 +46,46 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
 
     // MARK: - Test 1: reproduction + regression
 
-    /// Reproduction + regression test: typing a new paragraph, then quitting
-    /// while the block-sync poll is running, must write that paragraph to the
-    /// database exactly once — never twice.
+    /// Typing a new paragraph and quitting at once must write that paragraph to the database exactly once.
     @MainActor
-    func testQuitFlush_inFlightPollParkedBeforeEpochRead_doesNotDuplicateParagraph() async throws {
+    func testQuitFlush_typedParagraphReportInFlight_doesNotDuplicateParagraph() async throws {
         let stack = try await makeStack()
-        let (helper, db, pid, sync, editorState) = (stack.helper, stack.db, stack.pid, stack.sync, stack.editorState)
+        let (helper, db, pid, editorState) = (stack.helper, stack.db, stack.pid, stack.editorState)
         guard let window = hostWindow else { throw XCTSkip("no host window") }
 
-        defer {
-            sync.stopPolling()
-            sync.testPollCycleHook = nil
-            sync.testPollWatchdogSeconds = nil
-        }
-
-        // Move the caret to the end of the heading (NOT the trailing paragraph —
-        // see placeCursorAtEndOfHeading's doc comment for why that anchor choice
-        // is load-bearing), press Return, and type a distinctive marker
-        // paragraph via real NSEvents.
+        // Move the caret to the end of the heading (NOT the trailing paragraph -- see placeCursorAtEndOfHeading's doc
+        // comment for why that anchor choice is load-bearing), press Return, and type a distinctive marker paragraph via
+        // real NSEvents.
         try await placeCursorAtEndOfHeading(helper)
         try await Task.sleep(nanoseconds: 200_000_000)
         try pressEnter(window: window)
         try await Task.sleep(nanoseconds: 200_000_000)
         try typeViaNSEvents(Self.marker, window: window)
 
-        // block-sync-plugin's detectChanges debounce is 100ms; leave generous headroom.
-        try await Task.sleep(nanoseconds: 600_000_000)
-
+        // Quit at once: only the 100 ms detection debounce is waited out, so the paragraph's report may still be on its
+        // way (or not yet posted) when the save reads the editor.
+        try await Task.sleep(nanoseconds: 150_000_000)
         let contentAfterType = try await helper.getContent()
-        let hasPending = try await helper.webView.evaluateJavaScript(
-            "window.FinalFinal.hasBlockChanges()"
-        ) as? Bool
-
-        // A broken test harness (this precondition failing) must not silently and
-        // permanently skip a regression test -- XCTFail, not XCTSkip: a skip here would
-        // report green forever if the harness ever stopped exercising the race this
-        // test exists to catch.
-        guard hasPending == true, contentAfterType.contains(Self.marker) else {
-            XCTFail(
-                "the typed paragraph never became a pending, unconfirmed " +
-                "block-sync insert -- hasBlockChanges()=\(String(describing: hasPending)), " +
-                "content contains marker=\(contentAfterType.contains(Self.marker)); " +
-                "content=\(contentAfterType)"
-            )
+        guard contentAfterType.contains(Self.marker) else {
+            XCTFail("the typed paragraph never reached the editor; content=\(contentAfterType)")
             return
         }
+        XCTAssertEqual(editorState.contentState, .idle, "precondition: the editor is idle")
 
-        // Precondition: an unforced poll cycle SKIPS unless contentState == .idle
-        // (see BlockSyncService.doPollBlockChanges's contentState guard) -- without
-        // this, the test would "pass" because the cycle never even attempted to
-        // apply anything, not because the fix worked.
-        XCTAssertEqual(
-            editorState.contentState, .idle,
-            "precondition: an unforced poll cycle skips unless contentState == .idle"
-        )
-
-        // Push the watchdog well past both flushForQuit()'s worst case (up to one
-        // poll watchdog period for the sequence's own poll drain wait --
-        // BlockSyncService.defaultPollWatchdogSeconds, 8s by default -- plus a 2s
-        // WebView fetch timeout plus a 3s bibliography/footnote flush bound) and the
-        // 15s safety net below, so only the fix's own drain cancellation or that
-        // safety net can unpark the poll cycle -- a watchdog firing first would
-        // falsely look identical to the fix working.
-        sync.testPollWatchdogSeconds = 60
-
-        // Simulate "the poll is active, as it always is during normal editing" by
-        // starting a real, UNFORCED poll cycle -- exactly what the real 2s Timer's
-        // tick would invoke -- via the test-only entry point, and park it at the very
-        // top of its cycle via `testPollCycleHook`. See this file's header comment for
-        // why this replaces the real `sync.startPolling()` + wall-clock wait this test
-        // used before: the real `Timer` does not reliably fire while this test host is
-        // busy inside a `Task.sleep`-based wait loop.
-        let gate = QuitPollGate()
-        sync.testPollCycleHook = { await gate.waitAtGate() }
-        let pollTask = Task { @MainActor in
-            await sync.pollBlockChangesForTest(force: false)
-        }
-
-        // Fail loudly, don't silently unwedge, if nothing ever releases the parked
-        // cycle within a generous bound. Created BEFORE `waitUntilReached()` below
-        // (not after): that call is itself an unbounded `await` with nothing else
-        // guarding it, so if the poll cycle somehow never reaches the gate at all,
-        // this safety net is the only thing that can still fail the test instead of
-        // hanging it forever.
-        let safety = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(15))
-            if !Task.isCancelled {
-                XCTFail("flushForQuit()/drain never released the parked poll cycle within 15s")
-                gate.open()
-            }
-        }
-
-        // Confirms the cycle is genuinely in flight (registered in BlockSyncService's
-        // private `inFlightPoll` slot) and parked -- not merely about to run -- before
-        // quit begins.
-        await gate.waitUntilReached()
-        XCTAssertFalse(sync.testInFlightPollIsNil, "the poll cycle must be genuinely in flight before quit begins")
-
-        // Simulate quit while that poll cycle is still parked -- exactly the race
-        // `flushForQuit()`'s poll drain (step 0's `stopPolling()`, step 4's
-        // `raceDrain(bound:)`) exists to close. Called
-        // INLINE (not spawned concurrently): once the fix is restored,
-        // the sequence's drain cancels this parked cycle from the inside
-        // (via `QuitPollGate`'s `withTaskCancellationHandler`) before `flushForQuit()`
-        // ever fetches or flushes anything, so this `await` only returns once the
-        // parked cycle has actually unwound. With the fix still disabled, this
-        // returns immediately (the flush never waits on the poll at all), leaving the
-        // cycle parked for `gate.open()` below to release afterward -- reproducing the
-        // duplicate-insert race.
         guard let quitToken = QuitFlushTestSupport.armQuit(editorState) else { return XCTFail("could not arm the quit token") }
         await QuitFlushTestSupport.flush(editorState, token: quitToken, webView: helper.webView)
-
-        // Direct assertion on the drain's own effect -- more robust than relying only on
-        // the downstream row count below, which could still read 1 by coincidence (e.g.
-        // if the parked cycle's batch happened to be empty) even if flushForQuit()
-        // returned without actually draining it.
-        XCTAssertTrue(sync.testInFlightPollIsNil, "flushForQuit must drain the in-flight poll before returning")
-
-        safety.cancel()
-        gate.open() // no-op if the fix's drain already resumed (or cancelled) the parked continuation
-        await pollTask.value
+        // Anything still on its way lands (or is dropped as covered) now.
+        try await Task.sleep(nanoseconds: 1_000_000_000)
 
         let markerRows = try countRows(containing: Self.marker, db: db, pid: pid)
-
         XCTAssertEqual(
             markerRows, 1,
-            "Quit must write the new paragraph exactly once; found \(markerRows) rows " +
-            "containing '\(Self.marker)' (2+ means a poll cycle re-inserted it after the " +
-            "quit flush)"
-        )
-        XCTAssertTrue(
-            sync.testPollTimeoutForceFlags.isEmpty,
-            "the poll watchdog must never have fired in this test -- a watchdog race would " +
-            "falsely look identical to the fix working; got \(sync.testPollTimeoutForceFlags)"
+            "Quit must write the new paragraph exactly once; found \(markerRows) rows containing '\(Self.marker)' "
+                + "(2+ means the paragraph's report landed again after the quit's whole-document write)"
         )
     }
 
-    // MARK: - Test 2: quit disarms the periodic timer
-
-    /// Regression test for the OTHER half of the fix: quit must disarm the
-    /// periodic poll Timer itself (`stopPolling()`, the save sequence's step 0),
-    /// not just drain whatever cycle happens to be in flight at the moment of quit —
-    /// otherwise a fresh tick could still fire and re-insert after the flush. No
-    /// WebView or database wiring needed: `flushForQuit()` tolerates an unconfigured
-    /// `BlockSyncService` gracefully (`fetchContentFromWebView` returns nil with no
-    /// webView, and `flushContentToDatabase` no-ops on empty content / a nil
-    /// database), so this can drive the real timer directly.
-    @MainActor
-    func testQuitFlush_disarmsPeriodicPollTimer() async throws {
-        let sync = BlockSyncService()
-        let editorState = EditorViewState()
-        editorState.blockSyncService = sync
-        defer { sync.stopPolling() }
-        sync.startPolling()
-        XCTAssertTrue(sync.testPollTimerIsArmed)
-        guard let quitToken = QuitFlushTestSupport.armQuit(editorState) else { return XCTFail("could not arm the quit token") }
-        await QuitFlushTestSupport.flush(editorState, token: quitToken, webView: nil)
-        XCTAssertFalse(sync.testPollTimerIsArmed,
-            "quit must disarm the periodic poll so no fresh cycle can re-insert after the flush")
-    }
-
-    // MARK: - Test 3: forced Notes rebuild poll (the OTHER trigger the quit's lifecycle
-    // token guards against, distinct from the periodic-poll race
-    // tests 1/2 cover)
+    // MARK: - Test 3: forced Notes rebuild (the OTHER trigger the quit's lifecycle token guards against)
 
     /// Reproduction + regression test for the fix's OTHER half: `flushForQuit()` ->
     /// `flushAllSync()` -> `flushPendingBibliographyAndFootnoteSync()` can force an
@@ -439,7 +135,6 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         defer {
             DocumentManager.shared.projectDatabase = priorDb
             DocumentManager.shared.projectId = priorPid
-            view.blockSyncService.stopPolling()
         }
 
         // Schedule a debounced Notes update -- simulates a footnote reference typed a
@@ -464,13 +159,13 @@ final class QuitFlushDuplicateInsertTests: XCTestCase {
         try await Task.sleep(nanoseconds: 600_000_000)
 
         let contentAfterType = try await helper.getContent()
-        let hasPending = try await helper.webView.evaluateJavaScript(
-            "window.FinalFinal.hasBlockChanges()"
-        ) as? Bool
-        guard hasPending == true, contentAfterType.contains(Self.marker) else {
+        // Phase 5 B4: the page reports the paragraph itself (it is no longer held pending for a 2-second poll); whether its
+        // report is still unacknowledged is logged, not required.
+        let heldInOutbox = try await helper.webView.evaluateJavaScript(SwitchFlushTestSupport.outboxNotEmptyScript) as? Bool
+        guard contentAfterType.contains(Self.marker) else {
             XCTFail(
                 "the typed paragraph never became a pending, unconfirmed block-sync insert -- " +
-                "hasBlockChanges()=\(String(describing: hasPending)), " +
+                "heldInOutbox=\(String(describing: heldInOutbox)), " +
                 "content contains marker=\(contentAfterType.contains(Self.marker)); " +
                 "content=\(contentAfterType)"
             )

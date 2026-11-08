@@ -310,6 +310,73 @@ enum TestMode {
         try? await Task.sleep(for: .milliseconds(milliseconds))
     }
 
+    /// UI-test-only (Phase 5 job B3): `FF_UI_TESTING_PUSH_DROP=<n>` makes `ReportApplier` discard every n-th block report that
+    /// arrives on the message handler for the first time (a re-post is never dropped), as if it were lost, so the recovery (the
+    /// page's re-post, or Swift's gap fetch) must save its text.
+    static var uiTestingPushDrop: Int? {
+        guard isUITesting, let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_PUSH_DROP"],
+              let value = Int(raw), value >= 1 else { return nil }
+        return value
+    }
+
+    /// UI-test-only (Phase 5 job B4): `FF_UI_TESTING_PUSH_GAP_FETCH_OFF=1` turns Swift's gap fetch off (a report after a gap waits,
+    /// parked, until the missing one arrives), so a test can prove the page's re-post alone recovers a dropped report.
+    static var isUITestingPushGapFetchOff: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_PUSH_GAP_FETCH_OFF"] == "1"
+    }
+
+    /// UI-test-only (Phase 5 job B4): `FF_UI_TESTING_PUSH_REPOST_OFF=1` turns the page's re-post of unacknowledged reports off
+    /// (`window.__FF_REPORTS__.repost = false`): the must-fail twin of the re-post test.
+    static var isUITestingPushRepostOff: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_PUSH_REPOST_OFF"] == "1"
+    }
+
+    /// UI-test-only (Phase 5 job B2): `FF_UI_TESTING_REPORT_INTERVAL_MS=<n>` sets R, the least time between two block reports
+    /// (report-outbox.ts, default 250), for the coalescing measurement.
+    static var uiTestingReportIntervalMs: Int? {
+        guard isUITesting, let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_REPORT_INTERVAL_MS"],
+              let value = Int(raw), value >= 0 else { return nil }
+        return value
+    }
+
+    /// UI-test-only (Phase 5 job B2): `FF_UI_TESTING_LAG_SAMPLER=1` starts the main-run-loop lag sampler (`MainLagSampler`).
+    static var isUITestingLagSampler: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_LAG_SAMPLER"] == "1"
+    }
+
+    /// UI-test-only (t-633df056, Phase 5 job A5): `FF_UI_TESTING_MD_PAGE_READY_HOLD_MS=<n>` makes the FIRST Markdown (CodeMirror) page of
+    /// this launch wait `n` milliseconds after its load has finished and BEFORE it is mounted (`onWebViewReady`, which moves the app's
+    /// web-view pointers to it, and `batchInitialize`, which hands it its text: `CodeMirrorEditor.Coordinator.mountLoadedPageAfterTestHold`).
+    /// It widens the window between the status-bar badge saying Markdown and the page being there (about 1 s idle, 2.5 s busy on the
+    /// twelve-chapter book, VM figures), so a real-app test can press a section command inside it on purpose instead of racing it. A plain
+    /// suspension: nothing is held, the badge and the mode have already flipped. `nil` (unset, unparseable, <= 0, or `isUITesting` false)
+    /// means no hold and the mount runs synchronously, as always. Same `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingMdPageReadyHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_MD_PAGE_READY_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// Whether `holdMarkdownPageReady()` has already held the one page it holds in this launch.
+    private static var mdPageReadyHoldGranted = false
+
+    /// True while the next Markdown page mount is to be held (the variable is set and no page has been held yet in this launch). Read
+    /// synchronously by the mount, so every page that is NOT held is mounted right there, with no task hop.
+    @MainActor
+    static var willHoldMarkdownPageReady: Bool { uiTestingMdPageReadyHoldMs != nil && !mdPageReadyHoldGranted }
+
+    /// Waits `uiTestingMdPageReadyHoldMs` milliseconds (a plain suspension) for the first Markdown page of this launch; returns at once for
+    /// every later page and in every normal launch (the first guard). Persists one `[MD-PAGE-READY-HOLD]` line when a hold begins (the
+    /// marker the real-app test reads to prove the window was widened).
+    @MainActor
+    static func holdMarkdownPageReady() async {
+        guard let milliseconds = uiTestingMdPageReadyHoldMs, !mdPageReadyHoldGranted else { return }
+        mdPageReadyHoldGranted = true
+        DebugLog.alwaysPersisted("[MD-PAGE-READY-HOLD] markdown page ready hold begins for \(milliseconds) milliseconds")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+    }
+
     /// UI-test-only (board task t-dfc4fb02): `FF_UI_TESTING_FOOTNOTE_WRITE_HOLD_MS=<n>` delays the NOTES NOTIFICATION after the
     /// footnote write has committed (the writer is NOT blocked: a blocking hold trips the 5 s content-state watchdog and a plain
     /// whole-document push, see board). Concretely, `FootnoteSyncService.performFootnoteUpdate` waits `n` milliseconds in a plain
@@ -494,6 +561,15 @@ enum TestMode {
         autoBackupIdleSeamArmed = true
     }
 
+    /// UI-test-only (Phase 5 job B4): `FF_UI_TESTING_AUTOBACKUP_NO_LIVE_FLUSH=1` makes an idle auto-backup snapshot what the database
+    /// already holds and skip its live whole-document flush, which gives most rows new ids. Tests that compare row ids before and
+    /// after a command (the Version History restore tests) set it, because the real idle backup can fall in the middle of such a test.
+    /// Until Phase 5 the poll's first tick started an early idle backup in every launch, and its "too soon" rule then kept the real one
+    /// away for five minutes; with no poll the first idle backup is the one after the test's own edit. False outside a UI test.
+    static var uiTestingAutoBackupNoLiveFlush: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_AUTOBACKUP_NO_LIVE_FLUSH"] == "1"
+    }
+
     /// UI-test-only (t-18b7fa48 round 1e-i): `FF_UI_TESTING_LEGACY_STRUCTURAL=1` makes Duplicate Section and (round 2d-i) the
     /// whole-project version restore take today's whole sequence (flush the editor, undo-point copy, copy the rows, push the whole
     /// document back) instead of the editor-first path, so a UI test can time old and new in one session. Later rounds extend it to
@@ -606,5 +682,65 @@ enum TestMode {
         // where a concurrent isEnabled read on another thread could repopulate the cache with
         // the pre-removal value. See DiagnosticLogFile.invalidateEnabledCache's doc comment.
         DiagnosticLogFile.invalidateEnabledCache()
+    }
+}
+
+// MARK: - Phase 5 job A7: the zoom and switch transitions (docs/architecture/write-queue-plan/phase5/a7-a10-design.md, section 6)
+
+/// Which transition a `FF_UI_TESTING_LEGACY_TRANSITION` value turns back to today's path.
+enum UITestingTransitionKind {
+    case zoom
+    case modeSwitch
+}
+
+extension TestMode {
+    /// UI-test-only: `FF_UI_TESTING_LEGACY_TRANSITION=1|zoom|switch` makes the named transitions take today's code path (`1`: zoom and the
+    /// Rich Text / Markdown switch; `zoom`: the zooms only; `switch`: the switches only), so each job's A/B (speed, and the must-fail run of
+    /// the typing test) runs on one build. Removed with the legacy path after the user's approval. Same `isUITesting &&` guard as every
+    /// sibling flag.
+    static func isUITestingLegacyTransition(for kind: UITestingTransitionKind) -> Bool {
+        guard isUITesting, let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_LEGACY_TRANSITION"] else { return false }
+        switch raw {
+        case "1": return true
+        case "zoom": return kind == .zoom
+        case "switch": return kind == .modeSwitch
+        default: return false
+        }
+    }
+
+    /// UI-test-only: `FF_UI_TESTING_TRANS_HOLD_MS=<n>` makes a transition wait `n` milliseconds (a plain suspension) inside the window in
+    /// which typing used to be lost, so a real-app test can type there on purpose (the driver cannot type earlier than about 0.3 to 1 s
+    /// after a command). New path (a Rich Text zoom): after the barrier, while the page holds and records the typing, before the rows are
+    /// read and swapped in. Legacy path: after `flushContentToDatabase` and before the push, which is where today's loss lives. `nil`
+    /// (unset, unparseable, <= 0, or `isUITesting` false) means no hold.
+    static var uiTestingTransHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_TRANS_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// UI-test-only: `FF_UI_TESTING_TRANS_HOLD_FIRST_N=<n>` limits `FF_UI_TESTING_TRANS_HOLD_MS` to the first `n` transitions of this
+    /// launch. Default ONE (unset, unparseable or <= 0).
+    static var uiTestingTransHoldFirstN: Int {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_TRANS_HOLD_FIRST_N"],
+              let value = Int(raw), value > 0 else { return 1 }
+        return value
+    }
+
+    /// How many transitions `holdTransition(_:)` has held so far in this launch.
+    @MainActor private static var transHoldsGranted = 0
+
+    /// Waits `uiTestingTransHoldMs` milliseconds while fewer than `uiTestingTransHoldFirstN` transitions have been held in this launch;
+    /// returns at once otherwise (every normal launch: the first guard). Persists one `[TRANS-HOLD]` line when a hold begins (the marker
+    /// the real-app test reads to prove the window was really widened) and one when it ends.
+    @MainActor
+    static func holdTransition(_ label: String) async {
+        guard let milliseconds = uiTestingTransHoldMs, transHoldsGranted < uiTestingTransHoldFirstN else { return }
+        transHoldsGranted += 1
+        DebugLog.alwaysPersisted("[TRANS-HOLD] \(label) hold begins for \(milliseconds) ms")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+        DebugLog.alwaysPersisted("[TRANS-HOLD] \(label) hold ends")
     }
 }

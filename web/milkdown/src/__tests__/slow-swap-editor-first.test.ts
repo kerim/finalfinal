@@ -24,7 +24,7 @@
 import { undo, undoDepth } from '@milkdown/kit/prose/history';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getBlockChangesApi, setContentWithBlockIds, syncBlockIds } from '../api-content';
+import { setContentWithBlockIds, syncBlockIds } from '../api-content';
 import { deleteSectionEditorFirst } from '../api-section-delete';
 import { type StructuralSwapPayload, setTestAfterSwapHook, structuralSwapEditorFirst } from '../api-structural-swap';
 import { bibliographyEndMarkerPlugin } from '../bibliography-end-marker-plugin';
@@ -70,6 +70,7 @@ import {
   typeInto,
   waitForRAF,
 } from './editor-first-harness';
+import { takePendingAsReport } from './pending-for-test';
 
 const OP = 'dddddddd-2222-3333-4444-555555555555';
 
@@ -154,7 +155,7 @@ function swiftRepliesUndo(descriptor: { undoTopOpId?: string; redoTopOpId?: stri
 function expectNextEditIsAnUpdateOf(view: EditorView, startsWith: string, id: string): void {
   typeInto(view, startsWith, ' next');
   flushPendingBlockChanges();
-  const diff = getBlockChangesApi();
+  const diff = takePendingAsReport();
   expect(diff.updates.map((u) => u.id)).toEqual([id]);
   expect(diff.inserts).toEqual([]);
   expect(diff.deletes).toEqual([]);
@@ -208,7 +209,7 @@ async function makeManagedEditor() {
   const made = await makeEditor([bibliographyPlugin, bibliographyEndMarkerPlugin]);
   setContentWithBlockIds(MANAGED_MD, MANAGED_DOC_IDS, { managedBlockIds: MANAGED });
   await waitForRAF();
-  getBlockChangesApi();
+  takePendingAsReport();
   return made;
 }
 
@@ -339,10 +340,10 @@ describe('structuralSwapEditorFirst: the slow undo in one turn', () => {
     // (phase 4c job 2: the hold ends with the latch), so the poll that takes it comes after the reply.
     typeInto(view, 'B body', ' next');
     flushPendingBlockChanges();
-    expect(getBlockChangesApi(), 'held while the press is latched').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'held while the press is latched').toEqual(EMPTY_BATCH);
     await waitForRAF();
     swiftRepliesUndo({ redoTopOpId: OP });
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.updates.map((u) => u.id)).toEqual(['n-pb']);
     expect(diff.inserts).toEqual([]);
     expect(diff.deletes).toEqual([]);
@@ -528,10 +529,10 @@ describe('V3-3 and R2: typing since the press is put back; a document that chang
     swiftRepliesUndo({ redoTopOpId: OP });
     // The replay is new typing for block-sync: one update of the payload id, once.
     flushPendingBlockChanges();
-    const batch = getBlockChangesApi();
+    const batch = takePendingAsReport();
     expect(batch.updates.map((u) => u.id)).toEqual(['pb']);
     expect(batch.updates[0].textContent).toBe('B body. JUSTTYPED');
-    expect(getBlockChangesApi(), 'not queued a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'not queued a second time').toEqual(EMPTY_BATCH);
     expectNextEditIsAnUpdateOf(view, 'Chapter body', 'p1');
   });
 
@@ -593,7 +594,7 @@ describe('V3-3 and R2: typing since the press is put back; a document that chang
     );
     // The edit is in the batch and block-sync is running: it is not reported a second time, and the next edit is one update.
     await sleep(160);
-    expect(getBlockChangesApi(), 'the consumed edit is not queued again').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the consumed edit is not queued again').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP, 'failed');
     expectNextEditIsAnUpdateOf(view, 'Chapter body', 'p1');
   });
@@ -618,10 +619,10 @@ describe('R2b: typing just before the click, in a region the saved-copy comparis
     expect(idsInOrder()).toEqual(MANAGED_DOC_IDS);
     swiftRepliesUndo({ redoTopOpId: OP });
     flushPendingBlockChanges();
-    const batch = getBlockChangesApi();
+    const batch = takePendingAsReport();
     expect(batch.updates.map((u) => u.id)).toEqual(['bp']);
     expect(batch.updates[0].textContent).toBe('Reference one. LATE');
-    expect(getBlockChangesApi(), 'the replayed edit is not queued a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the replayed edit is not queued a second time').toEqual(EMPTY_BATCH);
   });
 
   const failures: Array<{
@@ -690,7 +691,7 @@ describe('R2b: typing just before the click, in a region the saved-copy comparis
     expect(swapTraces(posted).pop()).toMatch(trace);
     setTestAfterSwapHook(null);
     await sleep(160);
-    expect(getBlockChangesApi(), 'the consumed edit is not queued a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the consumed edit is not queued a second time').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP, 'failed');
     expectNextEditIsAnUpdateOf(view, 'Body two', 'b2'); // block-sync is running against the document on screen
   });
@@ -716,7 +717,7 @@ describe('noCheckpoint and idAlignment before the swap: nothing is touched', () 
       '[STRUCT-TRACE] swap-editor-first direction=undo opId=dddddddd ok=false reason=noCheckpoint detail=no registry entry'
     );
     await sleep(160);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
     expectNextEditIsAnUpdateOf(view, 'A body', 'pa');
   });
 
@@ -817,7 +818,7 @@ describe('the redo direction', () => {
     expect(idsInOrder()).toEqual(redoIds);
     swiftFinishesRedo(OP, { undoTopOpId: OP });
     flushPendingBlockChanges();
-    expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['n-pb']);
+    expect(takePendingAsReport().updates.map((u) => u.id)).toEqual(['n-pb']);
   });
 
   it('RD-gate-b: a redo whose re-check finds a change that is not typing swaps nothing, keeps the entry and returns the batch', async () => {

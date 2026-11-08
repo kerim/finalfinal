@@ -506,7 +506,9 @@ export class BlockwiseMapping {
 
   constructor(
     readonly src: readonly BlockInfo[],
-    readonly dst: readonly BlockInfo[]
+    readonly dst: readonly BlockInfo[],
+    /** Phase 5 job A10 (`RebaseArgs.carriedTextFirst`): a typed insertion at the very point where the target inserted text goes AFTER it. */
+    private readonly carriedTextFirst = false
   ) {
     this.srcKeys = new Set(src.map((block) => block.key));
     dst.forEach((block, index) => {
@@ -618,6 +620,13 @@ export class BlockwiseMapping {
     return covered.length > 0 && covered.every((index) => this.isGone(index));
   }
 
+  /** True when any block the range covers in part or whole is gone from the target (a zoom transition's "the step straddles the
+   * edge of the zoomed range": a Backspace joining a block inside the range with one outside it). */
+  rangeTouchesGone(from: number, to: number): boolean {
+    if (to < from) [from, to] = [to, from];
+    return this.spanned(from, to).some((index) => this.isGone(index));
+  }
+
   mapResult(pos: number, assoc: number): OverResult {
     const index = this.locate(pos);
     if (index >= 0 && pos > this.src[index].start && pos < this.src[index].end)
@@ -657,12 +666,34 @@ export class BlockwiseMapping {
     const offset = pos - this.src[srcIndex].start - 1;
     const diff = this.diffOf(srcIndex, dstIndex);
     let mapped = offset;
-    if (diff && offset > diff.start) {
+    const dst = this.dst[dstIndex];
+    if (diff && this.carriedAt(this.src[srcIndex].node, dst.node, diff, offset, assoc)) {
+      mapped = offset + diff.endB - diff.start;
+    } else if (diff && offset > diff.start) {
       if (offset >= diff.endA) mapped = offset - diff.endA + diff.endB;
       else mapped = assoc < 0 ? diff.start : diff.endB; // inside the changed run: its edge
     }
-    const dst = this.dst[dstIndex];
     return { pos: dst.start + 1 + Math.min(mapped, dst.node.content.size), delInfo: 0, recover: null };
+  }
+
+  /**
+   * `carriedTextFirst`: the target inserted text (a pure insertion) that could equally have been inserted at `offset`, the point a
+   * typed step inserts at: that text was typed before the step (the switch to Rich Text's carry: keys typed in the outgoing Markdown
+   * page, then keys typed on the new page), so the step goes after it. "Could equally" matters: the diff's common prefix slides the
+   * insertion past characters that repeat, so " box" typed before " harbour" is found as "box " one character later, and a typed key at
+   * the caret would otherwise go BEFORE the carried text (hand test 2026-11-06, a9-notes.md, "Cursor fix and switch notice").
+   */
+  private carriedAt(
+    src: ProsemirrorNode,
+    dst: ProsemirrorNode,
+    diff: ContentDiff,
+    offset: number,
+    assoc: number
+  ): boolean {
+    if (!this.carriedTextFirst || assoc <= 0 || diff.endA !== diff.start || offset > diff.start) return false;
+    if (offset === diff.start) return true;
+    const inserted = diff.endB - diff.start;
+    return dst.content.cut(offset + inserted).eq(src.content.cut(offset));
   }
 
   map(pos: number, assoc = 1): number {
@@ -721,6 +752,18 @@ export interface RebaseArgs {
   targetIds: ReadonlyMap<number, string>;
   /** Maps an id to its permanent form (a temp id Swift confirmed between the press and now), applied to both sides. */
   canonical?: (id: string) => string;
+  /** Default true (the Phase 4c rule, (e)): typing in a block the target no longer holds becomes its own paragraph at the gap. False
+   * (a zoom transition, Phase 5 job A7): such typing is NOT carried into the target (it goes to the rows as an ordinary batch, the
+   * design's `outside`), so a step inside a gone block is dropped, and a step that spans the edge of the range (a join of a block
+   * inside the range with one outside it) refuses the whole replay. */
+  ghostsForGoneBlocks?: boolean;
+  /** Default true (the restore pairing, `pairUnmatchedBlocks`). False (a zoom transition): the target's ids are a subset of the
+   * source's, so no block is paired by position; a target block without an id (a mini-Notes block) matches nothing. */
+  pairUnmatched?: boolean;
+  /** Default false. True (the switch to Rich Text, Phase 5 job A10): where the target inserted text at the very point a typed step
+   * inserts, the typed step goes after it. The target's text there is typing done in the outgoing Markdown page before the flip; the
+   * replayed step is typing done on the new page after it. */
+  carriedTextFirst?: boolean;
 }
 
 export interface RebaseOutcome {
@@ -768,16 +811,19 @@ export function rebaseTypingSteps(args: RebaseArgs): RebaseOutcome {
     dropped: 0,
   });
   const count = steps.length;
+  const ghosts = args.ghostsForGoneBlocks !== false;
   const srcBlocks = blocksOf(args.docAtPress, args.idsAtPress, canonical);
-  const dstBlocks = pairUnmatchedBlocks(srcBlocks, blocksOf(targetDoc, args.targetIds, canonical));
-  const plain = new BlockwiseMapping(srcBlocks, dstBlocks);
+  const dstPlain = blocksOf(targetDoc, args.targetIds, canonical);
+  const dstBlocks = args.pairUnmatched === false ? dstPlain : pairUnmatchedBlocks(srcBlocks, dstPlain);
+  const plain = new BlockwiseMapping(srcBlocks, dstBlocks, args.carriedTextFirst === true);
 
   // Typing inside a block the target no longer holds becomes its own paragraph at the gap. The paragraphs are made first, so the
-  // letters then follow the ordinary route (matched block, changed content) and stay together in one paragraph.
+  // letters then follow the ordinary route (matched block, changed content) and stay together in one paragraph. Not under
+  // `ghostsForGoneBlocks: false` (a zoom transition): that typing is dropped here and reaches the rows as an ordinary batch.
   const inversesOnly = new Mapping();
   for (let index = count - 1; index >= 0; index--) inversesOnly.appendMap(steps[index].inverted.getMap());
   const ghostTagByKey = new Map<string, number>();
-  for (let index = 0; index < count; index++) {
+  for (let index = 0; ghosts && index < count; index++) {
     const step = steps[index].step;
     if (!(step instanceof ReplaceStep) || step.slice.size === 0) continue;
     const key = plain.goneKeyAt(inversesOnly.slice(count - index).map(step.from, 1));
@@ -819,7 +865,7 @@ export function rebaseTypingSteps(args: RebaseArgs): RebaseOutcome {
       shifted.push({ key: ghost.key, start, end: start + paragraph.nodeSize, node: paragraph });
     });
     shifted.sort((a, b) => a.start - b.start);
-    over = new BlockwiseMapping(srcBlocks, shifted);
+    over = new BlockwiseMapping(srcBlocks, shifted, args.carriedTextFirst === true);
   }
 
   const chain = new RebaseMapping(
@@ -833,10 +879,11 @@ export function rebaseTypingSteps(args: RebaseArgs): RebaseOutcome {
     const span = spanOf(recorded.step);
     const back = chain.inversesOnly(index);
     // A change of the block itself (a heading id rewritten, a list wrapped) made to a block the target no longer holds is not carried
-    // to the paragraph made for the typing: that paragraph stands for the typed letters, not for the block.
+    // to the paragraph made for the typing: that paragraph stands for the typed letters, not for the block. Without ghosts (a zoom
+    // transition) it is dropped for every gone block: the block is outside the zoomed range and its change reaches the rows as a batch.
     if (span && (recorded.step instanceof ReplaceAroundStep || recorded.step instanceof AttrStep)) {
       const goneKey = plain.goneKeyAt(back.map(span.from, 1) + 1);
-      if (goneKey !== null && ghostTagByKey.has(goneKey)) {
+      if (goneKey !== null && (!ghosts || ghostTagByKey.has(goneKey))) {
         dropped++;
         continue;
       }
@@ -850,6 +897,14 @@ export function rebaseTypingSteps(args: RebaseArgs): RebaseOutcome {
         continue;
       }
       return failed(`step ${index + 1} of ${count} has no place in the target`);
+    }
+    if (
+      span &&
+      span.from !== span.to &&
+      !ghosts &&
+      over.rangeTouchesGone(back.map(span.from, 1), back.map(span.to, -1))
+    ) {
+      return failed(`step ${index + 1} of ${count} spans the edge of the zoomed range`);
     }
     if (span && span.from !== span.to && !over.rangeIntact(back.map(span.from, 1), back.map(span.to, -1))) {
       return failed(`step ${index + 1} of ${count} spans blocks the target has moved apart`);

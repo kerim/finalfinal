@@ -48,6 +48,8 @@ final class FetchContentWedge {
     var reply: String? = "late"
 
     func evaluate(_ script: String) async throws -> Any? {
+        // Step F (`flushAndAck`) finds a page with nothing pending, so the quit goes on to its fetch, which is what wedges.
+        if script.contains("flushReports") { return ScriptedJSEvaluator.quietPageAnswer("flushReports") }
         guard script.contains("getContent") else { return nil }
         getContentCalls += 1
         if wedge && !released {

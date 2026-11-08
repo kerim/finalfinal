@@ -177,4 +177,8 @@ final class DelayedProgressToast {
     static let finishingMessage = "Finishing the last change\u{2026}"
     static let undoingMessage = "Undoing\u{2026}"
     static let redoingMessage = "Redoing\u{2026}"
+    /// The carried switch between Rich Text and Markdown, shown once it has taken a second (Phase 5 jobs A9 and A10: the old editor stays
+    /// on screen and typeable until the new one has its text, so nothing else on screen says the switch is under way).
+    static let switchingToMarkdownMessage = "Switching to Markdown\u{2026}"
+    static let switchingToRichTextMessage = "Switching to Rich Text\u{2026}"
 }

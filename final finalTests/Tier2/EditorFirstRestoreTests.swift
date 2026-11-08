@@ -66,7 +66,7 @@ struct EditorFirstRestoreTests: QuickUndoFixtures {
         let plan = try #require(rig.controller.testLastRestorePlan)
         let payloadId = try #require(plan.rows.first { $0.textContent == "The A body." }?.id)   // the id the editor now holds
         rig.typingQueue.append(typing(id: payloadId, to: "The A body typed."))
-        let poll = rig.startPoll()
+        let poll = rig.startReport()
         rig.release(hold)
         #expect(await rig.awaitRuns([poll]))
         _ = await rig.waitUntilSettled()
@@ -179,7 +179,7 @@ struct EditorFirstRestoreTests: QuickUndoFixtures {
         let range = try #require(screenBefore.range(of: "The A body."), "the restored text is not on the screen")
         rig.editorText = screenBefore.replacingCharacters(in: range, with: typed)
         rig.typingQueue.append(typing(restoredBody, to: typed))
-        let poll = rig.startPoll()
+        let poll = rig.startReport()
         #expect(await gateWaitUntil({ rig.typingQueue.isEmpty }), "the poll did not fetch the typing")
         jobMayRun.signal()
         #expect(await rig.awaitRuns([poll]))

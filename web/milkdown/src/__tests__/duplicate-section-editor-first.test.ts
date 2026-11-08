@@ -13,7 +13,7 @@
 // `view.dispatch` wired through the production `runUndoTrackedDispatch`. Swift's side of the conversation is played by the test.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { confirmBlockIdsApi, getBlockChangesApi } from '../api-content';
+import { confirmBlockIdsApi } from '../api-content';
 import { deleteSectionEditorFirst } from '../api-section-delete';
 import {
   type DuplicateSectionResult,
@@ -43,6 +43,7 @@ import {
   typeInto,
   typeIntoNth,
 } from './editor-first-harness';
+import { takePendingAsReport } from './pending-for-test';
 
 const OP = 'dddddddd-2222-3333-4444-555555555555';
 const OP_2 = 'eeeeeeee-2222-3333-4444-555555555555';
@@ -82,11 +83,11 @@ describe('duplicateSectionEditorFirst', () => {
     ]);
     // The copy was re-baselined: the duplicate itself queues nothing, not even after block-sync's own debounce has run.
     await sleep(160);
-    expect(getBlockChangesApi(), 'the copies are never reported as inserts').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the copies are never reported as inserts').toEqual(EMPTY_BATCH);
 
     typeIntoNth(view, 'A body.', 1, ' typed'); // paragraph #1 starting "A body." is the COPY
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.inserts, 'typing in a copy is not an insert').toEqual([]);
     expect(diff.deletes).toEqual([]);
     expect(diff.updates.map((u) => u.id)).toEqual([r.copies[1].newId]);
@@ -191,7 +192,7 @@ describe('duplicateSectionEditorFirst', () => {
     expect(undoSectionDeleteEditorFirst(OP).ok).toBe(true);
     swiftFinishesUndo(OP, { redoTopOpId: OP });
     expect(idsInOrder()).toEqual(DOC.map((s) => s.name));
-    getBlockChangesApi();
+    takePendingAsReport();
 
     expect(pressRedo(view, OP), 'Cmd-Shift-Z routes to the undone duplicate').toBe(true);
     const redo = redoSectionDuplicateEditorFirst(OP, 'a', [], first.copies);
@@ -207,7 +208,7 @@ describe('duplicateSectionEditorFirst', () => {
 
     typeIntoNth(view, 'A body.', 1, ' typed');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.inserts).toEqual([]);
     expect(diff.updates.map((u) => u.id)).toEqual([first.copies[1].newId]);
   });
@@ -276,7 +277,7 @@ describe('duplicateSectionEditorFirst', () => {
     // The copy carries the pending text too (the editor is the truth), and the batch is consumed, not queued a second time.
     expect(view.state.doc.textContent.split('Sub text. (pending)').length - 1).toBe(2);
     await sleep(160);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
   });
 
   it('V1-6: a managed root is refused: nothing dispatched, no registry entry left, block-sync running', async () => {
@@ -303,7 +304,7 @@ describe('duplicateSectionEditorFirst', () => {
     // Block-sync is running: the next edit is recorded.
     typeInto(view, 'Chapter body', ' more');
     flushPendingBlockChanges();
-    expect(getBlockChangesApi().updates.map((u) => u.id)).toEqual(['p1']);
+    expect(takePendingAsReport().updates.map((u) => u.id)).toEqual(['p1']);
   });
 
   it('V1-6b: an unknown root and a root that is not a section leader are refused', async () => {
@@ -385,7 +386,7 @@ describe('duplicateSectionEditorFirst', () => {
     // Block-sync runs against the restored document: an edit is exactly one update of the ORIGINAL block.
     typeInto(view, 'A body', ' after');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.updates.map((u) => u.id)).toEqual(['pa']);
     expect(diff.inserts).toEqual([]);
     expect(diff.deletes).toEqual([]);
@@ -402,7 +403,7 @@ describe('duplicateSectionEditorFirst', () => {
     expect(undoSectionDeleteEditorFirst(OP).ok).toBe(true);
     swiftFinishesUndo(OP, { redoTopOpId: OP });
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
     expect(pressRedo(view, OP), 'routed structurally: the document equalled the saved copy at the press').toBe(true);
     typeInto(view, 'B body', ' typed after the press'); // ... and the user types before the redo's turn
 
@@ -414,7 +415,7 @@ describe('duplicateSectionEditorFirst', () => {
     const sent = [...redo.batch.updates];
     swiftFinishesRedo(OP, { undoTopOpId: OP });
     await sleep(160);
-    sent.push(...getBlockChangesApi().updates);
+    sent.push(...takePendingAsReport().updates);
     expect(
       sent.filter((u) => u.id === 'pb').map((u) => u.textContent),
       'the typing went out once, in the reply or the next poll'
@@ -546,10 +547,10 @@ describe('duplicateSectionEditorFirst', () => {
     expect(insertAt, 'the paragraph the blank one goes before must exist').toBeGreaterThan(-1);
     view.dispatch(view.state.tr.insert(insertAt, view.state.schema.nodes.paragraph.create()));
     flushPendingBlockChanges();
-    const reported = getBlockChangesApi();
+    const reported = takePendingAsReport();
     expect(reported.inserts.length, 'the empty paragraph is reported as an insert').toBe(1);
     confirmBlockIdsApi({ [reported.inserts[0].tempId]: 'sx-blank' });
-    getBlockChangesApi();
+    takePendingAsReport();
     expect(idsInOrder()).toEqual([
       'sx',
       'sx-intro',

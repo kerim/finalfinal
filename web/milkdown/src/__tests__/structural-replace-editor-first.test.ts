@@ -19,7 +19,7 @@
 
 import { Selection } from '@milkdown/kit/prose/state';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getBlockChangesApi, setContentWithBlockIds } from '../api-content';
+import { setContentWithBlockIds } from '../api-content';
 import { undoSectionDeleteEditorFirst } from '../api-section-undo';
 import {
   type ReplaceRangePayload,
@@ -59,6 +59,7 @@ import {
   typeIntoNth,
   waitForRAF,
 } from './editor-first-harness';
+import { takePendingAsReport } from './pending-for-test';
 
 const OP = 'dddddddd-2222-3333-4444-555555555555';
 const OP_2 = 'eeeeeeee-2222-3333-4444-555555555555';
@@ -152,7 +153,7 @@ const MANAGED_DOC_MD = [
 async function loadManagedDoc(): Promise<void> {
   setContentWithBlockIds(MANAGED_DOC_MD, MANAGED_DOC_IDS, { managedBlockIds: MANAGED_IDS });
   await waitForRAF();
-  getBlockChangesApi();
+  takePendingAsReport();
   expect(idsInOrder()).toEqual(MANAGED_DOC_IDS);
 }
 
@@ -197,7 +198,7 @@ describe('replaceRangeEditorFirst: section mode (the FLAT range)', () => {
     expect(r.predecessorId, 'the range began the document').toBeNull();
     // The change is applied and re-baselined: it queues nothing, not even after block-sync's own debounce has run.
     await sleep(160);
-    expect(getBlockChangesApi(), 'the new blocks are never reported as inserts').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the new blocks are never reported as inserts').toEqual(EMPTY_BATCH);
   });
 
   it('V2-1b: a deeper heading ends the flat range too (an H3 under an H2), and a longer body is replaced whole', async () => {
@@ -349,7 +350,7 @@ describe('replaceRangeEditorFirst: insertAfter mode', () => {
     expect(view.state.doc.child(0).eq(before.child(0))).toBe(true);
     expect(view.state.doc.child(4).eq(before.child(2))).toBe(true);
     await sleep(160);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
   });
 
   it('V2-1g: with no anchor the fragment goes after the last non-managed block, above Notes and Bibliography and their markers', async () => {
@@ -441,7 +442,7 @@ describe('replaceRangeEditorFirst: whole mode', () => {
     expect(r.predecessorId).toBeNull();
     for (const id of idsInOrder()) expect(isTempBlockId(id)).toBe(false);
     await sleep(160);
-    expect(getBlockChangesApi(), 'the replaced document queues nothing').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the replaced document queues nothing').toEqual(EMPTY_BATCH);
   });
 
   it('V2-1k: the caret is kept out of the bibliography span, as the whole-document push does', async () => {
@@ -501,7 +502,7 @@ describe('replaceRangeEditorFirst: a payload the editor cannot take is refused (
     // Block-sync is running: the next edit is exactly one update of the ORIGINAL block.
     typeInto(view, 'A body', ' more');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.updates.map((u) => u.id)).toEqual(['pa']);
     expect(diff.inserts).toEqual([]);
     expect(diff.deletes).toEqual([]);
@@ -566,7 +567,7 @@ describe('replaceRangeEditorFirst: a payload the editor cannot take is refused (
     setTestAfterReplaceHook(null);
     typeInto(view, 'A body', ' after');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.updates.map((u) => u.id)).toEqual(['pa']);
     expect(diff.inserts).toEqual([]);
     expect(diff.deletes).toEqual([]);
@@ -635,7 +636,7 @@ describe('replaceRangeEditorFirst: batch N, the replace and the re-baseline are 
     expect(r.batch.deletes).toEqual([]);
     await sleep(160);
     expect(
-      getBlockChangesApi(),
+      takePendingAsReport(),
       'the consumed edit is not queued a second time, and the replace queues nothing'
     ).toEqual(EMPTY_BATCH);
   });
@@ -653,7 +654,7 @@ describe('replaceRangeEditorFirst: batch N, the replace and the re-baseline are 
       'applied BEFORE the job that removes the row'
     ).toEqual(['pa']);
     await sleep(160);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
     expect(view.state.doc.textContent).not.toContain('(pending)');
   });
 
@@ -670,7 +671,7 @@ describe('replaceRangeEditorFirst: batch N, the replace and the re-baseline are 
 
     typeIntoNth(view, startsWith, 0, ' typed');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
 
     expect(diff.inserts, 'typing in replaced content is not an insert').toEqual([]);
     expect(diff.deletes).toEqual([]);
@@ -720,7 +721,7 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     // And block-sync is running against the restored document: typing is an update of the original id.
     typeInto(view, 'B body', ' later');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.updates.map((x) => x.id)).toEqual(['pb']);
     expect(diff.inserts).toEqual([]);
   });
@@ -737,7 +738,7 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     expect(pressUndo(view, OP)).toBe(true);
     expect(undoSectionDeleteEditorFirst(OP).ok).toBe(true);
     swiftFinishesUndo(OP, { redoTopOpId: OP });
-    getBlockChangesApi();
+    takePendingAsReport();
 
     expect(pressRedo(view, OP), 'Cmd-Shift-Z routes to the undone replace').toBe(true);
     const redo = redoReplaceRangeEditorFirst(OP, payload());
@@ -752,7 +753,7 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     ] as string;
     typeIntoNth(view, typedStart, 0, ' typed');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.inserts).toEqual([]);
     expect(diff.updates.map((x) => x.id)).toEqual([first.insertedIds[1] ?? first.insertedIds[0]]);
   });
@@ -767,7 +768,7 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     expect(undoSectionDeleteEditorFirst(OP).ok).toBe(true);
     swiftFinishesUndo(OP, { redoTopOpId: OP });
     await sleep(160);
-    getBlockChangesApi();
+    takePendingAsReport();
     expect(pressRedo(made.view, OP)).toBe(true);
     return made;
   }
@@ -790,7 +791,7 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     expect(redo.batch.updates[0].textContent).toBe('A body. typed after the press');
     receiveRedoOutcome(OP, 'failed');
     await sleep(160);
-    expect(getBlockChangesApi(), 'not sent a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'not sent a second time').toEqual(EMPTY_BATCH);
   });
 
   it('R-gate-elsewhere: typing outside the replaced section does not refuse the redo: the section is replaced again, the typing is kept and goes out once', async () => {
@@ -811,7 +812,7 @@ describe('replaceRangeEditorFirst: undo, redo and a second restore', () => {
     const sent = [...redo.batch.updates];
     swiftFinishesRedo(OP, { undoTopOpId: OP });
     await sleep(160);
-    sent.push(...getBlockChangesApi().updates);
+    sent.push(...takePendingAsReport().updates);
     expect(
       sent.filter((u) => u.id === 'pb').map((u) => u.textContent),
       'the typing went out once, in the reply or the next poll'

@@ -87,7 +87,7 @@ extension EditorViewState {
     /// Clear only the range instead, bump the epoch, and spawn the same recovery
     /// `flushContentToDatabase`'s own lost-root branch uses; it queues behind the mutex via
     /// `acquireZoomRestore()`, so this introduces no new race.
-    private func clearZoomFlagsSafely() {
+    func clearZoomFlagsSafely() {
         guard zoomedSectionId != nil else {
             zoomedSectionIds = nil
             zoomedSectionId = nil
@@ -137,6 +137,9 @@ extension EditorViewState {
 
         // Flush any pending editor edits before zooming
         flushContentToDatabase()
+        // UI-test seam (Phase 5 job A7, `FF_UI_TESTING_TRANS_HOLD_MS`): on today's path the window in which typing is lost lies between
+        // this flush and the push below. No effect outside UI tests.
+        await TestMode.holdTransition("zoom in (legacy)")
         // Phase 4a: a zoom starts. The zoomed Markdown save (`scheduleZoomedReparse`, `replaceBlocksInRange`) stays direct
         // and untouched, and the editor text from here is a section of the document, so the per-block writer's baseline
         // describes nothing. Leaving the zoom pushes the full text through `setContent`, which puts the baseline back to
@@ -161,82 +164,22 @@ extension EditorViewState {
         }
 
         do {
-            // Find the heading block BEFORE computing descendant IDs
-            guard let headingBlock = try db.fetchBlock(id: sectionId),
-                  let headingLevel = headingBlock.headingLevel else {
-                DebugLog.log(.zoom, "[Zoom] zoomToSection(\(sectionId)) aborted: block missing or not a heading (headingLevel nil)")
+            // The zoomed chapter's text, ids and range, read from the rows (EditorViewState+ZoomTargets.swift, shared with the
+            // carried zoom of Phase 5 job A7).
+            guard let target = try buildZoomInTarget(sectionId: sectionId, mode: mode, db: db, pid: pid) else {
                 clearZoomFlagsSafely()
                 contentState = .idle
                 return
             }
-
-            // Calculate zoomed section IDs AFTER confirming block exists
-            let descendantIds = mode == .shallow
-                ? getShallowDescendantIds(of: sectionId)
-                : getDescendantIds(of: sectionId)
+            let descendantIds = target.descendantIds
             zoomedSectionIds = descendantIds
-
-            // Find the range boundary (next heading that ends this zoom scope)
-            let allBlocks = try db.fetchBlocks(projectId: pid)
-            let sorted = allBlocks.sorted { $0.sortOrder < $1.sortOrder }
-            let endSortOrder = findEndSortOrder(
-                after: headingBlock, headingLevel: headingLevel, mode: mode, in: sorted
-            )
-
             // Store range for later use
-            zoomedBlockRange = (start: headingBlock.sortOrder, end: endSortOrder)
-
-            // Fetch blocks in the range (including the heading itself)
-            // Exclude bibliography and notes blocks (managed sections)
-            var zoomedBlocks = sorted.filter { block in
-                block.sortOrder >= headingBlock.sortOrder &&
-                !block.isBibliography &&
-                !block.isNotes &&
-                (endSortOrder == nil || block.sortOrder < endSortOrder!)
-            }
-
-            let headingLogMessage = "[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), " +
-                "level=\(headingLevel), fragment=\"\(String(headingBlock.markdownFragment.prefix(80)))\""
-            DebugLog.log(.zoom, headingLogMessage)
-            DebugLog.log(.zoom, "[Zoom] endSortOrder=\(String(describing: endSortOrder)), zoomedBlocks=\(zoomedBlocks.count)")
-            if let first = zoomedBlocks.first {
-                DebugLog.log(.zoom, "[Zoom] First block: id=\(first.id), sort=\(first.sortOrder), type=\(first.blockType)")
-            }
-
-            let zoomedImageMeta = zoomedBlocks
-                .filter { $0.blockType == .image }
-                .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
-            let zoomedPairs = BlockParser.alignmentPairs(zoomedBlocks)
-            let zoomedBlockIds = zoomedPairs.map { $0.id }
-            let zoomedExpectedBlocks = zoomedPairs.map { $0.meta }
-
-            var zoomedContent = BlockParser.assembleMarkdown(from: zoomedBlocks)
-
-            // Append mini #Notes section if zoomed content contains footnote references
-            let footnoteRefs = FootnoteSyncService.extractFootnoteRefs(from: zoomedContent)
-            if !footnoteRefs.isEmpty {
-                // Get ALL notes blocks from the full document (heading + definition blocks)
-                let notesBlocks = sorted.filter { $0.isNotes }
-                if !notesBlocks.isEmpty {
-                    let notesMd = BlockParser.assembleMarkdown(from: notesBlocks)
-                    let defs = FootnoteSyncService.extractFootnoteDefinitions(from: notesMd)
-                    var miniNotes = "\n\n<!-- ::zoom-notes:: -->\n# Notes\n"
-                    for ref in footnoteRefs {
-                        if let def = defs[ref], !def.isEmpty {
-                            miniNotes += "\n[^\(ref)]: \(def)\n"
-                        } else {
-                            miniNotes += "\n[^\(ref)]: \n"
-                        }
-                    }
-                    zoomedContent += miniNotes
-                }
-            }
-
-            // Compute max footnote label across full document body
-            let bodyBlocks = sorted.filter { !$0.isNotes && !$0.isBibliography }
-            let fullBodyContent = BlockParser.assembleMarkdown(from: bodyBlocks)
-            let allDocRefs = FootnoteSyncService.extractFootnoteRefs(from: fullBodyContent)
-            let maxLabel = allDocRefs.compactMap { Int($0) }.max() ?? 0
+            zoomedBlockRange = target.range
+            let zoomedImageMeta = target.document.imageMeta
+            let zoomedBlockIds = target.document.blockIds
+            let zoomedExpectedBlocks = target.document.expected
+            let zoomedContent = target.document.markdown
+            let maxLabel = target.maxLabel
 
             // Push zoom footnote state to JS BEFORE setting content (prevents timing gap)
             NotificationCenter.default.post(
@@ -272,36 +215,9 @@ extension EditorViewState {
             if editorMode == .source {
                 forcedPushGeneration += 1
             }
-            if editorMode == .source, let syncService = sectionSyncService {
-                // Compute offsets from zoomedBlocks (same data that produced zoomedContent)
-                let sortedBlocks = zoomedBlocks.sorted { a, b in
-                    let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-                    let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-                    return aKey < bKey
-                }
-                // MUST stay in sync with BlockParser.assembleMarkdown filtering
-                let nonEmptyBlocks = sortedBlocks.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
-                var blockOffset: [String: Int] = [:]
-                var offset = 0
-                for (i, block) in nonEmptyBlocks.enumerated() {
-                    if i > 0 { offset += 2 }
-                    blockOffset[block.id] = offset
-                    offset += block.markdownFragment.count
-                }
-
-                let zoomedSections = sections
-                    .filter { descendantIds.contains($0.id) && !$0.isBibliography }
-                    .sorted { $0.sortOrder < $1.sortOrder }
-                var adjustedSections: [SectionViewModel] = []
-                for section in zoomedSections {
-                    if let off = blockOffset[section.id] {
-                        adjustedSections.append(section.withUpdates(startOffset: off))
-                    }
-                }
-                sourceContent = syncService.injectSectionAnchors(
-                    markdown: zoomedContent,
-                    sections: adjustedSections
-                )
+            if editorMode == .source {
+                // The anchors injected at the zoomed offsets (EditorViewState+ZoomTargets.swift, shared with Phase 5 job A8's carried zoom).
+                sourceContent = markdownZoomInText(target)
             } else {
                 sourceContent = zoomedContent
             }
@@ -378,6 +294,8 @@ extension EditorViewState {
 
         // Flush any pending editor edits before reading from DB
         flushContentToDatabase()
+        // UI-test seam (Phase 5 job A7): today's loss window lies between this flush and the push. No effect outside UI tests.
+        await TestMode.holdTransition("zoom out (legacy)")
 
         // Sync mini-Notes definitions back to DB before fetching fresh blocks
         // (mirrors handleZoomedFootnoteInsertion pattern at ContentView+ContentRebuilding.swift:384-387)
@@ -450,22 +368,13 @@ extension EditorViewState {
     ) async throws -> Bool {
         // Fetch ALL blocks from DB - database is always complete
         let allBlocks = try db.fetchBlocks(projectId: pid)
-        // assembleMarkdownForEditor (not plain assembleMarkdown): this merged content
-        // becomes editorState.content again, unlike zoomToSection's zoomedContent above
-        // (which already excludes bibliography blocks and stays on assembleMarkdown) —
-        // see BlockParser.bibliographyEndMarker's doc comment.
-        let mergedContent = BlockParser.assembleMarkdownForEditor(from: allBlocks)
-
-        let allImageMeta = allBlocks
-            .filter { $0.blockType == .image }
-            .map { ContentView.ImageBlockMeta(id: $0.id, width: $0.imageWidth, caption: $0.imageCaption, alt: $0.imageAlt, src: $0.imageSrc) }
-        let allPairs = BlockParser.alignmentPairs(allBlocks)
-        let allBlockIds = allPairs.map { $0.id }
-        let allExpectedBlocks = allPairs.map { $0.meta }
-        // Restored (unzoomed) document includes Bibliography/Notes headings again -- flag
-        // them managed so the ⌘-hover zoom hint excludes them (see BlockSyncService.
-        // setContentWithBlockIds's managedBlockIds doc comment).
-        let allManagedBlockIds = Set(allBlocks.filter { $0.isBibliography || $0.isNotes }.map { $0.id })
+        // The whole document's text, ids and metadata (EditorViewState+ZoomTargets.swift, shared with the carried zoom out).
+        let fullTarget = Self.fullDocumentTarget(from: allBlocks)
+        let mergedContent = fullTarget.markdown
+        let allImageMeta = fullTarget.imageMeta
+        let allBlockIds = fullTarget.blockIds
+        let allExpectedBlocks = fullTarget.expected
+        let allManagedBlockIds = fullTarget.managedBlockIds
 
         // M3 fix-round-2: everything above this point only READS (fetches blocks, assembles
         // strings in memory) -- nothing has been pushed or assigned yet, so it's safe to bail
@@ -516,38 +425,9 @@ extension EditorViewState {
         if editorMode == .source {
             forcedPushGeneration += 1
         }
-        if editorMode == .source, let syncService = sectionSyncService {
-            // Compute offsets from allBlocks (same data that produced mergedContent)
-            let sortedBlocks = allBlocks.sorted { a, b in
-                let aKey = (a.sortOrder, a.blockType == .heading ? 0 : 1)
-                let bKey = (b.sortOrder, b.blockType == .heading ? 0 : 1)
-                return aKey < bKey
-            }
-            // MUST stay in sync with BlockParser.assembleMarkdown filtering
-            let nonEmptyBlocks = sortedBlocks.filter { !BlockParser.isEmptyFragment($0.markdownFragment) }
-            var blockOffset: [String: Int] = [:]
-            var offset = 0
-            for (i, block) in nonEmptyBlocks.enumerated() {
-                if i > 0 { offset += 2 }
-                blockOffset[block.id] = offset
-                offset += block.markdownFragment.count
-            }
-
-            let allSectionsList = sections.filter { !$0.isBibliography }.sorted { $0.sortOrder < $1.sortOrder }
-            var adjustedSections: [SectionViewModel] = []
-            for section in allSectionsList {
-                if let off = blockOffset[section.id] {
-                    adjustedSections.append(section.withUpdates(startOffset: off))
-                }
-            }
-            let withAnchors = syncService.injectSectionAnchors(
-                markdown: mergedContent,
-                sections: adjustedSections
-            )
-            sourceContent = syncService.injectBibliographyMarker(
-                markdown: withAnchors,
-                sections: sections
-            )
+        if editorMode == .source {
+            // Anchors and the bibliography marker injected (EditorViewState+ZoomTargets.swift, shared with Phase 5 job A8).
+            sourceContent = markdownFullDocumentText(mergedContent, allBlocks: allBlocks)
         } else {
             sourceContent = mergedContent
         }
@@ -832,20 +712,18 @@ extension EditorViewState {
         outOfQueueWriteGeneration &+= 1
 
         do {
-            // Strip zoom notes once and reuse for both mini-Notes sync and content parsing.
-            // stripZoomNotes returns content unchanged when no marker is present.
-            let stripResult = SectionSyncService.stripZoomNotes(from: contentToFlush)
-
-            if zoomedBlockRange != nil, let miniNotes = stripResult.miniNotes, !miniNotes.isEmpty {
-                sectionSyncService?.syncMiniNotesBackPublic(miniNotes, projectId: pid)
+            // Zoomed: only the blocks of the zoom range are replaced. Phase 5 job A8 moved the body into `applyZoomedRangeWrite`
+            // (EditorViewState+ZoomedRangeWrite.swift), which the queued zoomed write (`MarkdownBlockWriter.writeZoomedNow`) runs too.
+            if zoomedBlockRange != nil {
+                try applyZoomedRangeWrite(text: contentToFlush, db: db, pid: pid)
+                return
             }
+            // Strip zoom notes (returns the content unchanged when no marker is present).
+            let contentToParse = SectionSyncService.stripZoomNotes(from: contentToFlush).stripped
 
-            let contentToParse = stripResult.stripped
-
-            // Metadata preserved atomically by replaceBlocks/replaceBlocksInRange
-            // inside their write transactions (8 fields vs. the old pre-read's 3)
-            // C5: highest-stakes site -- the general content-flush path (editor-mode switches,
-            // zoom flushes, etc.) -- threads the DB-resolved Notes title explicitly.
+            // Metadata preserved atomically by replaceBlocks inside its write transaction (8 fields vs. the old pre-read's 3)
+            // C5: highest-stakes site -- the general content-flush path (editor-mode switches, zoom flushes, etc.) -- threads the
+            // DB-resolved Notes title explicitly.
             let blocks = BlockParser.parse(
                 markdown: contentToParse,
                 projectId: pid,
@@ -855,104 +733,12 @@ extension EditorViewState {
 
             DebugLog.log(.zoom, "[FLUSH] Input length=\(contentToParse.count), parsed \(blocks.count) blocks")
 
-            if let range = zoomedBlockRange {
-                // Zoomed: only replace blocks within the zoom range. `anchorHeadingId` pins
-                // the zoom ROOT by position (see replaceBlocksInRange's doc comment) so a
-                // rename keeps its id/metadata instead of churning to a fresh parser id --
-                // the root cause of the rename-empties-sidebar bug this fixes.
-                let inserted = try db.replaceBlocksInRange(
-                    blocks,
-                    for: pid,
-                    startSortOrder: range.start,
-                    endSortOrder: range.end,
-                    anchorHeadingId: zoomedSectionId
-                )
-
-                // Resolve the zoom root from `inserted` (the rows replaceBlocksInRange
-                // actually wrote), add-only: never remove an id from zoomedSectionIds, only
-                // ever add to it (SectionSyncService pairs its own Section rows to
-                // zoomedSectionIds by array position -- removing an id can shift that pairing
-                // and corrupt unrelated section metadata; a dead id left behind is harmless
-                // because nothing in the DB matches it). M9 (judge fix round): reads `inserted`
-                // directly instead of two redundant `fetchBlock(id:)` round trips -- every row
-                // in `inserted` is already a real, live, just-written DB row.
-                var resolvedRootId: String?
-                if let currentId = zoomedSectionId,
-                   inserted.contains(where: { $0.id == currentId && $0.blockType == .heading }) {
-                    // Common case, now including a rename: the anchor bound successfully in
-                    // replaceBlocksInRange, so the root kept its own id.
-                    resolvedRootId = currentId
-                } else if let fallbackHeading = inserted.first(where: {
-                    $0.blockType == .heading && !$0.isNotes && !$0.isBibliography
-                }) {
-                    // The anchor declined to bind (its heading line was removed entirely, or
-                    // this was a demotion colliding with another real heading's title -- see
-                    // resolveAnchorHeading). Fall back to the first surviving, non-managed
-                    // heading actually inserted.
-                    resolvedRootId = fallbackHeading.id
-                    zoomedSectionId = fallbackHeading.id
-                }
-
-                guard let resolvedRootId else {
-                    // No heading survived at all: the zoom root's own line was deleted and it
-                    // had no children to fall back to. Do NOT clear zoomedSectionId/
-                    // zoomedSectionIds here -- that was the original data-loss bug (clearing
-                    // zoom state immediately left a window where a later Markdown-mode
-                    // full-document reparse could race in and overwrite the rest of the
-                    // document, since those reparse paths gate on zoomedSectionId == nil).
-                    // Only the range clears; the same teardown a real zoom-out uses restores
-                    // the full document and then clears the rest of the zoom state safely.
-                    zoomedBlockRange = nil
-                    blockReparseTask?.cancel()
-                    blockReparseTask = nil
-                    // Episode token (M3, judge fix round): lets clearZoomRestoringEditor tell
-                    // apart "the episode it was spawned for" from a later zoom-in/zoom-out/
-                    // project-switch that already resolved this by the time it wakes up.
-                    zoomEpoch += 1
-                    Task { @MainActor [weak self] in
-                        await self?.clearZoomRestoringEditor()
-                    }
-                    return
-                }
-
-                // Add-only: fold in every inserted outline heading/pseudo-section (new
-                // sections created while zoomed, plus the resolved root itself) without ever
-                // removing a prior id.
-                let newSectionIds = inserted
-                    .filter { ($0.isOutlineHeading || $0.isPseudoSection) && !$0.isNotes && !$0.isBibliography }
-                    .map { $0.id }
-                zoomedSectionIds = (zoomedSectionIds ?? []).union(newSectionIds)
-
-                // Recalculate zoomedBlockRange from where the WRITTEN blocks actually landed --
-                // M2 fix (judge round): the old `newStart + Double(blocks.count)` assumed the
-                // resolved root was the FIRST written block (false on the fallback path, where
-                // the root can land after other rows) and that `blocks.count` equals the number
-                // of rows actually inserted (false whenever handleMachineManagedBlock skips or
-                // merges a row instead of inserting it) -- both together let the range overshoot
-                // its real end, so the NEXT flush would delete the following section's heading
-                // (unprotected, in range, its title absent from the new blocks) and duplicate a
-                // leading paragraph. Re-fetches every inserted row's LIVE, post-renumberSortOrders
-                // position instead of trusting `inserted`'s own sortOrder fields (assigned BEFORE
-                // renumberSortOrders reassigned the whole project's coordinate space, so they're
-                // stale the instant that call returns).
-                let allBlocksAfterWrite = try db.fetchBlocks(projectId: pid)
-                let insertedIds = Set(inserted.map { $0.id })
-                let insertedLiveSortOrders = allBlocksAfterWrite
-                    .filter { insertedIds.contains($0.id) }
-                    .map { $0.sortOrder }
-                if let newStart = allBlocksAfterWrite.first(where: { $0.id == resolvedRootId })?.sortOrder,
-                   let maxInsertedSort = insertedLiveSortOrders.max() {
-                    let blockAtEnd = allBlocksAfterWrite.first { $0.sortOrder > maxInsertedSort }
-                    zoomedBlockRange = (start: newStart, end: blockAtEnd?.sortOrder)
-                }
-            } else {
-                // Not zoomed: full document replace (existing behavior)
-                try writeWholeDocumentRows(blocks, to: db, projectId: pid, skipUnchangedWrite: skipUnchangedWrite)
-                // Phase 4a: a direct whole-document write replaced the rows (new ids for most block types, or none written
-                // when `skipUnchangedWrite` found them unchanged). The Markdown per-block writer's baseline ids are
-                // stale either way; its next fire compares with the stored rows again.
-                markdownWriter.noteDirectWholeWrite(text: contentToParse)
-            }
+            // Not zoomed: full document replace (existing behavior)
+            try writeWholeDocumentRows(blocks, to: db, projectId: pid, skipUnchangedWrite: skipUnchangedWrite)
+            // Phase 4a: a direct whole-document write replaced the rows (new ids for most block types, or none written
+            // when `skipUnchangedWrite` found them unchanged). The Markdown per-block writer's baseline ids are
+            // stale either way; its next fire compares with the stored rows again.
+            markdownWriter.noteDirectWholeWrite(text: contentToParse)
         } catch {
             DebugLog.log(.zoom, "[EditorViewState] flushContentToDatabase error: \(error)")
         }
@@ -969,7 +755,7 @@ extension EditorViewState {
     /// block-sync-plugin.ts's incremental `detectChanges()` silently drops a pure
     /// block move (same id, same content, different position) when the ProseMirror
     /// node reference is unchanged -- so the incremental diff alone (as used by
-    /// `pollBlockChangesNow()`) can't be trusted before these reads. This does a full
+    /// the editor's block reports) can't be trusted before these reads. This does a full
     /// re-parse via `flushContentToDatabase()` instead, which re-derives every
     /// block's sortOrder from document order.
     ///
@@ -1032,24 +818,6 @@ extension EditorViewState {
     }
 
     // MARK: - Block Range Helpers
-
-    /// Find the sortOrder of the first heading that ends a zoom scope.
-    /// - Full zoom: stops at the next heading with level <= the zoomed heading's level
-    /// - Shallow zoom: stops at the very next heading of any level
-    private func findEndSortOrder(
-        after headingBlock: Block, headingLevel: Int, mode: ZoomMode, in sorted: [Block]
-    ) -> Double? {
-        for block in sorted where block.sortOrder > headingBlock.sortOrder {
-            if block.blockType == .heading {
-                if mode == .shallow {
-                    return block.sortOrder
-                } else if let level = block.headingLevel, level <= headingLevel {
-                    return block.sortOrder
-                }
-            }
-        }
-        return nil
-    }
 
     // MARK: - Descendant Helpers
 

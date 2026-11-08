@@ -31,6 +31,15 @@ struct EditorSnapshot: Codable, Equatable {
     }
 }
 
+// MARK: - BlockReportRelay
+
+/// The test page's `blockReport` handler: what `MilkdownCoordinator+MessageDispatch.swift` does with the message, synchronously.
+final class BlockReportRelay: NSObject, WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated { ReportApplier.route(body: message.body, from: message.webView) }
+    }
+}
+
 // MARK: - EditorTestHelper
 
 @MainActor
@@ -60,6 +69,13 @@ final class EditorTestHelper: NSObject, WKNavigationDelegate {
         // Use non-persistent data store for test isolation
         configuration.websiteDataStore = WKWebsiteDataStore.nonPersistent()
         configuration.setURLSchemeHandler(EditorSchemeHandler(), forURLScheme: "editor")
+        if editorType == .milkdown {
+            // Phase 5 job B4: as in the app (MilkdownEditor.swift), the Rich Text page reports its block changes itself and the
+            // reports go to the intake of whichever `BlockSyncService` is configured with this web view (`ReportApplier.route`).
+            // Without this nothing would ever carry a test's typing to the database: the 2-second poll that used to is gone.
+            configuration.userContentController.addUserScript(ReportIntake.configUserScript())
+            configuration.userContentController.add(BlockReportRelay(), name: "blockReport")
+        }
 
         self.webView = WKWebView(
             frame: CGRect(x: 0, y: 0, width: 800, height: 600),

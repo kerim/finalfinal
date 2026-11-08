@@ -151,7 +151,6 @@ extension LifecycleEntryStatic {
         func safetyNetReleasesABarrierATailLeftHeld() async throws {
             let rig = try LifecycleFlushHarness()
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = LifecycleTailRig.fresh
 
             try await rig.withEntry {
@@ -169,7 +168,6 @@ extension LifecycleEntryStatic {
         func joinedQuitKeepsItsBarrierThroughACompletedTail() async throws {
             let rig = try LifecycleFlushHarness()
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = LifecycleTailRig.fresh
             var joinedKind: LifecycleKind?
 

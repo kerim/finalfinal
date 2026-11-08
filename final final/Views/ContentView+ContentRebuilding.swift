@@ -473,14 +473,9 @@ extension ContentView {
         // tell whether zoom or the active project changed while it was in flight.
         let zoomedSectionIdAtStart = editorState.zoomedSectionId
 
-        // No `blockSyncService.beginDatabaseRebuild()` marker needed here (t-7c1d3fd8,
-        // Finding #1): unlike the other three `.bibliographyUpdate` sites, this path never
-        // force-flushes the editor's JS-side pending-change queue via
-        // `pollBlockChangesNow()`/`pollBlockChangesNowForDatabaseRebuild()` -- it flushes
+        // Unlike the other three `.bibliographyUpdate` sites, this path does not `flushForDatabaseRebuild()`: it flushes
         // the already-cached `editorState.content` string straight to the database below
-        // (`flushContentToDatabase()` is synchronous and calls into `BlockParser`/GRDB only,
-        // never `BlockSyncService`'s poll machinery). With no `getBlockChanges()` fetch in
-        // this path, there is no parked routine-poll batch for a marker to protect.
+        // (`flushContentToDatabase()` is synchronous and calls into `BlockParser`/GRDB only).
         // Flush current editor content to DB before modifying
         // Does not wait for a pending section-delete job (plan D7): zoomed only. Delete Section is refused while zoomed, and
         // zooming in already waited for every delete job queued before it.

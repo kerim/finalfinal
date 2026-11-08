@@ -113,7 +113,6 @@ struct EditorFirstSwitchCaretTests {
     func testSwitchHeldForDeleteWorkIsDroppedWhenACloseStarts() async throws {
         let rig = try EditorFirstRig(markdown: "# First Chapter\n\nBody one.\n\n## Second Section\n\nBody two.")
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [weak rig] in try? rig?.assembledMarkdown() }
         let seen = GateOrderLog()
         let willObserver = NotificationCenter.default.addObserver(forName: .willToggleEditorMode, object: nil, queue: .main) { _ in

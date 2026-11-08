@@ -3,7 +3,7 @@
 //  final finalTests
 //
 //  Tier 2 (t-94369a83 Phase 4b slice 2b): what the quick undo's guard suites share. The helpers on `EditorFirstRig` that press a
-//  key, poll and wait, and the `QuickUndoFixtures` protocol (the article and book6 rigs, the delete helper, the stand-in rebuild
+//  key, report the typing and wait, and the `QuickUndoFixtures` protocol (the article and book6 rigs, the delete helper, the stand-in rebuild
 //  that stamps its read the way the three rebuild handlers do). Each suite conforms; nothing here is a test.
 //
 
@@ -23,11 +23,13 @@ extension EditorFirstRig {
         return run
     }
 
-    /// One routine poll cycle, in a child task.
-    func startPoll() -> QuickUndoChildRun {
+    /// The page reports the typing it holds (what `typeIntoEditor` queued), in a child task that ends once the intake has decided
+    /// every report it posted (applied through the writer, or given up). Phase 5 B4: it was one routine poll cycle.
+    func startReport() -> QuickUndoChildRun {
         let run = QuickUndoChildRun()
         Task { @MainActor in
-            await self.sync.pollBlockChangesForTest()
+            let through = self.postQueuedTyping()
+            _ = await self.sync.reportApplier.waitDecided(session: Self.reportSession, through: through, timeout: 10)
             run.done = true
         }
         return run

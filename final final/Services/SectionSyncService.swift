@@ -19,6 +19,19 @@ class SectionSyncService {
     private var projectDatabase: ProjectDatabase?
     private var projectId: String?
 
+    /// Phase 5 job B3-0: the typed handle the section-sync write goes through (the writer's queue), wired with the bibliography and
+    /// Notes services' (`ContentView+ProjectLifecycle.swift`). nil (an unwired service, tests) writes directly as before.
+    @ObservationIgnored var systemWriter: SystemWriter?
+    /// B3-0: one number per run, taken on the main actor when the run starts; a debounced run whose number is no longer the newest by
+    /// its turn writes nothing (`performSectionSyncWrite`).
+    @ObservationIgnored var sectionWriteRequests = 0
+    /// B3-0: no run writes after a newer one has written (`SectionSyncWriteOrder.claim`, inside the write transaction).
+    @ObservationIgnored let sectionWriteOrder = SectionSyncWriteOrder()
+    #if DEBUG
+    /// Test-only: what each run's write did ("written", "overtaken at turn", "overtaken at write", "direct", "refused").
+    @ObservationIgnored var testSectionSyncOutcomes: [String] = []
+    #endif
+
     /// Whether the service is properly configured with database and project ID
     var isConfigured: Bool {
         projectDatabase != nil && projectId != nil
@@ -201,6 +214,12 @@ class SectionSyncService {
         lastSyncedContent = ""
     }
 
+    /// Phase 5 job A7: `markdown` is what the section rows already describe (a carried zoom just put the rows' own text into the editor),
+    /// so the content observer's call for it is skipped, as it is for any text this service has just synced.
+    func noteContentAlreadySynced(_ markdown: String) {
+        lastSyncedContent = markdown
+    }
+
     /// Force immediate sync (e.g., before app quit).
     /// - Parameter fromEditorChange: Pass `true` when this flush represents the user's real,
     ///   settled editor content (e.g. `handleSaveVersion`'s "flush before snapshot" — the
@@ -220,7 +239,7 @@ class SectionSyncService {
         debounceTask?.cancel()
         let syncPendingToken = acquireSyncPending()
         defer { releaseSyncPending(syncPendingToken) }
-        await syncContent(markdown, fromEditorChange: fromEditorChange, suppressReconcile: suppressReconcile)
+        await syncContent(markdown, fromEditorChange: fromEditorChange, suppressReconcile: suppressReconcile, explicit: true)
     }
 
     /// Synchronous section sync for app termination / project close.
@@ -324,7 +343,8 @@ class SectionSyncService {
         _ markdown: String,
         zoomedIds: Set<String>? = nil,
         fromEditorChange: Bool = false,
-        suppressReconcile: Bool = false
+        suppressReconcile: Bool = false,
+        explicit: Bool = false
     ) async {
         guard let db = projectDatabase, let pid = projectId else { return }
 
@@ -336,54 +356,26 @@ class SectionSyncService {
             return
         }
 
-        // Capture @MainActor values before detaching
-        let isZoomed = isContentZoomed
-        let reconciler = self.reconciler
-        let fallbackBibTitle = ExportSettingsManager.shared.effectiveBibliographyHeaderName
+        // Capture @MainActor values before the first await. B3-0: the run's number is taken here, in the caller's turn, so the
+        // newest request is the newest text.
+        sectionWriteRequests += 1
+        let input = SectionSyncWriteInput(
+            markdown: markdown, projectId: pid, request: sectionWriteRequests, isZoomed: isContentZoomed,
+            suppressReconcile: suppressReconcile,
+            fallbackBibTitle: ExportSettingsManager.shared.effectiveBibliographyHeaderName,
+            reconciler: reconciler, order: sectionWriteOrder)
 
-        // Round M2 measurement: `sectionSync.detachedWait` is the main thread waiting (free); the four `sectionSync.*` spans inside the
-        // detached closure run off the main thread; `sectionSync.mainTail` is the main-thread work after it.
+        // Round M2 measurement: `sectionSync.detachedWait` is the main thread waiting (free) for the snapshot read and the parse
+        // (off the main thread) and the queued write (on the writer); `sectionSync.mainTail` is the main-thread work after it.
         let detachedWaitSpan = MdSpeed.span("sectionSync.detachedWait")
         do {
-            try await Task.detached(priority: .utility) {
-                // 1-2. C6: every read `parseHeaders`/`reconcile` below depend on --
-                // dbSections, bibliography/Notes heading titles, and the broader
-                // isBibliography/isNotes-exists-anywhere checks -- comes from ONE
-                // consistent snapshot instead of several separate `read {}` transactions
-                // that a concurrent write (this whole call runs off-MainActor, inside
-                // `Task.detached`) could interleave between. See
-                // `fetchSectionSyncSnapshot`'s doc comment for the full TOCTOU this closes.
-                let snapshot = try MdSpeed.timed("sectionSync.fetchSnapshot") { try db.fetchSectionSyncSnapshot(projectId: pid) }
-                let dbSections = snapshot.dbSections
-                let headers = MdSpeed.timed("sectionSync.parseHeaders") {
-                    SectionSyncService.parseHeaders(
-                        from: markdown, existingBibTitle: snapshot.existingBibTitle,
-                        existingNotesTitle: snapshot.existingNotesTitle, fallbackBibTitle: fallbackBibTitle)
-                }
-
-                // 3-4. Reconcile + apply -- skipped entirely while suppressed (§4d). Guarded
-                // on `!headers.isEmpty` same as before, only now nested under the
-                // suppression check rather than an early return, since step 5 below must
-                // still run even when headers is empty or suppression is active.
-                if !suppressReconcile && !headers.isEmpty {
-                    let changesSpan = MdSpeed.span("sectionSync.reconcileApply")
-                    let changes = reconciler.reconcile(
-                        headers: headers, dbSections: dbSections, projectId: pid,
-                        bibliographyExistsInBlocks: snapshot.bibliographyExistsInBlocks,
-                        notesExistsInBlocks: snapshot.notesExistsInBlocks
-                    )
-                    if !changes.isEmpty {
-                        try db.applySectionChanges(changes, for: pid)
-                    }
-                    changesSpan.end()
-                }
-
-                // 5. Save full content to database ONLY when not zoomed -- ALWAYS runs,
-                // suppression or not (content-of-record is never suppressed).
-                if !isZoomed {
-                    try MdSpeed.timed("sectionSync.saveContent") { try db.saveContent(markdown: markdown, for: pid) }
-                }
+            // 1-2. C6: the snapshot and the parse, off the main thread (`prepareSectionSync`).
+            let prepared = try await Task.detached(priority: .utility) {
+                try SectionSyncService.prepareSectionSync(
+                    db: db, markdown: input.markdown, projectId: input.projectId, fallbackBibTitle: input.fallbackBibTitle)
             }.value
+            // 3-5. B3-0: the section rows and the content row, as ONE write on the writer's queue.
+            try await performSectionSyncWrite(db: db, input: input, prepared: prepared, explicit: explicit)
         } catch {
             DebugLog.log(.sync, "[SectionSyncService] Error: \(error)")
         }

@@ -700,13 +700,11 @@ extension MilkdownEditor.Coordinator {
             return
         }
 
-        // Grace period: 200ms for push-based flow (reduced from 600ms polling)
         let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
-        if timeSincePush < 0.2 && content != self.lastPushedContent { return }
+        if timeSincePush < 0.2 && content != self.lastPushedContent { return }   // grace period: 200 ms for the push-based flow
         guard content != self.lastPushedContent else { return }
 
-        // Corruption check (Milkdown-specific)
-        // Only each text's first line is read (`Self.firstLine`): splitting a book-length push (~640,000 chars, ~10,000 lines) ran on every push.
+        // Corruption check (Milkdown-specific), first lines only (`Self.firstLine`): splitting a book (~640,000 chars) ran on every push.
         let pushedFirstLine = Self.firstLine(of: self.lastPushedContent)
         let receivedFirstLine = Self.firstLine(of: content)
         if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
@@ -715,7 +713,9 @@ extension MilkdownEditor.Coordinator {
             "\(Self.firstLine(of: content, startingWith: "#")?.prefix(60) ?? "(none)")\"")
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
+        self.adoptingEditorContent = true   // a view update inside this write must push nothing (`adoptingEditorContent`'s doc)
         self.contentBinding.wrappedValue = content
+        self.adoptingEditorContent = false
         self.onContentChange(content, wasUndo)
     }
 

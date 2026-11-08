@@ -79,7 +79,6 @@ struct EditorFirstRepushTests {
             let found = try Scenario.discoverSections()
             let rig = try EditorFirstRig(markdown: found.marked, lifecycleServices: true)
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswerProvider = { [unowned rig] in rig.editorText }
             rig.controller.testOrderingSpy = { [spyLog = rig.spyLog, events = rig.events] step in
                 spyLog.note(step)

@@ -27,7 +27,7 @@ import {
   setTypewriterEnabled,
   setTypewriterLineOffset,
 } from '../../../shared/typewriter-scrolling';
-import { getBlockChangesApi, setContentWithBlockIds } from '../api-content';
+import { setContentWithBlockIds } from '../api-content';
 import { reorderSectionsEditorFirst, setTestAfterReorderHook } from '../api-section-reorder';
 import { bibliographyEndMarkerPlugin } from '../bibliography-end-marker-plugin';
 import { bibliographyPlugin } from '../bibliography-plugin';
@@ -52,6 +52,7 @@ import {
   typeIntoNth,
   waitForRAF,
 } from './editor-first-harness';
+import { takePendingAsReport } from './pending-for-test';
 
 const OP = 'ffffffff-2222-3333-4444-555555555555';
 
@@ -155,7 +156,7 @@ describe('reorderSectionsEditorFirst', () => {
     expect(r.skippedIds).toEqual([]);
     // The move was re-baselined: it queues nothing, not even after block-sync's own debounce has run.
     await sleep(160);
-    expect(getBlockChangesApi(), 'the moved blocks are never reported as inserts or deletes').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'the moved blocks are never reported as inserts or deletes').toEqual(EMPTY_BATCH);
   });
 
   it('W1b: a block Swift has not confirmed yet keeps its temp id through the move', async () => {
@@ -317,7 +318,7 @@ describe('reorderSectionsEditorFirst', () => {
     const markdown = `${markdownOf(specs)}\n\n<!-- ::auto-bibliography:: -->\n\n# Bibliography\n\nSmith 2020.\n\n<!-- ::auto-bibliography-end:: -->`;
     setContentWithBlockIds(markdown, ['a', 'a-p1', 'z', 'z-p1', 'bib-h', 'bib-p']);
     await waitForRAF();
-    getBlockChangesApi();
+    takePendingAsReport();
     const types = () => {
       const out: string[] = [];
       view.state.doc.forEach((node) => {
@@ -698,7 +699,7 @@ describe('reorderSectionsEditorFirst', () => {
     // Block-sync runs against the restored document: an edit is exactly one update of the ORIGINAL block.
     typeInto(view, 'A body', ' after');
     flushPendingBlockChanges();
-    const diff = getBlockChangesApi();
+    const diff = takePendingAsReport();
     expect(diff.updates.map((u) => u.id)).toEqual(['pa']);
     expect(diff.inserts).toEqual([]);
     expect(diff.deletes).toEqual([]);
@@ -741,7 +742,7 @@ describe('reorderSectionsEditorFirst', () => {
     const markdown = `${markdownOf(specs)}\n\n<!-- ::auto-bibliography:: -->\n\n# Bibliography\n\nSmith 2020.\n\n<!-- ::auto-bibliography-end:: -->`;
     setContentWithBlockIds(markdown, [...specs.map((s) => s.name), 'bib-new', 'bib-p']);
     await waitForRAF();
-    getBlockChangesApi();
+    takePendingAsReport();
     return view;
   }
   const liveManaged = (withNotes: boolean) => (withNotes ? ['notes', 'n-p', 'bib-new', 'bib-p'] : ['bib-new', 'bib-p']);
@@ -839,7 +840,7 @@ describe('reorderSectionsEditorFirst', () => {
 
     typeIntoNth(view, 'Twin.', 1, ' typed after the drop'); // the second twin
     flushPendingBlockChanges();
-    const inMoved = getBlockChangesApi();
+    const inMoved = takePendingAsReport();
     expect(inMoved.updates.map((u) => u.id)).toEqual(['pb2']);
     expect(inMoved.updates[0].textContent).toBe('Twin. typed after the drop');
     expect(inMoved.inserts).toEqual([]);
@@ -847,7 +848,7 @@ describe('reorderSectionsEditorFirst', () => {
 
     typeInto(view, 'A body', ' typed too');
     flushPendingBlockChanges();
-    const inShifted = getBlockChangesApi();
+    const inShifted = takePendingAsReport();
     expect(inShifted.updates.map((u) => u.id)).toEqual(['pa']);
     expect(inShifted.inserts).toEqual([]);
     expect(inShifted.deletes).toEqual([]);

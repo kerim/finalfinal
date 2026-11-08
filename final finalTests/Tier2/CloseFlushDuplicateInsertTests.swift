@@ -107,7 +107,6 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
         defer {
             DocumentManager.shared.projectDatabase = priorDb
             DocumentManager.shared.projectId = priorPid
-            view.blockSyncService.stopPolling()
         }
 
         // Schedule a debounced Notes update -- simulates a footnote reference typed a
@@ -129,13 +128,13 @@ final class CloseFlushDuplicateInsertTests: XCTestCase {
         try await Task.sleep(nanoseconds: 600_000_000)
 
         let contentAfterType = try await helper.getContent()
-        let hasPending = try await helper.webView.evaluateJavaScript(
-            "window.FinalFinal.hasBlockChanges()"
-        ) as? Bool
-        guard hasPending == true, contentAfterType.contains(Self.marker) else {
+        // Phase 5 B4: the page reports the paragraph itself (it is no longer held pending for a 2-second poll); whether its
+        // report is still unacknowledged is logged, not required.
+        let heldInOutbox = try await helper.webView.evaluateJavaScript(SwitchFlushTestSupport.outboxNotEmptyScript) as? Bool
+        guard contentAfterType.contains(Self.marker) else {
             XCTFail(
                 "the typed paragraph never became a pending, unconfirmed block-sync insert -- " +
-                "hasBlockChanges()=\(String(describing: hasPending)), " +
+                "heldInOutbox=\(String(describing: heldInOutbox)), " +
                 "content contains marker=\(contentAfterType.contains(Self.marker)); " +
                 "content=\(contentAfterType)"
             )

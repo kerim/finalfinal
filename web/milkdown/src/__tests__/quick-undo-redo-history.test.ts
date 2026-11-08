@@ -33,7 +33,7 @@ import { EditorState, type Plugin } from '@milkdown/kit/prose/state';
 import { Transform } from '@milkdown/kit/prose/transform';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getBlockChangesApi, setContentWithBlockIds, updateHeadingLevels } from '../api-content';
+import { setContentWithBlockIds, updateHeadingLevels } from '../api-content';
 import { deleteSectionEditorFirst } from '../api-section-delete';
 import {
   redoSectionDeleteEditorFirst,
@@ -56,6 +56,7 @@ import {
   runUndoTrackedDispatch,
   setUndoDescriptor,
 } from '../undo-coordinator';
+import { takePendingAsReport } from './pending-for-test';
 
 // === Documents ===
 
@@ -200,7 +201,7 @@ async function load(specs: Spec[]): Promise<void> {
     specs.map((s) => s.name)
   );
   await waitForRAF();
-  getBlockChangesApi(); // whatever the push itself left pending is not what these tests are about
+  takePendingAsReport(); // whatever the push itself left pending is not what these tests are about
   expect(idsInOrder()).toEqual(specs.map((s) => s.name));
 }
 

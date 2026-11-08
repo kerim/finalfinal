@@ -49,6 +49,8 @@ private let errorCaptureScript = WKUserScript(
 /// avoid keeping two copies of this list in sync by hand.
 private func registerMilkdownMessageHandlers(on controller: WKUserContentController, coordinator: MilkdownEditor.Coordinator) {
     controller.add(coordinator, name: "contentChanged")
+    // Phase 5 jobs B2 to B4: the editor's block reports (web/milkdown/src/report-outbox.ts), the writer's input (`ReportApplier`).
+    controller.add(coordinator, name: "blockReport")
     controller.add(coordinator, name: "sectionChanged")
     controller.add(coordinator, name: "errorHandler")
     controller.add(coordinator, name: "openCitationPicker")
@@ -159,6 +161,20 @@ struct MilkdownEditor: NSViewRepresentable {
     var onWebViewReady: ((WKWebView) -> Void)?
 
     func makeNSView(context: Context) -> WKWebView {
+        // Phase 5 job A10: the page a switch to Rich Text filled before the flip (EditorPreloader+Prepare.swift). Its editor is mounted and
+        // holds its text, so there is no mount cloak and no content handover (`handlePreparedSwitchPage`).
+        if let staged = EditorPreloader.shared.claimStagedMilkdownPage() {
+            registerMilkdownMessageHandlers(on: staged.webView.configuration.userContentController, coordinator: context.coordinator)
+            staged.webView.navigationDelegate = context.coordinator
+            context.coordinator.webView = staged.webView
+            context.coordinator.handlePreparedSwitchPage(content: staged.content)
+            #if DEBUG
+            staged.webView.isInspectable = true
+            #endif
+            DebugLog.log(.sync, "[MilkdownEditor] Using the page the switch prepared")
+            return staged.webView
+        }
+
         // Try to use preloaded WebView for faster startup
         if let preloaded = EditorPreloader.shared.claimMilkdownView() {
             // Re-register message handlers with this coordinator
@@ -203,6 +219,7 @@ struct MilkdownEditor: NSViewRepresentable {
 
         // === PHASE 4: Add error handler script to capture JS errors ===
         configuration.userContentController.addUserScript(errorCaptureScript)
+        configuration.userContentController.addUserScript(ReportIntake.configUserScript())   // Phase 5: reporting on
         registerMilkdownMessageHandlers(on: configuration.userContentController, coordinator: context.coordinator)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -343,8 +360,10 @@ struct MilkdownEditor: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
-        // Only save cursor if not already saved by Phase 1 toggle flow
-        if coordinator.cursorPositionToRestoreBinding.wrappedValue == nil {
+        // Only save cursor if not already saved by Phase 1 toggle flow. Phase 5 jobs A9/A10: never for the page a carried switch replaced
+        // (the incoming page already has its caret; a caret saved here would be restored over the user's at the next content reset).
+        let carriedSwitch = EditorPreloader.shared.consumeOutgoingCursorSaveSuppression()
+        if !carriedSwitch, coordinator.cursorPositionToRestoreBinding.wrappedValue == nil {
             coordinator.saveCursorPositionBeforeCleanup()
         }
         coordinator.cleanup()

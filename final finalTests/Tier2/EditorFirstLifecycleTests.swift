@@ -55,7 +55,6 @@ struct EditorFirstJobWaitTests {
     private func makeRig() throws -> EditorFirstRig {
         let rig = try EditorFirstRig(markdown: Self.threeSections)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in try? rig.assembledMarkdown() }
         return rig
     }
@@ -208,7 +207,6 @@ struct LifecycleWaitsForGateTests {
         // never does, and so passed while the app dropped the second press.
         let rig = try EditorFirstRig(markdown: ComplexDocumentFixture.book6.editorMarkdown, configureSyncServices: false)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in try? rig.assembledMarkdown() }
         let chapters = try rig.chapterHeadings()
         let first = try #require(chapters.first)
@@ -280,7 +278,6 @@ struct LifecycleWaitsForGateTests {
     func testSettledHeldPressLetsTheCloseFinish() async throws {
         let rig = try EditorFirstRig(markdown: "# First Chapter\n\nBody one.\n\n## Second Section\n\nBody two.")
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in try? rig.assembledMarkdown() }
         let gate = rig.editorState.structuralGate
         // An undo is in flight (it holds the gate): the only time the editor holds a press, so the only time the close asks.
@@ -317,7 +314,6 @@ struct LifecycleWaitsForGateTests {
         // (obligation N24; the older lifecycle tests pin the same thing through the rig log).
         let idle = try EditorFirstRig(markdown: "# First Chapter\n\nBody one.\n\n## Second Section\n\nBody two.")
         idle.js.answer("flushPendingBlockChanges", true)
-        idle.js.answer("hasBlockChanges", false)
         idle.fetchAnswerProvider = { [unowned idle] in try? idle.assembledMarkdown() }
         idle.heldPressCountAnswer = 1   // would be counted if it were asked
         #expect(idle.editorState.structuralGate.isIdle)
@@ -329,7 +325,6 @@ struct LifecycleWaitsForGateTests {
         // Busy gate: an undo is in flight, so the editor may hold presses and the close counts them.
         let busy = try EditorFirstRig(markdown: "# First Chapter\n\nBody one.\n\n## Second Section\n\nBody two.")
         busy.js.answer("flushPendingBlockChanges", true)
-        busy.js.answer("hasBlockChanges", false)
         busy.fetchAnswerProvider = { [unowned busy] in try? busy.assembledMarkdown() }
         busy.heldPressCountAnswer = 1
         let busyGate = busy.editorState.structuralGate
@@ -398,18 +393,17 @@ struct ModeSwitchWaitsFirstTests {
         #expect(rig.editorState.contentState == .idle, "the editor stays live and idle during the wait")
         #expect(rig.unifiedUndo.generation == generationBefore, "no barrier fired: the switch changed nothing yet")
 
-        // The user types during the wait: a routine poll fetches the edit (the editor is live), and it must reach the database.
+        // The user types during the wait: the page reports the edit (the editor is live), and it must reach the database.
         let typed = BlockChanges(updates: [BlockUpdate(
             id: paragraph.id, textContent: typedText, markdownFragment: typedText, headingLevel: nil)])
-        rig.js.answer("hasBlockChanges", true)
-        rig.js.answer("getBlockChanges", String(data: try JSONEncoder().encode(typed), encoding: .utf8))
-        let poll = Task { @MainActor in await rig.sync.pollBlockChangesForTest() }
-        let fetched = await rig.js.waitUntilCallEntry("getBlockChanges", 1)
-        #expect(fetched, "the routine poll must run during the wait: typing is not held back")
+        rig.typingQueue.append(typed)
+        let report = rig.startReport()
+        let admitted = await gateWaitUntil({ rig.sync.reportApplier.admittedCount >= 1 }, iterations: 1000)
+        #expect(admitted, "the report must be taken in during the wait: typing is not held back")
         #expect(rig.editorState.editorMode == .wysiwyg)
 
         jobMayRun.signal()
-        await poll.value
+        #expect(await rig.awaitRuns([report]), "the report was never decided")
         // (book12: the job's snapshot and the switch's own flush parse and write 700,000 characters, so allow up to 20 s.)
         let switched = await gateWaitUntil({ rig.editorState.editorMode == .source }, iterations: 4000)
         #expect(switched, "the switch runs once the job has ended")
@@ -450,8 +444,8 @@ struct ModeSwitchWaitsFirstTests {
         jobMayRun.signal()
         let bothRan = await gateWaitUntil { rig.unifiedUndo.generation == generationBefore + 2 }
         #expect(bothRan, "both presses ran, one after the other, none dropped: generation \(rig.unifiedUndo.generation)")
-        // Two switches end where they started: Rich Text. (Held and run one after the other, not in parallel: each is one
-        // synchronous body on the main actor, and the second waits behind the first on the gate.)
+        // Two switches end where they started: Rich Text. (Held and run one after the other, not in parallel: the second waits
+        // behind the first on the gate, and since Phase 5 also until the first's carried switch to Markdown is over.)
         #expect(rig.editorState.editorMode == .wysiwyg, "two switches leave the editor in Rich Text")
         let settled = await gateWaitUntil { rig.editorState.structuralGate.isIdle }
         #expect(settled)
@@ -559,7 +553,9 @@ struct ModeSwitchWaitsFirstTests {
         Color.clear.handleEditorModeToggle(
             editorState: rig.editorState, sectionSyncService: SectionSyncService(),
             findBarState: FindBarState(), unifiedUndoService: rig.unifiedUndo)
-        #expect(rig.editorState.editorMode == .source, "the switch happened")
+        // Phase 5 job A9: the switch to Markdown is the carried switch, which flips the mode on its own task, not inside this call.
+        let flipped = await gateWaitUntil { rig.editorState.editorMode == .source }
+        #expect(flipped, "the switch happened")
         #expect(rig.unifiedUndo.generation == generationBefore + 1, "and exactly once")
 
         // Nothing else is pending: no second request, no second flip.

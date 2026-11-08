@@ -72,7 +72,11 @@ extension EditorFirstRig {
 
     /// Everything the class's `testJSEvaluator` is asked: the delete click, the quick undo and redo, the poll's two calls while the
     /// typing queue holds an edit, then the editor's other queries, then the scripted evaluator.
-    func answerScript(_ script: String) async throws -> Any? {
+    func answerScript(_ wrapped: String) async throws -> Any? {
+        // Phase 5 B3/B4: every editor-first route call arrives wrapped in the report cover (`BlockSyncService.coveredScript`). The
+        // rig's page has no reports in flight to cover, so it answers the route itself; the wrapper is taken off first, and the
+        // route's own reply goes back as it is (`unwrapCoveredReply` hands a reply that is not the wrapper through unchanged).
+        let script = Self.innerRouteScript(wrapped)
         // The slow undo and redo (round 3c): `structuralSwapEditorFirst`, answered in EditorFirstRig+SlowUndo.swift.
         if script.contains("structuralSwapEditorFirst") { return answerSwapClick(script) }
         // The two calls that end the page's hold on the typing of a latched press (t-d2061b27; EditorFirstRig+TypingAcrossUndo.swift).
@@ -96,12 +100,19 @@ extension EditorFirstRig {
         return try await answerEditorQuery(script)
     }
 
-    /// The editor's queries that need no scripting of the quick path: the poll's two calls while the typing queue holds an edit (they
-    /// were the last two checks of `answerScript`, moved here unchanged and in the same order to keep that function's complexity down), the
-    /// held-press count, `getContent()`, everything else.
+    /// The editor's queries that need no scripting of the quick path: `flushAndAck`'s `flushReports` (the page posts the typing it
+    /// holds as reports and answers its highest number), the held-press count, `getContent()`, everything else.
     private func answerEditorQuery(_ script: String) async throws -> Any? {
-        if script.contains("hasBlockChanges"), !typingQueue.isEmpty { return true }
-        if script.contains("getBlockChanges"), !typingQueue.isEmpty { return Self.json(typingQueue.removeFirst()) }
+        if script.contains("flushReports") {
+            flushReportsCalls += 1
+            if wedgeNextFlushReports {
+                wedgeNextFlushReports = false
+                try? await Task.sleep(for: .seconds(60))   // never answers within any bound a test uses
+                return nil
+            }
+            let through = postQueuedTyping()
+            return "{\"session\":\"\(Self.reportSession)\",\"through\":\(through),\"held\":false,\"enabled\":true}"
+        }
         if script.contains("heldUndoPressCount") {
             heldCountReads += 1
             // A busy editor answers late (JavaScript is single-threaded: the call waits behind a long content push).
@@ -112,9 +123,17 @@ extension EditorFirstRig {
             getContentCalls += 1
             let answer = fetchAnswerProvider?() ?? quickEditorText
             if let hold = getContentHold { await hold() }
-            return answer
+            // The Rich Text save's live read (Phase 5 B3) asks for the content wrapped with the report hold.
+            return script.contains("holdReportsForSave") ? heldReadAnswer(content: answer) : answer
         }
         return try await js.evaluate(script)
+    }
+
+    /// The route call inside a report-cover wrapper (`BlockSyncService.coveredScript`), or `script` itself when it is not wrapped.
+    static func innerRouteScript(_ script: String) -> String {
+        guard script.contains("beginReportCover"), let start = script.range(of: "try { v = ("),
+              let end = script.range(of: "); } finally {", options: .backwards), start.upperBound <= end.lowerBound else { return script }
+        return String(script[start.upperBound..<end.lowerBound])
     }
 
     /// The bridge's answer to `quickUndoLiveDiffersFromRestored` (S1-7): the override when a test set one, else whether the editor's live
@@ -343,7 +362,20 @@ extension EditorFirstRig {
         }
     }
 
-    /// Queues one edit for the next poll cycle to fetch (the editor's `getBlockChanges`): `block`'s text gets `suffix` appended.
+    /// The page posts every edit it holds as one report each, in order, to the intake (as `report-outbox.ts` does when its debounce
+    /// settles or Swift asks). Returns the highest report number posted so far.
+    @discardableResult
+    func postQueuedTyping() -> Int {
+        while !typingQueue.isEmpty {
+            reportsPosted += 1
+            sync.reportApplier.receive(
+                IncomingReport(number: reportsPosted, session: Self.reportSession, changes: typingQueue.removeFirst(), detectedAt: 0),
+                via: .message)
+        }
+        return reportsPosted
+    }
+
+    /// Queues one edit the page will report next: `block`'s text gets `suffix` appended.
     func queueTyping(_ block: Block, appending suffix: String) {
         typingQueue.append(BlockChanges(updates: [BlockUpdate(
             id: block.id, textContent: block.textContent + suffix, markdownFragment: block.markdownFragment + suffix,
@@ -351,7 +383,7 @@ extension EditorFirstRig {
     }
 
     /// The user types `suffix` at the end of `block`'s text: the editor's live text changes, `contentChanged` follows (unless
-    /// withheld), and the edit waits for the next poll cycle.
+    /// withheld), and the edit waits in the page until it is reported (`startReport`, or `flushReports`).
     func typeIntoEditor(_ block: Block, appending suffix: String) {
         queueTyping(block, appending: suffix)
         guard let live = quickEditorText ?? editorText, let range = live.range(of: block.markdownFragment) else { return }

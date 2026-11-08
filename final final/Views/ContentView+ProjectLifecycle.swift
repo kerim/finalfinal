@@ -70,6 +70,8 @@ extension ContentView {
         // Configure sync services with database
         sectionSyncService.configure(database: db, projectId: pid)
         sectionSyncService.editorState = editorState
+        // Phase 5 job B3-0: the section sync's write goes through the same ordered queue (SectionSyncService+Queued.swift).
+        sectionSyncService.systemWriter = SystemWriter(blockSync: blockSyncService)
         annotationSyncService.configure(database: db, contentId: cid)
         annotationSyncService.editorState = editorState
         bibliographySyncService.configure(database: db, projectId: pid)
@@ -479,7 +481,7 @@ extension ContentView {
     /// Called by the lifecycle's open tail only (t-94369a83 3a-1b rounds C5b and C8b; the old `handleProjectOpened`
     /// is gone). The open tail RETIRES the old project's writer (P6), so in Markdown mode it must also give the
     /// block-sync service a writer for the new project (plan section 4.4 open-tail step 8: `reconfigure` runs in
-    /// BOTH modes; only the content push and `startPolling` stay Rich-Text-only).
+    /// BOTH modes; only the content push stays Rich-Text-only).
     func configureAndPushContentAfterProjectSwitch(
         publishAfterContent: @escaping @MainActor () -> Void
     ) async {
@@ -508,7 +510,7 @@ extension ContentView {
             await blockSyncService.reconfigure(database: db, projectId: pid)
             Task {
                 if let result = fetchBlocksWithIds() {
-                    // Sync editorState.content to prevent polling from overwriting the atomic push
+                    // Sync editorState.content so the next view update does not re-push over the atomic push
                     editorState.content = result.markdown
                     // INTENTIONAL REPLACEMENT: project (re)open/restore. (Guarded by
                     // editorMode == .wysiwyg above, so today this is a no-op --
@@ -528,7 +530,6 @@ extension ContentView {
                 // why the window closes exactly where isResettingContent does, not on a
                 // separate timer.
                 editorState.suppressBibliographyRebuildsDuringSwitch = false
-                blockSyncService.startPolling()
                 // Scroll to top after content push settles
                 try? await Task.sleep(for: .milliseconds(100))
                 findBarState.activeWebView?.evaluateJavaScript(
@@ -586,8 +587,8 @@ extension ContentView {
     /// fetch, no token, no barrier. `ProjectCommands.close` has already closed it in `DocumentManager`; what is left
     /// is this view's own state. That is exactly the managed close tail without its automatic version (the throwaway
     /// token says Getting Started, which the tail reads to skip it, N1) -- stop observing, cancel and reset the
-    /// sync services, retire the writer, reset the editor state, then `onProjectClosed` (the picker) -- plus
-    /// stopping the poll timer, which a managed lifecycle stops at arm. Nothing here reads `DocumentManager` for the
+    /// sync services, retire the writer, reset the editor state, then `onProjectClosed` (the picker). Nothing here reads
+    /// `DocumentManager` for the
     /// closing project (N7): by now it holds none.
     ///
     /// This replaces the old `performProjectClose` (flush, fetch, bibliography flush, backup, reset), which had no
@@ -595,7 +596,6 @@ extension ContentView {
     /// Help > Getting Started all went through `LifecycleEntry.run`. Getting Started to Getting Started is not a
     /// close at all (`ProjectCommands.openGettingStarted`).
     func closeGettingStartedProject() async {
-        blockSyncService.stopPolling()
         let token = LifecycleToken(kind: .close, wasGettingStarted: true)
         await runCloseTail(token: token, callOnProjectClosed: true)
     }

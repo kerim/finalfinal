@@ -131,7 +131,7 @@ final class StructuralUndoController {
     /// Test-only ordering spy: appended to at each named step of the op sequence so a unit
     /// test can assert step order (specifically H6: mode-aware flush before
     /// `createUndoPointSnapshot()`) without needing a real WebView/DB round trip. Mirrors the
-    /// `testPollCycleHook`-style hooks already used in BlockSyncService. No cost in release
+    /// test-only hooks used elsewhere in this codebase. No cost in release
     /// builds (property doesn't exist).
     var testOrderingSpy: ((String) -> Void)?
 

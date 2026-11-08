@@ -2533,7 +2533,10 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         _ size: Phase4bDelSize, method: String, hold: Bool
     ) -> Phase4bSqRestoreRows? {
         let title = Phase4bDelSize.restoreSectionTitle
-        let env = hold ? ["FF_UI_TESTING_STRUCT_JOB_HOLD_MS": String(Self.jobHoldMs)] : [:]
+        var env = hold ? ["FF_UI_TESTING_STRUCT_JOB_HOLD_MS": String(Self.jobHoldMs)] : [:]
+        // Phase 5 job B4: these tests compare row ids before and after the command; an idle auto-backup's whole-document flush gives
+        // most rows new ids, and since the poll is gone the first idle backup of a launch can fall inside the test (TestMode doc).
+        env["FF_UI_TESTING_AUTOBACKUP_NO_LIVE_FLUSH"] = "1"
         guard startScenario(size, method: method, env: env, seed: { Self.withDupLines($0, under: title) }),
               let setup = requireDupLines(under: title) else { return nil }
         guard let anchor = pre.firstIndex(where: { $0.fragment == Self.anchorLine }) else {
@@ -3209,7 +3212,9 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         let size = Phase4bDelSize.book6
         let title = size.deleteTitle
         let lines = [Self.subLineOne, Self.subLineTwo]
-        guard startScenario(size, method: #function, seed: { Self.withPlainLines($0, under: title, level: 1, lines: lines) }),
+        // Phase 5 job B4: as in `startRestoreScenario`, no idle auto-backup flush in the middle of an id-stability test.
+        guard startScenario(size, method: #function, env: ["FF_UI_TESTING_AUTOBACKUP_NO_LIVE_FLUSH": "1"],
+                            seed: { Self.withPlainLines($0, under: title, level: 1, lines: lines) }),
               let subtree = requireSection(title), let flat = flatRange(of: title) else { return }
         guard pre.indices.contains(flat.lowerBound + 2), pre[flat.lowerBound + 1].fragment == Self.subLineOne,
               pre[flat.lowerBound + 2].fragment == Self.subLineTwo else {

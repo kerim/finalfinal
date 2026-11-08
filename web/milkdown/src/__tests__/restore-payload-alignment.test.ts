@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ANNOTATION_NODE_NAME } from '../annotation-delete';
 import { annotationPlugin } from '../annotation-plugin';
-import { getBlockChangesApi, setContentWithBlockIds } from '../api-content';
+import { setContentWithBlockIds } from '../api-content';
 import { type ReplaceRangePayload, replaceRangeEditorFirst } from '../api-structural-replace';
 import { bibliographyEndMarkerPlugin } from '../bibliography-end-marker-plugin';
 import { bibliographyPlugin } from '../bibliography-plugin';
@@ -45,6 +45,7 @@ import {
   sleep,
   waitForRAF,
 } from './editor-first-harness';
+import { takePendingAsReport } from './pending-for-test';
 
 const OP = 'dddddddd-2222-3333-4444-555555555555';
 
@@ -171,7 +172,7 @@ describe.each(['article', 'book6', 'looseListSection'])('the Swift payload for %
         OLD_DOC.map((s) => s.name)
       );
       await waitForRAF();
-      getBlockChangesApi();
+      takePendingAsReport();
       expect(idsInOrder()).toEqual(OLD_DOC.map((s) => s.name));
 
       const start = performance.now();
@@ -183,7 +184,7 @@ describe.each(['article', 'book6', 'looseListSection'])('the Swift payload for %
       expect(r.insertedIds).toEqual(f.blockIds);
       expect(JSON.stringify(view.state.doc.toJSON()), 'the same document as the push builds').toBe(pushed);
       await sleep(160);
-      expect(getBlockChangesApi(), 'the replace queues nothing').toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport(), 'the replace queues nothing').toEqual(EMPTY_BATCH);
       // Measurement only (no assertion on time): jsdom says little, the VM end-to-end run gives the real number.
       const jsMs = replaceTraces(posted)
         .filter((line) => line.includes('ok=true'))

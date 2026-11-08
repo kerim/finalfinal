@@ -155,10 +155,6 @@ xcodegen generate
 echo "  Checking pbxproj determinism..."
 bash "$PROJECT_DIR/scripts/verify-pbxproj-determinism.sh"
 
-# Tests listed in scripts/unit-quarantine.txt are left out of the run.
-SKIP_ARGS=()
-while IFS= read -r arg; do SKIP_ARGS+=("$arg"); done \
-  < <(bash "$PROJECT_DIR/scripts/unit-quarantine-args.sh" 2>/dev/null)
 echo "  Running unit tests..."
 # -packageAuthorizationProvider netrc: package resolution must not consult the
 # login keychain (that raises the "wants to use your confidential information
@@ -170,7 +166,6 @@ xcodebuild test \
     -scheme "final final" \
     -destination 'platform=macOS' \
     -only-testing 'final finalTests' \
-    ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"} \
     -parallel-testing-enabled NO \
     CODE_SIGN_IDENTITY='-' \
     CODE_SIGN_STYLE=Manual

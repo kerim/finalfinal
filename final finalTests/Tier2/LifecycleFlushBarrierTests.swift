@@ -32,7 +32,6 @@ struct LifecycleFlushBarrierTests {
 
     private func prime(_ rig: LifecycleFlushHarness) {
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = Self.fresh
     }
 
@@ -240,7 +239,6 @@ struct LifecycleFlushBarrierTests {
         let rig = try LifecycleFlushHarness(content: seed)
         let footnotes = rig.attachFootnoteService()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = "Body[^1] and new[^2] text.\n\n# Notes\n\n[^1]: First note.\n"
         rig.editorState.contentState = .structuralUndo
         defer { rig.editorState.contentState = .idle }

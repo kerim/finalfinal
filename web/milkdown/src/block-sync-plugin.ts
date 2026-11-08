@@ -10,6 +10,14 @@ import { type Align, formatTable, type ParsedTable } from '../../shared/format-t
 import { getAllBlockIds, getBlockIdZoomMode, SYNC_DIAG_DETAIL } from './block-id-plugin';
 import type { CitationAttrs } from './citation-plugin';
 import { serializeCitation } from './citation-plugin';
+import {
+  applyOps,
+  type BlockOp,
+  drainUnderCover,
+  noteDetected as noteReportDetected,
+  noteSettled as noteReportSettled,
+  setRealMapsProbe,
+} from './report-outbox';
 import { syncLog } from './sync-debug';
 import { isTraceTypingOn, noteRebuildReplacedPending } from './typing-trace';
 
@@ -98,6 +106,14 @@ let syncPaused = false;
  */
 export function setSyncPaused(paused: boolean): void {
   syncPaused = paused;
+}
+
+// Phase 5 job B3: a report (report-outbox.ts) takes these maps.
+setRealMapsProbe(() => currentState);
+
+/** Phase 5: a report is not posted while sync is paused (report-outbox.ts). */
+export function isSyncPaused(): boolean {
+  return syncPaused;
 }
 
 // ---------------------------------------------------------------------------
@@ -695,7 +711,10 @@ export function getBlockChanges(): BlockChanges {
     return { updates: [], inserts: [], deletes: [] };
   }
 
-  const changes: BlockChanges = {
+  // Phase 5 job B3: inside Swift's cover (a section command's or a zoom / switch begin's page call), the drain also returns every
+  // report still on its way to Swift, folded with the maps, and posts the maps' part as a numbered report (report-outbox.ts).
+  const covered = drainUnderCover(currentState);
+  const changes: BlockChanges = covered ?? {
     updates: Array.from(currentState.pendingUpdates.values()),
     inserts: Array.from(currentState.pendingInserts.values()),
     deletes: Array.from(currentState.pendingDeletes),
@@ -815,14 +834,44 @@ export function detectChanges(
   newSnapshot: Map<string, BlockSnapshot>,
   state: BlockSyncPluginState
 ): void {
+  applyDetectedOps(state, computeChangeOps(oldSnapshot, newSnapshot));
+}
+
+/** Applies detected ops to the real maps (with the plugin's own log line for an update merged into a pending insert). */
+function applyDetectedOps(state: BlockSyncPluginState, ops: readonly BlockOp[]): void {
+  applyOps(state, ops, (id) => {
+    const insert = state.pendingInserts.get(id);
+    syncLog(
+      'BlockSync:detect',
+      `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${(insert?.textContent ?? '').slice(0, 40)}"`
+    );
+  });
+}
+
+/** Detection into the pending maps (Phase 5 job B3: and the note of when the oldest unreported change was detected, for the
+ * report's typing-to-database delay). */
+function detectIntoQueues(
+  oldSnapshot: Map<string, BlockSnapshot>,
+  newSnapshot: Map<string, BlockSnapshot>,
+  state: BlockSyncPluginState
+): void {
+  const ops = computeChangeOps(oldSnapshot, newSnapshot);
+  applyDetectedOps(state, ops);
+  if (state === currentState && ops.length > 0) noteReportDetected();
+}
+
+/**
+ * The detection itself, as an ordered list of operations (no state is read or written): deletes and updates in the old snapshot's
+ * order, then inserts. `applyOps` (report-outbox.ts) applies them with the merge rules this function used to apply inline.
+ */
+function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: Map<string, BlockSnapshot>): BlockOp[] {
+  const ops: BlockOp[] = [];
   // Detect updates and deletes
   for (const [id, oldBlock] of oldSnapshot) {
     const newBlock = newSnapshot.get(id);
     if (!newBlock) {
-      // Block was deleted
-      state.pendingDeletes.add(id);
-      // Remove from updates if pending
-      state.pendingUpdates.delete(id);
+      // Block was deleted (applyOps also removes a pending update of it)
+      ops.push({ kind: 'delete', id });
       syncLog(
         'BlockSync:detect',
         `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} "${oldBlock.textContent.slice(0, 40)}"`
@@ -836,45 +885,34 @@ export function detectChanges(
       oldBlock.blockType !== newBlock.blockType ||
       getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock)
     ) {
-      // If this block is already pending as an insert, update the insert's content
-      // instead of adding a separate update (prevents INSERT+UPDATE overlap → orphan blocks)
-      if (state.pendingInserts.has(id)) {
-        const existing = state.pendingInserts.get(id)!;
-        state.pendingInserts.set(id, {
-          ...existing,
-          blockType: newBlock.blockType,
-          textContent: newBlock.textContent,
-          markdownFragment: getMarkdownFragment(newBlock),
-          headingLevel: newBlock.headingLevel,
-        });
-        syncLog(
-          'BlockSync:detect',
-          `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${newBlock.textContent.slice(0, 40)}"`
-        );
-      } else {
-        // Block was updated — lazily compute markdownFragment only for changed blocks
-        state.pendingUpdates.set(id, {
+      // Block was updated — lazily compute markdownFragment only for changed blocks. If this block is already pending as an
+      // insert, applyOps merges the update into the insert instead of adding a separate update (prevents INSERT+UPDATE overlap
+      // → orphan blocks).
+      ops.push({
+        kind: 'update',
+        id,
+        update: {
           id,
           textContent: newBlock.textContent,
           markdownFragment: getMarkdownFragment(newBlock),
           headingLevel: newBlock.headingLevel,
           blockType: newBlock.blockType,
-        });
-        if (SYNC_DIAG_DETAIL) {
-          const changes: string[] = [];
-          if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
-          if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
-          if (oldBlock.headingLevel !== newBlock.headingLevel)
-            changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
-          const typeStr =
-            oldBlock.blockType !== newBlock.blockType
-              ? `type:${oldBlock.blockType}→${newBlock.blockType}`
-              : `type=${newBlock.blockType}`;
-          syncLog(
-            'BlockSync:detect',
-            `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
-          );
-        }
+        },
+      });
+      if (SYNC_DIAG_DETAIL) {
+        const changes: string[] = [];
+        if (oldBlock.textContent !== newBlock.textContent) changes.push('text');
+        if (oldBlock.nodeSize !== newBlock.nodeSize) changes.push(`size:${oldBlock.nodeSize}→${newBlock.nodeSize}`);
+        if (oldBlock.headingLevel !== newBlock.headingLevel)
+          changes.push(`level:${oldBlock.headingLevel}→${newBlock.headingLevel}`);
+        const typeStr =
+          oldBlock.blockType !== newBlock.blockType
+            ? `type:${oldBlock.blockType}→${newBlock.blockType}`
+            : `type=${newBlock.blockType}`;
+        syncLog(
+          'BlockSync:detect',
+          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
+        );
       }
     }
   }
@@ -899,14 +937,17 @@ export function detectChanges(
         }
       }
 
-      state.pendingInserts.set(id, {
-        tempId: id,
-        blockType: newBlock.blockType,
-        textContent: newBlock.textContent,
-        markdownFragment: getMarkdownFragment(newBlock),
-        headingLevel: newBlock.headingLevel,
-        afterBlockId,
-        atDocumentStart,
+      ops.push({
+        kind: 'insert',
+        insert: {
+          tempId: id,
+          blockType: newBlock.blockType,
+          textContent: newBlock.textContent,
+          markdownFragment: getMarkdownFragment(newBlock),
+          headingLevel: newBlock.headingLevel,
+          afterBlockId,
+          atDocumentStart,
+        },
       });
       syncLog(
         'BlockSync:detect',
@@ -914,6 +955,7 @@ export function detectChanges(
       );
     }
   }
+  return ops;
 }
 
 // Debounce state for detectChanges() — keeps snapshotBlocks() synchronous
@@ -965,17 +1007,19 @@ function runPendingDetectChanges(): void {
   if (currentState && pendingOldSnapshot && pendingNewSnapshot) {
     const resolvedOld = remapSnapshot(pendingOldSnapshot, pendingIdRemap);
     const resolvedNew = remapSnapshot(pendingNewSnapshot, pendingIdRemap);
-    detectChanges(resolvedOld, resolvedNew, currentState);
+    detectIntoQueues(resolvedOld, resolvedNew, currentState);
   }
   pendingOldSnapshot = null;
   pendingNewSnapshot = null;
   pendingIdRemap.clear();
+  // Phase 5 job B3: a settled detection; report-outbox.ts posts the maps now or at R.
+  noteReportSettled();
 }
 
 /**
  * Force any debounced-but-not-yet-detected change to be processed right now.
  * Two callers:
- *  - Swift's forced poll (`BlockSyncService.pollBlockChangesNow()`), to close a
+ *  - Swift's `flushAndAck` (`flushReports`, api-content.ts; it was the forced poll until Phase 5 B4), to close a
  *    race where a confirming transaction (e.g. footnote-trigger → real footnote
  *    marker) lands just before its own 100ms detectTimer fires — the forced
  *    poll's `force: true` only skips a Swift-side generation check and does
@@ -1221,6 +1265,7 @@ export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, Bl
   const newSnapshot = snapshotBlocks(doc);
   detectChanges(baseline, newSnapshot, currentState);
   currentState.lastSnapshot = newSnapshot;
+  noteReportSettled();
 }
 
 /**
@@ -1262,8 +1307,9 @@ export function detectPausedEditsKeepingPending(doc: Node, baseline: Map<string,
   pendingIdRemap.clear();
 
   const newSnapshot = snapshotBlocks(doc);
-  detectChanges(baseline, newSnapshot, currentState);
+  detectIntoQueues(baseline, newSnapshot, currentState);
   currentState.lastSnapshot = newSnapshot;
+  noteReportSettled();
 }
 
 /**
@@ -1321,7 +1367,12 @@ export function reconcilePendingQueueAfterManagedRebuild(
     currentState.pendingUpdates.delete(id);
     currentState.pendingDeletes.delete(id);
   }
-  if (currentState.pendingInserts.size === 0) return;
+  repointPendingInsertsAfterManagedRebuild(mergedIds);
+}
+
+/** The second correction of `reconcilePendingQueueAfterManagedRebuild` (its doc comment, item 2). */
+function repointPendingInsertsAfterManagedRebuild(mergedIds: readonly string[]): void {
+  if (!currentState || currentState.pendingInserts.size === 0) return;
   const survivingSet = new Set(mergedIds);
   for (const [tempId, insert] of currentState.pendingInserts) {
     if (insert.afterBlockId === undefined || survivingSet.has(insert.afterBlockId)) continue;

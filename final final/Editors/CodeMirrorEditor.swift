@@ -94,6 +94,20 @@ struct CodeMirrorEditor: NSViewRepresentable {
     var isReconciliationPending: (() -> Bool)?
 
     func makeNSView(context: Context) -> WKWebView {
+        // Phase 5 job A9: the page a switch to Markdown filled before the flip (EditorPreloader+Prepare.swift). It already holds its text,
+        // so the mount skips the content handover (`handlePreparedSwitchPage`).
+        if let staged = EditorPreloader.shared.claimStagedCodeMirrorPage() {
+            context.coordinator.registerMessageHandlers(on: staged.webView.configuration.userContentController, includeTableInsertTruncated: true)
+            staged.webView.navigationDelegate = context.coordinator
+            context.coordinator.webView = staged.webView
+            context.coordinator.handlePreparedSwitchPage(content: staged.content)
+            #if DEBUG
+            staged.webView.isInspectable = true
+            #endif
+            DebugLog.log(.editor, "[CodeMirrorEditor] Using the page the switch prepared")
+            return staged.webView
+        }
+
         // Try preloaded view first for instant startup
         if let preloaded = EditorPreloader.shared.claimCodeMirrorView() {
             context.coordinator.registerMessageHandlers(on: preloaded.configuration.userContentController, includeTableInsertTruncated: true)
@@ -279,8 +293,10 @@ struct CodeMirrorEditor: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
-        // Only save cursor if not already saved by Phase 1 toggle flow
-        if coordinator.cursorPositionToRestoreBinding.wrappedValue == nil {
+        // Only save cursor if not already saved by Phase 1 toggle flow. Phase 5 jobs A9/A10: never for the page a carried switch replaced
+        // (the incoming page already has its caret; a caret saved here would be restored over the user's at the next content reset).
+        let carriedSwitch = EditorPreloader.shared.consumeOutgoingCursorSaveSuppression()
+        if !carriedSwitch, coordinator.cursorPositionToRestoreBinding.wrappedValue == nil {
             coordinator.saveCursorPositionBeforeCleanup()
         }
         coordinator.cleanup()

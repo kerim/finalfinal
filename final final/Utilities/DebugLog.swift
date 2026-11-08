@@ -55,7 +55,7 @@ enum DebugLog {
     /// per-refresh totals (`[batchWordCounts]`) and per-edit deltas (`[Blocks:edit]`)
     /// so a spurious wordcount jump can be traced to the exact block that moved.
     /// DIAGNOSTIC (temporary, added during footnote-export-race investigation):
-    /// `.sync` and `.blockPoll` enabled to trace pollBlockChangesNow()/getBlockChanges()
+    /// `.sync` and `.blockPoll` enabled to trace the editor's block reports and their apply
     /// during FootnoteExportRaceTests. Safe to remove once the flush race is resolved.
     /// `.zoom` enabled permanently: `HeadingZoomClickRouter.decide`'s drop-reason logging
     /// uses this category, and it was invisible in the console by default — a violation of

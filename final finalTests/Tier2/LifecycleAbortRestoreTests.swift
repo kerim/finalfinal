@@ -36,7 +36,6 @@ extension LifecycleEntryStatic {
 
         private func prime(_ rig: LifecycleFlushHarness) {
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = Self.fresh
         }
 
@@ -123,7 +122,6 @@ extension LifecycleEntryStatic {
                 ContentSyncObserverHost<EmptyView>.scheduleSourceModeReparse(
                     newValue: content, editorState: rig.editorState, services: services)
             }
-            defer { rig.sync.stopPolling() }
 
             await rig.withEntry {
                 _ = try? await LifecycleEntry.run(kind: .projectSwitch) { throw RestoreBoom() }
@@ -152,7 +150,7 @@ extension LifecycleEntryStatic {
                 "the catch-up went through the writer (not the legacy whole-document write)")
             #expect(!texts.contains("fresh Y paragraph."))
             #expect(rig.pushes.isEmpty, "Markdown has no block ids to restore")
-            #expect(rig.sync.testPollTimerIsArmed, "polling restarts in both modes")
+            #expect(rig.js.callCount("releaseReportHold") == 0, "Markdown has no report hold to release (Rich Text only)")
             #expect(rig.editorState.switchInProgressContent == nil, "the staged Markdown content must not outlive the lifecycle")
             #expect(rig.editorState.lifecycleFlushDoneFor == nil)
             #expect(rig.editorState.activeLifecycle == nil)
@@ -164,7 +162,6 @@ extension LifecycleEntryStatic {
             let rig = try LifecycleFlushHarness()
             prime(rig)
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
 
             await rig.withEntry {
                 _ = try? await LifecycleEntry.run(kind: .close) { throw RestoreBoom() }
@@ -185,7 +182,6 @@ extension LifecycleEntryStatic {
             let rig = try LifecycleFlushHarness()
             prime(rig)
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
 
             await rig.withEntry {
                 _ = try? await LifecycleEntry.run(kind: .projectSwitch) {
@@ -207,7 +203,6 @@ extension LifecycleEntryStatic {
             let rig = try LifecycleFlushHarness()
             prime(rig)
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
 
             await rig.withEntry {
                 _ = try? await LifecycleEntry.run(kind: .projectSwitch) { throw RestoreBoom() }
@@ -227,7 +222,6 @@ extension LifecycleEntryStatic {
         func fbStillQueued_isAwaited_thenIdsAreRepushed() async throws {
             let rig = try LifecycleFlushHarness()
             rig.recordPushes()
-            defer { rig.sync.stopPolling() }
             guard case .armed(let token) = rig.editorState.armLifecycle(.close, wasGettingStarted: false) else {
                 Issue.record("could not arm a close token")
                 return
@@ -254,8 +248,8 @@ extension LifecycleEntryStatic {
             await opener.value
 
             #expect(rig.pushes.count == 1, "FB landed during the bounded wait, so the ids are restored")
-            #expect(rig.pushes.first?.pollTimerArmed == false, "before polling restarts")
-            #expect(rig.sync.testPollTimerIsArmed)
+            #expect(rig.pushes.first?.reportHoldReleased == false, "before the reports flow again")
+            #expect(await rig.reportHoldReleased())
             #expect(rig.editorState.activeLifecycle == nil)
         }
 
@@ -270,7 +264,6 @@ extension LifecycleEntryStatic {
             let fbGate = LifecycleEntryHarness.Gate()
             defer {
                 fbGate.open()
-                rig.sync.stopPolling()
             }
             var flush = LifecycleFlushResult()
             flush.fbStatus = .started
@@ -292,7 +285,7 @@ extension LifecycleEntryStatic {
 
             #expect(elapsed < .seconds(1.4), "bounded by abortStep (0.2s at this scale): \(elapsed)")
             #expect(rig.pushes.isEmpty, "an unsettled FB is not known to have applied: nothing is pushed")
-            #expect(rig.sync.testPollTimerIsArmed, "polling restarts regardless")
+            #expect(await rig.reportHoldReleased(), "the reports flow again regardless")
             #expect(rig.editorState.activeLifecycle == nil)
         }
     }

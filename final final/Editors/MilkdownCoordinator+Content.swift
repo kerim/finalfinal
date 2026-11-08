@@ -405,6 +405,13 @@ extension MilkdownEditor.Coordinator {
     }
 
     func shouldPushContent(_ newContent: String) -> Bool {
+        // A view update inside `handleContentPush`'s binding write sees the old `content` against the new `lastPushedContent`: the
+        // editor already holds the new text, so neither may be pushed (b3-notes.md, second regression). Lengths only in the log.
+        if adoptingEditorContent {
+            DebugLog.log(.sync, "[SYNC-DIAG:UpdateNSView] HELD during editor-content adoption len=\(newContent.utf16.count) "
+                + "adopting=\(lastPushedContent.utf16.count)")
+            return false
+        }
         let timeSinceLastReceive = Date().timeIntervalSince(lastReceivedFromEditor)
         if timeSinceLastReceive < 0.6 && newContent == lastPushedContent {
             return false

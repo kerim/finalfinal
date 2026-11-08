@@ -25,7 +25,6 @@ struct QuickUndoSettleAndFailureTests: QuickUndoFixtures {
     func testCloseRightAfterQuickUndoWaitsForReinsert_book6() async throws {
         let rig = try makeBookRig()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [weak rig] in try? rig?.assembledMarkdown() }
         let deleted = try await delete(rig)
         let settleMayGo = LifecycleEntryHarness.Gate()

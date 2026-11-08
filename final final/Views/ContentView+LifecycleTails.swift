@@ -104,8 +104,7 @@ extension ContentView {
     /// 5. `retireForLifecycle(.projectSwitch)` (P6), then the structural gate takes new work again (A21);
     /// 6. the bibliography-rebuild suppression window opens (the token clears before the new content push settles);
     /// 7. `isResettingContent = true`, the JS-side reset, then `runProjectOpenSequence`;
-    /// 8. `reconfigure` runs in BOTH modes (the old writer was retired); only the push and `startPolling` stay
-    ///    Rich-Text-only.
+    /// 8. `reconfigure` runs in BOTH modes (the old writer was retired); only the push stays Rich-Text-only.
     ///
     /// Returns whether the tail ran to the end (`false` when a quit joined), which the create tail reads.
     @MainActor
@@ -272,6 +271,7 @@ extension ContentView {
                 DebugLog.log(.lifecycle,
                     "[handleProjectOpened] WARNING: .willResetEditorForProjectSwitch had no matching Coordinator "
                     + "observer -- falling back to direct resetForProjectSwitch() call, mount-flash cloak will be skipped this time")
+                ReportApplier.pageWillResetForProjectSwitch(webView)   // Phase 5 job B3
                 webView.evaluateJavaScript("window.FinalFinal.resetForProjectSwitch()") { _, _ in }
             }
         } else {

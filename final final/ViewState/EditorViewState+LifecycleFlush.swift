@@ -22,7 +22,7 @@ extension EditorViewState {
     ///   - not zoomed, which means BOTH `zoomedRange` and `zoomedSectionId` are nil (the zoom-in-flight shape,
     ///     section id set and range nil, must stay the counted `.refused(.notWanted)` loss, N15; a zoomed
     ///     close also writes Mini-Notes, N17);
-    ///   - F finished cleanly: no poll watchdog hit, no drain or forced-poll timeout (the editor answered);
+    ///   - F finished cleanly: the page answered `flushAndAck` and the writer settled within its bound;
     ///   - the fresh fetch really answered (`fetchedContent != nil`, not the `usedFallback` content on hand).
     /// "A writer exists" is NOT part of the gate: it cannot be known here. The direct-write fallback
     /// (no queue writer, or a writer of another project) never inherits the decision: it writes with
@@ -31,7 +31,7 @@ extension EditorViewState {
         capture.editorMode == .wysiwyg
             && capture.zoomedRange == nil
             && capture.zoomedSectionId == nil
-            && !result.watchdogHit && !result.drainTimedOut && !result.forcedPollTimedOut
+            && !result.watchdogHit && !result.forcedPollTimedOut
             && result.fetchedContent != nil
             && !result.usedFallback
     }

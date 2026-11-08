@@ -138,7 +138,6 @@ struct QuickUndoTamperTwinTests: QuickUndoFixtures {
     func testQuitRightAfterQuickUndoWithTheJobPendingReleasesTheGate() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         let sectionA = try rig.heading("Section A")
         let typedParagraph = try #require(try rig.blocks().first { $0.textContent == "The B body." })
         try rig.setReply(.init(removedLeaderIds: [sectionA.id]))

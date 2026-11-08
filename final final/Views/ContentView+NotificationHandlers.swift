@@ -84,11 +84,6 @@ extension ContentView {
         // and the 100ms-delayed pushBlockIds() arrives too late — block-sync reports
         // changes with temp IDs, Swift creates new blocks at maxSortOrder+1.
         editorState.contentState = .bibliographyUpdate
-        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands,
-        // synchronously and before any Task is spawned, so a routine poll cycle parked
-        // mid-flight can keep (not discard) a batch that predates this rebuild by exactly
-        // this one transition — see BlockSyncService.checkGenerationGuard's doc comment.
-        blockSyncService.beginDatabaseRebuild()
         // This is a synthetic content rebuild, not a mode switch — any cursor position
         // already sitting in cursorPositionToRestore was computed against the
         // pre-rebuild document and is stale by construction. Drop it so the stale
@@ -99,13 +94,13 @@ extension ContentView {
 
         // Registered so the lifecycle save sequence (step 3) can await this rebuild, push included (item 21).
         let rebuildTask: Task<Void, Never> = Task {
-            // Force-flush pending JS changes to DB before reading blocks
+            // Everything the editor holds reaches the DB before the blocks are read (`flushAndAck`).
             if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
-                DebugLog.log(.bib, "[CV:bibRebuild] BEFORE poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
+                DebugLog.log(.bib, "[CV:bibRebuild] BEFORE flush: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
             }
-            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
+            await blockSyncService.flushForDatabaseRebuild()
             if let db = documentManager.projectDatabase, let pid = documentManager.projectId {
-                DebugLog.log(.bib, "[CV:bibRebuild] AFTER poll: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
+                DebugLog.log(.bib, "[CV:bibRebuild] AFTER flush: \((try? db.fetchBlockCount(projectId: pid)) ?? -1) blocks in DB")
             }
 
             let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
@@ -392,11 +387,6 @@ extension ContentView {
 
         // Atomic content+IDs push (same pattern as bibliography)
         editorState.contentState = .bibliographyUpdate  // Reuse same state
-        // Finding #1 (Calm_Bibliography, t-7c1d3fd8): mark the instant this bump lands,
-        // synchronously and before any Task is spawned — see
-        // handleBibliographySectionChanged above and
-        // BlockSyncService.checkGenerationGuard's doc comment.
-        blockSyncService.beginDatabaseRebuild()
         // This is a synthetic content rebuild, not a mode switch — any cursor position
         // already sitting in cursorPositionToRestore was computed against the
         // pre-rebuild document and is stale by construction. Drop it so the stale
@@ -408,9 +398,9 @@ extension ContentView {
         // Registered for the lifecycle save sequence's step 3, as in `handleBibliographySectionChanged`.
         let rebuildTask: Task<Void, Never> = Task {
             defer { FootnoteDiag.log("notes rebuild: finished duration=\(FootnoteDiag.nowMs() - diagStart)ms") }
-            // Force-flush pending JS changes to DB before reading blocks
-            await blockSyncService.pollBlockChangesNowForDatabaseRebuild()
-            FootnoteDiag.log("notes rebuild: forced poll done after \(FootnoteDiag.nowMs() - diagStart)ms")
+            // Everything the editor holds reaches the DB before the blocks are read (`flushAndAck`).
+            await blockSyncService.flushForDatabaseRebuild()
+            FootnoteDiag.log("notes rebuild: flush done after \(FootnoteDiag.nowMs() - diagStart)ms")
 
             let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
             let sourceRead = markdownRegionRead()   // t-4a8fd8af O28: the editor's regions, on the stamp's line (nil: not Markdown)
@@ -605,6 +595,13 @@ extension ContentView {
     /// no Focus Mode gate) shares this instead of risking a second, drifting copy.
     @MainActor
     func performUserZoomIn(_ sectionId: String, mode: ZoomMode, reason: String) {
+        // Phase 5 job A7: a close, quit or project switch is saving the project: the zoom is ignored, like the mode switch (the model's
+        // `P5_Abort_Switch_Zoom`); a zoom pressed while a switch or another zoom runs is held and runs afterwards.
+        guard zoomMayStart(direction: "in") else { return }
+        if editorState.zoomMustWaitForTransition {
+            editorState.holdZoomUntilTransitionEnds { performUserZoomIn(sectionId, mode: mode, reason: reason) }
+            return
+        }
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): an editor-first section delete's job is still pending. Wait for it
         // BEFORE any state change below, so the editor stays live (and typing keeps being saved) during the wait; then start the
         // zoom exactly as usual. Nothing pending (the normal case) takes the unchanged synchronous path. In Markdown mode "pending"
@@ -629,12 +626,19 @@ extension ContentView {
         // zoomToSection() itself -- matches the zoom-out barrier's placement below.
         unifiedUndoService.invalidateAll(reason: reason)
         findBarState.clearSearch()
+        let zoomInStart = Date()
+        // Phase 5 job A7: Rich Text takes the carried path (ContentView+ZoomTransition.swift); it falls back to the lines below itself.
+        if editorState.usesCarriedZoom {
+            runCarriedZoomIn(sectionId, mode: mode, started: zoomInStart)
+            return
+        }
         editorState.contentState = .zoomTransition
         Task {
             await editorState.zoomToSection(sectionId, mode: mode)
             await blockSyncService.pushBlockIds(for: editorState.zoomedBlockRange)
             await annotationSyncService.syncNow(editorState.content)
             editorState.contentState = .idle
+            DebugLog.log(.zoom, "[ZoomClick] performUserZoomIn tail complete in \(Date().timeIntervalSince(zoomInStart))s")
         }
     }
 
@@ -674,6 +678,12 @@ extension ContentView {
     /// been fixed there too; see that call site's own comment in StructuralUndoController.swift.
     @MainActor
     func performUserZoomOut(reason: String) {
+        // Phase 5 job A7: ignored during a close, quit or project switch; held behind a switch or another zoom (see `performUserZoomIn`).
+        guard zoomMayStart(direction: "out") else { return }
+        if editorState.zoomMustWaitForTransition {
+            editorState.holdZoomUntilTransitionEnds { performUserZoomOut(reason: reason) }
+            return
+        }
         // t-94369a83 Phase 4b slice 2a (plan D7, addendum A2): wait for a pending editor-first delete job before any state
         // change, as `performUserZoomIn` does. Delete is refused while zoomed, so this is almost never taken; it is the plan's
         // listed wait site for zoom out. It waits for the Markdown writer's structural hold too (see `performUserZoomIn`).
@@ -692,12 +702,24 @@ extension ContentView {
         unifiedUndoService.invalidateAll(reason: reason)
         let savedSectionId = editorState.zoomedSectionId
         findBarState.clearSearch()
-        editorState.contentState = .zoomTransition
+        let carried = editorState.usesCarriedZoom
+        // Today's path sets the state at once; the carried path (Phase 5 job A7) sets it only after its barrier.
+        if !carried { editorState.contentState = .zoomTransition }
         let zoomOutStart = Date()
         Task {
-            await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
+            // The carried zoom out (EditorViewState+ZoomTransition.swift); false = the page could not begin: today's path, unchanged.
+            // A carried zoom out is back to `.idle` itself (a rebuild may have started since), so the state is not touched after it.
+            var setsIdle = true
+            if !carried {
+                await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
+            } else if await editorState.zoomOutCarried(restoreScrollToSectionId: savedSectionId) {
+                setsIdle = false
+            } else {
+                editorState.contentState = .zoomTransition
+                await editorState.zoomOut(restoreScrollToSectionId: savedSectionId)
+            }
             DebugLog.log(.zoom, "[ZoomClick] zoomOut() settled in \(Date().timeIntervalSince(zoomOutStart))s")
-            editorState.contentState = .idle
+            if setsIdle { editorState.contentState = .idle }
             NotificationCenter.default.post(name: .didZoomOut, object: nil)
             if let sectionId = savedSectionId {
                 // KEPT even though zoomOut() above already resolved and landed on this same
@@ -732,6 +754,7 @@ extension ContentView {
             blockId: blockId,
             zoomedSectionId: editorState.zoomedSectionId,
             contentState: editorState.contentState,
+            transitionRunning: editorState.zoomMustWaitForTransition,
             sections: editorState.sections.map {
                 HeadingZoomClickSectionInfo(
                     id: $0.id,
@@ -744,6 +767,10 @@ extension ContentView {
         switch action {
         case .drop(let reason):
             DebugLog.log(.zoom, "[ZoomClick] ignored Cmd-click on \(blockId): \(reason)")
+        case .hold(let reason):
+            // Phase 5 job A7: a switch or a zoom is running. The click is decided again, from the top, once it is over.
+            DebugLog.log(.zoom, "[ZoomClick] Cmd-click on \(blockId) held: \(reason)")
+            editorState.holdZoomUntilTransitionEnds { handleZoomHeadingClicked(notification) }
         case .zoomIn(let id, let mode):
             performUserZoomIn(id, mode: mode, reason: "user zoomed in (heading Cmd-click)")
         case .zoomOut:

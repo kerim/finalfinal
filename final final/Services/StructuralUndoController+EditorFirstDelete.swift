@@ -622,14 +622,14 @@ extension StructuralUndoController {
     ///
     /// It does what the normal Notes rebuild (`ContentView.handleNotesSectionChanged`) does, in the same order (fix round 6; the VM's
     /// `testQuitRightAfterDeleteNumbering_book6` saved 45 references on their ORIGINAL numbers with the notes on the wrong numbers):
-    /// 1. First the ORDERED forced poll (`pollBlockChangesNowForDatabaseRebuild`: it also waits for a batch the routine poll has
-    ///    already fetched and not yet applied) carries the editor's pending changes into the database. The footnote resync renumbers
-    ///    the references IN THE EDITOR with the content push suppressed, so that renumber (like any typing the poll has not carried)
-    ///    is an unsent edit that only a poll takes to the database; lifecycle step 0 has stopped the routine poll. Reading the
-    ///    database before this poll gave stale references with already-renumbered Notes.
+    /// 1. First `flushForDatabaseRebuild` (`flushAndAck`: the page posts what it holds and the wait ends when the writer has decided
+    ///    every report up to it) carries the editor's pending changes into the database. The footnote resync renumbers the
+    ///    references IN THE EDITOR with the content push suppressed, so that renumber (like any typing not yet reported) is an
+    ///    unsent edit that only a report takes to the database. Reading the database before this flush gave stale references with
+    ///    already-renumbered Notes.
     /// 2. Then the database is read, and `isResettingContent` stays set from the moment `content` is assigned until the merge push
     ///    has returned: without it the view pushes `content` (which the merge push has not yet been allowed to update, about a
-    ///    second) into the editor and replaces its user blocks. With the poll done the database text carries the editor's edits, so
+    ///    second) into the editor and replaces its user blocks. With the flush done the database text carries the editor's edits, so
     ///    `content` is what the editor holds, and what the whole-document save falls back to when it cannot fetch (`FB` reads
     ///    `editorState.content` then) is the renumbered text, not a stale one.
     /// 3. The merge-guarded push keeps whatever the editor still holds in its user blocks and takes the database's Notes and
@@ -641,16 +641,16 @@ extension StructuralUndoController {
     func pushManagedRegionsWhileClosing(editorState: EditorViewState, projectId: String?) async -> Bool {
         guard editorState.activeLifecycle != nil, editorState.editorMode == .wysiwyg, editorState.zoomedSectionId == nil,
               let pid = projectId, editorState.currentProjectId == pid else { return false }
-        // A flush that did not complete (the editor did not answer within the poll's watchdog, or the writer did not settle) may have
-        // left the editor's pending edits out of the database: reading it then would assign an OLDER document to `content` (which the
+        // A flush that did not complete (the editor did not answer within its bound, or the writer did not settle) may have left the
+        // editor's pending edits out of the database: reading it then would assign an OLDER document to `content` (which the
         // whole-document save falls back to when it cannot fetch) and push it. So nothing is assigned or pushed then; the lifecycle's
-        // own forced poll (F) and the save fetch the editor's live text afterwards (fix round 8, F6).
-        guard await blockSyncService?.pollBlockChangesNowForDatabaseRebuild() ?? true else {
+        // own step F (`flushAndAck`) and the save fetch the editor's live text afterwards (fix round 8, F6).
+        guard await blockSyncService?.flushForDatabaseRebuild() ?? true else {
             DebugLog.alwaysPersisted(
-                "[StructuralUndoController] closing push skipped: the forced poll did not complete (watchdog or unsettled writer)")
+                "[StructuralUndoController] closing push skipped: the flush did not complete (page silent or unsettled writer)")
             return false
         }
-        // The poll suspended: look again (a cancelled lifecycle hands the rebuild back to the handlers, a switch changes the project).
+        // The flush suspended: look again (a cancelled lifecycle hands the rebuild back to the handlers, a switch changes the project).
         guard editorState.activeLifecycle != nil, editorState.currentProjectId == pid, let db = editorState.projectDatabase else { return false }
         let stamp = editorState.stampRebuildRead()   // slice 2b: on the line before the database read, no `await` between
         guard let result = fetchFullBlocksWithIds(db: db, pid: pid) else { return false }

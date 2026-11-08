@@ -112,7 +112,7 @@ final class FootnoteExportRaceTests: XCTestCase {
         DocumentManager.shared.projectDatabase = db
         DocumentManager.shared.projectId = pid
         DocumentManager.shared.flushBeforeExport = { [weak sync] in
-            await sync?.pollBlockChangesNow()
+            _ = await sync?.flushForDatabaseRebuild()
         }
 
         // --- Real slash-command insertion ---

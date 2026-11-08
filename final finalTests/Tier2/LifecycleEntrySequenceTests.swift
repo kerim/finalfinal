@@ -41,7 +41,6 @@ extension LifecycleEntryStatic {
 
         private func prime(_ rig: LifecycleFlushHarness) {
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = Self.fresh
         }
 

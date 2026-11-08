@@ -71,10 +71,8 @@ extension ZoomWordCountSyncTests {
         )
         try await Task.sleep(nanoseconds: 600_000_000)
 
-        let hasChanges = try await helper.webView.evaluateJavaScript(
-            "window.FinalFinal.hasBlockChanges()"
-        ) as? Bool
-        await sync.pollBlockChangesNow()
+        let hasChanges = try await helper.webView.evaluateJavaScript(SwitchFlushTestSupport.outboxNotEmptyScript) as? Bool
+        _ = await sync.flushForDatabaseRebuild()
 
         let blockCountAfter = try db.fetchBlockCount(projectId: pid)
         XCTAssertGreaterThan(
@@ -82,7 +80,7 @@ extension ZoomWordCountSyncTests {
             """
             ZOOMED: paragraph split while zoomed did not reach the DB \
             (blocks before=\(blockCountBefore), after=\(blockCountAfter), \
-            hasBlockChanges=\(String(describing: hasChanges))). \
+            heldInOutbox=\(String(describing: hasChanges))). \
             New blocks created during zoom must get temp IDs and sync live.
             """
         )
@@ -96,7 +94,7 @@ extension ZoomWordCountSyncTests {
     @MainActor
     func testZoomed_miniNotesTail_staysOutOfDatabase() async throws {
         let stack = try await makeStack()
-        let (helper, db) = (stack.helper, stack.db)
+        let db = stack.db
         let (pid, sync) = (stack.pid, stack.sync)
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: db)
@@ -124,9 +122,9 @@ extension ZoomWordCountSyncTests {
 
         // Two poll cycles: any temp IDs wrongly assigned to the mini-Notes tail
         // would surface as inserts here.
-        await sync.pollBlockChangesNow()
+        _ = await sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await sync.pollBlockChangesNow()
+        _ = await sync.flushForDatabaseRebuild()
 
         let blockCountAfter = try db.fetchBlockCount(projectId: pid)
         XCTAssertEqual(
@@ -174,19 +172,17 @@ extension ZoomWordCountSyncTests {
         try await editBetaParagraph(helper.webView)
 
         // Diagnostic visibility: what does the JS side think it has pending?
-        let hasChanges = try await helper.webView.evaluateJavaScript(
-            "window.FinalFinal.hasBlockChanges()"
-        ) as? Bool
-        DebugLog.always("[ZoomWordCountSyncTests] zoomed hasBlockChanges=\(String(describing: hasChanges))")
+        let hasChanges = try await helper.webView.evaluateJavaScript(SwitchFlushTestSupport.outboxNotEmptyScript) as? Bool
+        DebugLog.always("[ZoomWordCountSyncTests] zoomed heldInOutbox=\(String(describing: hasChanges))")
 
-        await sync.pollBlockChangesNow()
+        _ = await sync.flushForDatabaseRebuild()
 
         let after = try totalWordCount(db, pid)
         XCTAssertGreaterThan(
             after, before,
             """
             ZOOMED: edit inside the zoomed section did not reach the DB \
-            (before=\(before), after=\(after), hasBlockChanges=\(String(describing: hasChanges))). \
+            (before=\(before), after=\(after), heldInOutbox=\(String(describing: hasChanges))). \
             This reproduces the frozen-word-count-while-zoomed bug.
             """
         )

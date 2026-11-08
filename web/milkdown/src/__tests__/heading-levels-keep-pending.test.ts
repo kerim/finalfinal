@@ -5,7 +5,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it } from 'vitest';
-import { flushPendingBlockChanges, getBlockChangesApi, updateHeadingLevels } from '../api-content';
+import { flushPendingBlockChanges, updateHeadingLevels } from '../api-content';
 import {
   blockIdPlugin,
   getAllBlockIds,
@@ -17,6 +17,7 @@ import {
 import { blockSyncPlugin, resetAndSnapshot, resetBlockSyncState } from '../block-sync-plugin';
 import { setEditorInstance } from '../editor-state';
 import { highlightPlugin } from '../highlight-plugin';
+import { takePendingAsReport } from './pending-for-test';
 
 // Regression coverage for t-94369a83 Phase 2, §3: updateHeadingLevels used to finish by
 // calling deferredSnapshotAndUnpause() with no arguments, which routes to the full-wipe
@@ -101,7 +102,7 @@ describe('updateHeadingLevels keeps the pending block-sync queue (t-94369a83 Pha
     updateHeadingLevels([{ blockId: 'h-b', newLevel: 2 }]);
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const pUpdate = changes.updates.find((u) => u.id === 'p-1');
     expect(pUpdate).toBeDefined();
     expect(pUpdate?.textContent).toContain('para more');
@@ -134,7 +135,7 @@ describe('updateHeadingLevels keeps the pending block-sync queue (t-94369a83 Pha
     updateHeadingLevels([{ blockId: 'h-b', newLevel: 2 }]);
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const insert = changes.inserts.find((i) => i.tempId === tempId);
     expect(insert).toBeDefined();
     expect(insert?.textContent).toBe('Inserted.');
@@ -155,7 +156,7 @@ describe('updateHeadingLevels keeps the pending block-sync queue (t-94369a83 Pha
     updateHeadingLevels([{ blockId: 'h-b', newLevel: 2 }]);
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const hUpdate = changes.updates.find((u) => u.id === 'h-b');
     expect(hUpdate).toBeDefined();
     expect(hUpdate?.headingLevel).toBe(2);

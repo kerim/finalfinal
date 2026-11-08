@@ -89,7 +89,7 @@ extension QuickUndoFixtures {
         _ = await rig.waitUntilSettled()
         var cycles = 0
         repeat {
-            #expect(await rig.awaitRuns([rig.startPoll()]), "a poll did not end")
+            #expect(await rig.awaitRuns([rig.startReport()]), "a poll did not end")
             cycles += 1
         } while !rig.typingQueue.isEmpty && cycles < 6
         _ = await rig.waitUntilSettled()

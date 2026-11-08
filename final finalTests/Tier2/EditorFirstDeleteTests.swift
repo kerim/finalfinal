@@ -122,8 +122,16 @@ final class EditorFirstRig {
     /// `resumeSyncAfterQuickUndo` and after `typeIntoEditor`. This flag withholds BOTH: the notification never arrives, and `content`
     /// stays what it was (the post-delete text), the case the reinsert settle must not trust (U-Q18).
     var withholdContentUpdate = false
-    /// Pending edits the next poll cycle fetches, oldest first (`queueTyping`). Empty: the poll asks the scripted evaluator.
+    /// Edits the page holds and has not reported yet, oldest first (`queueTyping`). Phase 5 B4: each leaves as one report
+    /// (`postQueuedTyping`) when the page's debounce would post it (`startReport`) or when Swift asks (`flushReports`).
     var typingQueue: [BlockChanges] = []
+    /// The report numbers the rig's page has posted so far, in its one page session (`reportSession`).
+    var reportsPosted = 0
+    static let reportSession = "rig-page"
+    /// The page does not answer the next `flushReports` (a wedged page), once.
+    var wedgeNextFlushReports = false
+    /// How many times Swift asked the page `flushReports` (step F of a close, a rebuild's flush).
+    var flushReportsCalls = 0
     /// What `ContentView`'s content-change handler does with the footnote service when `content` changes while the editor is idle.
     /// Off unless a test turns it on: only the footnote-checkpoint tests need it.
     var emulatesFootnoteContentChange = false
@@ -519,7 +527,7 @@ struct EditorFirstDeleteTests {
 
     // MARK: - U14
 
-    @Test("U14: a routine poll batch fetched BEFORE the click survives the delete")
+    @Test("U14: a report admitted BEFORE the click (its turn reserved, not yet applied) survives the delete")
     func testPollBatchFetchedBeforeClickSurvives() async throws {
         let rig = try EditorFirstRig(markdown: Self.threeSections)
         rig.controller.testEFBumpGenerationAtClick = Self.bumpGenerationAtClick
@@ -527,31 +535,23 @@ struct EditorFirstDeleteTests {
         let root = try rig.heading("Second Section")
         let subtreeIds = try #require(try rig.db.sectionBlockIds(rootId: root.id, projectId: rig.pid))
 
-        // A routine cycle fetches a batch carrying the user's typing, then is held right after the fetch.
+        // A report carrying the user's typing is admitted (its turn reserved) while the writer is busy, so it has not applied yet.
         let typed = BlockChanges(updates: [BlockUpdate(
             id: paragraph.id, textContent: "The first chapter's body. TYPED-U14", markdownFragment: "The first chapter's body. TYPED-U14",
             headingLevel: nil)])
-        let typedJSON = String(data: try JSONEncoder().encode(typed), encoding: .utf8)
-        rig.js.answer("hasBlockChanges", true)
-        rig.js.answer("getBlockChanges", typedJSON)
-        let parked = LifecycleEntryHarness.Gate()
-        let entered = GateOrderLog()
-        rig.sync.testAfterFetchHook = {
-            entered.note("fetched")
-            await parked.wait()
-        }
-        let poll = Task { @MainActor in await rig.sync.pollBlockChangesForTest() }
-        let reached = await gateWaitUntil { entered.items == ["fetched"] }
-        #expect(reached, "the routine cycle must have fetched its batch before the click")
+        let busy = try #require(rig.sync.writer).reserve()
+        rig.sync.reportApplier.receive(
+            IncomingReport(number: 1, session: EditorFirstRig.reportSession, changes: typed, detectedAt: 0), via: .message)
+        #expect(rig.sync.reportApplier.testLedger(EditorFirstRig.reportSession).waiting == [1],
+                "the report must hold its turn before the click")
 
-        // The click: its own batch is empty (the poll took the typing), and it removes the section.
+        // The click: its own batch is empty (the report took the typing), and it removes the section.
         try rig.setReply(.init(removedLeaderIds: [root.id]))
         let outcome = await rig.controller.performSectionDelete(rootId: root.id)
         #expect(outcome == .performed)
         let entry = try #require(rig.unifiedUndo.undoStack.last)
 
-        parked.open()
-        await poll.value
+        busy.settleIfOpen(.empty)
         await rig.settle(entry.id)
 
         let rows = try rig.blocks()

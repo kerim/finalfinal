@@ -206,7 +206,7 @@ struct EditorFirstSlowUndoTests: QuickUndoFixtures {
 
         let id = try payloadId(rig, of: "The B body.")   // the id the editor now holds for it
         rig.typingQueue.append(typing(id: id, to: "The B body typed."))
-        let poll = rig.startPoll()
+        let poll = rig.startReport()
         rig.release(hold)
         #expect(await rig.awaitRuns([press, poll]))
         _ = await rig.waitUntilSettled()

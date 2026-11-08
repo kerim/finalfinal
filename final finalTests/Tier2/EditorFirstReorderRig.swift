@@ -99,7 +99,7 @@ final class ReorderRig {
             annotationSyncService: AnnotationSyncService(), unifiedUndoService: rig.unifiedUndo, findBarState: rig.findBar)
         let previous = rig.sync.testJSEvaluator
         rig.sync.testJSEvaluator = { [weak self] script in
-            if script.contains("reorderSectionsEditorFirst") { return self?.answerClick(script) }
+            if script.contains("reorderSectionsEditorFirst") { return self?.answerClick(EditorFirstRig.innerRouteScript(script)) }
             return try await previous?(script)
         }
     }
@@ -176,7 +176,7 @@ final class ReorderRig {
         _ = await rig.waitUntilSettled()
         var cycles = 0
         repeat {
-            #expect(await rig.awaitRuns([rig.startPoll()]), "a poll did not end")
+            #expect(await rig.awaitRuns([rig.startReport()]), "a poll did not end")
             cycles += 1
         } while !rig.typingQueue.isEmpty && cycles < 6
         _ = await rig.waitUntilSettled()

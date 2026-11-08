@@ -214,7 +214,6 @@ struct TypingAcrossUndoSwiftTests: QuickUndoFixtures {
     func testCloseReleasesTheHeldTypingPushesBeforeTheForcedPoll() async throws {
         let rig = try EditorFirstRig(markdown: Self.fourSections)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in try? rig.assembledMarkdown() }
 
         let result = await rig.runLifecycle(.close, bounds: .production)

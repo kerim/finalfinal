@@ -968,10 +968,18 @@ export function assignBlockIds(
   const newTypes = new Map<number, string>();
   const claimedIds = new Set<string>();
 
-  // Count current blocks to detect structural changes (insertion/deletion)
+  // Zoom mode: only the mini-Notes tail is exempt from temp IDs (see zoomNotesBoundary)
+  const notesBoundary = blockIdZoomMode ? zoomNotesBoundary(doc) : Infinity;
+
+  // Count current blocks to detect structural changes (insertion/deletion).
+  // The mini-Notes tail of a zoom never carries ids (it is never in
+  // `existingIds`), so it is left out of the count: counting it made every
+  // keystroke in a zoom with footnotes look structural, and the structural
+  // route refuses a claim for text typed mid-block or after the first key at
+  // a block's start — the block lost its id and was sent as DELETE + INSERT.
   let blockCount = 0;
-  doc.forEach((node) => {
-    if (isBlockType(node)) blockCount++;
+  doc.forEach((node, offset) => {
+    if (isBlockType(node) && !suppressTempIdInZoom(blockIdZoomMode, offset, notesBoundary)) blockCount++;
   });
   const structureChanged = blockCount !== existingIds.size;
 
@@ -1113,9 +1121,6 @@ export function assignBlockIds(
 
   // Collect deferred blocks that need proximity matching
   const deferred: Array<{ offset: number; nodeType: string; nodeText: string; flagged: boolean }> = [];
-
-  // Zoom mode: only the mini-Notes tail is exempt from temp IDs (see zoomNotesBoundary)
-  const notesBoundary = blockIdZoomMode ? zoomNotesBoundary(doc) : Infinity;
 
   // Phase 1: mapped-position matches. Each existing id is looked up at the
   // position `tr.mapping` actually carried its old start to (`oldByNewOffset`/

@@ -170,7 +170,7 @@ final class AutoBackupService {
             return
         }
 
-        if needsLiveFlush, let editorState {
+        if needsLiveFlush, !TestMode.uiTestingAutoBackupNoLiveFlush, let editorState {
             await editorState.flushLiveContentToDatabase {
                 await editorState.blockSyncService?.fetchContentFromWebView()
             }

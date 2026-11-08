@@ -170,9 +170,9 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         print("DOM AFTER PASTE (pre-flush): \(domAfterPaste)")
 
         // Force a sync flush and capture the FULL block list — checkpoint 1.
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let checkpoint1Blocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
@@ -198,9 +198,9 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         let domAfterHeading = try await domDump(stack.helper.webView)
         print("DOM AFTER ADDING LEADING HEADING (pre-flush): \(domAfterHeading)")
 
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let checkpoint2Blocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
@@ -228,11 +228,14 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
 
         // The pasted paragraph (a copy of "text") must sort BEFORE the original
         // heading, since it was pasted above it.
-        if let pastedParagraph = sorted.first(where: { $0.blockType == .paragraph && $0.textContent == "text" && $0.sortOrder != sorted.last?.sortOrder }),
+        if let pastedParagraph = sorted.first(where: {
+            $0.blockType == .paragraph && $0.textContent == "text" && $0.sortOrder != sorted.last?.sortOrder
+        }),
            let originalHeading = sorted.first(where: { $0.blockType == .heading && $0.textContent == "heading" }) {
             XCTAssertLessThan(
                 pastedParagraph.sortOrder, originalHeading.sortOrder,
-                "regression: pasted paragraph (so=\(pastedParagraph.sortOrder)) must sort BEFORE the original heading (so=\(originalHeading.sortOrder)) — it was pasted ABOVE it"
+                "regression: pasted paragraph (so=\(pastedParagraph.sortOrder)) must sort BEFORE the original heading "
+                    + "(so=\(originalHeading.sortOrder)) — it was pasted ABOVE it"
             )
         } else {
             XCTFail("Could not identify pasted paragraph / original heading in final blocks: \(orderSummary(sorted))")
@@ -267,9 +270,9 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         let domAfterPaste = try await domDump(stack.helper.webView)
         print("V2-DOM AFTER PASTE (pre-flush): \(domAfterPaste)")
 
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let checkpointBlocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
@@ -308,7 +311,7 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         // Force a poll RIGHT NOW — commits the empty paragraph to a permanent id
         // (atDocumentStart) before its content is filled. Minimal settle time
         // after this, unlike the clean reproduction test above.
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
 
         let domAfterSplitCommit = try await domDump(stack.helper.webView)
         print("V3-DOM AFTER SPLIT+COMMIT (no settle): \(domAfterSplitCommit)")
@@ -382,11 +385,11 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
         let domFinal = try await domDump(stack.helper.webView)
         print("V3-DOM FINAL (pre-flush): \(domFinal)")
 
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let finalBlocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
@@ -414,11 +417,14 @@ final class PasteAboveHeadingOrderBugTests: XCTestCase {
 
         // The pasted paragraph (a copy of "text") must sort BEFORE the original
         // heading, since it was pasted above it.
-        if let pastedParagraph = sorted.first(where: { $0.blockType == .paragraph && $0.textContent == "text" && $0.sortOrder != sorted.last?.sortOrder }),
+        if let pastedParagraph = sorted.first(where: {
+            $0.blockType == .paragraph && $0.textContent == "text" && $0.sortOrder != sorted.last?.sortOrder
+        }),
            let originalHeading = sorted.first(where: { $0.blockType == .heading && $0.textContent == "heading" }) {
             XCTAssertLessThan(
                 pastedParagraph.sortOrder, originalHeading.sortOrder,
-                "regression: pasted paragraph (so=\(pastedParagraph.sortOrder)) must sort BEFORE the original heading (so=\(originalHeading.sortOrder)) — it was pasted ABOVE it"
+                "regression: pasted paragraph (so=\(pastedParagraph.sortOrder)) must sort BEFORE the original heading "
+                    + "(so=\(originalHeading.sortOrder)) — it was pasted ABOVE it"
             )
         } else {
             XCTFail("Could not identify pasted paragraph / original heading in final blocks: \(orderSummary(sorted))")
@@ -573,8 +579,8 @@ extension PasteAboveHeadingOrderBugTests {
     /// for why this — and not execCommand — is required to exercise real editor behavior).
     @MainActor
     private func typeViaNSEvents(_ text: String, window: NSWindow) throws {
-        for ch in text {
-            let charString = String(ch)
+        for character in text {
+            let charString = String(character)
             let now = ProcessInfo.processInfo.systemUptime
             guard
                 let down = NSEvent.keyEvent(
@@ -583,7 +589,7 @@ extension PasteAboveHeadingOrderBugTests {
                     characters: charString, charactersIgnoringModifiers: charString,
                     isARepeat: false, keyCode: 0
                 ),
-                let up = NSEvent.keyEvent(
+                let keyUp = NSEvent.keyEvent(
                     with: .keyUp, location: .zero, modifierFlags: [],
                     timestamp: now, windowNumber: window.windowNumber, context: nil,
                     characters: charString, charactersIgnoringModifiers: charString,
@@ -593,7 +599,7 @@ extension PasteAboveHeadingOrderBugTests {
                 throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for \(charString)"])
             }
             window.sendEvent(down)
-            window.sendEvent(up)
+            window.sendEvent(keyUp)
         }
     }
 
@@ -626,7 +632,7 @@ extension PasteAboveHeadingOrderBugTests {
                 characters: character, charactersIgnoringModifiers: character,
                 isARepeat: false, keyCode: keyCode
             ),
-            let up = NSEvent.keyEvent(
+            let keyUp = NSEvent.keyEvent(
                 with: .keyUp, location: .zero, modifierFlags: modifierFlags,
                 timestamp: now, windowNumber: window.windowNumber, context: nil,
                 characters: character, charactersIgnoringModifiers: character,
@@ -636,7 +642,7 @@ extension PasteAboveHeadingOrderBugTests {
             throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for keyCode \(keyCode)"])
         }
         window.sendEvent(down)
-        window.sendEvent(up)
+        window.sendEvent(keyUp)
     }
 
     @MainActor

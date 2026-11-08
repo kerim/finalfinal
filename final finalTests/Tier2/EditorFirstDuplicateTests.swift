@@ -160,7 +160,7 @@ struct EditorFirstDuplicateTests: QuickUndoFixtures {
         _ = await rig.waitUntilSettled()
         var cycles = 0
         repeat {
-            #expect(await rig.awaitRuns([rig.startPoll()]), "a poll did not end")
+            #expect(await rig.awaitRuns([rig.startReport()]), "a poll did not end")
             cycles += 1
         } while !rig.typingQueue.isEmpty && cycles < 6
         _ = await rig.waitUntilSettled()
@@ -233,7 +233,7 @@ struct EditorFirstDuplicateTests: QuickUndoFixtures {
         let copyBody = try #require(screenBefore.range(of: "The C body.", options: .backwards), "no paragraph in the copy")
         rig.editorText = screenBefore.replacingCharacters(in: copyBody, with: typed)
         rig.typingQueue.append(BlockChanges(updates: [BlockUpdate(id: copyBodyId, textContent: typed, markdownFragment: typed, headingLevel: nil)]))
-        let poll = rig.startPoll()
+        let poll = rig.startReport()
         #expect(await gateWaitUntil({ rig.typingQueue.isEmpty }), "the poll did not fetch the typing")
         jobMayRun.signal()
         #expect(await rig.awaitRuns([poll]))

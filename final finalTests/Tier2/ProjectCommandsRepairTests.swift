@@ -104,7 +104,8 @@ extension LifecycleEntryStatic {
         // MARK: - stillBroken and failed: perform throws, the abort restores
 
         /// What a restored editor looks like after an abort that followed an applied FB: the ids went back to the
-        /// editor, polling runs again, the writer was NOT retired (the project stays open), nothing is armed or held and
+        /// editor, its reports flow again (Phase 5 B4: it was the poll's restart), the writer was NOT retired (the project stays open),
+        /// nothing is armed or held and
         /// no tail ran (no automatic version, no post).
         private func expectRestored(
             _ rig: LifecycleTailRig,
@@ -112,10 +113,10 @@ extension LifecycleEntryStatic {
             pushes: [[String]],
             snapshotsBefore: Int,
             sourceLocation: SourceLocation = #_sourceLocation
-        ) throws {
+        ) async throws {
             #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)", sourceLocation: sourceLocation)
             #expect(pushes.count == 1, "FB applied, so the abort re-pushed the block ids once; got \(pushes)", sourceLocation: sourceLocation)
-            #expect(rig.sync.testPollTimerIsArmed, "polling is running again", sourceLocation: sourceLocation)
+            #expect(await rig.reportHoldReleased(), "the editor's reports flow again", sourceLocation: sourceLocation)
             #expect(rig.editorState.activeLifecycle == nil, sourceLocation: sourceLocation)
             #expect(rig.editorState.lifecycleBarrier == nil, sourceLocation: sourceLocation)
             #expect(LifecycleEntry.current == nil, sourceLocation: sourceLocation)
@@ -152,7 +153,7 @@ extension LifecycleEntryStatic {
             }
             #expect(newReport.issues == [.missingProjectRecord], "the sheet gets the UPDATED report")
             #expect(recorder.order == ["repair"], "order: \(recorder.order)")
-            try expectRestored(rig, recorder: recorder, pushes: pushes, snapshotsBefore: before)
+            try await expectRestored(rig, recorder: recorder, pushes: pushes, snapshotsBefore: before)
         }
 
         @Test("""
@@ -180,7 +181,7 @@ extension LifecycleEntryStatic {
             }
             #expect(error as? RepairBoom == RepairBoom(), "the sheet gets the error")
             #expect(recorder.order == ["repair"], "order: \(recorder.order)")
-            try expectRestored(rig, recorder: recorder, pushes: pushes, snapshotsBefore: before)
+            try await expectRestored(rig, recorder: recorder, pushes: pushes, snapshotsBefore: before)
         }
 
         @Test("E6 Open Anyway failed: the same restore, and the error goes back to the sheet")
@@ -205,7 +206,7 @@ extension LifecycleEntryStatic {
             }
             #expect(error as? RepairBoom == RepairBoom())
             #expect(recorder.order == ["openAnyway"], "order: \(recorder.order)")
-            try expectRestored(rig, recorder: recorder, pushes: pushes, snapshotsBefore: before)
+            try await expectRestored(rig, recorder: recorder, pushes: pushes, snapshotsBefore: before)
         }
 
         // MARK: - not run
@@ -217,7 +218,6 @@ extension LifecycleEntryStatic {
         func repairIsCancelled_performNeverCalled() async throws {
             let rig = try LifecycleFlushHarness()
             rig.js.answer("flushPendingBlockChanges", true)
-            rig.js.answer("hasBlockChanges", false)
             rig.fetchAnswer = "# Alpha\n\nfresh Y paragraph.\n\n# Beta\n\nfour five six.\n"
             let toasts = ToastCenter()
             rig.editorState.toastCenter = toasts

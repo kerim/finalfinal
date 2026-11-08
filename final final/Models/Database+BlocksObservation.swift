@@ -34,8 +34,8 @@ extension ProjectDatabase {
     ///   - `docs/findings/minor-fixes.md` (the first time we removed it)
     ///
     /// The emission rate is already bounded: GRDB fires once per committed
-    /// transaction (not per row), `BlockSyncService.pollInterval` is 2 s,
-    /// `applyBlockChangesFromEditor` wraps every poll-cycle's writes into one
+    /// transaction (not per row), the editor's reports are spaced at least R (250 ms) apart,
+    /// `applyBlockChangesFromEditor` wraps every report's writes into one
     /// transaction, and `EditorViewState.fetchBatchWordCounts` runs off the
     /// main actor via `Task.detached`. Dedup here buys nothing and breaks
     /// live word-count updates. The regression is covered by

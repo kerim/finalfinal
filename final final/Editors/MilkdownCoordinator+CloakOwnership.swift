@@ -199,6 +199,7 @@ extension MilkdownEditor.Coordinator {
     func beginProjectResetCloak() {
         guard let webView else { return }
         let token = beginCloak(.projectReset)
+        ReportApplier.pageWillResetForProjectSwitch(webView)   // Phase 5 job B3: the old project's report sessions are revoked first
         webView.evaluateJavaScript("window.FinalFinal.resetForProjectSwitch(\(token))") { _, _ in }
     }
 

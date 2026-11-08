@@ -7,11 +7,7 @@ import { undo } from '@milkdown/kit/prose/history';
 import { Selection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  getBlockChangesApi,
-  PRESERVE_USER_BLOCKS_PARSE_FAILURE_SENTINEL,
-  setContentWithBlockIds,
-} from '../api-content';
+import { PRESERVE_USER_BLOCKS_PARSE_FAILURE_SENTINEL, setContentWithBlockIds } from '../api-content';
 import {
   blockIdPlugin,
   getAllBlockIds,
@@ -24,6 +20,7 @@ import {
 import { blockSyncPlugin, resetAndSnapshot, resetBlockSyncState } from '../block-sync-plugin';
 import { getCurrentContent, setEditorInstance } from '../editor-state';
 import { highlightPlugin } from '../highlight-plugin';
+import { takePendingAsReport } from './pending-for-test';
 
 // Regression coverage for t-6a0d195d: a bibliography/Notes/footnote rebuild reads the whole
 // document from the database and pushes back every block that differs (buildBlockLevelReplace,
@@ -35,7 +32,7 @@ import { highlightPlugin } from '../highlight-plugin';
 // for the algorithm.
 //
 // Harness mirrors block-sync-pause-race.test.ts: a real Milkdown editor, real ProseMirror
-// transactions, and assertions against the real `getBlockChangesApi()` surface -- not a
+// transactions, and assertions against the real `takePendingAsReport()` surface -- not a
 // mocked/isolated comparator -- so these tests exercise the actual production wiring.
 //
 // Real timers throughout (no vi.useFakeTimers()): `signalPaintComplete` (api-content.ts)
@@ -124,7 +121,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
 
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const pUpdate = changes.updates.find((u) => u.id === 'id-p');
     expect(pUpdate?.textContent).toContain('NEW');
   });
@@ -149,7 +146,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
 
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const pUpdate = changes.updates.find((u) => u.id === 'id-p');
     expect(pUpdate?.textContent).toContain('EDIT');
   });
@@ -180,7 +177,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
 
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const insert = changes.inserts.find((i) => i.tempId === tempId);
     expect(insert).toBeDefined();
     expect(insert?.textContent).toBe('New inserted.');
@@ -206,7 +203,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
 
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     expect(changes.deletes).toContain('id-q');
   });
 
@@ -414,7 +411,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
 
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const insert = changes.inserts.find((ins) => ins.tempId === tempId);
     expect(insert).toBeDefined();
     expect(insert?.afterBlockId).toBe('id-bib-entry-new');
@@ -518,9 +515,9 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
     expect(view.state.doc.textContent).toContain('P. EDIT');
     expect(view.state.doc.textContent).not.toContain('P changed from db');
 
-    // The pending queue is intact (not cleared/reset) -- getBlockChangesApi still surfaces the
+    // The pending queue is intact (not cleared/reset) -- takePendingAsReport still surfaces the
     // update flushPendingBlockChangesPlugin queued above.
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const pUpdate = changes.updates.find((u) => u.id === 'id-p');
     expect(pUpdate).toBeDefined();
     expect(pUpdate?.textContent).toContain('EDIT');
@@ -562,7 +559,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
     // The pending update the override exists to protect must still be queued, not stripped by
     // reconcilePendingQueueAfterManagedRebuild (which would happen if id-d were still counted
     // as "managed this push").
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const dUpdate = changes.updates.find((u) => u.id === 'id-d');
     expect(dUpdate).toBeDefined();
     expect(dUpdate?.textContent).toContain('EDITED');
@@ -732,7 +729,7 @@ describe('setContentWithBlockIds preserveUserBlocks — rebuild-flush-typing-rac
 
     await waitForRAF();
 
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     const insert = changes.inserts.find((ins) => ins.tempId === tempId);
     expect(insert).toBeDefined();
     expect(insert?.atDocumentStart).toBe(true);

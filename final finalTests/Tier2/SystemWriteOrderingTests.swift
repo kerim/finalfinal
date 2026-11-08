@@ -201,70 +201,50 @@ struct SystemWriteOrderingTests {
         refuse once that same sequence has settled
         """)
     func heldEditorSeqNestingGuard_refusesWhileOpen_notFalselyAfterSettle() async throws {
+        // Phase 5 B4: the open editor sequence is a report's (`applyReportBatch` sets `heldEditorSeq` around its apply; it was the
+        // poll cycle's fetch-to-apply window before the poll was removed).
         let stack = try makeStack()
-
         let js = ScriptedJSEvaluator()
-        js.answer("flushPendingBlockChanges", true)
-        js.answer("hasBlockChanges", true)
+        stack.sync.testJSEvaluator = { try await js.evaluate($0) }
         let target = try #require(try TestFixtureFactory.fetchBlocks(from: stack.db)
             .first { $0.textContent.contains("one two three") })
-        let json = try blockChangesJSON(updates: [
+        let changes = BlockChanges(updates: [
             BlockUpdate(id: target.id, textContent: "edited while held open", markdownFragment: nil, headingLevel: nil)
         ])
-        js.answer("getBlockChanges", json)
-        stack.sync.testJSEvaluator = { try await js.evaluate($0) }
-        // Same escape hatch W32 already established: the `heldEditorSeq` nesting
-        // check backs a DEBUG `assertionFailure` (a real, unguarded call from
-        // production code should never hit it) that would otherwise crash this test
-        // process the moment it intentionally triggers `.nested` here.
+        // Same escape hatch W32 already established: the `heldEditorSeq` nesting check backs a DEBUG `assertionFailure`.
         stack.sync.testSuppressNestedAssert = true
 
         let identity = SystemWriteIdentity(projectId: stack.pid, database: stack.db)
-        var whileOpenOutcome: SystemWriteOutcome<Int>?
-        var whileOpenPrepareRan: Bool?
-        var afterSettleOutcome: SystemWriteOutcome<Int>?
+        final class Seen { var whileOpen: SystemWriteReservationResult?; var afterSettle: SystemWriteOutcome<Int>? }
+        let seen = Seen()
+        let (ticket, stamp) = try #require(stack.sync.reserveWriterTurn(database: stack.db, projectId: stack.pid))
+        ticket.noteFetched()
+        let sync = stack.sync
+        // `abandonAfterTurn` runs once the turn is granted, before the apply: the sequence is genuinely open there.
+        // `onApplied` runs right after the apply: by then the writer has removed the ticket's phase entry, so `isOpen` is false
+        // even though the SAME task-local value is still in scope -- the "still open, not was set" distinction W34 proves.
+        await sync.applyReportBatch(
+            ticket: ticket, stamp: stamp, changes: changes,
+            abandonAfterTurn: {
+                seen.whileOpen = sync.reserveSystemWriteNow(identity: identity)
+                return false
+            },
+            onApplied: { _ in
+                seen.afterSettle = await sync.performSystemWrite(
+                    identity: identity, kind: .headingLevels, stillWanted: { true },
+                    body: { _ in SystemWriteBody(value: 1) }
+                ).outcome
+            })
 
-        // Both hooks run on the SAME Task as `doPollBlockChanges` (an unstructured
-        // `Task { }` inherits the task-local values active at its creation point, and
-        // neither hook spawns a further child task), so `SystemWriteScope.heldEditorSeq`
-        // -- set via `withValue` around the whole fetch-through-apply window -- is
-        // genuinely visible from inside them, exactly as it would be from code called
-        // deep within that window in production. `testAfterFetchHook` fires while the
-        // ticket is still open (fetched, not yet turn-waited/applied);
-        // `testAfterApplyHook` fires right after `applyAndConfirm` -- by then the
-        // writer has already removed the ticket's phase entry on a successful apply,
-        // so `writer.isOpen(heldSeq)` is false even though the SAME task-local value
-        // is still in scope -- this is the "still open, not was set" distinction W34
-        // exists to prove.
-        stack.sync.testAfterFetchHook = {
-            let result = await stack.sync.performSystemWrite(
-                identity: identity, kind: .headingLevels, stillWanted: { true },
-                body: { _ in SystemWriteBody(value: 1) }
-            )
-            whileOpenOutcome = result.outcome
-            whileOpenPrepareRan = result.prepareRan
-        }
-        stack.sync.testAfterApplyHook = {
-            let result = await stack.sync.performSystemWrite(
-                identity: identity, kind: .headingLevels, stillWanted: { true },
-                body: { _ in SystemWriteBody(value: 1) }
-            )
-            afterSettleOutcome = result.outcome
-        }
-
-        await stack.sync.pollBlockChangesForTest(force: true)
-
-        guard case .refused(.nested) = whileOpenOutcome else {
-            Issue.record("expected .refused(.nested) while the held editor sequence was still open, got \(String(describing: whileOpenOutcome))")
+        guard case .refused(.nested) = seen.whileOpen else {
+            Issue.record("expected .refused(.nested) while the report's editor sequence was still open, got \(String(describing: seen.whileOpen))")
             return
         }
-        #expect(whileOpenPrepareRan == false, "a .nested refusal must never have run prepare")
-
-        if case .refused(.nested) = afterSettleOutcome {
-            Issue.record("must NOT refuse .nested once the held editor sequence has already settled -- got \(String(describing: afterSettleOutcome))")
+        if case .refused(.nested) = seen.afterSettle {
+            Issue.record(
+                "must NOT refuse .nested once the report's editor sequence has already settled -- got \(String(describing: seen.afterSettle))")
         }
-        // The apply itself must have actually landed -- proves the nested-check calls
-        // above did not somehow interfere with the real cycle's own write.
+        // The apply itself must have actually landed.
         let updated = try TestFixtureFactory.fetchBlocks(from: stack.db).first { $0.id == target.id }
         #expect(updated?.textContent == "edited while held open")
     }
@@ -391,7 +371,7 @@ struct SystemWriteOrderingTests {
         // NOT covered this round (recorded honestly): `.skipped`/`.outOfTurn` with
         // prepareRan == true both need the write to be genuinely blocked behind
         // another sequence AFTER prepare runs, then skipped/raced out from under it --
-        // doable (e.g. hold an editor sequence open via `testAfterFetchHook`, park a
+        // doable (e.g. hold an editor sequence open inside `applyReportBatch`, park a
         // second `performSystemWrite` call behind it, then call `configure(...)` again
         // to trigger `skipAllReserved`), but not attempted this round given the time
         // ceiling; the four pre-prepare-refusal cases and the two post-prepare
@@ -834,7 +814,7 @@ struct SystemWriteOrderingTests {
         #expect(service.testHasPendingUpdate)
 
         // Hold the in-flight run deterministically suspended via the production-side
-        // test hook, mirroring `BlockSyncService.testPollCycleHook`'s own precedent --
+        // test hook --
         // NOT a real wall-clock sleep or a blocked database writer lock. An earlier
         // version of this test held the writer lock busy via `Thread.sleep` inside a
         // `Task`, which starved Swift concurrency's cooperative thread pool badly

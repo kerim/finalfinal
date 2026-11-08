@@ -314,8 +314,8 @@ extension StructuralUndoController {
             DebugLog.log(.undo, "[StructuralUndoController] duplicate settle \(opId): id push skipped (entry taken or a lifecycle armed)")
             return
         }
-        guard await blockSync.pollBlockChangesNowForDatabaseRebuild(), wanted() else {
-            DebugLog.log(.undo, "[StructuralUndoController] duplicate settle \(opId): id push skipped (poll incomplete or entry taken)")
+        guard await blockSync.flushForDatabaseRebuild(), wanted() else {
+            DebugLog.log(.undo, "[StructuralUndoController] duplicate settle \(opId): id push skipped (flush incomplete or entry taken)")
             return
         }
         await blockSync.pushBlockIds()

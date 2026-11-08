@@ -133,8 +133,8 @@ extension LifecycleEntryStatic {
         // MARK: - A wedged quit still backs up
 
         @Test("""
-            a wedged quit still backs up: a poll cycle that never comes back ends at its watchdog, the fetch is \
-            skipped, FB writes the content on hand, and the automatic version is made before the reply
+            a wedged quit still backs up: a page that never answers step F's flushReports is given up on at F's bound, \
+            the fetch is skipped, FB writes the content on hand, and the automatic version is made before the reply
             """)
         func wedgedQuit_stillMakesTheAutomaticVersion() async throws {
             let rig = try LifecycleTailRig(mountedEditor: true)
@@ -143,12 +143,9 @@ extension LifecycleEntryStatic {
             let replies = QuitReplies()
             let before = try rig.snapshotCount()
             rig.backup.contentDidChange()
-            rig.js.wedgeOn("hasBlockChanges")
+            rig.js.wedgeOn("flushReports")
             rig.fetchAnswer = "THE FETCH MUST NOT HAPPEN"
             rig.editorState.content = "# Alpha\n\nfallback paragraph.\n\n# Beta\n\nfour five six.\n"
-            let sync = rig.sync
-            let cycle = Task { @MainActor in await sync.pollBlockChangesForTest(force: false) }
-            await rig.js.waitUntilEnteredWedge()
 
             await rig.withEntry(bounds: LifecycleBounds.production.scaled(0.25)) {
                 #expect(delegate.runQuitSequence(reply: { replies.values.append($0) }) == .terminateLater)
@@ -161,10 +158,6 @@ extension LifecycleEntryStatic {
             #expect(try rig.paragraphTexts().contains("fallback paragraph."), "FB wrote the content on hand")
 
             rig.js.releaseWedge()
-            for _ in 0..<300 where !rig.sync.testInFlightPollIsNil {
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            await cycle.value
         }
 
         // MARK: - C19: delete everything, then quit
@@ -183,8 +176,7 @@ extension LifecycleEntryStatic {
             #expect(paragraphIds.count == 2, "precondition: the seed has two paragraphs")
             rig.editorState.content = ""     // the content push already carried the deletion to Swift
             // The editor's pending changes: both paragraphs deleted (not a 100% delete, which a guard refuses).
-            rig.js.answer("hasBlockChanges", true)
-            rig.js.answer("getBlockChanges", try blockChangesJSON(deletes: paragraphIds))
+            rig.js.reportOnFlush(BlockChanges(deletes: paragraphIds), to: rig.sync)
             rig.fetchAnswer = ""
 
             await rig.withEntry(bounds: LifecycleBounds.production.scaled(0.25)) {

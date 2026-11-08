@@ -6,10 +6,11 @@ import type { Node as ProsemirrorNode } from '@milkdown/kit/prose/model';
 import { TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { expect } from 'vitest';
-import { getBlockChangesApi } from '../api-content';
+
 import { getAllBlockIds, setBlockIdsForTopLevel } from '../block-id-plugin';
 import { flushPendingBlockChanges } from '../block-sync-plugin';
 import { beginStructuralOp, finalizeStructuralOpPostOpDoc } from '../undo-coordinator';
+import { takePendingAsReport } from './pending-for-test';
 
 /** A block's text, with a footnote reference written `[^label]`. */
 export function describeBlock(node: ProsemirrorNode): string {
@@ -80,7 +81,7 @@ export function runRegisteredOp(_view: EditorView, opId: string, op: () => void)
   op();
   expect(finalizeStructuralOpPostOpDoc(opId)).toBe(true);
   flushPendingBlockChanges();
-  getBlockChangesApi(); // what the operation itself left pending is not what these tests are about
+  takePendingAsReport(); // what the operation itself left pending is not what these tests are about
 }
 
 export function placeCaret(view: EditorView, pos: number): void {

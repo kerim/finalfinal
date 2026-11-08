@@ -16,12 +16,7 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  getBlockChangesApi,
-  hasBlockChanges,
-  releaseHeldTypingAndGetBatch,
-  setContentWithBlockIds,
-} from '../api-content';
+import { releaseHeldTypingAndGetBatch, setContentWithBlockIds } from '../api-content';
 import { deleteSectionEditorFirst } from '../api-section-delete';
 import { type StructuralSwapPayload, setTestAfterReplayHook, structuralSwapEditorFirst } from '../api-structural-swap';
 import { bibliographyEndMarkerPlugin } from '../bibliography-end-marker-plugin';
@@ -53,6 +48,7 @@ import {
   typeInto,
   waitForRAF,
 } from './editor-first-harness';
+import { hasReportablePending, takePendingAsReport } from './pending-for-test';
 import {
   endOfParagraphText,
   paragraphText,
@@ -181,12 +177,12 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
 
     // Saved once, by the replay: the next poll has exactly this one update, and then nothing.
     flushPendingBlockChanges();
-    const batch = getBlockChangesApi();
+    const batch = takePendingAsReport();
     expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);
     expect(batch.updates[0].textContent).toBe('two typed');
     expect(batch.inserts).toEqual([]);
     expect(batch.deletes).toEqual([]);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
   });
 
   it('W1b: a Return in the wait makes one new row, saved once', async () => {
@@ -214,10 +210,10 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
     ]);
     swiftReplies(OP, { redoTopOpId: OP });
     flushPendingBlockChanges();
-    const batch = getBlockChangesApi();
+    const batch = takePendingAsReport();
     expect(batch.inserts.length, 'the new paragraph is inserted once, not twice').toBe(1);
     expect(batch.inserts[0].textContent).toBe('more');
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
   });
 
   it('W9-route: a letter typed straight after the swap lands right after the replayed text', async () => {
@@ -245,16 +241,16 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       expect(getTypingCollector().stepsSince(1).length, 'premise: typing recorded').toBeGreaterThanOrEqual(1);
 
       expect(isTypingPushHeld()).toBe(true);
-      expect(hasBlockChanges()).toBe(false);
-      expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+      expect(hasReportablePending()).toBe(false);
+      expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
 
       receiveUndoOutcome(OP, 'failed');
       expect(isTypingPushHeld()).toBe(false);
-      expect(hasBlockChanges()).toBe(true);
-      const batch = getBlockChangesApi();
+      expect(hasReportablePending()).toBe(true);
+      const batch = takePendingAsReport();
       expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);
       expect(batch.updates[0].textContent).toBe('two typed');
-      expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
     });
 
     it.each([
@@ -267,15 +263,15 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       typeText(view, ' typed');
       flushPendingBlockChanges();
       expect(getTypingCollector().stepsSince(1).length, 'premise: typing recorded').toBeGreaterThanOrEqual(1);
-      expect(getBlockChangesApi(), 'held while latched').toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport(), 'held while latched').toEqual(EMPTY_BATCH);
 
       receiveUndoOutcome(OP, outcome);
 
       expect(isTypingPushHeld()).toBe(false);
-      const batch = getBlockChangesApi();
+      const batch = takePendingAsReport();
       expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);
       expect(batch.updates[0].textContent).toBe('two typed');
-      expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
       expect(getTypingCollector().isRecording, 'the collector is reset on this exit').toBe(false);
     });
 
@@ -294,9 +290,9 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       flushPendingBlockChanges();
 
       expect(isTypingPushHeld()).toBe(false);
-      const batch = getBlockChangesApi();
+      const batch = takePendingAsReport();
       expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);
-      expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
       expect(getTypingCollector().isRecording).toBe(false);
     });
 
@@ -309,7 +305,7 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       expect(getTypingCollector().stepsSince(1).length, 'premise: typing recorded').toBeGreaterThanOrEqual(1);
 
       expect(releaseHeldTypingPushes()).toBe(true);
-      const batch = getBlockChangesApi();
+      const batch = takePendingAsReport();
       expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);
 
       // Sent once already: the replay would save it a second time, so the press refuses and keeps the document.
@@ -355,7 +351,7 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       expect(r.batch.deletes).toEqual(['b']);
       receiveUndoOutcome(OP, 'failed'); // Swift: refuse with the notice, release the latch
       flushPendingBlockChanges();
-      expect(getBlockChangesApi(), 'the typing was sent once, with the batch').toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport(), 'the typing was sent once, with the batch').toEqual(EMPTY_BATCH);
     });
 
     it('W7-route: a Backspace that joins two paragraphs which are ALSO adjacent in the target is placed there: one joined paragraph, once', async () => {
@@ -420,7 +416,9 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       }
       receiveUndoOutcome(OP, 'failed');
       flushPendingBlockChanges();
-      expect(getBlockChangesApi(), 'saved once: the baseline was reset after the batch was taken').toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport(), 'saved once: the baseline was reset after the batch was taken').toEqual(
+        EMPTY_BATCH
+      );
     });
 
     it('F13: a replay that does not give the document the dry run built is refused with docChanged: nothing swapped, the typing comes back in the batch', async () => {
@@ -597,10 +595,10 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
       ]);
       swiftReplies(OP, { redoTopOpId: OP });
       flushPendingBlockChanges();
-      const batch = getBlockChangesApi();
+      const batch = takePendingAsReport();
       expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);
       expect(batch.updates[0].textContent).toBe('XYtwo');
-      expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+      expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
     });
 
     it('the restore changed the block type: no pairing, the typing becomes its OWN paragraph at the edge of the changed run (after the block that took its place), the headings are unchanged', async () => {
@@ -805,7 +803,7 @@ async function managedSceneAfterDelete(withFootnote: boolean) {
   const { view } = made;
   setContentWithBlockIds(MANAGED_MD, MANAGED_IDS, { managedBlockIds: MANAGED });
   await waitForRAF();
-  getBlockChangesApi();
+  takePendingAsReport();
   if (withFootnote) {
     const ref = view.state.schema.nodes.footnote_ref;
     view.dispatch(
@@ -815,10 +813,10 @@ async function managedSceneAfterDelete(withFootnote: boolean) {
     );
   }
   flushPendingBlockChanges();
-  getBlockChangesApi();
+  takePendingAsReport();
   expect(deleteSectionEditorFirst(OP, 't', MANAGED).ok).toBe(true);
   await sleep(160);
-  getBlockChangesApi();
+  takePendingAsReport();
   expect(pressUndo(view, OP)).toBe(true);
   return made;
 }
@@ -875,11 +873,11 @@ describe('typing across a waiting Cmd-Z: typing first, the settle rewrite last (
     ]);
     swiftReplies(OP, { redoTopOpId: OP });
     flushPendingBlockChanges();
-    const batch = getBlockChangesApi();
+    const batch = takePendingAsReport();
     expect(batch.updates.map((u) => u.id)).toEqual(['b2']);
     expect(batch.inserts).toEqual([]);
     expect(batch.deletes).toEqual([]);
-    expect(getBlockChangesApi(), 'not sent a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'not sent a second time').toEqual(EMPTY_BATCH);
   });
 
   it('W15b: typing INSIDE the bibliography entry, then a rebuild that rewrites that entry: refused before the swap, the live document untouched', async () => {
@@ -913,7 +911,7 @@ describe('typing across a waiting Cmd-Z: typing first, the settle rewrite last (
     expect(r.batch.updates[0].textContent).toBe('Reference ONE.');
     receiveUndoOutcome(OP, 'failed'); // Swift: refuse with the notice, release the latch
     flushPendingBlockChanges();
-    expect(getBlockChangesApi(), 'sent once').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'sent once').toEqual(EMPTY_BATCH);
   });
 
   // The old R2b (slow-swap-editor-first.test.ts) covered typing in a region the saved-copy comparison ignores (a bibliography entry):
@@ -942,13 +940,13 @@ describe('typing across a waiting Cmd-Z: typing first, the settle rewrite last (
       receiveUndoOutcome(OP, 'failed');
     }
     flushPendingBlockChanges();
-    rows.push(...getBlockChangesApi().updates);
+    rows.push(...takePendingAsReport().updates);
 
     // The typed text is in the editor, once, whichever way the press ended ...
     expect(paragraphText(view, 'Reference one'), 'the typing is still in the editor').toBe('Reference one. LATE');
     // ... and in the rows, exactly once (it rides the replay or the batch, never both and never neither).
     expect(rows.filter((u) => u.id === 'bp' && u.textContent.includes('LATE'))).toHaveLength(1);
-    expect(getBlockChangesApi(), 'nothing is sent a second time').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'nothing is sent a second time').toEqual(EMPTY_BATCH);
   });
 });
 
@@ -1107,8 +1105,8 @@ describe('typing across a waiting Cmd-Z: ending the hold and taking the batch in
     placeCaret(view, endOfParagraphText(view, 'two'));
     typeText(view, ' typed'); // the 100 ms detection has not run yet
     expect(isTypingPushHeld(), 'premise: the typing is held back from the polls').toBe(true);
-    expect(hasBlockChanges()).toBe(false);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(hasReportablePending()).toBe(false);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
 
     const taken = releaseHeldTypingAndGetBatch();
 
@@ -1116,7 +1114,7 @@ describe('typing across a waiting Cmd-Z: ending the hold and taking the batch in
     expect(taken.batch.updates.map((u) => u.id)).toEqual(['c2p']);
     expect(taken.batch.updates[0].textContent).toBe('two typed');
     expect(isTypingPushHeld()).toBe(false);
-    expect(getBlockChangesApi(), 'sent once').toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport(), 'sent once').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP, 'failed');
   });
 
@@ -1128,6 +1126,6 @@ describe('typing across a waiting Cmd-Z: ending the hold and taking the batch in
 
     expect(taken.released).toBe(false);
     expect(taken.batch.updates.map((u) => u.id)).toEqual(['c2p']);
-    expect(getBlockChangesApi()).toEqual(EMPTY_BATCH);
+    expect(takePendingAsReport()).toEqual(EMPTY_BATCH);
   });
 });

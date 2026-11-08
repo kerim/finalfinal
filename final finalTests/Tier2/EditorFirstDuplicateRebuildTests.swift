@@ -153,7 +153,7 @@ struct EditorFirstDuplicateRebuildTests: QuickUndoFixtures {
         let copyIds = try #require(try rig.db.sectionBlockIds(rootId: copyRoot.id, projectId: rig.pid))
         let body = try firstParagraph(in: copyIds, rig)
         rig.queueTyping(body, appending: " TYPED-IN-THE-COPY")
-        #expect(await rig.awaitRuns([rig.startPoll()]), "the poll after the typing never ended")
+        #expect(await rig.awaitRuns([rig.startReport()]), "the poll after the typing never ended")
         _ = await rig.waitUntilSettled()
         let stored = try rig.blocks().first { $0.id == body.id }
         #expect(

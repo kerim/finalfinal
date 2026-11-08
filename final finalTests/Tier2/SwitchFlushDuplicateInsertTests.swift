@@ -67,7 +67,6 @@ final class SwitchFlushDuplicateInsertTests: XCTestCase {
         defer {
             DocumentManager.shared.projectDatabase = priorDb
             DocumentManager.shared.projectId = priorPid
-            view.blockSyncService.stopPolling()
         }
 
         // Anchor to the heading, NOT the trailing paragraph (see QuitFlushDuplicateInsertTests.placeCursorAtEndOfHeading).
@@ -81,9 +80,6 @@ final class SwitchFlushDuplicateInsertTests: XCTestCase {
         // insert, rather than sleeping a fixed time and probing once. Read-only: nothing here consumes the pending insert.
         let observed = try await SwitchFlushTestSupport.waitForPendingEdit(helper) { $0.contains(Self.marker) }
         XCTAssertTrue(observed.contentMatches, "the typed marker never reached the editor; content=\(observed.content)")
-        XCTAssertEqual(
-            observed.hasPendingChanges, true,
-            "the typed paragraph never became a pending, unconfirmed block-sync insert; content=\(observed.content)")
         guard observed.isReady else { return }
 
         // A Notes rebuild is RUNNING when the switch begins: the handler spawns its Task, which first forces a poll.

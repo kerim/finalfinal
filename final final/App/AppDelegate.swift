@@ -209,6 +209,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AppDelegate.shared = self
 
         DebugLog.log(.lifecycle, "[FINAL|FINAL] Build: \(GitInfo.branch) (\(GitInfo.commit))")
+        MainLagSampler.startIfRequested()   // Phase 5 job B2 measurement: UI tests with FF_UI_TESTING_LAG_SAMPLER=1 only
 
         // Debug builds tint the Dock icon and label their windows with the
         // worktree (or branch) they came from — see DevBuildBadge.swift.

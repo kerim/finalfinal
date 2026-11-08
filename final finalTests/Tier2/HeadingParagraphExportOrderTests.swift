@@ -19,7 +19,7 @@
 //       into two poll cycles).
 //    C. Cross-cycle leading-heading insert, done for BOTH sections: type the
 //       paragraph alone, force a flush (so it becomes a real, committed, permanent-id
-///      block), THEN go back and prepend a heading for it in a separate cycle. This is
+//       block), THEN go back and prepend a heading for it in a separate cycle. This is
 //       the exact shape the in-worktree "export-order-bug" fix targets — done here
 //       twice (once per section) to see whether the second section's cross-cycle
 //       prepend (NOT at literal document position 0) behaves the same as the first.
@@ -152,8 +152,8 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
     /// for why this — and not execCommand — is required to exercise real editor behavior).
     @MainActor
     private func typeViaNSEvents(_ text: String, window: NSWindow) throws {
-        for ch in text {
-            let charString = String(ch)
+        for character in text {
+            let charString = String(character)
             let now = ProcessInfo.processInfo.systemUptime
             guard
                 let down = NSEvent.keyEvent(
@@ -162,7 +162,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
                     characters: charString, charactersIgnoringModifiers: charString,
                     isARepeat: false, keyCode: 0
                 ),
-                let up = NSEvent.keyEvent(
+                let keyUp = NSEvent.keyEvent(
                     with: .keyUp, location: .zero, modifierFlags: [],
                     timestamp: now, windowNumber: window.windowNumber, context: nil,
                     characters: charString, charactersIgnoringModifiers: charString,
@@ -172,7 +172,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
                 throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for \(charString)"])
             }
             window.sendEvent(down)
-            window.sendEvent(up)
+            window.sendEvent(keyUp)
         }
     }
 
@@ -187,7 +187,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
                 characters: "\r", charactersIgnoringModifiers: "\r",
                 isARepeat: false, keyCode: 36
             ),
-            let up = NSEvent.keyEvent(
+            let keyUp = NSEvent.keyEvent(
                 with: .keyUp, location: .zero, modifierFlags: [],
                 timestamp: now, windowNumber: window.windowNumber, context: nil,
                 characters: "\r", charactersIgnoringModifiers: "\r",
@@ -197,7 +197,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
             throw NSError(domain: "diag", code: 1, userInfo: [NSLocalizedDescriptionKey: "could not build Enter NSEvent"])
         }
         window.sendEvent(down)
-        window.sendEvent(up)
+        window.sendEvent(keyUp)
     }
 
     /// Human-readable dump of stored blocks in sortOrder, for assertion failure messages.
@@ -235,9 +235,9 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
 
         // Let the debounce settle, then force a flush the way a real save/export would.
         try await Task.sleep(nanoseconds: 800_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
         let contentAfter = try await stack.helper.getContent()
@@ -271,7 +271,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
         try pressEnter(window: window)
         try typeViaNSEvents("Alpha paragraph text one two three test.", window: window)
         try await Task.sleep(nanoseconds: 500_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
 
         try pressEnter(window: window)
@@ -279,9 +279,9 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
         try pressEnter(window: window)
         try typeViaNSEvents("Beta paragraph text four five six test.", window: window)
         try await Task.sleep(nanoseconds: 500_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
         let contentAfter = try await stack.helper.getContent()
@@ -313,7 +313,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
         try await focusDocumentEnd(stack.helper.webView)
         try typeViaNSEvents("Alpha paragraph text one two three test.", window: window)
         try await Task.sleep(nanoseconds: 500_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
 
         let contentAfterPara1 = try await stack.helper.getContent()
@@ -329,7 +329,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
         try await focusStartOfBlock(containingPrefix: "Alpha Heading", webView: stack.helper.webView)
         try typeViaNSEvents("# ", window: window)
         try await Task.sleep(nanoseconds: 500_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
 
         // --- Section 2: paragraph appended at the end, flush, THEN prepend heading
@@ -339,7 +339,7 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
         try await Task.sleep(nanoseconds: 300_000_000)
         try typeViaNSEvents("Beta paragraph text four five six test.", window: window)
         try await Task.sleep(nanoseconds: 500_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
 
         let contentAfterPara2 = try await stack.helper.getContent()
@@ -355,9 +355,9 @@ final class HeadingParagraphExportOrderTests: XCTestCase {
         try await focusStartOfBlock(containingPrefix: "Beta Heading", webView: stack.helper.webView)
         try typeViaNSEvents("# ", window: window)
         try await Task.sleep(nanoseconds: 500_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
         try await Task.sleep(nanoseconds: 300_000_000)
-        await stack.sync.pollBlockChangesNow()
+        _ = await stack.sync.flushForDatabaseRebuild()
 
         let blocks = try TestFixtureFactory.fetchBlocks(from: stack.db)
         let contentAfter = try await stack.helper.getContent()

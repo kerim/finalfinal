@@ -49,6 +49,9 @@ extension MilkdownEditor {
         var lastReceivedFromEditor: Date = .distantPast
         var lastPushedContent: String = ""
         var lastPushTime: Date = .distantPast
+        /// True only while `handleContentPush` writes the editor's own text into the content binding: a view update SwiftUI runs
+        /// inside that write must not push anything (`shouldPushContent`), since the editor already holds the text being adopted.
+        var adoptingEditorContent = false
 
         /// P3 (4c/4d, undo-mode-switch-focus second timing gap): the most recent
         /// `contentChanged` message's `wasUndo` flag (sticky-OR across the JS-side 50ms

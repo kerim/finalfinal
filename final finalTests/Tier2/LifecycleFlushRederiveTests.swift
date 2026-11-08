@@ -47,7 +47,6 @@ struct LifecycleFlushRederiveTests {
 
     private func prime(_ rig: LifecycleFlushHarness, fetch: String) {
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = fetch
     }
 

@@ -88,9 +88,9 @@ final class LifecycleFlushHarness {
     /// One `pushBlockIds` call as the abort routine made it.
     struct PushRecord {
         let ids: [String]
-        /// Whether block-sync's poll timer was armed at the moment of the push: the abort must push BEFORE it
-        /// restarts polling (N14, item 13).
-        let pollTimerArmed: Bool
+        /// Whether the editor's reports had already been let flow again (`releaseReportHold`) at the moment of the push: the
+        /// abort must push BEFORE it does (N14, item 13; it was the poll's restart until Phase 5 B4).
+        let reportHoldReleased: Bool
         let isResettingContent: Bool
     }
 
@@ -128,7 +128,6 @@ final class LifecycleFlushHarness {
         sync.configure(database: db, projectId: pid, webView: view)
         editorState = EditorViewState()
         sync.editorState = editorState
-        sync.testPollWatchdogSeconds = 0.2
         editorState.blockSyncService = sync
         editorState.projectDatabase = db
         editorState.currentProjectId = pid
@@ -138,6 +137,11 @@ final class LifecycleFlushHarness {
 
     private func wire() {
         sync.testJSEvaluator = { [unowned self] script in
+            if script.contains("holdReportsForSave") {
+                // The Rich Text save's live read (Phase 5 B3): the content, wrapped with the report hold.
+                self.noteFetch()
+                return heldReadAnswer(content: self.fetchAnswer)
+            }
             if script.contains("getContent()") {
                 self.noteFetch()
                 return self.fetchAnswer
@@ -204,7 +208,7 @@ final class LifecycleFlushHarness {
             self.note("pushBlockIds")
             self.pushes.append(PushRecord(
                 ids: ids,
-                pollTimerArmed: self.sync.testPollTimerIsArmed,
+                reportHoldReleased: self.js.callCount("releaseReportHold") > 0,
                 isResettingContent: self.editorState.isResettingContent))
             await self.pushGate?.wait()
         }
@@ -328,13 +332,20 @@ final class LifecycleFlushHarness {
         return FootnoteSyncService.extractFootnoteRefs(from: body.map(\.markdownFragment).joined(separator: "\n\n"))
     }
 
-    /// Releases a wedged JS call and waits (bounded, 3s) for the poll cycle parked in it to unwind, so no
-    /// cycle is still running against the temporary database when the test ends.
+    /// Releases a wedged JS call and lets whatever was parked in it unwind (bounded, 100 ms), so nothing is still running against
+    /// the temporary database when the test ends.
     func releaseWedgeAndSettle() async throws {
         js.releaseWedge()
-        for _ in 0..<300 {
-            if sync.testInFlightPollIsNil { return }
-            try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: .milliseconds(100))
+    }
+
+    /// Whether the editor's reports were let flow again (`releaseReportHold`, which the abort routine sends without awaiting it):
+    /// waits a bounded while (1 s) for the call. Replaces the poll-timer check (`testPollTimerIsArmed`) of before Phase 5 B4.
+    func reportHoldReleased() async -> Bool {
+        for _ in 0..<100 {
+            if js.callCount("releaseReportHold") > 0 { return true }
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        return js.callCount("releaseReportHold") > 0
     }
 }

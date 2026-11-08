@@ -16,7 +16,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, expect, vi } from 'vitest';
-import { getBlockChangesApi, setContentWithBlockIds } from '../api-content';
+import { setContentWithBlockIds } from '../api-content';
 import { resumeSyncAfterQuickUndo } from '../api-section-undo';
 import { blockIdPlugin, getAllBlockIds, resetBlockIdState, setBlockIdZoomMode } from '../block-id-plugin';
 import { blockSyncPlugin, resetBlockSyncState, setSyncPaused } from '../block-sync-plugin';
@@ -34,6 +34,7 @@ import {
   setUndoDescriptor,
   typingCollectorPlugin,
 } from '../undo-coordinator';
+import { takePendingAsReport } from './pending-for-test';
 
 // === Documents ===
 
@@ -158,7 +159,7 @@ export async function load(specs: Spec[]): Promise<void> {
     specs.map((s) => s.name)
   );
   await waitForRAF();
-  getBlockChangesApi(); // whatever the push itself left pending is not what these tests are about
+  takePendingAsReport(); // whatever the push itself left pending is not what these tests are about
   expect(idsInOrder()).toEqual(specs.map((s) => s.name));
 }
 

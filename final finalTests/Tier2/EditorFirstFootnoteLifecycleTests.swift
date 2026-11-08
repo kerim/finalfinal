@@ -100,7 +100,6 @@ struct EditorFirstFootnoteLifecycleTests {
         #expect(Self.markedBook6.contains("GONE-19"), "the fixture's third chapter definitions carry the marker")
         let rig = try EditorFirstRig(markdown: Self.markedBook6, lifecycleServices: true)
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswerProvider = { [unowned rig] in rig.editorText }
         let before = Self.footnoteLabels(in: try rig.assembledMarkdown())
         #expect(before.references.count == 54, "six chapters with nine footnote references each: \(before.references.count)")

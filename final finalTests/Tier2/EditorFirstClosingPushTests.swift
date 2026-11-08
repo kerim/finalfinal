@@ -47,7 +47,7 @@ struct EditorFirstClosingPushTests {
     ///
     /// `contentEchoesTyping`: `editorState.content` (the mirror the editor's own echo keeps) already holds the typed sentence, as it
     /// does after the editor's 50 ms push. `fetchFails`: the save's fetch of the editor's live text gets no answer, so it falls back to
-    /// `editorState.content`. `wedgePoll`: the editor's first `hasBlockChanges` never answers, so a forced poll hits its watchdog.
+    /// `editorState.content`. `wedgePoll`: the page does not answer the closing push's `flushReports`, so its flush does not complete.
     private func setUp(
         renumber: Bool, typing: Bool, contentEchoesTyping: Bool = false, fetchFails: Bool = false, wedgePoll: Bool = false
     ) async throws -> Scenario {
@@ -78,7 +78,7 @@ struct EditorFirstClosingPushTests {
         }
         rig.editorText = editorText
 
-        // The batch a poll would fetch: the user blocks the editor changed.
+        // The batch the page would report: the user blocks the editor changed.
         var updates: [BlockUpdate] = []
         for block in try rig.blocks() where !block.isNotes && !block.isBibliography {
             var text = renumber ? EditorFirstFootnoteLifecycleTests.applyRenumbering(block.textContent, mapping: mapping) : block.textContent
@@ -93,14 +93,12 @@ struct EditorFirstClosingPushTests {
             }
         }
         #expect(!updates.isEmpty, "the editor has unsent edits")
-        let batch = String(data: try JSONEncoder().encode(BlockChanges(updates: updates)), encoding: .utf8)
-        rig.js.answer("hasBlockChanges", true, false)   // the first poll finds them, later ones find nothing
-        rig.js.answer("getBlockChanges", batch)
+        rig.typingQueue.append(BlockChanges(updates: updates))   // the page reports them when Swift asks (`flushReports`)
         if contentEchoesTyping { rig.editorState.content = editorText }
         if fetchFails { rig.fetchAnswerProvider = { nil } }
         if wedgePoll {
-            rig.sync.testPollWatchdogSeconds = 0.3
-            rig.js.wedgeOn("hasBlockChanges")
+            rig.sync.testRebuildFlushBound = 0.3
+            rig.wedgeNextFlushReports = true
         }
         return Scenario(rig: rig, settleMayRun: settleMayRun)
     }

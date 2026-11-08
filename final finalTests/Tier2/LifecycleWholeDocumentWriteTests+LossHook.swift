@@ -9,7 +9,7 @@
 //    - `.nested`   (W32 precedent: `SystemWriteScope.$active.withValue(true)` + `testSuppressNestedAssert`)
 //    - `.failed`   (a body that throws)
 //    - `.skipped`  (`configure` -> `skipAllReserved` while FB waits for its turn behind an open editor
-//                   sequence -- the "hold an editor sequence open via `testAfterFetchHook`" recipe the
+//                   sequence -- the "hold an editor sequence open (a reserved report turn)" recipe the
 //                   NOT-covered note at the end of SystemWriteOrderingTests W36 describes)
 //    - a replaced writer (review fix M18): the loss is counted on the writer the write USED, not on the
 //      replacement writer that `configure` installed while the write was suspended
@@ -134,8 +134,7 @@ extension LifecycleWholeDocumentWriteTests {
 
     // MARK: - .skipped (and the replaced-writer variant, review fix M18)
 
-    /// Holds an editor sequence open (fetched, not applied) via `testAfterFetchHook`, issues FB from a task
-    /// that does NOT inherit `SystemWriteScope.heldEditorSeq` (it would be refused `.nested`), waits until
+    /// Holds an editor sequence open (a report admitted, not applied), issues FB from a task, waits until
     /// FB is PARKED behind the editor sequence, then calls `configure` -- same project (`replaceWriter:
     /// false`: `skipAllReserved(.editorReplaced)`, the writer survives) or a different one (`true`:
     /// `retire(.writerReplaced)`, a fresh writer takes over) -- and returns FB's result.
@@ -146,17 +145,10 @@ extension LifecycleWholeDocumentWriteTests {
         let parked = WriterEventSignal(matching: { if case .parked = $0 { return true }; return false })
         stack.sync.testWriterEventHandler = { recorder.append($0); parked.note($0) }
 
-        // The same scripted poll as W34 (SystemWriteOrderingTests): one cycle that fetches a batch.
-        let js = ScriptedJSEvaluator()
-        js.answer("flushPendingBlockChanges", true)
-        js.answer("hasBlockChanges", true)
-        let target = try #require(try TestFixtureFactory.fetchBlocks(from: stack.db)
-            .first { $0.textContent.contains("one two three") })
-        let json = try blockChangesJSON(updates: [
-            BlockUpdate(id: target.id, textContent: "edit that will be skipped", markdownFragment: nil, headingLevel: nil)
-        ])
-        js.answer("getBlockChanges", json)
-        stack.sync.testJSEvaluator = { try await js.evaluate($0) }
+        // An editor sequence held open ahead of FB: a report admitted (its turn reserved, its batch taken in) whose apply has not
+        // run yet. (Phase 5 B4: it was a poll cycle parked right after its fetch.)
+        let (openTicket, _) = try #require(stack.sync.reserveWriterTurn(database: stack.db, projectId: stack.pid))
+        openTicket.noteFetched()
 
         let identity = SystemWriteIdentity(projectId: stack.pid, database: stack.db)
         let prepared = try #require(LifecycleWholeDocumentWrite.prepare(
@@ -165,25 +157,15 @@ extension LifecycleWholeDocumentWriteTests {
         let otherDb = try TestFixtureFactory.createTemporary()
         let otherPid = try TestFixtureFactory.getProjectId(from: otherDb)
 
-        var fbTask: Task<SystemWriteResult<LifecycleWholeDocumentWriteValue>, Never>?
-        stack.sync.testAfterFetchHook = {
-            fbTask = Task { @MainActor in
-                await SystemWriteScope.$heldEditorSeq.withValue(nil) {
-                    await stack.sync.performLifecycleWholeDocumentWrite(identity: identity, prepared: prepared)
-                }
-            }
-            await parked.wait()                                  // FB holds sequence 2, behind the open editor sequence 1
-            if replaceWriter {
-                stack.sync.configure(database: otherDb, projectId: otherPid, webView: stack.webView)
-            } else {
-                stack.sync.configure(database: stack.db, projectId: stack.pid, webView: stack.webView)
-            }
+        let sync = stack.sync
+        let fbTask = Task { @MainActor in
+            await sync.performLifecycleWholeDocumentWrite(identity: identity, prepared: prepared)
         }
-        await stack.sync.pollBlockChangesForTest(force: true)
-
-        guard let fbTask else {
-            Issue.record("the after-fetch hook never ran: the scripted poll cycle did not reach its fetch")
-            return nil
+        await parked.wait()                                  // FB holds the next sequence, behind the open editor sequence
+        if replaceWriter {
+            stack.sync.configure(database: otherDb, projectId: otherPid, webView: stack.webView)
+        } else {
+            stack.sync.configure(database: stack.db, projectId: stack.pid, webView: stack.webView)
         }
         return FBSkippedRun(stack: stack, result: await fbTask.value, recorder: recorder)
     }

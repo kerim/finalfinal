@@ -145,6 +145,14 @@ extension MilkdownEditor.Coordinator {
             }
             return true
 
+        case "blockReport":
+            // Phase 5 job B3: a block report, the writer's input. Taken in synchronously, here in the delegate callback with no `Task`
+            // hop (b2-b4-design.md correction 5), so its writer turn is reserved in delivery order, before any later page reply is handled.
+            let body = message.body
+            let page = message.webView
+            MainActor.assumeIsolated { ReportApplier.route(body: body, from: page) }
+            return true
+
         case "selectionChanged":
             guard let text = message.body as? String else { return true }
             Task { @MainActor in

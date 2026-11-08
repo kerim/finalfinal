@@ -398,7 +398,6 @@ struct StructuralGateBarrierTests {
     func testCancelledCloseReopensTheGate() async throws {
         let rig = try LifecycleFlushHarness()
         rig.js.answer("flushPendingBlockChanges", true)
-        rig.js.answer("hasBlockChanges", false)
         rig.fetchAnswer = "# Alpha\n\nfresh Y paragraph.\n\n# Beta\n\nfour five six.\n"
         let controller = rig.controller
         rig.editorState.toastCenter = ToastCenter()

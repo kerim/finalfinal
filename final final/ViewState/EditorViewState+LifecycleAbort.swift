@@ -110,9 +110,11 @@ extension EditorViewState {
             await repushBlockIds(bounds: bounds)
         }
 
-        // 6. ALWAYS restart polling (N23), after the re-push (N14) and even when FB never applied.
+        // 6. ALWAYS let the editor's reports flow again (N23; it was the poll's restart until Phase 5 B4), after the re-push (N14)
+        // and even when FB never applied. The save's live read held the reports (design 3.6); the project stays open.
+        // Not awaited: nothing below waits on it, and step 7 stays one synchronous stretch.
         isResettingContent = false
-        blockSyncService?.startPolling()
+        if mode == .wysiwyg, let blockSync = blockSyncService { Task { await blockSync.releaseReportHold(on: nil) } }
 
         // 7. Synchronous from here to the end: no gate can see the cleared token before the editor is restored.
         // The token goes first because P5 drops a Markdown re-parse scheduled while it is armed.

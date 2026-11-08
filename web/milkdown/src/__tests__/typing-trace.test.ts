@@ -5,7 +5,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getBlockChangesApi, setContentWithBlockIds } from '../api-content';
+import { setContentWithBlockIds } from '../api-content';
 import {
   blockIdPlugin,
   getAllBlockIds,
@@ -19,6 +19,7 @@ import { setEditorInstance } from '../editor-state';
 import { highlightPlugin } from '../highlight-plugin';
 import { setTraceTyping } from '../typing-trace';
 import { runUndoTrackedDispatch } from '../undo-coordinator';
+import { takePendingAsReport } from './pending-for-test';
 
 // Phase 4b part 2, slice 0 (measurement only, t-94369a83): the typing-latency trace.
 //
@@ -224,7 +225,7 @@ describe('typing trace (slice 0): posted only when the flag is on, and only for 
 
     expect(trace).not.toHaveBeenCalled();
     // The behaviour the trace only observes: the replaced block's queued edit is gone, the kept block's survives.
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     expect(changes.updates.find((u) => u.id === 'id-bib-e')).toBeUndefined();
     expect(changes.updates.find((u) => u.id === 'id-p')?.textContent).toContain('typed in the kept paragraph');
   });
@@ -237,7 +238,7 @@ describe('typing trace (slice 0): posted only when the flag is on, and only for 
     expect(trace).toHaveBeenCalledWith({ event: 'rebuild-replaced-pending', kind: 'bibliography', block: 'id-bib-e' });
     // Reporting must not change what the rebuild does: the replaced block's queued edit is still dropped, the kept block's
     // survives (the same assertions as the flag-off test above).
-    const changes = getBlockChangesApi();
+    const changes = takePendingAsReport();
     expect(changes.updates.find((u) => u.id === 'id-bib-e')).toBeUndefined();
     expect(changes.updates.find((u) => u.id === 'id-p')?.textContent).toContain('typed in the kept paragraph');
   });
