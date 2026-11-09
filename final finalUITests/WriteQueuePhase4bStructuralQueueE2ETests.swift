@@ -1871,6 +1871,19 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
             + "Whether the first job was still pending is NOT asserted here.")
     }
 
+    /// The second command of the two article pending-job tests, given straight after the first click without a walk of the mouse: the
+    /// app's UI-testing trigger (`UITestingDeleteTrigger`, the Delete or the Duplicate notification) finds the copy by its sidebar title
+    /// and runs the SAME entry point the sidebar's context menu runs, the moment the copy is in the sidebar's list (it waits up to 10 s
+    /// for that). Returns the log line count from before the post, the `from` index of the second command's trace lines.
+    func postSecondCommandTrigger(duplicate: Bool, title: String) -> Int {
+        tail.poll()
+        let index = tail.lines.count
+        let name = "com.kerim.final-final.uitest." + (duplicate ? "duplicateSection" : "deleteSection")
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(name), object: nil, userInfo: ["title": title, "waitSeconds": 10.0], deliverImmediately: true)
+        return index
+    }
+
     /// Where the second command's click fell against the first one's held job, on the app's own clock: the first job's body cannot end
     /// before its reservation plus `holdMs`, so a second click that arrived before that really met a PENDING job (the window the review's
     /// A1 is about). A margin of 0 or less is a TEST-SETUP failure (the VM was slow: the scenario did not exercise the window). When the
@@ -1928,8 +1941,16 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
 
         // The two commands, one straight after the other: nothing is awaited between the first click and the second.
         let from = chooseSidebarItem(card, item: "Duplicate Section")
-        guard let copyCard = copyCardAtOnce(copyTitle, band: band) else { return }
-        let deleteFrom = chooseSidebarItem(copyCard, item: "Delete Section", activate: false)
+        let deleteFrom: Int
+        if holdFirstJob {
+            // The pending-job proof: the second command is posted to the app at once and the app runs it the moment the copy is in
+            // the sidebar's list (a few tens of milliseconds). The walk of the mouse to the copy's card used to take 3.5 s in the VM,
+            // inside a hold of 3.9 s, and missed it on a slow night (2026-11-08: 45 and 69 ms late).
+            deleteFrom = postSecondCommandTrigger(duplicate: false, title: copyTitle)
+        } else {
+            guard let copyCard = copyCardAtOnce(copyTitle, band: band) else { return }
+            deleteFrom = chooseSidebarItem(copyCard, item: "Delete Section", activate: false)
+        }
         let snapshotsAtTheClick = automaticSnapshotCount()
         let copyRowsAtTheClick = copyHeadingRows(copyTitle)
         result("STRAIGHT AFTER THE DELETE CLICK: the block table held \(copyRowsAtTheClick) heading row(s) for the copy "
@@ -2093,8 +2114,14 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         let band = app.groups["outline-sidebar"].scrollViews.firstMatch.frame
 
         let from = chooseSidebarItem(card, item: "Duplicate Section")
-        guard let copyCard = copyCardAtOnce(copyTitle, band: band) else { return }
-        let secondFrom = chooseSidebarItem(copyCard, item: "Duplicate Section", activate: false)
+        let secondFrom: Int
+        if holdFirstJob {
+            // As in `runDuplicateThenDeleteTheCopy`: the second command is posted to the app at once, not walked to with the mouse.
+            secondFrom = postSecondCommandTrigger(duplicate: true, title: copyTitle)
+        } else {
+            guard let copyCard = copyCardAtOnce(copyTitle, band: band) else { return }
+            secondFrom = chooseSidebarItem(copyCard, item: "Duplicate Section", activate: false)
+        }
         let snapshotsAtTheClick = automaticSnapshotCount()
         let secondShown = sidebarCard(secondTitle).waitForExistence(timeout: 10)
         result("STRAIGHT AFTER THE SECOND CLICK: the block table held \(copyHeadingRows(copyTitle)) heading row(s) matching the copy "
