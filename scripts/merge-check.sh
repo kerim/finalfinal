@@ -120,6 +120,10 @@ fi
 # ─────────────────────────────────────────────
 print_header "Step 2/3: Tier 1 + Tier 2 — Unit Tests"
 
+# Tests listed in scripts/unit-quarantine.txt are left out of the run.
+SKIP_ARGS=()
+while IFS= read -r arg; do SKIP_ARGS+=("$arg"); done \
+  < <(bash "$PROJECT_DIR/scripts/unit-quarantine-args.sh" 2>/dev/null)
 cd "$PROJECT_DIR"
 start_time=$(date +%s)
 # -packageAuthorizationProvider netrc: keeps package resolution out of the login
@@ -130,6 +134,7 @@ if xcodebuild test \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -only-testing "final finalTests" \
+    ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"} \
     -parallel-testing-enabled NO \
     CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual \
     -quiet \

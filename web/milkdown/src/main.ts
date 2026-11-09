@@ -106,6 +106,7 @@ import {
   setFocusMode,
   setTheme,
 } from './api-modes';
+import { logReplacementResult, logReplacementTarget, logUnusualInput } from './autocorrect-diag';
 import { autolinkPlugin } from './autolink-plugin';
 import { bibliographyEndMarkerPlugin } from './bibliography-end-marker-plugin';
 import { bibliographyPlugin } from './bibliography-plugin';
@@ -505,6 +506,7 @@ async function initEditor() {
   // causing headings to lose their content. By handling it manually through ProseMirror's
   // transaction system, we preserve the document structure.
   view.dom.addEventListener('beforeinput', (e: InputEvent) => {
+    logUnusualInput(view, e);
     if (e.inputType === 'insertReplacementText') {
       e.preventDefault();
 
@@ -580,8 +582,10 @@ async function initEditor() {
       if (ranges.length === 0) {
         // Fallback: use current selection
         const { from, to } = view.state.selection;
+        logReplacementTarget(view, 'selection', from, to, replacement);
         const tr = view.state.tr.replaceWith(from, to, view.state.schema.text(replacement));
         view.dispatch(tr);
+        logReplacementResult(view, from, replacement);
         return;
       }
 
@@ -591,8 +595,10 @@ async function initEditor() {
       const endPos = view.posAtDOM(range.endContainer, range.endOffset);
 
       // Perform the replacement through ProseMirror
+      logReplacementTarget(view, 'targetRange', startPos, endPos, replacement);
       const tr = view.state.tr.replaceWith(startPos, endPos, view.state.schema.text(replacement));
       view.dispatch(tr);
+      logReplacementResult(view, startPos, replacement);
     }
   });
 
