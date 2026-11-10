@@ -396,7 +396,7 @@ extension ProjectDatabase {
             headingLevel: effectiveHeadingLevel,
             // A genuinely new section_break block (the /break "text before" / "text
             // after" / "split" cases all insert one) must be flagged as a pseudo-section
-            // here — observeOutlineBlocks and fetchOutlineBlocks filter on isPseudoSection,
+            // here — fetchOutlineBlocks (the outline snapshot's rows) filters on isPseudoSection,
             // not blockType, so without this the block silently never appears in the
             // outline sidebar despite being correctly typed as .sectionBreak.
             isPseudoSection: blockType == .sectionBreak

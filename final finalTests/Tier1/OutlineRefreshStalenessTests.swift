@@ -4,13 +4,16 @@
 //
 //  Tier 1: Silent Killers
 //
-//  Guards `refreshSectionsAwaiting()` against a stale-fetch-wins race: it does two
-//  `await`s (fetchOutlineBlocks, fetchBatchWordCounts) before merging into `sections`.
-//  If some other write to `sections` (the live observation loop, a structural-undo
-//  sequence, hierarchy enforcement) lands while this fetch is suspended, applying the
-//  fetch's now-stale result afterward would merge superseded outline blocks/word counts
-//  back over the newer data, and re-arm the outline equality cache with the stale set --
-//  causing the sidebar to briefly flash superseded headings/word counts.
+//  Phase 6 (numbered sidebar snapshots). The sidebar shows a snapshot only if its number is higher than the one it already shows
+//  (`EditorViewState.acceptOutlineSnapshot`), so an older reading can never land on top of a newer one. This file used to guard the
+//  `outlineGeneration` counter and the `RefreshSignal` chain that did the same job by counting; the cases are the same ones, now
+//  decided by the numbers. `OutlineSnapshotPublisherTests` covers the reader itself.
+//
+//  What the sidebar does with a snapshot besides the number check:
+//   - a tick is skipped while `contentState != .idle`, an explicit refresh is not;
+//   - an explicit snapshot is dropped if anything wrote `sections` locally since the call (hierarchy enforcement's level fix, the
+//     old reorder path), a tick is not;
+//   - the overlays (`pendingRemovalIds` and the others) are merged in when the snapshot is shown, not when it was read.
 //
 
 import Testing
@@ -33,223 +36,301 @@ struct OutlineRefreshStalenessTests {
         pairs.mapValues { .init(sectionOnly: $0, aggregate: $0) }
     }
 
-    @Test("A refresh overtaken by a newer apply must not merge its stale blocks back")
-    func staleRefreshDoesNotOverwriteNewerApply() async throws {
-        let db = try TestFixtureFactory.createTemporary(content: "# Stale Heading\n\nBody text.")
-        let pid = try TestFixtureFactory.getProjectId(from: db)
+    /// A state wired to a temporary project, with its publisher made by one explicit refresh (so no commit observation runs and
+    /// the tests below decide exactly which snapshots arrive).
+    private struct Rig {
+        let state: EditorViewState
+        let db: ProjectDatabase
+        let pid: String
+    }
 
+    private func makeState(content: String = "# Original Heading\n\nBody.") async throws -> Rig {
+        let db = try TestFixtureFactory.createTemporary(content: content)
+        let pid = try TestFixtureFactory.getProjectId(from: db)
         let state = EditorViewState()
         state.projectDatabase = db
         state.currentProjectId = pid
-
-        let generationBeforeRefresh = state.outlineGeneration
-        let refresh = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
-
-        // MUST-FIX 2: prove the interleave actually happened -- if `sections` is already
-        // non-empty here, the refresh finished and applied its (stale) result before the
-        // newer apply below ever runs, so the race this test targets never occurred and it
-        // must fail loudly rather than pass silently.
-        #expect(state.sections.isEmpty, "setup didn't interleave -- refresh already landed before the newer apply")
-
-        let newer = [heading("newer-1", 0, level: 1, text: "Newer Heading")]
-        let newerCounts = counts(["newer-1": 42])
-        state.applySectionsUpdate(from: newer, counts: newerCounts)
-
-        await refresh.value
-
-        #expect(state.sections.map(\.title) == ["Newer Heading"])
-        #expect(state.isOutlineUnchanged(blocks: newer, counts: newerCounts) == true)
+        await state.refreshSectionsAwaiting()
+        return Rig(state: state, db: db, pid: pid)
     }
 
-    @Test("A later refresh's freshly-fetched data wins even when an earlier-started refresh resumes after it")
-    func laterRefreshWinsOverEarlierLateLander() async throws {
-        let db = try TestFixtureFactory.createTemporary(content: "# Original Heading\n\nBody text.")
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-
-        let state = EditorViewState()
-        state.projectDatabase = db
-        state.currentProjectId = pid
-
-        // First refresh: starts, captures its generation snapshot, and begins its DB fetch --
-        // but hasn't landed yet.
-        let first = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
-
-        // Prove the interleave actually happened, same as the single-refresh test above: if
-        // `sections` is already non-empty here, `first` already landed before the DB change
-        // and the second refresh below, so the race this test targets never occurred.
-        #expect(state.sections.isEmpty, "setup didn't interleave -- first refresh already landed")
-
-        // Change the DB out from under the first refresh's still-pending fetch. `heading()`
-        // hardcodes projectId "p" (fine for the in-memory-only `applySectionsUpdate` test
-        // above), but `replaceBlocks` is a real DB write enforcing a FK against the actual
-        // project row, so the block written here must carry the real `pid`.
-        var newerBlock = heading("newer-1", 0, level: 1, text: "Newer Heading")
-        newerBlock.projectId = pid
-        let newer = [newerBlock]
-        try db.replaceBlocks(newer, for: pid)
-
-        // Second, later-started refresh. Because `refreshSectionsAwaiting()` serializes into a
-        // chain, this call's own DB fetch cannot start until `first` has fully completed
-        // (fetched AND applied) -- so it is guaranteed to observe whatever is freshest in the
-        // DB at that point, and never races `first` for who lands first.
-        let second = Task { @MainActor in await state.refreshSectionsAwaiting() }
-
-        await first.value
-        await second.value
-
-        #expect(state.sections.map(\.title) == ["Newer Heading"])
-        // Proves the drop path was never hit -- not just that the final state happens to look
-        // right. Under the old (non-chained) implementation this could be nonzero: a
-        // later-started-but-faster-landing refresh could win the generation check first,
-        // causing the other (freshest-data) refresh to be wrongly discarded as "stale" once it
-        // finally landed.
-        #expect(state.staleRefreshDropCount == 0)
+    private func snapshot(
+        _ state: EditorViewState, rev: Int, titles: [String], projectId: String? = nil, publisherId: UUID? = nil
+    ) -> OutlineSnapshot {
+        let blocks = titles.enumerated().map { index, title in heading("snap-\(title)-\(index)", Double(index), text: title) }
+        return OutlineSnapshot(
+            rev: rev,
+            publisherId: publisherId ?? state.outlinePublisher?.id ?? UUID(),
+            projectId: projectId ?? state.currentProjectId ?? "",
+            blocks: blocks,
+            counts: counts(Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, 10) }))
+        )
     }
 
-    @Test("A refresh that bails early (no db/pid) does not wedge the chain for later refreshes")
-    func bailingRefreshDoesNotWedgeChain() async throws {
+    // MARK: - The number rule
+
+    @Test("A snapshot numbered above the one shown is shown")
+    func higherNumberIsShown() async throws {
+        let state = try await makeState().state
+        #expect(state.sections.map(\.title) == ["Original Heading"])
+        let shown = state.shownOutlineRev
+
+        #expect(state.acceptOutlineSnapshot(snapshot(state, rev: shown + 5, titles: ["Newer"]), source: .tick))
+        #expect(state.sections.map(\.title) == ["Newer"])
+        #expect(state.shownOutlineRev == shown + 5)
+    }
+
+    @Test("A snapshot numbered below or equal to the one shown is refused and counted")
+    func lowerOrEqualNumberIsRefused() async throws {
+        let state = try await makeState().state
+        state.acceptOutlineSnapshot(snapshot(state, rev: 10, titles: ["Newer"]), source: .tick)
+
+        #expect(!state.acceptOutlineSnapshot(snapshot(state, rev: 4, titles: ["Older"]), source: .tick))
+        #expect(!state.acceptOutlineSnapshot(snapshot(state, rev: 10, titles: ["Same number"]), source: .tick))
+        #expect(state.sections.map(\.title) == ["Newer"])
+        #expect(state.staleOutlineDropCount == 2)
+        #expect(state.shownOutlineRev == 10)
+    }
+
+    @Test("A snapshot from another publisher, or for another project, is ignored without a trace")
+    func foreignSnapshotIsIgnored() async throws {
+        let state = try await makeState().state
+        let titlesBefore = state.sections.map(\.title)
+
+        #expect(!state.acceptOutlineSnapshot(snapshot(state, rev: 99, titles: ["Foreign"], publisherId: UUID()), source: .tick))
+        #expect(!state.acceptOutlineSnapshot(snapshot(state, rev: 99, titles: ["Other project"], projectId: "other"), source: .tick))
+        #expect(state.sections.map(\.title) == titlesBefore)
+        #expect(state.staleOutlineDropCount == 0)
+    }
+
+    @Test("A stale explicit refresh still calls onSectionsUpdated (the sequences run hierarchy enforcement from it); a stale tick does not")
+    func staleExplicitStillCallsTheCallback() async throws {
+        let state = try await makeState().state
+        state.acceptOutlineSnapshot(snapshot(state, rev: 10, titles: ["Newer"]), source: .tick)
+        var calls = 0
+        state.onSectionsUpdated = { calls += 1 }
+
+        state.acceptOutlineSnapshot(snapshot(state, rev: 3, titles: ["Older"]), source: .tick)
+        #expect(calls == 0)
+        state.acceptOutlineSnapshot(snapshot(state, rev: 3, titles: ["Older"]),
+                                    source: .explicit(sectionsWritesAtCall: state.localSectionsWriteCount))
+        #expect(calls == 1)
+        #expect(state.sections.map(\.title) == ["Newer"])
+    }
+
+    // MARK: - Tick and explicit differ in two ways
+
+    @Test("A tick is skipped while the editor is not idle; an explicit refresh is not")
+    func tickIsSkippedWhileNotIdle() async throws {
+        let state = try await makeState().state
+        state.contentState = .zoomTransition
+
+        #expect(!state.acceptOutlineSnapshot(snapshot(state, rev: 10, titles: ["Tick"]), source: .tick))
+        #expect(state.shownOutlineRev < 10)
+        #expect(state.acceptOutlineSnapshot(snapshot(state, rev: 11, titles: ["Explicit"]),
+                                            source: .explicit(sectionsWritesAtCall: state.localSectionsWriteCount)))
+        #expect(state.sections.map(\.title) == ["Explicit"])
+        // A skipped tick is not counted as stale: it was never old, it was early.
+        #expect(state.staleOutlineDropCount == 0)
+    }
+
+    @Test("An explicit snapshot is dropped after a local write to sections; a tick is not")
+    func explicitIsDroppedAfterALocalWrite() async throws {
+        let state = try await makeState().state
+        let writesAtCall = state.localSectionsWriteCount
+        // Hierarchy enforcement's level fix, the old reorder path's mutate closure: sections written ahead of the database.
+        state.sections = Array(state.sections.reversed())
+        #expect(state.localSectionsWriteCount == writesAtCall + 1)
+
+        #expect(!state.acceptOutlineSnapshot(snapshot(state, rev: 10, titles: ["Read before the change"]),
+                                             source: .explicit(sectionsWritesAtCall: writesAtCall)))
+        #expect(state.staleOutlineDropCount == 1)
+        // The old observation never dropped a tick for a local write, and still does not.
+        #expect(state.acceptOutlineSnapshot(snapshot(state, rev: 11, titles: ["Tick"]), source: .tick))
+        #expect(state.sections.map(\.title) == ["Tick"])
+    }
+
+    @Test("Showing a snapshot is not a local write")
+    func showingASnapshotIsNotALocalWrite() async throws {
+        let state = try await makeState().state
+        let writes = state.localSectionsWriteCount
+        state.acceptOutlineSnapshot(snapshot(state, rev: 10, titles: ["A", "B"]), source: .tick)
+        state.acceptOutlineSnapshot(snapshot(state, rev: 11, titles: ["A"]), source: .tick)
+        #expect(state.localSectionsWriteCount == writes)
+    }
+
+    // MARK: - Overlays
+
+    @Test("The removal overlay is merged in when the snapshot is shown, even if it was set after the snapshot was read")
+    func removalOverlayIsMergedAtAcceptTime() async throws {
+        let state = try await makeState().state
+        let reading = snapshot(state, rev: 10, titles: ["Keep", "Remove me"])
+        // The overlay is set AFTER the reading was taken (the editor-first Delete Section click) and BEFORE it is shown.
+        let removedId = try #require(reading.blocks.last?.id)
+        state.pendingRemovalIds = [removedId]
+
+        #expect(state.acceptOutlineSnapshot(reading, source: .tick))
+        #expect(state.sections.map(\.title) == ["Keep"], "the deleted section must not come back from a reading taken before the click")
+
+        // Once the overlay is lifted, a later reading shows what the database holds.
+        state.pendingRemovalIds = []
+        state.acceptOutlineSnapshot(snapshot(state, rev: 11, titles: ["Keep", "Remove me"]), source: .tick)
+        #expect(state.sections.map(\.title) == ["Keep", "Remove me"])
+    }
+
+    @Test("The restore overlay (a quick undo's section not yet in the database) is merged in at its anchor, whenever the reading was taken")
+    func restoreOverlayIsMergedAtAcceptTime() async throws {
+        let state = try await makeState().state
+        // The reading the database gave: the restored section is not in it yet.
+        let reading = snapshot(state, rev: 10, titles: ["A", "C"])
+        let anchorId = try #require(reading.blocks.first?.id)
+        let entry = UUID()
+        state.pendingRestoreSections[entry] = [heading("restored-b", 1, text: "B")]
+        state.pendingRestoreAnchors[entry] = .after(anchorId)
+
+        #expect(state.acceptOutlineSnapshot(reading, source: .tick))
+        #expect(state.sections.map(\.title) == ["A", "B", "C"], "the restored section sits after its anchor, not where its old sort order says")
+
+        // Once the database has the rows back and the overlay is lifted, the reading alone gives the same list.
+        state.pendingRestoreSections[entry] = nil
+        state.acceptOutlineSnapshot(snapshot(state, rev: 11, titles: ["A", "C"]), source: .tick)
+        #expect(state.sections.map(\.title) == ["A", "C"])
+    }
+
+    @Test("The reorder overlay (a drag the database has not renumbered yet) puts a reading into the order the editor shows")
+    func reorderOverlayIsMergedAtAcceptTime() async throws {
+        let state = try await makeState().state
+        // The database still has the old order A, B; the editor already shows B, A.
+        let reading = snapshot(state, rev: 10, titles: ["A", "B"])
+        let ids = reading.blocks.map(\.id)
+        state.pendingReorder = PendingReorder(opId: UUID(), order: [ids[1], ids[0]], levels: [:])
+
+        #expect(state.acceptOutlineSnapshot(reading, source: .tick))
+        #expect(state.sections.map(\.title) == ["B", "A"], "an old-order reading must not put the cards back")
+
+        state.pendingReorder = nil
+        state.acceptOutlineSnapshot(snapshot(state, rev: 11, titles: ["B", "A"]), source: .tick)
+        #expect(state.sections.map(\.title) == ["B", "A"])
+    }
+
+    // MARK: - Explicit refresh
+
+    @Test("A refresh with no publisher makes one and fills the sidebar")
+    func refreshWithNoPublisherFillsTheSidebar() async throws {
+        let state = try await makeState(content: "# Real Heading\n\nBody.").state
+        #expect(state.sections.map(\.title) == ["Real Heading"])
+        #expect(state.outlinePublisher != nil)
+    }
+
+    @Test("A refresh with no database returns at once and changes nothing")
+    func refreshWithNoDatabaseReturns() async throws {
         let state = EditorViewState()
-        // No `projectDatabase`/`currentProjectId` set -- this call takes the early-bail path
-        // inside `performSectionsRefresh`, before ever touching the chain's DB-fetch machinery.
         await state.refreshSectionsAwaiting()
         #expect(state.sections.isEmpty)
-        #expect(state.staleRefreshDropCount == 0)
+        #expect(state.staleOutlineDropCount == 0)
+    }
 
-        // Wire up a real project and confirm a subsequent refresh still completes normally --
-        // the bailed entry must not have left the chain-tail signal pointing at anything that
-        // blocks forever.
-        let db = try TestFixtureFactory.createTemporary(content: "# Real Heading\n\nBody.")
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-        state.projectDatabase = db
-        state.currentProjectId = pid
+    @Test("A refresh sees a write that finished before the call")
+    func refreshSeesAnEarlierWrite() async throws {
+        let rig = try await makeState()
+        let state = rig.state
+        let db = rig.db
+        let pid = rig.pid
+        var newer = heading("newer-1", 0, level: 1, text: "Newer Heading")
+        newer.projectId = pid
+        try db.replaceBlocks([newer], for: pid)
 
         await state.refreshSectionsAwaiting()
-        #expect(state.sections.map(\.title) == ["Real Heading"])
+        #expect(state.sections.map(\.title) == ["Newer Heading"])
     }
 
-    @Test("A queued refresh bails cleanly, without applying or hanging, if the project changes before its turn")
-    func queuedRefreshBailsOnProjectChange() async throws {
+    @Test("Two refreshes that overlap both finish, and the sidebar ends on the database")
+    func twoRefreshesBothFinish() async throws {
+        let rig = try await makeState()
+        let state = rig.state
+        let db = rig.db
+        let pid = rig.pid
+        var newer = heading("newer-1", 0, level: 1, text: "Newer Heading")
+        newer.projectId = pid
+        try db.replaceBlocks([newer], for: pid)
+
+        let first = Task { @MainActor in await state.refreshSectionsAwaiting() }
+        let second = Task { @MainActor in await state.refreshSectionsAwaiting() }
+        await first.value
+        await second.value
+        #expect(state.sections.map(\.title) == ["Newer Heading"])
+    }
+
+    @Test("A refresh after stopObserving works and does not hang")
+    func refreshAfterStopObservingWorks() async throws {
+        let state = try await makeState().state
+        state.stopObserving()
+        #expect(state.outlinePublisher == nil)
+        await state.refreshSectionsAwaiting()
+        #expect(state.sections.map(\.title) == ["Original Heading"])
+    }
+
+    @Test("A refresh whose project changes while it waits shows nothing and does not hang")
+    func refreshOnProjectChangeShowsNothing() async throws {
         let db = try TestFixtureFactory.createTemporary(content: "# Original Heading\n\nBody.")
         let pid = try TestFixtureFactory.getProjectId(from: db)
-
         let state = EditorViewState()
         state.projectDatabase = db
         state.currentProjectId = pid
 
-        // First refresh: starts on `pid`, begins its DB fetch, hasn't landed yet.
-        let first = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
-        #expect(state.sections.isEmpty, "setup didn't interleave -- first refresh already landed")
-
-        // Second refresh: enqueued while the project is still `pid`, so it captures
-        // `expectedProjectId == pid` at enqueue time (synchronously, before its chained-behind
-        // fetch ever runs). The yield below lets that synchronous capture actually execute
-        // before the project switch on the next line.
-        let second = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
-
-        // Known simplification: a real project switch goes through `startObserving`, which
-        // sets `projectDatabase` and `currentProjectId` together. Here we only flip
-        // `currentProjectId` (cheaper to set up, and it's the only one `performSectionsRefresh`'s
-        // project guard actually reads), so this isn't a byte-for-byte replay of the real path --
-        // just enough to exercise the guard.
+        let refresh = Task { @MainActor in await state.refreshSectionsAwaiting() }
+        await Task.yield()   // the refresh is now waiting for its reading
+        // The project switch lands before the waiting refresh can show anything.
         state.currentProjectId = "some-other-project-id"
-
-        await first.value
-        await second.value
-
-        // `second` must have bailed cleanly on the project mismatch: it neither applied a
-        // fetch for the wrong project nor hung waiting on its turn. Only `first`'s own
-        // (correctly-scoped) fetch should be visible.
-        #expect(state.sections.map(\.title) == ["Original Heading"])
-        // The project-mismatch bail is a distinct guard from the generation-staleness drop
-        // path -- it must not be counted as one.
-        #expect(state.staleRefreshDropCount == 0)
+        await refresh.value
+        #expect(state.sections.isEmpty)
+        #expect(state.staleOutlineDropCount == 0)
     }
 
-    @Test("A third caller arriving while an already-chained entry is still pending joins it instead of enqueueing a redundant one")
-    func thirdCallerJoinsPendingChainedEntry() async throws {
+    @Test("stopObserving while a refresh waits ends the wait")
+    func stopObservingWhileRefreshWaits() async throws {
         let db = try TestFixtureFactory.createTemporary(content: "# Original Heading\n\nBody.")
         let pid = try TestFixtureFactory.getProjectId(from: db)
-
         let state = EditorViewState()
         state.projectDatabase = db
         state.currentProjectId = pid
 
-        // Entry 1: starts fetching immediately, stays suspended on its DB read.
-        let first = Task { @MainActor in await state.refreshSectionsAwaiting() }
+        let refresh = Task { @MainActor in await state.refreshSectionsAwaiting() }
         await Task.yield()
-        #expect(state.sections.isEmpty, "setup didn't interleave -- first refresh already landed")
-
-        // Entry 2: arrives while entry 1 is still fetching. Entry 1 already cleared its own
-        // `pendingRefreshSignal` (that clearing happens synchronously, before the DB read), so
-        // entry 2 does NOT join it -- it creates its own new entry, chained behind entry 1.
-        // Because entry 2 must await entry 1's completion before its OWN turn, entry 2's
-        // `pendingRefreshSignal` stays set for entry 1's entire remaining runtime -- this is
-        // the (non-zero-width, contrary to an earlier assumption) window in which the joiner
-        // branch below is reachable.
-        let second = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
-
-        // Entry 3: arrives while entry 2 is still pending (chained behind entry 1, hasn't
-        // started its own fetch yet, same project) -- this is the joiner branch itself.
-        let third = Task { @MainActor in await state.refreshSectionsAwaiting() }
-
-        await first.value
-        await second.value
-        await third.value
-
-        // All three complete without hanging, and the refresh that actually landed is genuine
-        // (not dropped), whichever of entry 2/3 ends up doing the real work.
-        #expect(state.sections.map(\.title) == ["Original Heading"])
-        #expect(state.staleRefreshDropCount == 0)
+        state.stopObserving()
+        await refresh.value   // returns, whichever side of the read the stop landed on
     }
 
-    @Test("A caller whose project differs from a pending entry's does not join it, and still gets its own correctly-scoped refresh")
-    func joinerRefusesMismatchedProjectAndGetsOwnEntry() async throws {
-        let db1 = try TestFixtureFactory.createTemporary(content: "# Project One Heading\n\nBody.")
-        let pid1 = try TestFixtureFactory.getProjectId(from: db1)
-        let db2 = try TestFixtureFactory.createTemporary(content: "# Project Two Heading\n\nBody.")
-        let pid2 = try TestFixtureFactory.getProjectId(from: db2)
+    // MARK: - Through the real publisher
 
+    @Test("An opened project fills the sidebar, and a body edit and a status edit made outside the writer reach it")
+    func openedProjectFollowsTheDatabase() async throws {
+        let db = try TestFixtureFactory.createTemporary(content: "# Only Section\n\nOne two three four five.")
+        let pid = try TestFixtureFactory.getProjectId(from: db)
         let state = EditorViewState()
-        state.projectDatabase = db1
-        state.currentProjectId = pid1
+        state.startObserving(database: db, projectId: pid)
+        defer { state.stopObserving() }
 
-        // Entry 1: starts fetching project 1, stays suspended on its DB read.
-        let first = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
-        #expect(state.sections.isEmpty, "setup didn't interleave -- first refresh already landed")
+        func waitFor(_ condition: @MainActor () -> Bool) async -> Bool {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while !condition() {
+                if ContinuousClock.now >= deadline { return false }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+            return true
+        }
 
-        // Entry 2: chains behind entry 1, still scoped to project 1 (enqueued before the
-        // switch below). Its `pendingRefreshSignal` stays set while it awaits entry 1.
-        let second = Task { @MainActor in await state.refreshSectionsAwaiting() }
-        await Task.yield()
+        #expect(await waitFor { state.sections.count == 1 }, "the first reading fills the sidebar")
+        let wordsBefore = try #require(state.sections.first?.wordCount)
 
-        // Switch to project 2 (same simplification noted in `queuedRefreshBailsOnProjectChange`
-        // -- only flipping the two properties `performSectionsRefresh`'s guards actually read).
-        state.projectDatabase = db2
-        state.currentProjectId = pid2
+        var paragraph = try #require(try TestFixtureFactory.fetchBlocks(from: db).first(where: { $0.blockType == .paragraph }))
+        paragraph.textContent += " and a few more words"
+        paragraph.recalculateWordCount()
+        try db.write { try paragraph.update($0) }
+        #expect(await waitFor { state.sections.first?.wordCount != wordsBefore }, "a typed word reaches the card's count")
 
-        // Entry 3 (caller C from the bug report): arrives on project 2 while entry 2 is still
-        // pending, but entry 2 is scoped to project 1. Without the project check on the join,
-        // entry 3 would join entry 2, entry 2 would bail on the (by-then) project mismatch, and
-        // entry 3 would return having gotten NO refresh at all for project 2 -- silently. With
-        // the check, entry 3 must instead get its own entry, chained behind entry 2, correctly
-        // scoped to project 2.
-        let third = Task { @MainActor in await state.refreshSectionsAwaiting() }
-
-        await first.value
-        await second.value
-        await third.value
-
-        // If entry 3 had silently joined entry 2 and returned with nothing done, `sections`
-        // would still show project 1's content (from entry 1's apply) here. Seeing project 2's
-        // content proves entry 3 actually performed its own fetch, scoped to its own project.
-        #expect(state.sections.map(\.title) == ["Project Two Heading"])
-        // Entry 2's bail is the project-mismatch guard, not the generation-staleness drop path.
-        #expect(state.staleRefreshDropCount == 0)
+        let headingId = try #require(state.sections.first?.id)
+        try db.updateBlockStatus(id: headingId, status: .review)
+        #expect(await waitFor { state.sections.first?.status == .review }, "a status edit reaches the card")
     }
 }

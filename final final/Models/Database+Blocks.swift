@@ -46,16 +46,7 @@ extension ProjectDatabase {
 
     /// Fetch blocks that can appear in the outline sidebar (headings + section breaks)
     func fetchOutlineBlocks(projectId: String) throws -> [Block] {
-        try read { db in
-            try Block
-                .filter(Block.Columns.projectId == projectId)
-                .filter(
-                    Block.Columns.blockType == BlockType.heading.rawValue ||
-                    Block.Columns.isPseudoSection == true
-                )
-                .order(Block.Columns.isBibliography.asc, Block.Columns.sortOrder.asc)
-                .fetchAll(db)
-        }
+        try read { db in try Self.fetchOutlineBlocks(in: db, projectId: projectId) }
     }
 
     /// Title of the bibliography heading block, if a real (machine-managed) bibliography
@@ -473,7 +464,7 @@ extension ProjectDatabase {
             // block-id-plugin.ts phase1CanClaim: section_break is not in
             // ATOMIC_BLOCK_TYPES, so the exact-offset claim keeps the paragraph's
             // existing block ID). Without isPseudoSection=true here, the block
-            // never satisfies observeOutlineBlocks'/fetchOutlineBlocks' filter and
+            // never satisfies fetchOutlineBlocks' (the outline snapshot's) filter and
             // silently never appears in the outline sidebar.
             //
             // isSectionBreakMarker (not `trimmed ==`) matches the marker as the

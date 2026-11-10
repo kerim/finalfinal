@@ -382,7 +382,7 @@ extension ProjectDatabase {
     ///
     /// What the numbers feed, and what that means if this were on for Rich Text (it stays OFF there): nothing in the
     /// editor holds a `sortOrder` (a block is identified by its id; the poll's anchors are ids), so a Rich Text
-    /// batch in flight is unaffected. What DOES observe the numbers re-reads once: `observeOutlineBlocks` and the
+    /// batch in flight is unaffected. What DOES observe the numbers re-reads once: the outline snapshot (`OutlineSnapshotPublisher`) and the
     /// section word counts (sums over `sortOrder` ranges, recomputed from the rows), because every row changed in
     /// one transaction (one re-emit). `recomputeSectionParents` runs after this in the same transaction and reads
     /// the new numbers. Anything that keeps a row's OLD number across the batch would see it move; the only such

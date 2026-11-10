@@ -641,7 +641,7 @@ class EditorViewState {
 
     // MARK: - Sidebar State (Phase 1.6)
     var sections: [SectionViewModel] = [] {
-        didSet { invalidateOutlineCache(); outlineGeneration &+= 1 }
+        didSet { invalidateOutlineCache(); noteLocalSectionsWrite() }
     }
     var statusFilter: SectionStatus?
     var headerLevelFilter: Int?
@@ -893,75 +893,24 @@ class EditorViewState {
     var currentPersistTask: Task<Void, Never>?
 
     // MARK: - Database Observation
-    private var observationTask: Task<Void, Never>?
+    // Phase 6 (numbered sidebar snapshots): the Outline's list is read by `OutlineSnapshotPublisher` and shown by
+    // `acceptOutlineSnapshot` (EditorViewState+OutlineSnapshots.swift). Declared here because stored properties cannot live in an
+    // extension; they are owned by that file.
+    /// The loop that shows the open project's commit-driven snapshots (`beginOutlineSnapshots`).
+    @ObservationIgnored
+    var observationTask: Task<Void, Never>?
     private var annotationObservationTask: Task<Void, Never>?
-
-    // MARK: - Refresh Chain (serializes refreshSectionsAwaiting() calls; see that method's doc
-    // comment for the full invariant this protects)
-    //
-    // `RefreshSignal` (not a `Task`) is deliberate: `refreshSectionsAwaiting()` runs the chain
-    // bookkeeping AND the actual refresh work inline, in the calling task's own execution --
-    // never wrapped in a freshly-spawned child `Task`. Wrapping the work in a child `Task`
-    // (an earlier version of this fix did exactly that) adds a real scheduling hop before that
-    // child ever gets to run, which measurably delays when `performSectionsRefresh` captures
-    // its `outlineGeneration` snapshot relative to the caller -- late enough, in one observed
-    // case, that a synchronous `applySectionsUpdate` call made by the *caller's own code*
-    // immediately after starting a refresh could land BEFORE the snapshot was taken instead of
-    // after, silently defeating the staleness guard this whole file depends on
-    // (`OutlineRefreshStalenessTests.staleRefreshDoesNotOverwriteNewerApply` catches exactly
-    // this). `RefreshSignal` is just a resumable wait-list: creating one and later calling
-    // `finish()` on it involves no task creation and so introduces no scheduling gap.
-    //
-    // `@MainActor` here is load-bearing, not decorative: a nested type does NOT inherit its
-    // enclosing type's global-actor isolation (only members do), so without this annotation
-    // `RefreshSignal` would be nonisolated. A nonisolated `async` `wait()` called from
-    // `@MainActor` code hops OFF the main actor (SE-0338), so `wait()`'s check-then-append and
-    // `finish()`'s read-then-clear (called from the `defer` below, which IS on the main actor)
-    // would run concurrently on different threads with no synchronization: a data race on
-    // `waiters`, and a lost-wakeup if `finish()` drains between `wait()`'s `isDone` check and
-    // its append (that continuation would be appended to an already-drained list and never
-    // resumed -- a permanent hang). `@MainActor` makes every call to `wait()`/`finish()`
-    // serialize on the main actor like every other method in this file, the same way
-    // `contentAckContinuation` (above; see its clear-before-resume in
-    // `EditorViewState+Zoom.swift`) relies on MainActor to make ITS check-then-clear atomic.
-    @MainActor
-    private final class RefreshSignal {
-        /// The project this refresh is (or was, for a completed/bailed one) scoped to --
-        /// carried alongside the signal so a caller considering whether to join a still-pending
-        /// entry (`refreshSectionsAwaiting()`'s coalescing branch) can tell whether that entry
-        /// is even for the right project before committing to wait on its result. See that
-        /// method's doc comment for the failure this prevents.
-        let expectedProjectId: String?
-        private var isDone = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        init(expectedProjectId: String?) {
-            self.expectedProjectId = expectedProjectId
-        }
-
-        func wait() async {
-            if isDone { return }
-            await withCheckedContinuation { waiters.append($0) }
-        }
-
-        func finish() {
-            isDone = true
-            let pending = waiters
-            waiters = []
-            for waiter in pending { waiter.resume() }
-        }
-    }
-
+    /// The reader of the open project's outline. nil before a project is opened and after `stopObserving`.
     @ObservationIgnored
-    private var refreshChainTailSignal: RefreshSignal?
+    var outlinePublisher: OutlineSnapshotPublisher?
+    /// The number of the snapshot the sidebar last showed. A snapshot is shown only if its number is higher. Reset to 0 whenever a
+    /// publisher is made.
     @ObservationIgnored
-    private var refreshChainTailToken: UUID?
+    var shownOutlineRev: Int = 0
+    /// How many snapshots were refused (a higher number was already shown, or, for an explicit one, a local write to `sections`
+    /// came after the call).
     @ObservationIgnored
-    private var pendingRefreshSignal: RefreshSignal?
-    @ObservationIgnored
-    private var pendingRefreshToken: UUID?
-    @ObservationIgnored
-    private(set) var staleRefreshDropCount: Int = 0
+    var staleOutlineDropCount: Int = 0
 
     /// Callback invoked after sections are updated from database observation
     /// Used by ContentView to enforce hierarchy constraints after slash command changes
@@ -969,18 +918,17 @@ class EditorViewState {
 
     // MARK: - Outline Cache (equality guard for the merge, Fix 1)
     //
-    // Caches the last blocks/counts an observation tick actually applied, so an unchanged
-    // re-emission from ValueObservation can be skipped before it ever reaches
-    // `mergeSections`. This is the guard from Fix 1; Fix 2 is the merge itself. Comparing
-    // blocks alone (without counts) would reintroduce a bug this codebase has fixed and
-    // re-broken four times before -- see the "DO NOT ADD .removeDuplicates()" banner near
-    // `observeOutlineBlocks` in `Database+BlocksObservation.swift` and
-    // `OutlineObservationTests.swift`.
+    // Caches the last blocks/counts a snapshot actually applied, so an unchanged snapshot can
+    // be skipped before it ever reaches `mergeSections`. This is the guard from Fix 1; Fix 2 is
+    // the merge itself. Comparing blocks alone (without counts) would reintroduce a bug this
+    // codebase has fixed and re-broken four times before: the heading rows do not change when a
+    // paragraph is typed in, only the derived word counts do (see
+    // `OutlineSnapshotPublisherTests.bodyEditProducesATick`).
     //
     // Annotations don't need an equivalent cache: `observeAnnotations` applies
-    // `.removeDuplicates()` at the GRDB layer (unlike `observeOutlineBlocks`, which
-    // deliberately can't), so an unchanged re-emission is already filtered out before this
-    // class ever sees it.
+    // `.removeDuplicates()` at the GRDB layer (the outline's rows hide body edits, so it
+    // cannot), so an unchanged re-emission is already filtered out before this class ever
+    // sees it.
     //
     // Mechanism: invalidation is automatic, via `sections`'s `didSet` above -- any wholesale
     // write to `sections` (reassignment, subscript assignment, `inout` access) clears the
@@ -1027,23 +975,21 @@ class EditorViewState {
     @ObservationIgnored
     private var lastOutlineCounts: [String: ProjectDatabase.HeadingWordCounts] = [:]
 
-    /// Bumped on every write to `sections` (via its `didSet`) and, additionally, at the end of
-    /// `applySectionsUpdate` (to cover the counts-only path, which re-arms the equality cache
-    /// without writing `sections`). `performSectionsRefresh` (the body of
-    /// `refreshSectionsAwaiting()`) snapshots this before its DB fetch and re-checks it after;
-    /// a mismatch means some other apply (the live observation loop, a structural-undo
-    /// sequence, hierarchy enforcement) landed while this fetch was suspended, so the fetch's
-    /// result is stale and must be dropped rather than merged in -- otherwise it can overwrite
-    /// newer data and re-arm the cache with the stale set. This guard correctly resolves one
-    /// direction of a refresh-vs-apply race (an apply that lands while a refresh's fetch is
-    /// suspended); it does NOT by itself resolve refresh-vs-refresh ordering (an earlier-started
-    /// refresh whose fetch resumes and applies *after* a later-started refresh already applied
-    /// fresher data) -- `refreshSectionsAwaiting()`'s serialized chain (see its doc comment)
-    /// fixes that by construction, ensuring only one refresh's DB fetch is ever in flight at a
-    /// time. See `docs/architecture/unified-undo.md` and the class-level cache doc comment
-    /// above.
+    /// Counts the writes to `sections` that are NOT the sidebar showing a snapshot (an overlay set by an editor-first click,
+    /// hierarchy enforcement's local level fix, the old reorder path's `mutate` closure, a project reset). An explicit refresh
+    /// notes the count when it is called and its snapshot is dropped if the count moved: the snapshot may have been read before
+    /// the change that local write stands for reached the database. This is what the old `outlineGeneration` did for explicit
+    /// refreshes (it was bumped by every write to `sections`); ticks were never held to it and still are not. Showing a snapshot
+    /// does not count (`isShowingOutlineSnapshot`): the order between snapshots is their numbers.
     @ObservationIgnored
-    private(set) var outlineGeneration: Int = 0
+    private(set) var localSectionsWriteCount: Int = 0
+    /// True while `applySectionsUpdate` assigns `sections`.
+    @ObservationIgnored
+    private var isShowingOutlineSnapshot = false
+
+    private func noteLocalSectionsWrite() {
+        if !isShowingOutlineSnapshot { localSectionsWriteCount &+= 1 }
+    }
 
     /// Clear the outline equality-guard cache. Fires automatically from `sections`'s `didSet`;
     /// private so nothing outside this file can hand-manage it.
@@ -1061,69 +1007,14 @@ class EditorViewState {
         lastOutlineBlocks == blocks && lastOutlineCounts == counts
     }
 
-    /// Start observing blocks from database for reactive UI updates
+    /// Start reading the outline from the database for the reactive sidebar.
     /// Call this once during initialization after database is ready
     func startObserving(database: ProjectDatabase, projectId: String) {
         stopObserving()  // Cancel any existing observation
         invalidateOutlineCache()
         self.projectDatabase = database
         self.currentProjectId = projectId
-
-        observationTask = Task { [weak self] in
-            do {
-                for try await outlineBlocks in database.observeOutlineBlocks(for: projectId) {
-                    guard !Task.isCancelled, let self else { break }
-
-                    // Skip updates during content transitions (drag, zoom, hierarchy enforcement, etc.)
-                    guard contentState == .idle else {
-                        DebugLog.log(.outline, "[EditorViewState:observe] SKIPPED: contentState=\(contentState), blocks=\(outlineBlocks.count)")
-                        continue
-                    }
-
-                    // An editor-first section delete's job has not applied yet: the sections it removed from the screen must not
-                    // reappear from this result (plan D1.6, Q10). Filtered BEFORE the word counts, the equality check, the merge
-                    // and `onSectionsUpdated`, so none of them ever sees a removed section.
-                    let blocksForCounts = self.withoutPendingRemovals(outlineBlocks)
-
-                    // Batch word counts in a single DB read off the main thread.
-                    let blockIds = blocksForCounts.map(\.id)
-                    let needsAggregate = Set(blocksForCounts.filter { $0.aggregateGoal != nil }.map(\.id))
-                    let counts = await Self.fetchBatchWordCounts(
-                        database: database,
-                        blockIds: blockIds,
-                        needsAggregate: needsAggregate
-                    )
-
-                    // t-0b70d1e9 (C2b): the filters and overlays are applied AGAIN after the await. The word counts take a while, and an
-                    // editor-first click sets its overlay (a reorder's order, a delete's removals, a duplicate's copy) in ONE main-actor
-                    // turn that can land inside that wait; a result filtered before it would put the old order back over the new one.
-                    // A card with no count yet just shows none until the next tick.
-                    let visibleBlocks = self.withoutPendingRemovals(outlineBlocks)
-
-                    // Fix 1: skip the merge entirely when nothing actually changed since the
-                    // last applied tick -- both blocks AND counts, never blocks alone.
-                    if self.isOutlineUnchanged(blocks: visibleBlocks, counts: counts) {
-                        self.onSectionsUpdated?()
-                        continue
-                    }
-
-                    // Fix 2: merge in place -- reuse existing view models by id instead of
-                    // replacing the array wholesale, then recalculate parent relationships.
-                    // `applySectionsUpdate` merges into a local copy and only assigns back when
-                    // something actually changed: `inout` access to a tracked `@Observable`
-                    // property fires that property's array-level notification unconditionally
-                    // on exit (its synthesized `_modify` accessor's `didSet` call sits in an
-                    // unconditional `defer`, unlike the plain `set`), so passing `&self.sections`
-                    // directly here would defeat the point of this merge on every single tick.
-                    self.applySectionsUpdate(from: visibleBlocks, counts: counts)
-
-                    // Notify observers (e.g., for hierarchy enforcement)
-                    self.onSectionsUpdated?()
-                }
-            } catch {
-                DebugLog.log(.outline, "[EditorViewState] Block observation error: \(error)")
-            }
-        }
+        beginOutlineSnapshots(database: database, projectId: projectId)
     }
 
     /// `blocks` without the leaders of sections an editor-first delete has removed from the screen but whose job has not applied
@@ -1139,192 +1030,12 @@ class EditorViewState {
         return mergingPendingReorder(into: merged, unfiltered: blocks)
     }
 
-    /// Re-fetch outline blocks from database and update sections.
-    /// Called when ValueObservation may have been dropped during non-idle contentState.
-    /// Fire-and-forget wrapper around `refreshSectionsAwaiting()` for callers that don't need
-    /// to know when the fetch lands (the original/common case).
-    func refreshSections() {
-        StructuralTrace.log("refreshSections requested") // slice 0 measurement; silent unless tracing is on
-        Task { [weak self] in
-            await self?.refreshSectionsAwaiting()
-        }
-    }
-
-    /// Awaited version of `refreshSections()` (MF-1, `StructuralUndoController`'s audited
-    /// sequences -- see docs/architecture/unified-undo.md's audited-sequences and Barriers
-    /// sections, Phase 4 review round): those sequences need to know the DB fetch has
-    /// actually landed in `sections` before running hierarchy enforcement in-sequence, so they
-    /// can't use the fire-and-forget `refreshSections()` above. Heavy DB work runs off the main
-    /// actor; the section assignment lands back on @MainActor.
-    ///
-    /// **Serialized chain.** Two concurrent refreshes used to be able to resolve their race by
-    /// first-to-land instead of freshest-snapshot: an earlier-started, later-landing call could
-    /// overwrite a fresher result and bump `outlineGeneration`, causing that fresher result to
-    /// be discarded as "stale" by `performSectionsRefresh`'s own generation guard when it was
-    /// actually newer. This method removes that race by construction: every call awaits the
-    /// previous call's completion (`refreshChainTailSignal`) before starting its own DB fetch,
-    /// so at most one fetch is ever in flight. A caller arriving while the tail entry hasn't
-    /// started its DB read yet joins that pending entry (`pendingRefreshSignal`) instead of
-    /// enqueueing a redundant one, rather than getting its own chained entry -- but ONLY when
-    /// that pending entry is scoped to the SAME project as this caller (see below); otherwise it
-    /// gets its own chained entry like any other caller.
-    ///
-    /// **Why the project check on the join.** A pending entry's `expectedProjectId` is fixed at
-    /// the moment it was enqueued. If the project has since changed, that entry is going to bail
-    /// without refreshing anything (see `performSectionsRefresh`'s own project guard) -- a
-    /// caller that blindly joined it would `await` its `wait()` and return having gotten NO
-    /// refresh at all, silently. Concretely: entry B enqueues for project P1; the user switches
-    /// to P2; caller C (now on P2) would join B purely because B hasn't started fetching yet; B
-    /// bails (P1 != P2) without fetching; C's await returns with nothing done. Checking
-    /// `pending.expectedProjectId == myProjectId` before joining closes this: a caller whose own
-    /// project doesn't match the pending entry's gets its own entry instead, chained behind
-    /// whatever's currently the tail (which includes that mismatched pending entry, so
-    /// ordering/serialization is still preserved) -- and that new entry captures ITS OWN
-    /// project id, so its own eventual `performSectionsRefresh` call is correctly scoped.
-    /// `StructuralUndoController.enforceHierarchyInSequence` depends on this method actually
-    /// performing a refresh for the caller's project, not silently no-op'ing.
-    ///
-    /// INVARIANT (load-bearing, must not be violated by future edits): everything from reading
-    /// `pendingRefreshSignal`/`refreshChainTailSignal` through calling `performSectionsRefresh`
-    /// runs INLINE in the calling task -- never inside a freshly-spawned child `Task`. Spawning
-    /// a child `Task` to do this work (an earlier version of this method did exactly that) adds
-    /// a real scheduling hop before that child ever runs, which delays exactly when
-    /// `performSectionsRefresh` captures its `outlineGeneration` snapshot relative to this
-    /// call's own caller -- late enough, in one observed regression, that a synchronous
-    /// `applySectionsUpdate` call made by the caller's own code immediately after starting a
-    /// refresh landed BEFORE the snapshot instead of after, silently defeating the staleness
-    /// guard (`OutlineRefreshStalenessTests.staleRefreshDoesNotOverwriteNewerApply` catches
-    /// this). Running inline preserves the same timing this method had before the chain existed:
-    /// with no prior entry to wait for, `generationAtFetch` is captured synchronously, with
-    /// zero suspension points, relative to the caller. This also protects
-    /// `StructuralUndoController.enforceHierarchyInSequence` (Services/StructuralUndoController.swift),
-    /// which awaits this method specifically so `hasHierarchyViolations` sees that operation's
-    /// own just-written DB mutation.
-    ///
-    /// Separately: the chain requires that no code reached from inside a chain entry awaits
-    /// `refreshSectionsAwaiting()` itself, or the chain deadlocks. Today this holds only because
-    /// `onSectionsUpdated` is a SYNCHRONOUS closure and `applySectionsUpdate`/
-    /// `recalculateParentRelationships` are both sync -- this is currently a load-bearing
-    /// accident, not an enforced invariant. If `onSectionsUpdated` is ever made async/awaiting,
-    /// re-audit this.
-    func refreshSectionsAwaiting() async {
-        let traceSpan = StructuralTrace.span("refreshSectionsAwaiting") // slice 0 measurement; silent unless tracing is on
-        defer { traceSpan.end() }
-        let myProjectId = currentProjectId
-
-        if let pending = pendingRefreshSignal, pending.expectedProjectId == myProjectId {
-            await pending.wait()
-            return
-        }
-
-        let previous = refreshChainTailSignal
-        let token = UUID()
-        let signal = RefreshSignal(expectedProjectId: myProjectId)
-
-        pendingRefreshSignal = signal
-        pendingRefreshToken = token
-        refreshChainTailSignal = signal
-        refreshChainTailToken = token
-
-        defer {
-            if refreshChainTailToken == token {
-                refreshChainTailSignal = nil
-                refreshChainTailToken = nil
-            }
-            signal.finish()
-        }
-
-        // No-op (and no suspension at all) when `previous` is nil -- i.e. when nothing is
-        // chained ahead of us, which is the common case. See the INVARIANT above: this is what
-        // keeps `performSectionsRefresh`'s generation snapshot exactly as immediate as it was
-        // before the chain existed.
-        if let previous {
-            let chainWaitSpan = MdSpeed.span("refreshSections.chainWait")   // round M2 measurement: an await behind an earlier refresh
-            await previous.wait()
-            chainWaitSpan.end()
-        }
-
-        if pendingRefreshToken == token {
-            pendingRefreshToken = nil
-            pendingRefreshSignal = nil
-        }
-
-        await performSectionsRefresh(expectedProjectId: myProjectId)
-    }
-
-    /// The actual DB-fetch-and-apply body, run serially by `refreshSectionsAwaiting()`'s chain
-    /// -- see that method's doc comment for why serialization is needed and what it guarantees.
-    /// `expectedProjectId` is the project id captured at enqueue time; if the current project
-    /// has changed by the time this entry's turn comes up (queued behind other work while the
-    /// user switched documents), bail rather than applying a fetch for the wrong project.
-    private func performSectionsRefresh(expectedProjectId: String?) async {
-        guard let db = projectDatabase, let pid = currentProjectId else {
-            DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: no db/pid")
-            return
-        }
-        guard expectedProjectId == nil || expectedProjectId == pid else {
-            DebugLog.log(.outline, "[EditorViewState:refresh] BAIL: project changed while queued (\(expectedProjectId ?? "nil") -> \(pid))")
-            return
-        }
-        let generationAtFetch = outlineGeneration
-        do {
-            let fetchSpan = MdSpeed.span("refreshSections.outlineFetch")   // round M2 measurement: an await; the read runs off the main thread
-            let fetchedOutlineBlocks = try await Task.detached(priority: .userInitiated) {
-                try db.fetchOutlineBlocks(projectId: pid)
-            }.value
-            fetchSpan.end()
-            // Same filter as the live observation loop (plan D1.6): a section an editor-first delete just removed stays out.
-            let outlineBlocks = withoutPendingRemovals(fetchedOutlineBlocks)
-
-            let blockIds = outlineBlocks.map(\.id)
-            let needsAggregate = Set(outlineBlocks.filter { $0.aggregateGoal != nil }.map(\.id))
-            let countsSpan = MdSpeed.span("refreshSections.wordCounts")   // an await; the read runs off the main thread
-            let counts = await Self.fetchBatchWordCounts(
-                database: db,
-                blockIds: blockIds,
-                needsAggregate: needsAggregate
-            )
-            countsSpan.end()
-            let applySpan = MdSpeed.span("refreshSections.apply")   // main thread: the merge, the assignment and the sidebar callback
-            defer { applySpan.end() }
-
-            // MUST-FIX 1 (task plan): `sections` may have been reassigned by another writer
-            // (the live observation loop, a structural-undo sequence, hierarchy enforcement)
-            // while both awaits above were suspended. Applying this fetch's result now would
-            // merge stale outline blocks/counts back over that newer data and re-arm the
-            // equality cache with the stale set. Drop the result instead: still notify via
-            // `onSectionsUpdated?()` because `StructuralUndoController`'s sequences await this
-            // method specifically so hierarchy enforcement runs in-sequence afterward.
-            guard outlineGeneration == generationAtFetch else {
-                DebugLog.log(.outline, "[EditorViewState:refresh] Discarded stale result "
-                             + "(gen \(generationAtFetch) != \(outlineGeneration))")
-                staleRefreshDropCount += 1
-                onSectionsUpdated?()
-                return
-            }
-
-            DebugLog.log(.outline, "[EditorViewState:refresh] \(outlineBlocks.count) sections (contentState=\(contentState))")
-
-            if isOutlineUnchanged(blocks: outlineBlocks, counts: counts) {
-                onSectionsUpdated?()
-                return
-            }
-
-            // See the observation-loop call site above for why `applySectionsUpdate` merges
-            // into a local copy rather than passing `&self.sections` directly.
-            applySectionsUpdate(from: outlineBlocks, counts: counts)
-            onSectionsUpdated?()
-        } catch {
-            DebugLog.log(.outline, "[EditorViewState] refreshSections error: \(error)")
-        }
-    }
-
-    /// Merge freshly-fetched blocks/counts into `sections` and recalculate parent
-    /// relationships in one step -- the exact sequence both `startObserving`'s live loop and
-    /// `refreshSections`'s explicit re-fetch run on every tick. Extracted so both call sites
-    /// (and tests) go through one call rather than duplicating the "merge into a local copy,
-    /// assign back only if changed, then recalculate parents" sequence -- see `mergeSections`'s
-    /// doc comment (EditorViewState+ObservableListDiff.swift) for why the local-copy step matters.
+    /// Merge a snapshot's blocks/counts into `sections` and recalculate parent
+    /// relationships in one step -- the sequence `acceptOutlineSnapshot` runs for every
+    /// snapshot it shows. Extracted so that call site (and tests) go through one call rather
+    /// than duplicating the "merge into a local copy, assign back only if changed, then
+    /// recalculate parents" sequence -- see `mergeSections`'s doc comment
+    /// (EditorViewState+ObservableListDiff.swift) for why the local-copy step matters.
     ///
     /// - Returns: `true` if `mergeSections` structurally changed `sections` (see that method's
     ///   doc comment for what counts as a structural change).
@@ -1335,41 +1046,20 @@ class EditorViewState {
     ) -> Bool {
         var updatedSections = sections
         let sectionsChanged = Self.mergeSections(into: &updatedSections, from: blocks, counts: counts)
+        // This write is the sidebar showing a snapshot, not a local change (see `localSectionsWriteCount`).
+        isShowingOutlineSnapshot = true
         if sectionsChanged { sections = updatedSections }   // fires didSet -> clears cache
+        isShowingOutlineSnapshot = false
         recalculateParentRelationships()
         // Re-arm AFTER the assignment above: `sections`'s didSet would otherwise wipe it.
         lastOutlineBlocks = blocks
         lastOutlineCounts = counts
-        // Unconditional bump: the counts-only path (sectionsChanged == false) re-arms the
-        // cache above without writing `sections`, so it needs its own generation bump to
-        // invalidate any in-flight `refreshSectionsAwaiting()` fetch that's still suspended.
-        // A `didSet` bump firing again when `sectionsChanged` is true is harmless -- it
-        // happens after this method's own re-check, not before it.
-        outlineGeneration &+= 1
         return sectionsChanged
-    }
-
-    /// Fetch heading word counts off the main thread, logging (rather than swallowing)
-    /// any error so a silently-zeroed sidebar gets attention in the debug log.
-    private static func fetchBatchWordCounts(
-        database: ProjectDatabase,
-        blockIds: [String],
-        needsAggregate: Set<String>
-    ) async -> [String: ProjectDatabase.HeadingWordCounts] {
-        await Task.detached(priority: .userInitiated) {
-            do {
-                return try database.batchWordCounts(blockIds: blockIds, needsAggregate: needsAggregate)
-            } catch {
-                DebugLog.log(.outline, "[EditorViewState] batchWordCounts failed: \(error)")
-                return [:]
-            }
-        }.value
     }
 
     /// Stop observing sections from database
     func stopObserving() {
-        observationTask?.cancel()
-        observationTask = nil
+        endOutlineSnapshots()
         annotationObservationTask?.cancel()
         annotationObservationTask = nil
         invalidateOutlineCache()
@@ -1386,10 +1076,11 @@ class EditorViewState {
 
                     // Merge in place -- reuse existing view models by id. Merge into a
                     // local copy and only assign back when something actually changed -- see
-                    // the sections observation loop above for why `&self.annotations` can't be
-                    // passed directly here. No equality guard is needed before this: unlike
-                    // `observeOutlineBlocks`, `observeAnnotations` applies `.removeDuplicates()`
-                    // at the GRDB layer, so an unchanged re-emission never reaches here.
+                    // `acceptOutlineSnapshot` (EditorViewState+OutlineSnapshots.swift) for why
+                    // `&self.annotations` can't be passed directly here. No equality guard is
+                    // needed before this: unlike the outline, `observeAnnotations` applies
+                    // `.removeDuplicates()` at the GRDB layer, so an unchanged re-emission never
+                    // reaches here.
                     var updatedAnnotations = self.annotations
                     let annotationsChanged = Self.mergeAnnotations(into: &updatedAnnotations, from: dbAnnotations)
                     if annotationsChanged { self.annotations = updatedAnnotations }

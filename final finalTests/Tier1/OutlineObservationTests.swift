@@ -4,21 +4,20 @@
 //
 //  Tier 1: Silent Killers
 //
-//  Guards `observeOutlineBlocks` against the `.removeDuplicates()` regression.
-//  The tracking closure returns only heading + pseudo-section rows, but the
-//  downstream sidebar derives per-section word counts from body blocks via
-//  `batchWordCounts`. A naive `.removeDuplicates()` here would suppress
-//  re-emission on body-only edits — exactly the bug this file exists to prevent.
+//  Guards the commit signal that tells the Outline sidebar's reader (`OutlineSnapshotPublisher`) to take a new snapshot:
+//  `ProjectDatabase.observeBlockCommits`, a GRDB region observation on the whole `block` table.
 //
-//  Background: `.removeDuplicates()` has been add→remove→add→remove across
-//  four commits. See `docs/lessons/grdb-database.md` §"removeDuplicates()
-//  Suppresses Derived-Data Updates" and the comment at the top of
-//  `Database+BlocksObservation.swift`.
+//  Background (this file used to guard `observeOutlineBlocks` against `.removeDuplicates()`): the outline rows are headings and
+//  section breaks, but the sidebar derives each section's word total from the BODY blocks' `wordCount`. A signal that only
+//  fired for a change to a heading row would freeze the sidebar's word counts at their open-time values. The signal is
+//  therefore table-wide and is not deduplicated. See `docs/lessons/grdb-database.md` §"removeDuplicates() Suppresses
+//  Derived-Data Updates".
 //
 
 import Testing
 import Foundation
 import GRDB
+import Synchronization
 @testable import final_final
 
 @Suite("Outline Observation — Tier 1: Silent Killers")
@@ -26,8 +25,6 @@ struct OutlineObservationTests {
 
     // MARK: - Fixture
 
-    /// Simple doc with one heading and one paragraph so a body-only edit is
-    /// unambiguous and the signature change is easy to verify.
     private func makeDoc() -> String {
         return """
         # Only Section
@@ -36,32 +33,13 @@ struct OutlineObservationTests {
         """
     }
 
-    // MARK: - Helpers
+    /// Counts commit signals. The signal runs on GRDB's writer queue, so the count is behind a lock.
+    private final class SignalCounter: Sendable {
+        private let value = Mutex(0)
+        var count: Int { value.withLock { $0 } }
+        func increment() { value.withLock { $0 += 1 } }
 
-    /// Signature that captures derived-data state: sum of every block's
-    /// stored `wordCount` for the given project. Body edits change this sum
-    /// even though heading rows don't — so a dedup scheme that compares
-    /// fetched heading rows would incorrectly suppress an emission that
-    /// should surface this change.
-    private func bodyWordCountSum(_ db: ProjectDatabase, _ projectId: String) throws -> Int {
-        try db.read { database in
-            try Int.fetchOne(database, sql: """
-                SELECT COALESCE(SUM(wordCount), 0)
-                FROM block
-                WHERE projectId = ?
-                """, arguments: [projectId]) ?? 0
-        }
-    }
-
-    /// Actor-backed emission collector. A background Task drains the stream
-    /// into this array; the test polls `count` with a deadline so a
-    /// suppressed emission fails loudly rather than hanging CI.
-    private actor EmissionCollector {
-        private(set) var count: Int = 0
-        func increment() { count += 1 }
-
-        /// Busy-wait (with small sleep) until `count >= target`. Returns
-        /// true if the target was reached within `timeout`, false otherwise.
+        /// Polls until `count >= target`; false if `timeout` passes first.
         func waitUntil(count target: Int, timeout: Duration = .seconds(3)) async -> Bool {
             let deadline = ContinuousClock.now + timeout
             while count < target {
@@ -72,46 +50,23 @@ struct OutlineObservationTests {
         }
     }
 
-    /// Start a background Task that drains `stream` into `collector`.
-    /// Returns the Task so the caller can cancel it when the test ends.
-    private func startCollecting(
-        _ stream: AsyncThrowingStream<[Block], Error>,
-        into collector: EmissionCollector
-    ) -> Task<Void, Never> {
-        Task.detached {
-            do {
-                for try await _ in stream {
-                    await collector.increment()
-                }
-            } catch {
-                // Stream terminated via cancellation or error; fine.
-            }
-        }
+    private func startCounting(_ db: ProjectDatabase) -> (SignalCounter, AnyDatabaseCancellable) {
+        let counter = SignalCounter()
+        let cancellable = db.observeBlockCommits { counter.increment() }
+        return (counter, cancellable)
     }
 
     // MARK: - Guardrail Test
 
-    @Test("Body-only paragraph edit re-emits on observeOutlineBlocks (GUARDRAIL)")
+    @Test("A body-only paragraph edit signals a commit (GUARDRAIL)")
     @MainActor
-    func bodyEditReEmits() async throws {
+    func bodyEditSignalsACommit() async throws {
         let db = try TestFixtureFactory.createTemporary(content: makeDoc())
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-
-        let initialBlocks = try TestFixtureFactory.fetchBlocks(from: db)
-        guard var paragraph = initialBlocks.first(where: { $0.blockType == .paragraph }) else {
+        guard var paragraph = try TestFixtureFactory.fetchBlocks(from: db).first(where: { $0.blockType == .paragraph }) else {
             Issue.record("Fixture must contain at least one paragraph"); return
         }
-
-        let collector = EmissionCollector()
-        let stream = db.observeOutlineBlocks(for: pid)
-        let collectTask = startCollecting(stream, into: collector)
-        defer { collectTask.cancel() }
-
-        // Handshake: wait for the initial emission so the observer is
-        // definitely attached before we write.
-        let gotFirst = await collector.waitUntil(count: 1)
-        #expect(gotFirst, "Initial emission must arrive (observer not attached)")
-        let firstSignature = try bodyWordCountSum(db, pid)
+        let (counter, cancellable) = startCounting(db)
+        defer { cancellable.cancel() }
 
         // Body-only edit: change a paragraph. Heading rows do not change.
         paragraph.textContent += " extra words appended here"
@@ -121,47 +76,27 @@ struct OutlineObservationTests {
             try paragraph.update(database)
         }
 
-        // Second emission must arrive. If `.removeDuplicates()` is present
-        // on `observeOutlineBlocks`, this times out at 3s and `gotSecond` is
-        // false.
-        let gotSecond = await collector.waitUntil(count: 2)
+        let signalled = await counter.waitUntil(count: 1)
         #expect(
-            gotSecond,
+            signalled,
             """
-            observeOutlineBlocks did not re-emit after a body-only edit.
-            This almost always means `.removeDuplicates()` was added to the
-            observation in Database+BlocksObservation.swift — see the comment
-            at the top of that file and docs/lessons/grdb-database.md.
+            No commit signal after a body-only edit. The outline's word counts come from body blocks, so the signal must be
+            table-wide (Database+BlocksObservation.swift); see docs/lessons/grdb-database.md.
             """
-        )
-
-        let secondSignature = try bodyWordCountSum(db, pid)
-        #expect(
-            secondSignature != firstSignature,
-            "Derived wordCount sum must differ after a body edit"
         )
     }
 
-    // MARK: - Positive Baseline
+    // MARK: - Positive Baselines
 
-    @Test("Heading-text edit re-emits (positive baseline)")
+    @Test("A heading-text edit signals a commit")
     @MainActor
-    func headingEditReEmits() async throws {
+    func headingEditSignalsACommit() async throws {
         let db = try TestFixtureFactory.createTemporary(content: makeDoc())
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-
-        let initialBlocks = try TestFixtureFactory.fetchBlocks(from: db)
-        guard var heading = initialBlocks.first(where: { $0.blockType == .heading }) else {
+        guard var heading = try TestFixtureFactory.fetchBlocks(from: db).first(where: { $0.blockType == .heading }) else {
             Issue.record("Fixture must contain at least one heading"); return
         }
-
-        let collector = EmissionCollector()
-        let stream = db.observeOutlineBlocks(for: pid)
-        let collectTask = startCollecting(stream, into: collector)
-        defer { collectTask.cancel() }
-
-        let gotFirst = await collector.waitUntil(count: 1)
-        #expect(gotFirst)
+        let (counter, cancellable) = startCounting(db)
+        defer { cancellable.cancel() }
 
         heading.textContent = "Renamed Heading"
         heading.recalculateWordCount()
@@ -170,40 +105,93 @@ struct OutlineObservationTests {
             try heading.update(database)
         }
 
-        let gotSecond = await collector.waitUntil(count: 2)
-        #expect(gotSecond, "Heading edits must emit (this would fail only if the observation itself is broken)")
+        #expect(await counter.waitUntil(count: 1), "Heading edits must signal")
     }
 
-    // MARK: - Metadata Path
-
-    @Test("Metadata write on a heading re-emits (covers updateSection path)")
+    @Test("A metadata write on a heading signals a commit (covers the updateSection path)")
     @MainActor
-    func metadataWriteOnHeadingReEmits() async throws {
+    func metadataWriteOnHeadingSignalsACommit() async throws {
         let db = try TestFixtureFactory.createTemporary(content: makeDoc())
-        let pid = try TestFixtureFactory.getProjectId(from: db)
-
-        let initialBlocks = try TestFixtureFactory.fetchBlocks(from: db)
-        guard var heading = initialBlocks.first(where: { $0.blockType == .heading }) else {
+        guard var heading = try TestFixtureFactory.fetchBlocks(from: db).first(where: { $0.blockType == .heading }) else {
             Issue.record("Fixture must contain at least one heading"); return
         }
+        let (counter, cancellable) = startCounting(db)
+        defer { cancellable.cancel() }
 
-        let collector = EmissionCollector()
-        let stream = db.observeOutlineBlocks(for: pid)
-        let collectTask = startCollecting(stream, into: collector)
-        defer { collectTask.cancel() }
-
-        let gotFirst = await collector.waitUntil(count: 1)
-        #expect(gotFirst)
-
-        // Change a non-text metadata column. This is the `updateSection`
-        // shape — status / goals / tags on heading blocks.
+        // A non-text metadata column: the `updateSection` shape (status / goals / tags on heading blocks), which does NOT go
+        // through the DocumentWriter.
         heading.status = .review
         heading.updatedAt = Date()
         try db.write { database in
             try heading.update(database)
         }
 
-        let gotSecond = await collector.waitUntil(count: 2)
-        #expect(gotSecond, "Metadata writes on heading blocks must emit")
+        #expect(await counter.waitUntil(count: 1), "Metadata writes on heading blocks must signal")
+    }
+
+    // MARK: - Negative Cases
+
+    private struct Rollback: Error {}
+
+    @Test("A write that is rolled back does not signal")
+    @MainActor
+    func rolledBackWriteDoesNotSignal() async throws {
+        let db = try TestFixtureFactory.createTemporary(content: makeDoc())
+        guard var heading = try TestFixtureFactory.fetchBlocks(from: db).first(where: { $0.blockType == .heading }) else {
+            Issue.record("Fixture must contain at least one heading"); return
+        }
+        let (counter, cancellable) = startCounting(db)
+        defer { cancellable.cancel() }
+
+        heading.textContent = "Never committed"
+        do {
+            try db.write { database in
+                try heading.update(database)
+                throw Rollback()
+            }
+        } catch is Rollback {
+            // expected
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(counter.count == 0, "A rolled-back transaction must not reach the sidebar")
+
+        // The signal still works afterwards.
+        heading.textContent = "Committed"
+        try db.write { database in
+            try heading.update(database)
+        }
+        #expect(await counter.waitUntil(count: 1))
+    }
+
+    @Test("A write to another table does not signal")
+    @MainActor
+    func otherTableDoesNotSignal() async throws {
+        let db = try TestFixtureFactory.createTemporary(content: makeDoc())
+        let (counter, cancellable) = startCounting(db)
+        defer { cancellable.cancel() }
+
+        try db.write { database in
+            try database.execute(sql: "UPDATE project SET title = 'Renamed project'")
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(counter.count == 0)
+    }
+
+    @Test("A cancelled observation never signals again")
+    @MainActor
+    func cancelledObservationStaysQuiet() async throws {
+        let db = try TestFixtureFactory.createTemporary(content: makeDoc())
+        guard var heading = try TestFixtureFactory.fetchBlocks(from: db).first(where: { $0.blockType == .heading }) else {
+            Issue.record("Fixture must contain at least one heading"); return
+        }
+        let (counter, cancellable) = startCounting(db)
+        cancellable.cancel()
+
+        heading.textContent = "After cancel"
+        try db.write { database in
+            try heading.update(database)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(counter.count == 0)
     }
 }

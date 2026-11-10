@@ -21,7 +21,7 @@
 //       bibliography END marker after the last bibliography row);
 //    2. a block-offset map over `MarkdownBlockDiff.assemblyOrderedNonEmpty` (the shared order: the rebuild uses the same function), in
 //       Characters, "\n\n" between blocks, the fragment's `count`;
-//    3. the sections the rebuild marks: `editorState.sections` filtered `!isBibliography`. That list is fed by `observeOutlineBlocks` /
+//    3. the sections the rebuild marks: `editorState.sections` filtered `!isBibliography`. That list is fed by the outline snapshot, whose rows come from
 //       `fetchOutlineBlocks` (Database+Blocks.swift): EVERY `.heading` row of every level and every `isPseudoSection` row (the Notes
 //       heading included), no level filter. A section gets a marker only where it has a block offset, that is only when its fragment is
 //       not empty (`BlockParser.isEmptyFragment`);

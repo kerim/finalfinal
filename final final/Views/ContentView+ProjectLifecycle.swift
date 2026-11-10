@@ -45,6 +45,20 @@ extension ContentView {
 
         loadInitialContent(db: db, pid: pid)
 
+        // Connect to Zotero (just verify it's available - search is on-demand).
+        //
+        // STARTED BEFORE the section sync below, not after it (Phase 6, found by the real-app test
+        // `testReplaceSectionThenType_book12`). The bibliography update that the first content change after open schedules
+        // fires after a 1 s debounce and returns silently when Zotero is not yet connected (`performBibliographyUpdate`'s
+        // `isConnected` guard); nothing retries it. This Task is a main-actor job that is queued in order with the debounce's own
+        // wake-up, so which of the two runs first on a book whose open keeps the main thread busy depended on when
+        // `syncNow` returned: with the connect started after it, the unchanged code won that race by 33 ms and the Phase 6 build
+        // (whose first sidebar fill lands a little later) lost it, and a 700,000-character book opened with no Bibliography
+        // until the first edit. Started here, the connect is queued ahead of anything the open schedules later.
+        Task {
+            await connectToZotero()
+        }
+
         // Populate section table from loaded content so version history has fresh data.
         // For Getting Started, this pre-round-trip programmatic sync intentionally does NOT
         // count as `fromEditorChange` — the Getting Started baseline is instead captured
@@ -54,12 +68,6 @@ extension ContentView {
         if !editorState.content.isEmpty {
             await sectionSyncService.syncNow(editorState.content)
         }
-
-        // Connect to Zotero (just verify it's available - search is on-demand)
-        Task {
-            await connectToZotero()
-        }
-
     }
 
     /// Configure sync services with the database, and wire up their editorState
