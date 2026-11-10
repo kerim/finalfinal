@@ -16,7 +16,7 @@
 //  `phase1CanClaim`, which treats this as a legitimate non-atomic type
 //  conversion at the same offset).
 //
-//  `observeOutlineBlocks`/`fetchOutlineBlocks` filter on
+//  `fetchOutlineBlocks` (which the sidebar's numbered snapshots also read through) filters on
 //  `Block.Columns.isPseudoSection == true`, not on `blockType`, so a block
 //  with the correct `.sectionBreak` type but `isPseudoSection == false`
 //  silently never appears in the outline — exactly the symptom reported:
@@ -72,7 +72,7 @@ struct SectionBreakOutlineSyncTests {
 
         let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
         #expect(outlineBlocks.contains { $0.id == permanentId },
-                "fetchOutlineBlocks (and observeOutlineBlocks, which shares the same filter) must include the new section break")
+                "fetchOutlineBlocks (which the sidebar's numbered snapshots read through) must include the new section break")
     }
 
     @Test("A bare /break in-place paragraph→section_break conversion (same block id) is flagged and appears in the outline")
@@ -117,6 +117,6 @@ struct SectionBreakOutlineSyncTests {
 
         let outlineBlocks = try db.fetchOutlineBlocks(projectId: pid)
         #expect(outlineBlocks.contains { $0.id == placeholder.id },
-                "fetchOutlineBlocks (and observeOutlineBlocks, which shares the same filter) must include the converted section break")
+                "fetchOutlineBlocks (which the sidebar's numbered snapshots read through) must include the converted section break")
     }
 }
