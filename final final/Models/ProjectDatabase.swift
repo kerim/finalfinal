@@ -398,6 +398,6 @@ final class ProjectDatabase: Sendable {
     // sweepOrphanedNotesDefinitionsAtV16(db:projectId:) -- raw-SQL helpers used only by the
     // v15/v16 migrations above -- live in ProjectDatabase+MigrationHelpers.swift, moved there
     // to keep this class's body under SwiftLint's type_body_length limit. read(_:), write(_:),
-    // observeSections(for:), and observeAnnotations(for:) live in
-    // ProjectDatabase+Observation.swift for the same reason.
+    // and observeAnnotations(for:) live in ProjectDatabase+Observation.swift for the same
+    // reason.
 }

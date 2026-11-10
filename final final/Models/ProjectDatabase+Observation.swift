@@ -21,34 +21,6 @@ extension ProjectDatabase {
 
     // MARK: - Reactive Observation
 
-    /// Returns an async sequence of section updates for reactive UI
-    /// Uses ValueObservation to automatically push updates when the database changes
-    func observeSections(for projectId: String) -> AsyncThrowingStream<[Section], Error> {
-        let observation = ValueObservation
-            .tracking { db in
-                try Section
-                    .filter(Section.Columns.projectId == projectId)
-                    .order(Section.Columns.isBibliography.asc, Section.Columns.sortOrder.asc)
-                    .fetchAll(db)
-            }
-            .removeDuplicates()  // Prevent unnecessary re-renders
-
-        return AsyncThrowingStream { continuation in
-            let cancellable = observation.start(
-                in: dbWriter,
-                scheduling: .async(onQueue: .main)
-            ) { error in
-                continuation.finish(throwing: error)
-            } onChange: { sections in
-                continuation.yield(sections)
-            }
-
-            continuation.onTermination = { _ in
-                cancellable.cancel()
-            }
-        }
-    }
-
     /// Returns an async sequence of annotation updates for reactive UI
     /// Uses ValueObservation to automatically push updates when annotations change
     func observeAnnotations(for contentId: String) -> AsyncThrowingStream<[Annotation], Error> {
