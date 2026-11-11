@@ -305,10 +305,14 @@ Intro paragraph for section A.
             "CodeMirror source editor should render raw markdown (a leading '#') after toggling, not just flip the status-bar label"
         )
 
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(Self.replacementMarkdown, forType: .string)
-
         func selectAllAndPasteReplacement() {
+            // Phase 7 (2026-11-11): the text goes on the clipboard at EVERY attempt, right before the paste. The VM shares its clipboard
+            // with the host (tart's clipboard sharing), and in a failing run the guest's clipboard was overwritten with 8 bytes of
+            // something else between this copy and the paste (the app log shows the runner "lost ownership to new generation"), so
+            // the paste replaced the document with no words and the retry pasted the same wrong text. Copying again narrows the race;
+            // starting the VM with `tart run --no-clipboard` would close it (a change to the shared vmtest engine, not made here).
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(Self.replacementMarkdown, forType: .string)
             editorAreaAfterRestatus.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).click()
             app.activateAndWaitForForeground()
             app.typeKey("a", modifierFlags: .command) // select all existing content

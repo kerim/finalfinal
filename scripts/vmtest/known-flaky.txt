@@ -150,3 +150,24 @@ final finalUITests/EscapeLadderE2ETests/testFindBarFieldFocusedEscClosesFindBarR
 # span, tooltip-width-sized rather than toolbar-button-sized. Revisit if it
 # starts failing consistently or this hypothesis is confirmed or ruled out.
 final finalUITests/ShortcutTooltipE2ETests/testHoveringReplaceToggleShowsCustomTooltip
+
+# Added 2026-11-11 (Phase 7 of the write-queue redesign, run record docs/architecture/write-queue-plan/phase7/README.md section 10), so the
+# release-time full suite (`vmtest run --suite full`, /ship) is not held red by tests that fail on and off for reasons outside what a
+# release changes. Each entry below has a diagnosis on file and a board task; remove the line when its task is closed.
+
+# A paste test. The VM shares its clipboard with the host (tart run has clipboard sharing on by default), and in a failing run the guest
+# clipboard was overwritten between the test's copy and its Cmd-V, so the document was replaced by 8 bytes with no words ("0 words").
+# Diagnosis: infra (app-console.log of run-1794412559-23379). The test now copies at every attempt, which narrows the race; the real fix
+# is `--no-clipboard` on the `tart run` line of the shared vmtest engine. Board t-5b41ac38. Remove this line once that flag is in.
+final finalUITests/E2ESectionReconcilerPseudoSectionTests/testSurvivingPseudoSectionKeepsOwnStatusNotNeighbors
+
+# A mode-switch undo test: failed once in a full run under host load (load average 11 to 16, two VMs), passed in two other runs
+# ("raw-markdown evidence should disappear after toggling back to WYSIWYG ... still present after 10.0s"). Cause not established.
+# Board t-5b41ac38.
+final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterSourceToWysiwygViaMenuShortcut
+
+# THIS ONE HIDES A REAL APP BUG, on purpose and for now (the user decided on 2026-11-11 that the bug is a task for later and a release
+# must not be blocked by it). After select-all and retype in Markdown mode in a book with a Notes section, the FIRST heading can end up
+# flagged as a Notes heading next to the real one (rows 2.0|1|1|# Chapter One and 3.0|2|1|## Notes in the failing runs); the test fails
+# in about three of five runs. Board t-e3c7105f. REMOVE THIS LINE WHEN t-e3c7105f IS FIXED, or the bug stays invisible to the release run.
+final finalUITests/FootnoteCursorPlacementE2ETests/testH1ToH2FlipInSourceThenSwitchToMilkdownInsertLandsSentinelCorrectly
