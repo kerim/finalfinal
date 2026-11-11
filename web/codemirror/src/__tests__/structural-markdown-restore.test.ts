@@ -1007,12 +1007,12 @@ describe('WR15 the caret stays with its text and the page does not scroll', () =
 // =============================================================================================================================
 
 describe('WR17 the golden request', () => {
-  // The same file is the Swift side's pin (request-golden.json in the slice4-restores folder): real uppercase UUIDs as `UUID().uuidString`
+  // The same file is the Swift side's pin (docs/architecture/golden-requests/markdown-restore-request-golden.json): real uppercase UUIDs as `UUID().uuidString`
   // writes them, keys sorted, compact, explicit nulls. The page must accept exactly this text.
   // (Vitest runs from web/, as `pnpm test` does; jsdom gives `import.meta.url` no file scheme, so the path starts at the working directory.)
   const goldenPath = resolve(
     process.cwd(),
-    '../docs/architecture/write-queue-plan/phase4b-markdown/slice4-restores/request-golden.json'
+    '../docs/architecture/golden-requests/markdown-restore-request-golden.json'
   );
   const sortKeys = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(sortKeys);

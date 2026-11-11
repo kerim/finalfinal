@@ -41,6 +41,16 @@ extension XCUIApplication {
         launchEnvironment["FF_TEST_FIXTURE_PATH"] = fixturePath
         launch()
         activateAndWaitForForeground()
+        logLaunchWindowFrames()
+    }
+
+    /// Phase 7 diagnostic (2026-11-11): one line per launch with every window's frame next to the screen's, so a shard that starts in
+    /// native full screen (the cascade of the Esc-ladder class) shows it at the launch that inherits it instead of only at a later
+    /// teardown. Prints frames only, no document text.
+    func logLaunchWindowFrames() {
+        let screen = NSScreen.main?.frame ?? .zero
+        let frames = windows.allElementsBoundByIndex.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" }
+        print("[LaunchFrame] windows=\(frames) screen=\(Int(screen.width))x\(Int(screen.height))")
     }
 
     /// Re-activates the app and waits for it to report the foreground state

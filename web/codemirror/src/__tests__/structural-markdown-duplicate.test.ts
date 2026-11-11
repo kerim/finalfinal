@@ -1254,12 +1254,12 @@ describe('WD20 a selection is kept, or collapsed, sensibly', () => {
 });
 
 describe('WD21 the golden request', () => {
-  // The same file is the Swift side's pin (request-golden.json in the slice3-duplicate folder): real uppercase UUIDs as `UUID().uuidString`
+  // The same file is the Swift side's pin (docs/architecture/golden-requests/markdown-duplicate-request-golden.json): real uppercase UUIDs as `UUID().uuidString`
   // writes them, keys sorted, compact. The page must accept exactly this text.
   // (Vitest runs from web/, as `pnpm test` does; jsdom gives `import.meta.url` no file scheme, so the path starts at the working directory.)
   const goldenPath = resolve(
     process.cwd(),
-    '../docs/architecture/write-queue-plan/phase4b-markdown/slice3-duplicate/request-golden.json'
+    '../docs/architecture/golden-requests/markdown-duplicate-request-golden.json'
   );
   const sortKeys = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(sortKeys);

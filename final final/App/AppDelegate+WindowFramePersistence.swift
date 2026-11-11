@@ -70,6 +70,16 @@ extension AppDelegate {
         // is finally known, closes that gap regardless of which of the two ran first.
         closeSpuriousFinderOpenWindows()
         capturedWindowFrameAutosaveName = disableFrameAutosave(for: window)
+        // Phase 7 (2026-11-11, found by the first full real-app run since September; the app's own system log in run-1794399864-73766 shows it):
+        // under UI testing no window may leave a saved window state behind. macOS saves the window about 15 s after a change; a test that
+        // leaves full screen and is killed within that gap leaves a state that still says "full screen", and every later launch of the
+        // shard is then restored into native full screen before its test starts. In full screen the menu bar is hidden (open panel and
+        // menu tests fail), `applyUITestingWindowWidthOverride` skips the window (the width tests measure 1024 not 1000) and Focus Mode
+        // declines to leave a full screen it did not enter (the Esc-ladder tests fail in teardown). `TestMode.isUITesting` is false for a
+        // user's launch, so the app they run is unchanged.
+        if TestMode.isUITesting {
+            window.isRestorable = false
+        }
         applyUITestingWindowWidthOverride(to: window)
         if !TestMode.isTesting {
             SplitViewAutosaveNaming.stabilize(for: window)

@@ -160,6 +160,22 @@ extension EscapeLadderE2ETests {
             && abs(windowFrame.height - screenFrame.height) <= tolerance
     }
 
+    /// Phase 7 (2026-11-11, found by the first full real-app run since September): the CLEANUP's test for "is the app still in native
+    /// full screen". `isMainWindowNativeFullScreen()` asks only for the window that contains "editor-area"; when no window carries it
+    /// (a test that ended while the page was not in the accessibility tree) `mainWindow().frame` reads `.zero`, the answer is "not full
+    /// screen" and `exitFullScreenIfNeeded()` returned at its first line, so the app was closed still in full screen and the next
+    /// launches of the shard started that way (the Esc-ladder class and the classes after it, sidebar width and open-error sheets,
+    /// then all failed). This asks the same question of EVERY window of the app, for the cleanup only: the tests' own assertions keep
+    /// using the main-window check, so a secondary window cannot weaken what they prove.
+    func isAnyAppWindowNativeFullScreen(tolerance: CGFloat = 4.0) -> Bool {
+        if isMainWindowNativeFullScreen(tolerance: tolerance) { return true }
+        guard let screenFrame = NSScreen.main?.frame else { return false }
+        return app.windows.allElementsBoundByIndex.contains { window in
+            abs(window.frame.width - screenFrame.width) <= tolerance
+                && abs(window.frame.height - screenFrame.height) <= tolerance
+        }
+    }
+
     /// Resolves the actual main editor window by finding the window CONTAINING the
     /// "editor-area" accessibility element, rather than:
     /// - an index-based `app.windows.firstMatch` -- wrong, because a second window (Version
@@ -190,7 +206,10 @@ extension EscapeLadderE2ETests {
             print(
                 "[EscapeLadderE2ETests] mainWindow(): no window with editor-area found among "
                     + "\(windowCount) window(s) -- treating as not full screen, but this may be "
-                    + "masking a real problem"
+                    + "masking a real problem; window frames "
+                    + "\(app.windows.allElementsBoundByIndex.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" }), "
+                    + "screen \(Int(NSScreen.main?.frame.width ?? 0))x\(Int(NSScreen.main?.frame.height ?? 0)), "
+                    + "status bar present \(app.groups["status-bar"].exists), menu bar items \(app.menuBars.menuBarItems.count)"
             )
         }
         return match
@@ -302,7 +321,7 @@ extension EscapeLadderE2ETests {
     /// method's own doc comment.
     @discardableResult
     func exitFullScreenIfNeeded() -> String? {
-        guard isMainWindowNativeFullScreen() else { return nil }
+        guard isAnyAppWindowNativeFullScreen() else { return nil }
         for round in 1...5 {
             app.activate()
             _ = app.wait(for: .runningForeground, timeout: 5)
@@ -318,6 +337,13 @@ extension EscapeLadderE2ETests {
         // in case a genuinely different stuck-window scenario needs it.
         app.activate()
         _ = app.wait(for: .runningForeground, timeout: 5)
+        // Phase 7: when Focus Mode is off, Esc has nothing to close and the app never leaves a full screen it did not enter itself,
+        // so also try the system's own menu item (best effort: the menu bar is hidden in full screen and the item may not exist).
+        let exitItem = app.menuBars.menuItems["Exit Full Screen"]
+        if exitItem.exists, exitItem.isHittable {
+            exitItem.click()
+            if waitForNativeFullScreenClearedAndSettled(timeout: 10) { return nil }
+        }
         app.typeKey("f", modifierFlags: [.control, .command])
         if waitForNativeFullScreenClearedAndSettled(timeout: 10) {
             return nil
@@ -360,7 +386,7 @@ extension EscapeLadderE2ETests {
     func waitForNativeFullScreenClearedAndSettled(timeout: TimeInterval = 10) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            guard !isMainWindowNativeFullScreen() else {
+            guard !isAnyAppWindowNativeFullScreen() else {
                 // Why this sleep is exempt from the fixed-wait lint: sampling interval of this bounded
                 // wait: full screen hasn't cleared yet, so re-check after a short pause rather than
                 // spinning. Polls `isMainWindowNativeFullScreen()`, computed window geometry rather
@@ -380,7 +406,7 @@ extension EscapeLadderE2ETests {
             // remove or shorten it.
             // e2e-lint: allow sleep -- the gap IS the measurement (two full-screen reads ~250ms apart), not a sampling gap
             Thread.sleep(forTimeInterval: 0.25)
-            guard !isMainWindowNativeFullScreen() else { continue }
+            guard !isAnyAppWindowNativeFullScreen() else { continue }
             return true
         }
         return false

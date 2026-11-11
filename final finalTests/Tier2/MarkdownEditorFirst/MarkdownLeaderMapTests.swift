@@ -277,7 +277,7 @@ struct MarkdownLeaderMapTests {
             .deletingLastPathComponent()   // Tier2/
             .deletingLastPathComponent()   // final finalTests/
             .deletingLastPathComponent()   // the repository root
-            .appendingPathComponent("docs/architecture/write-queue-plan/phase4b-markdown/slice3-duplicate/request-golden.json")
+            .appendingPathComponent("docs/architecture/golden-requests/markdown-duplicate-request-golden.json")
     }
 
     /// The request `markdownStructuralDuplicate` takes, built through `MarkdownLeaderMap.duplicateRequest` from real UUID ids and
@@ -347,7 +347,7 @@ extension MarkdownLeaderMapTests {
             .deletingLastPathComponent()   // Tier2/
             .deletingLastPathComponent()   // final finalTests/
             .deletingLastPathComponent()   // the repository root
-            .appendingPathComponent("docs/architecture/write-queue-plan/phase4b-markdown/slice4-restores/request-golden.json")
+            .appendingPathComponent("docs/architecture/golden-requests/markdown-restore-request-golden.json")
     }
 
     private func canonicalJSON(_ text: String) throws -> String {

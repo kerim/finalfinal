@@ -114,6 +114,19 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
     // MARK: - Scenario 2: H1 -> H2 flip in CodeMirror, switch to Milkdown, insert
 
     func testH1ToH2FlipInSourceThenSwitchToMilkdownInsertLandsSentinelCorrectly() throws {
+        try runH1ToH2Flip()
+    }
+
+    /// Phase 7 (2026-11-11) diagnostic twin: the same scenario with Markdown saving switched back to the old whole-document save
+    /// (`FF_UI_TESTING_MD_LEGACY_REPARSE`, `ViewNotificationModifiers.swift`). The scenario above found TWO Notes headings in the first
+    /// full real-app run since September, on the integration branch and in this phase. If this twin passes while the original fails,
+    /// the Phase 4a block-by-block Markdown saver is the cause; if both fail, look at the Phase 5 Rich Text reports.
+    func testH1ToH2FlipWithLegacyMarkdownSave() throws {
+        app.launchEnvironment["FF_UI_TESTING_MD_LEGACY_REPARSE"] = "1"
+        try runH1ToH2Flip()
+    }
+
+    private func runH1ToH2Flip() throws {
         let bodyLine = "Body paragraph with a reference[^1] here for the H1 to H2 flip."
         // Preceded by `# Chapter One` (in both the seed and the retype target) because
         // `ContentView+HierarchyEnforcement.swift` enforces "the document's first section
@@ -158,7 +171,16 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
             notesParagraphFragment(containing: "Flip H1 to H2 original definition text"),
             "The original definition must survive the H1->H2 flip plus insertion"
         )
-        XCTAssertEqual(notesHeadingCount(), 1, "Exactly one Notes heading after an H1->H2 flip + insertion")
+        // Phase 7: say WHAT the Notes rows are when there is not exactly one (sort order, level, flag, the heading's own text; no
+        // document prose), so a failure names the second heading instead of only counting it.
+        let notesRows = FixtureDatabase.read(
+            fixturePath: TestFixtureHelper.fixturePath,
+            sql: "SELECT sortOrder, headingLevel, isNotes, substr(markdownFragment, 1, 40) FROM block "
+                + "WHERE blockType = 'heading' AND (isNotes = 1 OR markdownFragment LIKE '%Notes%') ORDER BY sortOrder;"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(notesHeadingCount(), 1,
+                       "Exactly one Notes heading after an H1->H2 flip + insertion; the Notes-like heading rows "
+                       + "(sortOrder|level|isNotes|text): \(notesRows)")
         // `editorContainsText` is a CONTAINS scan -- "## Notes" contains "# Notes" as a
         // substring, so a text-presence check alone can never discriminate which level
         // actually survived. Query the DB directly for the real heading level instead.
