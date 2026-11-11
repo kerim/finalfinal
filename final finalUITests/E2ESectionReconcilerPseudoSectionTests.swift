@@ -264,9 +264,13 @@ Intro paragraph for section A.
         // programmatically): confirms the doctoring above really landed
         // before it's relied on as the "before" state.
         let preEditStatuses = try Self.queryStatuses(fixturePath: TestFixtureHelper.fixturePath, ids: [break1Id, break2Id, break3Id])
+        // Phase 7 (2026-11-11): the app itself rewrites the doctored "final_" to "final" the first time it saves that section (the
+        // asymmetry described at the end of this test), and it now does so before this read on a fast run, so this sanity check
+        // accepted only the slower ordering. Both spellings mean "the doctoring landed"; the check still proves the three distinct statuses.
+        let normalizedPreEditStatuses = preEditStatuses.map { $0 == "final_" ? "final" : $0 }
         XCTAssertEqual(
-            preEditStatuses, ["writing", "review", "final_"],
-            "Doctored statuses should be in place before the edit. Got: \(preEditStatuses)"
+            normalizedPreEditStatuses, ["writing", "review", "final"],
+            "Doctored statuses should be in place before the edit (final_ and the app's own rewrite final both count). Got: \(preEditStatuses)"
         )
 
         // DIAGNOSTIC (coordinator-requested, 2026-07-27 failure investigation):
