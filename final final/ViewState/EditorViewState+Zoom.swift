@@ -580,18 +580,11 @@ extension EditorViewState {
         }
     }
 
-    /// Simple zoom out without async - for use in synchronous contexts like breadcrumb click
-    func zoomOutSync() {
-        Task {
-            await zoomOut()
-        }
-    }
-
     /// Comprehensive synchronous flush: blocks + section metadata + annotation positions.
     /// This is the guaranteed-synchronous subset — completes fully before returning, with
-    /// no `async` suspension anywhere in its call chain. Callers that need that hard
-    /// guarantee (e.g. `applicationWillTerminate`'s force-quit safety net) must call this
-    /// directly rather than the async `flushAllSync()` below.
+    /// no `async` suspension anywhere in its call chain. Its one caller is the force-quit
+    /// safety net in `AppDelegate.applicationShouldTerminate`; the bounded wait on pending
+    /// bibliography and footnote updates beside it is `flushPendingBibliographyAndFootnoteSync()`.
     func flushAllSyncCore() {
         // Round 4 (doc-open-blank-regression, judge round 3 must-fix): resolve the
         // effective content ONCE, matching flushContentToDatabase()'s own fallback
@@ -638,9 +631,8 @@ extension EditorViewState {
     /// re-reading `editorState.content`, which was deliberately stale for the duration of both
     /// functions. Close, project switch and quit now run the lifecycle save sequence
     /// (`EditorViewState.runLifecycleFlush`) instead: it writes the fresh content through the
-    /// ordered queue (FB) and refreshes the bibliography itself. `flushAllSync()` below passes
-    /// `nil`; its only caller was quit, which since round C6 runs that sequence
-    /// (`EditorViewState+Quit.swift`), so it currently has no caller.
+    /// ordered queue (FB) and refreshes the bibliography itself. The only caller left is the
+    /// best-effort wait in `AppDelegate.applicationShouldTerminate`, which passes `nil`.
     func flushPendingBibliographyAndFootnoteSync(overrideContent: String? = nil) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -655,15 +647,6 @@ extension EditorViewState {
             _ = await group.next()
             group.cancelAll()
         }
-    }
-
-    /// Full flush: the original synchronous three steps (`flushAllSyncCore()`), plus a
-    /// bounded flush of any pending bibliography/footnote sync. Only callable from an
-    /// async context that can actually await it — see `flushAllSyncCore()` for the
-    /// guaranteed-synchronous subset used where that isn't possible.
-    func flushAllSync() async {
-        flushAllSyncCore()
-        await flushPendingBibliographyAndFootnoteSync()
     }
 
     // MARK: - CodeMirror Flush

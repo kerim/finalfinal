@@ -472,6 +472,14 @@ extension ContentView {
     func connectToZotero() async {
         let zotero = ZoteroService.shared
 
+        // UI-test hold (Phase 7, t-a54c1950): the connection waits for the first bibliography check, which then finds Zotero not
+        // connected and has to ask for itself. Never set outside a test (`TestMode`'s own doc comment).
+        if TestMode.isUITestingZoteroConnectHeld {
+            DebugLog.log(.zotero, "[ZoteroHold] the open-time connection waits for the first bibliography check")
+            await bibliographySyncService.waitForFirstUpdateAttempt()
+            DebugLog.log(.zotero, "[ZoteroHold] released: the first bibliography check has been made")
+        }
+
         do {
             try await zotero.connect()
             DebugLog.log(.zotero, "[ContentView] Zotero/BBT is available for citation search")

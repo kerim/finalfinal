@@ -1694,8 +1694,9 @@ extension WriteQueuePhase4bTraceE2ETests {
         assertCheck(blocks(containing: marker) > 0, "the typed word must still be in the block table after the hold")
     }
 
-    /// The press that restores the section (press number `number`, the one after the last typed character is gone): only the fallback comparison
-    /// can route it (the document is the saved copy plus the rewrites).
+    /// The press that restores the section (press number `number`, the one after the last typed character is gone). Before the editor-first
+    /// delete only the fallback comparison could route it (the document was the saved copy plus the rewrites); since then the saved copy
+    /// follows the rewrites, so it routes exactly (no `routing-equivalence` line) or, when the rebase does not apply, through the fallback.
     func pressRestoreThroughTheFallback(number: Int, title: String, headingRowsBefore: Int, footnotesBefore: Int) {
         guard let stamp = pressChord("z", flags: .command, name: "cmdZ\(number)Pressed", replaceCaret: false) else { return }
         let undo = waitForStructural(label: "undo", since: stamp, timeout: capped(size.operationTimeout))
@@ -1715,8 +1716,13 @@ extension WriteQueuePhase4bTraceE2ETests {
             + "`equivalenceReason=` on the `routing-refused` line) in the attached diagnostic log: it says which part of the two documents differs "
             + "(a position, a node type and a size, never document text) and how the bibliography region was recognised in each"
         assertCheck(undo.didPerform, "Cmd-Z \(number) must run the structural undo; saw: \(undo.description); \(hint)")
-        assertCheck(equivalence?.text.contains("result=true") == true,
-                    "a `routing-equivalence ... decision=structural result=true` line must exist for the last press; \(hint)")
+        // Phase 7 (board t-d7fd3bf4, 2026-11-11 run): since the editor-first delete the saved copy follows the rewrites (the rebase; see
+        // write-queue-plan/phase4b-undo-fix/review-code-merged.md, G3: "exact, or the fallback when the rebase does not apply"), so the
+        // press normally routes by exact equality and the fallback comparison never runs: there is NO `routing-equivalence` line, the
+        // undo is performed and nothing is refused. Either route is correct; a `routing-equivalence` line, when there is one, must say
+        // `result=true`.
+        assertCheck(equivalence == nil || equivalence?.text.contains("result=true") == true,
+                    "a `routing-equivalence ... decision=structural` line, if the fallback comparison ran, must say result=true; \(hint)")
         assertCheck(refusal == nil, "no `routing-refused` line after the last press; saw: \(refusal?.text ?? "none")")
         assertCheck(restored == headingRowsBefore, "the heading \"\(title)\" must be back (\(headingRowsBefore) row(s)); found \(restored)")
         assertCheck(cardBack, "the sidebar card \"\(title)\" must be back after the last Cmd-Z")
@@ -1725,11 +1731,17 @@ extension WriteQueuePhase4bTraceE2ETests {
     /// Delete a section, type a word before the automatic rewrites land, let them land, then press Cmd-Z until the section is back: Cmd-Z 1 undoes
     /// the footnote renumber in the editor (and no new renumber may follow; the Notes list in the database is only recorded), the next presses
     /// remove the typed word (as many as the typing's undo groups need, each asserted by `undoUntilTypedTextIsGone`: the section stays deleted, no
-    /// structural undo, no new renumber), and the press after the last typed character is gone restores the section through the fallback
-    /// comparison, after which the Notes list must be the seeded one again.
+    /// structural undo, no new renumber), and the press after the last typed character is gone restores the section (by exact routing, or
+    /// through the fallback comparison), after which the Notes list must be the seeded one again.
     func runTypeEarlyThenUndo(_ size: Phase4bSize, method: String) {
         begin(method: method, size: size)
         app.launchEnvironment["FF_UI_TESTING_REWRITE_DELAY_SECONDS"] = String(Int(Self.seamedRewriteDelaySeconds))
+        // Phase 7 (board t-d7fd3bf4, diagnosis 2026-11-11): since the editor-first delete the footnote renumber no longer waits for the
+        // stretched timers above. The delete's own follow-up work (`resyncAfterEditorFirstDelete`) runs `resyncNow`, which cancels the timer
+        // and writes at once, about a second after the click, so the renumber landed while this test was still clicking back into the text
+        // and the "typing landed after an automatic rewrite" guard below failed before any Cmd-Z. Holding the first settle for 10 s keeps
+        // the follow-up work back until the word has been typed; the guard stays as it is (it catches the follow-up renumber too).
+        app.launchEnvironment["FF_UI_TESTING_EF_SETTLE_HOLD_MS"] = "10000"
         launchScenario()
         let title = size.deleteTitle
         let marker = "PHASEFOURBEARLY"

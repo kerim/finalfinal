@@ -895,6 +895,9 @@ class Phase4bDelHarness: XCTestCase {
     var firstTriggerIndex: Int?
     /// The section-table row count once the document has loaded (the sections beside every number).
     var sectionsInDatabase = -1
+    /// Seconds `launchScenario` waited for the generated bibliography (nil: it did not appear within the size's wait). Phase 7: read by
+    /// `WriteQueuePhase7ZoteroLateE2ETests`.
+    var bibliographyReadySeconds: Double?
     /// Where `placeCaretAtAnchorEnd` clicked, relative to the editor area's top-left corner (for `clickBackIntoAnchor`).
     var caretOffset: CGVector?
     /// Index into `tail.lines` where the scenario's own window begins (set after the load by the behaviour tests). When set, `writeEvidence`
@@ -1197,6 +1200,7 @@ extension Phase4bDelHarness {
         let loadSeconds = Date().timeIntervalSince(launched)
         let gate = waitForLog(containing: "editor-ready gate satisfied", timeout: capped(size.loadTimeout))
         let bibliography = waitForBibliography(timeout: capped(size.bibliographyTimeout))
+        bibliographyReadySeconds = bibliography
         let blocks = waitForBlocksToSettle()
         sectionsInDatabase = dbInt("SELECT count(*) FROM section;") ?? -1
         let quiet = waitForLogQuiet(quiet: 3, cap: capped(60))

@@ -147,6 +147,15 @@ final class BibliographySyncService {
     /// itself (review round 1 must-fix: the bibliography-flush clobber).
     var flushLiveEditorContentToBlocks: ((_ scheduledForProjectId: String, _ overrideContent: String?) async -> Void)?
 
+    /// Phase 7 (t-a54c1950): what `performBibliographyUpdate` calls when Zotero is not marked connected, to find out whether it is
+    /// reachable now (the default pings Better BibTeX and never touches the network in a unit-test run; see
+    /// `BibliographySyncService+ZoteroReady.swift`). A property so a unit test can answer for Zotero; nothing else sets it.
+    @ObservationIgnored var connectToZotero: () async -> Bool = { await BibliographySyncService.askZoteroByPing() }
+
+    /// Phase 7: how many runs of `performBibliographyUpdate` got past its staleness guard, that is, reached the point where Zotero is
+    /// needed. Read by `waitForFirstUpdateAttempt` (the UI-test hold of the open-time connection) and by unit tests.
+    @ObservationIgnored private(set) var updateAttemptCount = 0
+
     // MARK: - Public Methods
 
     // Citekey extraction (citationSpanPattern, citationKeyPattern, extractCitekeys) lives in
@@ -399,9 +408,11 @@ final class BibliographySyncService {
         // scheduled. A stale debounced rebuild must NOT run against its now-superseded
         // citekeys snapshot.
         guard !Task.isCancelled, scheduledGeneration == syncGeneration, state == .idle else { return }
+        updateAttemptCount += 1
 
-        let zoteroService = ZoteroService.shared
-        guard zoteroService.isConnected else { return }
+        // Phase 7 (t-a54c1950): a Zotero not yet marked connected is asked, not given up on (`BibliographySyncService+ZoteroReady.swift`).
+        guard await zoteroIsReadyForThisRun(isStillWanted: { !Task.isCancelled && scheduledGeneration == syncGeneration && state == .idle })
+        else { return }
 
         state = .syncing
         defer { state = .idle }
@@ -455,14 +466,7 @@ final class BibliographySyncService {
         }
 
         // Check for missing items and fetch them from Zotero
-        let missingKeys = uniqueCitekeys.filter { !zoteroService.hasItem(citekey: $0) }
-        if !missingKeys.isEmpty {
-            do {
-                _ = try await zoteroService.fetchItemsForCitekeys(missingKeys)
-            } catch {
-                DebugLog.log(.bib, "[BibliographySyncService] Failed to fetch items: \(error)")
-            }
-        }
+        await fetchMissingZoteroItems(for: uniqueCitekeys)
 
         // Generate bibliography markdown (items now in cache)
         let bibliographyContent = generateBibliographyMarkdown(citekeys: uniqueCitekeys)

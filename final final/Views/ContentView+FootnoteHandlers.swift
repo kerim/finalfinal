@@ -127,7 +127,7 @@ extension ContentView {
             // this fetch's block IDs; when the two disagreed on top-level node arrangement,
             // the editor's positional ID-assignment could attach an existing footnote's
             // identity to the wrong (blank) node. Pushing result.markdown directly (the
-            // same pattern rebuildDocumentContent already uses) eliminates that mismatch.
+            // same pattern every other rebuild handler uses) eliminates that mismatch.
             let rebuildStamp = editorState.stampRebuildRead()   // slice 2b: on the line before the read, no `await` between
             let sourceRead = markdownRegionRead()   // t-4a8fd8af O28: the editor's regions on the stamp's line (nil: not Markdown)
             guard let result = fetchBlocksWithIds() else {

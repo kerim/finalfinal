@@ -73,6 +73,16 @@ enum TestMode {
         isUITesting && ProcessInfo.processInfo.environment["FF_UI_TESTING_ZOTERO_MOCK"] == "1"
     }
 
+    /// UI-test-only (Phase 7, board t-a54c1950): holds the OPEN-TIME Zotero connection (`ContentView.connectToZotero`) back until the
+    /// first bibliography update of the session has made its attempt, so a test gets the order that used to lose the first
+    /// bibliography check (check first, connection second) every time instead of by a few milliseconds of timing. It holds nothing else:
+    /// `ZoteroService.ping()` itself is untouched, so a bibliography update that asks Zotero for itself still gets its answer. Needs
+    /// the Zotero mock above (a real Zotero is not wanted in a test) AND its own variable; unset, a normal launch and every other test
+    /// connect at once as before. Read fresh on every access.
+    static var isUITestingZoteroConnectHeld: Bool {
+        isUITestingZoteroMockEnabled && ProcessInfo.processInfo.environment["FF_UI_TESTING_ZOTERO_HOLD_CONNECT"] == "1"
+    }
+
     /// UI-test-only extension of the Zotero mock above (complex-document switch measurements): the path of a file holding a CSL-JSON
     /// array that `ZoteroService`'s mock fetch resolves citekeys against, IN ADDITION to the one canned item. Lets a test document that
     /// cites dozens of distinct keys see them all resolve (real citation formatting in the Rich Text editor, a real generated

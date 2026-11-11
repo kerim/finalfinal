@@ -95,37 +95,6 @@ extension ContentView {
         }
     }
 
-    /// Rebuild document content from block database
-    /// For zoom state, fetches only the zoomed range; otherwise fetches all blocks
-    func rebuildDocumentContent() {
-        // Guard against rebuilding during editor transition
-        guard editorState.contentState != .editorTransition else { return }
-        guard let result = fetchBlocksWithIds() else { return }
-
-        editorState.isResettingContent = true
-        editorState.content = result.markdown
-        editorState.pendingImageMeta = result.imageMeta
-
-        // Update sourceContent for CodeMirror (when in source mode)
-        // DERIVED REFRESH (default): general DB-driven rebuild, not a deliberate
-        // replacement event. (This function has no current callers -- dead code -- but
-        // classified for whoever revives it.)
-        updateSourceContentIfNeeded()
-
-        Task {
-            await blockSyncService.setContentWithBlockIds(
-                markdown: result.markdown,
-                blockIds: result.blockIds,
-                imageMeta: result.imageMeta,
-                cursorBoundary: result.bibBoundaryIndex,
-                cursorBoundaryEnd: result.bibBoundaryEndIndex,
-                expectedBlocks: result.expectedBlocks,
-                managedBlockIds: result.managedBlockIds,
-                zoomMode: editorState.zoomedSectionIds != nil)
-            editorState.isResettingContent = false
-        }
-    }
-
     /// Filter blocks to only those within zoomed heading ranges
     func filterBlocksForZoom(
         _ blocks: [Block],
