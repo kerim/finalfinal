@@ -353,6 +353,29 @@ delete_branch_or_report() {
     return 1
 }
 
+keep_run_logs() {
+    # Before a worktree goes, copy the text part of its VM test runs (verdict
+    # and short logs; no test report, screenshots or app logs) into the main
+    # checkout's run folder, where `vmtest stats` and vmtest's usual cleanup
+    # (age window, size cap) take them over. Added 2026-11-12, after three
+    # removed phase worktrees held 185 GB of runs and had to be archived by
+    # hand. Never blocks the removal: a copy failure is reported and ignored.
+    local src="$WT/.claude/vmtest-runs"
+    [ -d "$src" ] || return 0
+    [ "$dry_run" -eq 1 ] && return 0
+    mkdir -p "$repo/.claude/vmtest-runs"
+    if ! rsync -a --prune-empty-dirs \
+        --exclude='TestRun.xcresult/' --exclude='attachments/' --exclude='screenshots/' \
+        --exclude='app-diagnostics/' --exclude='app-console.log' --include='*/' \
+        --include='vmtest-result.json' --include='vmtest-status' --include='*.log' \
+        --include='vmtest-guest-stage' --include='guest-config.sh' --include='guest-run.sh' \
+        --exclude='*' \
+        "$src/" "$repo/.claude/vmtest-runs/" 2>/dev/null; then
+        echo -e "${YELLOW}worktree-cleanup: note — could not copy '$slug' test-run logs to the main checkout; removing the worktree anyway.${NC}" >&2
+    fi
+    return 0
+}
+
 # ─────────────────────────────────────────────
 # Actions per state
 # ─────────────────────────────────────────────
@@ -364,6 +387,7 @@ case "$state" in
         ;;
 
     S1)
+        keep_run_logs
         run git -C "$repo" worktree remove "$WT"
         branch_del_failed=0
         if [ "$branch_exists" -eq 1 ]; then
@@ -397,6 +421,7 @@ case "$state" in
 
     S2c-merged)
         n="$(count_pure_deletions)"
+        keep_run_logs
         run git -C "$repo" worktree remove --force "$WT"
         branch_msg=""
         branch_del_failed=0

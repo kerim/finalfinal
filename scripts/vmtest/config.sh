@@ -115,11 +115,22 @@ VMTEST_LOCK_WAIT_SUITE=900
 # filling the volume — see the Risks section of the plan.
 VMTEST_DISK_FLOOR_GB=30
 
-# Retained-video storage cap, in bytes (default 2 GB). See §3 pruning rules.
-VMTEST_VIDEO_CAP_BYTES=$((2 * 1024 * 1024 * 1024))
+# Total size cap for every run folder of this project — the main checkout and
+# every worktree together — in bytes. Past it, the oldest runs lose their
+# heavy evidence (test report, screenshots, logs of the app) and keep their
+# verdict and short logs. 2 GB holds about 20 failed runs. Replaced
+# VMTEST_VIDEO_CAP_BYTES on 2026-11-12, which nothing ever read.
+VMTEST_RUNS_CAP_BYTES=$((2 * 1024 * 1024 * 1024))
 
 # Age window for run-directory pruning, in days.
 VMTEST_PRUNE_AGE_DAYS=7
+
+# The app's own diagnostic log folder inside the guest, relative to the guest
+# user's home; copied out to <run>/app-diagnostics/. The app logs with print()
+# and to this file, never to unified logging, so app-console.log cannot carry
+# its messages. Written only when a test turns diagnostics on
+# (FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1); the app caps its size itself.
+VMTEST_GUEST_APP_DIAG_DIR="Library/Application Support/com.kerim.final-final/Diagnostics"
 
 # ConnectTimeout=10 and ServerAliveInterval/CountMax bound every SSH call to
 # the guest. Without this, an SSH call against a VM that's mid-shutdown or
