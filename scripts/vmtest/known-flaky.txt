@@ -165,9 +165,3 @@ final finalUITests/E2ESectionReconcilerPseudoSectionTests/testSurvivingPseudoSec
 # ("raw-markdown evidence should disappear after toggling back to WYSIWYG ... still present after 10.0s"). Cause not established.
 # Board t-5b41ac38.
 final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterSourceToWysiwygViaMenuShortcut
-
-# THIS ONE HIDES A REAL APP BUG, on purpose and for now (the user decided on 2026-11-11 that the bug is a task for later and a release
-# must not be blocked by it). After select-all and retype in Markdown mode in a book with a Notes section, the FIRST heading can end up
-# flagged as a Notes heading next to the real one (rows 2.0|1|1|# Chapter One and 3.0|2|1|## Notes in the failing runs); the test fails
-# in about three of five runs. Board t-e3c7105f. REMOVE THIS LINE WHEN t-e3c7105f IS FIXED, or the bug stays invisible to the release run.
-final finalUITests/FootnoteCursorPlacementE2ETests/testH1ToH2FlipInSourceThenSwitchToMilkdownInsertLandsSentinelCorrectly

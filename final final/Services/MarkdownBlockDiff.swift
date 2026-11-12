@@ -192,7 +192,9 @@ enum MarkdownBlockDiff {
     /// Aligns `new` against `baseline` by key. `CollectionDifference` finds the unchanged blocks; each region
     /// between two unchanged blocks (the removed run and the inserted run that sit there) is then paired in
     /// order by `BlockType`.
-    static func align(baseline: [Key], new: [Key]) -> Alignment {
+    ///
+    /// `rules` (t-e3c7105f): a stored Notes HEADING row is not paired by type alone. See `PairingRules`.
+    static func align(baseline: [Key], new: [Key], rules: PairingRules = .none) -> Alignment {
         var builder = AlignmentBuilder(baseline: baseline, new: new)
         let difference = new.difference(from: baseline)
         var removedBaseline = Set<Int>()
@@ -219,7 +221,7 @@ enum MarkdownBlockDiff {
                 insertedRun.append(newIndex)
                 newIndex += 1
             }
-            builder.pair(removedRun: removedRun, insertedRun: insertedRun)
+            builder.pair(removedRun: removedRun, insertedRun: insertedRun, rules: rules)
             // Both sides now stand on an unchanged block (the same element, by construction of the difference).
             if baselineIndex < baseline.count, newIndex < new.count {
                 builder.matches[newIndex] = .same(baselineIndex)
@@ -251,21 +253,16 @@ enum MarkdownBlockDiff {
         /// block's id), linear, and a pairing never crosses another pairing, so every update keeps its row's place.
         /// It does not maximise the number of pairs (a removed `[heading, paragraph]` against an inserted
         /// `[paragraph, heading]` pairs one, not two): the cost of a missed pair is one new id, never lost text.
-        mutating func pair(removedRun: [Int], insertedRun: [Int]) {
-            var cursor = 0
-            for removedIndex in removedRun {
-                let type = baseline[removedIndex].blockType
-                var candidate = cursor
-                while candidate < insertedRun.count, new[insertedRun[candidate]].blockType != type {
-                    candidate += 1
-                }
-                if candidate < insertedRun.count {
-                    matches[insertedRun[candidate]] = .changed(removedIndex)
-                    cursor = candidate + 1
-                } else {
-                    removed.append(removedIndex)
-                }
-            }
+        ///
+        /// A stored Notes HEADING row (`rules.restricted`, t-e3c7105f) goes first and takes only a heading `rules.allows`
+        /// calls its own (the same section, renamed or at another level); with no such heading in the region it is removed
+        /// (the writer never deletes a Notes row, so it stays). The other rows then pair as above, but only with the blocks
+        /// before the next claimed one, so no two pairings cross.
+        mutating func pair(removedRun: [Int], insertedRun: [Int], rules: PairingRules) {
+            let result = MarkdownBlockDiff.pairRegion(
+                baseline: baseline, new: new, removedRun: removedRun, insertedRun: insertedRun, rules: rules)
+            for (newIndex, baselineIndex) in result.pairs { matches[newIndex] = .changed(baselineIndex) }
+            removed.append(contentsOf: result.removed)
         }
     }
 
@@ -360,7 +357,9 @@ enum MarkdownBlockDiff {
     /// - Parameter makeTempId: injectable so a test can assert the exact `BlockChanges`.
     static func diff(baseline: [Entry], new: [Block], makeTempId: () -> String = MarkdownBlockDiff.makeTempId) -> Result {
         let (alignment, movedNotes) = pairMovedNotes(
-            alignment: align(baseline: baseline.map(\.key), new: new.map { Key($0) }), baseline: baseline, new: new)
+            alignment: align(
+                baseline: baseline.map(\.key), new: new.map { Key($0) }, rules: notesHeadingRules(baseline: baseline, new: new)),
+            baseline: baseline, new: new)
         var builder = DiffBuilder()
         for index in alignment.removed {
             builder.addRemoved(baseline[index])
@@ -507,6 +506,122 @@ enum MarkdownBlockDiff {
                 afterBlockId: anchorId, atDocumentStart: anchorId == nil ? true : nil))
             entries.append(Entry(parsed: block, id: tempId))
             anchorId = tempId
+        }
+    }
+}
+
+// MARK: - A Notes heading row follows its heading (t-e3c7105f)
+// In an extension so the enum body stays under the project's type-body-length limit.
+
+extension MarkdownBlockDiff {
+
+    /// Which new blocks a stored Notes HEADING row may take the text of.
+    ///
+    /// The bug this closes: select all in Markdown mode, delete, type a replacement document. The first save (editor empty) deletes
+    /// every row the writer may delete and leaves the Notes rows, so the next save compares a first heading and a paragraph with a
+    /// baseline of just the Notes heading and its definition. Pairing by type alone gave the Notes heading row to the first typed
+    /// heading ("# Chapter One"): the update was accepted (a heading has no footnote label to differ) and the row kept its Notes
+    /// flag, so the document's first heading was a Notes heading beside the real one.
+    ///
+    /// A Notes heading row now pairs only with a heading that is still the Notes heading: the parse flags it Notes, or it opens a
+    /// run with a `[^N]:` definition under it before the next heading (`NotesOpeningSelector`, so a renamed Notes heading with its
+    /// definitions still counts), or its title is the row's own title (at any level: the H1 to H2 flip, before any definition is
+    /// typed). Any other heading becomes an insert and the row stays. Notes heading rows pair first, so an ordinary row that sits
+    /// before them (a half-typed "## No") cannot take the heading they are waiting for.
+    struct PairingRules: Sendable {
+        /// Baseline indices of the stored Notes heading rows.
+        var restricted: Set<Int> = []
+        /// Whether the new block at the second index may take the text of the restricted row at the first.
+        var allows: @Sendable (_ baselineIndex: Int, _ newIndex: Int) -> Bool = { _, _ in true }
+
+        static let none = PairingRules()
+    }
+
+    /// The pairing of ONE changed region (`AlignmentBuilder.pair` calls it; kept here so the enum body stays under the length
+    /// limit). Returns the pairs as (new index, baseline index) and the removed rows that took no block, in removed order.
+    static func pairRegion(
+        baseline: [Key], new: [Key], removedRun: [Int], insertedRun: [Int], rules: PairingRules
+    ) -> (pairs: [(Int, Int)], removed: [Int]) {
+        let claims = claimNotesHeadings(
+            baseline: baseline, new: new, removedRun: removedRun, insertedRun: insertedRun, rules: rules)
+        // For each removed row: the first inserted position it must stay below (the next claim after it).
+        var limits = [Int](repeating: insertedRun.count, count: removedRun.count)
+        var nextClaim = insertedRun.count
+        for position in removedRun.indices.reversed() {
+            limits[position] = nextClaim
+            if let claim = claims[removedRun[position]] { nextClaim = claim }
+        }
+        var pairs: [(Int, Int)] = []
+        var removed: [Int] = []
+        var cursor = 0
+        for (position, removedIndex) in removedRun.enumerated() {
+            if let claim = claims[removedIndex] {
+                pairs.append((insertedRun[claim], removedIndex))
+                cursor = claim + 1
+                continue
+            }
+            if rules.restricted.contains(removedIndex) {
+                removed.append(removedIndex)
+                continue
+            }
+            let type = baseline[removedIndex].blockType
+            var candidate = cursor
+            while candidate < limits[position], new[insertedRun[candidate]].blockType != type {
+                candidate += 1
+            }
+            if candidate < limits[position] {
+                pairs.append((insertedRun[candidate], removedIndex))
+                cursor = candidate + 1
+            } else {
+                removed.append(removedIndex)
+            }
+        }
+        return (pairs, removed)
+    }
+
+    /// removed baseline index -> position in `insertedRun` of the heading it takes: each Notes heading row, in order, takes the
+    /// earliest heading after the previous claim that `rules.allows`.
+    private static func claimNotesHeadings(
+        baseline: [Key], new: [Key], removedRun: [Int], insertedRun: [Int], rules: PairingRules
+    ) -> [Int: Int] {
+        var claims: [Int: Int] = [:]
+        var floor = 0
+        for removedIndex in removedRun where rules.restricted.contains(removedIndex) {
+            var candidate = floor
+            while candidate < insertedRun.count,
+                  !(new[insertedRun[candidate]].blockType == baseline[removedIndex].blockType
+                    && rules.allows(removedIndex, insertedRun[candidate])) {
+                candidate += 1
+            }
+            if candidate < insertedRun.count {
+                claims[removedIndex] = candidate
+                floor = candidate + 1
+            }
+        }
+        return claims
+    }
+
+    static func notesHeadingRules(baseline: [Entry], new: [Block]) -> PairingRules {
+        let restricted = Set(baseline.indices.filter {
+            baseline[$0].isNotes && !baseline[$0].isBibliography && baseline[$0].key.blockType == .heading
+        })
+        guard !restricted.isEmpty else { return .none }
+        let units = new.map {
+            NotesOpeningSelector.Unit(
+                isCandidateHeading: false, isAnyHeading: $0.blockType == .heading,
+                isEvidence: FootnoteSyncService.parseNotesLabel(from: $0.markdownFragment) != nil)
+        }
+        let fragments = new.map { $0.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var titles: [Int: String] = [:]
+        for index in restricted {
+            titles[index] = BlockParser.extractTextContent(from: baseline[index].key.fragment, blockType: .heading)
+        }
+        let rowTitles = titles
+        return PairingRules(restricted: restricted) { baselineIndex, newIndex in
+            guard new[newIndex].blockType == .heading else { return false }
+            if new[newIndex].isNotes { return true }
+            if NotesOpeningSelector.hasEvidence(in: units, after: newIndex + 1) { return true }
+            return BlockParser.isNotesHeading(fragments[newIndex], notesHeaderName: rowTitles[baselineIndex] ?? "Notes")
         }
     }
 }

@@ -148,11 +148,20 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
         waitForEditorReady()
 
+        // t-e3c7105f (2026-11-12): the retyped body differs from the seeded one by one word on purpose. After Cmd-A + Delete the
+        // footnote feature removes the Notes section (no reference left) once the editor has stayed empty for its 3 s deadline, and
+        // when the reference comes back with a body that is word for word the one it remembers, it treats that as an UNDO and puts the
+        // old Notes section back into the editor beside the one being typed (a second Notes heading, a blank definition). A person
+        // has to clear the whole document, leave it empty for seconds and then put the same text back, so it is written down in
+        // docs/architecture/write-queue-plan/phase7/README.md (section 11) and not built for. The VM's occasional multi-second stall
+        // after Delete made this test hit it about one run in five. The retype below is what this scenario is about: the first typed
+        // heading must not be given the Notes flag, whatever the pause after Delete.
+        let retypedBodyLine = bodyLine.replacingOccurrences(of: "flip.", with: "flip, retyped.")
         switchToSourceMode()
         retypeWholeSourceDocument("""
         # Chapter One
 
-        \(bodyLine)
+        \(retypedBodyLine)
 
         ## Notes
 
