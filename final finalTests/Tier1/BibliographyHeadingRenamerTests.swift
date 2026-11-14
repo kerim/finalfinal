@@ -108,7 +108,12 @@ struct BibliographyHeadingRenamerTests {
         let heading = try Self.insertHeading(
             db, projectId, text: "Old Name and a Half", level: 1, sortOrder: 1.0, isBibliography: true)
         try Self.insertParagraph(db, projectId, text: "Entry one.", sortOrder: 2.0, isBibliography: true)
-        let beforeUpdatedAt = heading.updatedAt
+        // Read the row back before renaming: `heading` is the in-memory value from `insertHeading`
+        // and keeps microseconds, while the database stores dates to the millisecond. Taking the
+        // "before" timestamp from the stored row gives both sides of the comparison below the
+        // same precision.
+        let stored = try #require(try Self.fetchBlock(db, id: heading.id))
+        let beforeUpdatedAt = stored.updatedAt
         let beforeWordCount = heading.wordCount
 
         let outcome = BibliographyHeadingRenamer.rename(
@@ -122,8 +127,10 @@ struct BibliographyHeadingRenamerTests {
         #expect(after.headingLevel == 1)
         #expect(after.wordCount == MarkdownUtils.wordCount(for: "New Name"))
         #expect(after.wordCount != beforeWordCount, "wordCount must be recomputed for the new text, not left stale")
-        // `>=` rather than strict `>`: both timestamps come from `Date()` calls microseconds
-        // apart, and the DB's date-storage precision must not make this test flaky.
+        // `>=` rather than strict `>`: the insert and the rename can land in the same
+        // millisecond, which is all the precision the database keeps. `beforeUpdatedAt` is read
+        // back from the stored row (above) so it is rounded the same way as `after.updatedAt`;
+        // comparing against the in-memory microsecond value made this test flaky.
         #expect(after.updatedAt >= beforeUpdatedAt)
         #expect(after.isBibliography == true, "isBibliography must not be disturbed by a rename")
 

@@ -632,10 +632,12 @@ struct SectionReconciler: Sendable {
     /// sectionBreakPlugin + commonmark + gfm, feeding it this app's own seed
     /// markdown — not guessed) to come out of `api-content.ts`'s `getContent()`
     /// (Milkdown's own whole-document `getMarkdown()` serializer — the path a
-    /// Source Mode paste's reparse goes through) but NOT out of this app's
-    /// canonical block-fragment builder (`block-sync-plugin.ts`'s
-    /// `nodeToMarkdownFragment`, which always emits "- " and joins sibling
-    /// items with a single "\n"):
+    /// Source Mode paste's reparse goes through) but NOT out of content a
+    /// block-fragment path wrote EARLIER (before t-4eb7bfa9 `block-sync-plugin.ts`'s
+    /// `nodeToMarkdownFragment` always emitted "- " and joined sibling items with
+    /// a single "\n"; the per-block text is now the whole-document serializer's
+    /// own piece, so a stored row written since then already has the "*" form,
+    /// while older stored rows still have the "- " form):
     ///
     /// 1. Bullet markers come back as "*" regardless of whether the source used
     ///    "-" (or "+") — reproduced with `<!-- ::break:: -->\n- alpha one` going

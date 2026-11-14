@@ -109,6 +109,8 @@ describe('detectChanges — an update carries blockType', () => {
         textContent: node.textContent,
         nodeSize: node.nodeSize,
         node,
+        listRunBefore: [],
+        listRunSignature: '',
         _cachedMarkdown: null,
       };
     };

@@ -25,27 +25,34 @@
 //  id/metadata and bibliography-flag restoration, carry-forward, image metadata), so the comparison and the
 //  write cannot drift apart (plan-v2 D6, amendment A3).
 //
-//  Honest scope (plan-v2 D1, D5): the editor's per-block serializer (what the per-edit path stores) and its
-//  whole-document serializer (what FB's fresh fetch carries) write some blocks differently (list markers,
-//  tight vs loose list items, rules, `_x_` emphasis, characters remark escapes, possibly tables, multi-paragraph
-//  quotes and citeproc bibliography text). After a session that touched any of those, the rows differ and FB
-//  runs exactly as before. The check must NOT be loosened to tolerate them.
+//  Honest scope (plan-v2 D1, D5, as changed by t-4eb7bfa9): the per-block text the per-edit path stores is now
+//  Milkdown's own serializer's piece of the whole-document text (the same clean-up, the same minimal escaping:
+//  `block-sync-plugin.ts`, `blockMarkdownFragment`), so list markers, tight vs loose list items, rules,
+//  `_x_` emphasis, escaped characters, tables, multi-paragraph quotes and line breaks are written the same by
+//  both serializers, and a session of those shapes reaches `.unchanged`. What can still differ: a list directly
+//  after another list takes the other bullet (or `1)` for `1.`) in the whole-document text, so its stored text
+//  can be stale when only the EARLIER list changed; a table cell with a line break; a blank paragraph (the close
+//  save keeps it as `<br />`, a per-edit row holds ''); citeproc bibliography text. After a session that touched
+//  one of those the rows differ and FB runs exactly as before. The check must NOT be loosened to tolerate them.
 //
 //  Why `textContent` is compared (code review X1; it replaces plan-v2 D8's "a skip leaves textContent as the
-//  editor wrote it"): the per-edit path stores ProseMirror's `node.textContent`, which leaves out inline atoms
-//  (a citation, inline math) and joins table and quote child text with no separator, while FB re-derives the
-//  text from the whole-document parse (`BlockParser.extractTextContent`, which keeps the citation syntax and
-//  the math). A skip that ignored it would leave the stored `textContent` (what search and the heading titles
-//  read) different from what FB writes. Comparing it means FB runs whenever the editor's text differs from
-//  what FB would write, so the stored text stays what it was before this phase.
+//  editor wrote it"): the per-edit path used to store ProseMirror's `node.textContent`, which leaves out inline
+//  atoms (a citation, inline math) and joins table and quote child text with no separator, while FB re-derives
+//  the text from the whole-document parse (`BlockParser.extractTextContent`, which keeps the citation syntax and
+//  the math). Since t-4eb7bfa9 the per-edit path derives its stored text the same way, from the update's
+//  fragment under the row's final type (`applyTextContentFromFragment`), so the two agree for an edited block.
+//  The comparison stays: a row whose stored text differs (one from an older version, or from a path that sent
+//  no fragment) must still make FB run, or the stored `textContent` (what search and the heading titles read)
+//  would differ from what FB writes.
 //
 //  Word counts are NOT the reason for comparing the text any more. A per-edit update counts its words from its
 //  markdown fragment (`Block.recalculateWordCount(fromMarkdown:)`, t-0b70d1e9), so the words a citation renders
 //  as are already in the stored count, and the count no longer comes from the stored `textContent`. (The
 //  open-time pass, `recomputeStoredBlockWordCounts`, does recompute from the STORED `textContent`; rows whose
-//  text differs from FB's are rebuilt at close, so it reads the parse's text.) The narrowed scope, stated
-//  plainly: a paragraph containing a citation or inline math still rebuilds at close, as today. Plain-text
-//  paragraphs and headings skip.
+//  text differs from FB's are rebuilt at close, so it reads the parse's text.) Before t-4eb7bfa9 a paragraph
+//  containing a citation or inline math always rebuilt at close, because of the text; now its stored text is
+//  derived from its fragment, so it rebuilds only if its fragment differs from the whole-document piece
+//  (`block-fragment-parity.test.ts` checks that for inline atoms).
 //
 
 import Foundation

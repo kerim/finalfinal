@@ -10,7 +10,8 @@
 //  database holds them (`ProjectDatabase.preparedRowsForWholeReplace` for a whole document, `BlockParser.parse` of a snapshot
 //  section for a section), and hand the editor the Markdown and the ids those rows have. The ids must line up with the editor's own
 //  top-level nodes exactly the way a whole-document push lines up, so the one function that decides that lives here and every caller
-//  uses it: `alignmentPairs` merges consecutive rows of one list type into one node, skips an empty fragment and skips the
+//  uses it: `alignmentPairs` merges consecutive rows of one list type AND marker into one node (a list directly after another with the
+//  other bullet or delimiter is its own node), skips an empty fragment and skips the
 //  auto-bibliography marker, and `assembleMarkdownForEditor` writes the Markdown the editor parses. A payload built somewhere else
 //  would drift from that rule (a loose list, an empty paragraph, the bibliography marker each shift every later id by one).
 //

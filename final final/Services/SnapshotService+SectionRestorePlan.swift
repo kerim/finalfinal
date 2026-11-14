@@ -127,7 +127,8 @@ extension SnapshotService {
     /// Notes or Bibliography). Every inserted row has a fresh id.
     ///
     /// TWO anchors, because the editor and the database count differently (fix round F1, review A1): the editor inserts after a
-    /// top-level NODE, and a list of several items is ONE node that `BlockParser.alignmentPairs` stands for with its FIRST item's id;
+    /// top-level NODE, and a list stored as several rows (one per item, same marker; an earlier version wrote a loose list so, the
+    /// parser now keeps it in one row) is ONE node that `BlockParser.alignmentPairs` stands for with its FIRST item's id;
     /// the job inserts after a ROW. `anchorBlockId` is the node's id (the payload's: what the editor receives). `jobAnchorBlockId` is
     /// the id of the LAST ROW of the same range (the plan's: what the job inserts after), so the copy lands after the whole list and not
     /// between its first and second item. Both nil: after the last block that is not Notes or Bibliography.

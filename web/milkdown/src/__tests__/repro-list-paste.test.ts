@@ -1116,7 +1116,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
     expect(nodeToMarkdownFragment(schema.nodes.hr!.create())).toBe('---');
   });
 
-  it('outbound payload: inserting an hr node produces an INSERT with blockType="horizontal_rule" and markdownFragment="---"', async () => {
+  it('outbound payload: inserting an hr node produces an INSERT with blockType="horizontal_rule" and markdownFragment="***"', async () => {
     const editor = await makeEditor('Existing paragraph.');
     setEditorInstance(editor);
     const view = editor.ctx.get(editorViewCtx);
@@ -1134,7 +1134,8 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
 
     const hrInsert = changes.inserts.find((i) => i.blockType === 'horizontal_rule');
     expect(hrInsert).toBeDefined();
-    expect(hrInsert?.markdownFragment).toBe('---');
+    // A rule's per-block text is the whole-document serializer's piece, `***` (it was the hand converter's `---`; t-4eb7bfa9).
+    expect(hrInsert?.markdownFragment).toBe('***');
     expect(hrInsert?.afterBlockId).toBe('id-para');
   });
 
@@ -1186,7 +1187,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
 
     const hrInsert = changes.inserts.find((i) => i.blockType === 'horizontal_rule');
     expect(hrInsert).toBeDefined();
-    expect(hrInsert?.markdownFragment).toBe('---');
+    expect(hrInsert?.markdownFragment).toBe('***');
     expect(hrInsert?.afterBlockId).toBe('id-para');
   });
 
@@ -1204,7 +1205,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
   // "---" content — see Database+Blocks.swift), so this JS-only test cannot
   // observe the DB row directly. What it CAN and must pin is the JS-side
   // contract that fix depends on: this scenario produces an UPDATE keyed by
-  // the PERMANENT id, carrying markdownFragment "---", and NOT a fresh
+  // the PERMANENT id, carrying markdownFragment "***", and NOT a fresh
   // INSERT (an insert here would mean a duplicate/orphan row on the Swift
   // side, since the paragraph row would never get cleaned up). The old
   // single-burst test above cannot make this distinction — it only ever hits
@@ -1265,7 +1266,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
     expect(secondChanges.inserts.length).toBe(0); // no duplicate/orphan row
     const hrUpdate = secondChanges.updates.find((u) => u.id === permanentId);
     expect(hrUpdate).toBeDefined();
-    expect(hrUpdate?.markdownFragment).toBe('---');
+    expect(hrUpdate?.markdownFragment).toBe('***');
   });
 
   // Round-3 review finding 2: the merge-into-pending-insert path in
@@ -1274,7 +1275,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
   // pending BlockInsert, but NOT blockType — so a block that changed type
   // (paragraph → hr) WHILE its own insert was still waiting to flush kept
   // reporting its STALE original blockType even though markdownFragment had
-  // already moved on to "---". Models: create a paragraph (INSERT stays
+  // already moved on to "***". Models: create a paragraph (INSERT stays
   // pending, never flushed to Swift), then type "---" into it before that
   // insert is ever flushed — both changes must merge into ONE insert with
   // the FINAL (hr) blockType, not a stale "paragraph" insert.
@@ -1309,6 +1310,6 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
     const hrInsert = changes.inserts.find((i) => i.tempId !== 'id-para');
     expect(hrInsert).toBeDefined();
     expect(hrInsert?.blockType).toBe('horizontal_rule'); // was stale "paragraph" before the fix
-    expect(hrInsert?.markdownFragment).toBe('---');
+    expect(hrInsert?.markdownFragment).toBe('***');
   });
 });

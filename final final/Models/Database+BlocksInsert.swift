@@ -436,6 +436,8 @@ extension ProjectDatabase {
             block.imageWidth = BlockParser.parseImageWidthPercent(from: insertTrimmed)
         }
 
+        // LAST, under the final type: the text a close writes for this markdown, not the editor's `textContent` (t-4eb7bfa9).
+        applyTextContentFromFragment(&block, insert.markdownFragment)
         return block
     }
 }

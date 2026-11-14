@@ -52,4 +52,18 @@ extension ProjectDatabase {
         DebugLog.log(.data, "[Database+Blocks] editor type \(oldType.rawValue)→\(editorType.rawValue) block=\(block.id.prefix(8))")
         logWordCountChange(block: block, oldWordCount: oldWC, tag: "→\(editorType.rawValue)")
     }
+
+    /// Sets `block.textContent` to what the whole-document write stores for the same markdown: `BlockParser.extractTextContent` of
+    /// the trimmed fragment, read under the row's FINAL type (t-4eb7bfa9, plan step 5). The editor's own `textContent` is
+    /// ProseMirror's `node.textContent`, which leaves out inline atoms and joins quote and table text with no separator, so a row
+    /// kept by an edit used to differ from the row a close would write, and the close rebuilt it (the X1 rule in
+    /// `LifecycleWholeDocumentWrite+Check`). One helper for all four paths that carry a fragment (`applyUpdateToExistingBlock`,
+    /// `mergeUpdateIntoInsertedBlock`, `applyDefensiveTempIdUpdate`, `buildInsertedBlock`).
+    ///
+    /// Call it LAST, after the fragment step, `applyEditorBlockType` and the heading level, next to `recountWordsFromFragment`:
+    /// the type it reads must be the one the row keeps. It leaves the word count alone (that is counted from the fragment).
+    func applyTextContentFromFragment(_ block: inout Block, _ markdownFragment: String) {
+        let trimmed = markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+        block.textContent = BlockParser.extractTextContent(from: trimmed, blockType: block.blockType)
+    }
 }

@@ -198,6 +198,7 @@ import { pushLiveContentToSwift } from './content-push';
 import { cancelLinkEditFromLadder, isLinkEditPopupOpen, linkTooltipPlugin, openLinkEdit } from './link-tooltip';
 import { cancelMathEdit, isMathEditPopupOpen } from './math-edit-popup';
 import { mathPlugin } from './math-plugin';
+import { minimalEscapePlugin } from './minimal-escape-plugin';
 import { orderedListOrderPlugin } from './ordered-list-order-plugin';
 import { noteTransactionForEditSpanTracking } from './recent-edit-span';
 import { searchPlugin } from './search-plugin';
@@ -338,6 +339,7 @@ async function initEditor() {
       .use(markdownLinkPlugin) // Convert [text](url) to link mark on ) keypress - AFTER commonmark for link schema
       .use(smartQuotesPlugin) // Context-aware curly quote conversion (balanced open/close)
       .use(highlightPlugin) // ==highlight== syntax - AFTER commonmark for serialization
+      .use(minimalEscapePlugin) // Escape only where text would read back as formatting (`snake_case_name` stays bare), for the whole-document save and the per-block save alike (t-4eb7bfa9)
       .use(history)
       .use(tablePastePlugin) // Intercept TSV/HTML table paste before clipboard plugin
       .use(clipboard) // Parse pasted markdown as rich text instead of literal text

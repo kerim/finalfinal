@@ -283,7 +283,8 @@ extension ProjectDatabase {
     /// (`source`, already resolved through the writer's temp-id map). They are matched against `BlockParser.alignmentPairs` of the
     /// subtree's rows by the source id, for EVERY row (an empty paragraph the editor shows is a row `BlockParser.alignmentPairs` skips,
     /// and it takes the editor's id for its copy too), then by position where the ids do not match but the counts of copies and
-    /// aligned nodes agree (`alignmentPairs` lists one pair per top-level editor node: same-type list rows merged, empty fragments and
+    /// aligned nodes agree (`alignmentPairs` lists one pair per top-level editor node: list rows of the same type AND marker merged, so a
+    /// list directly after another with the other bullet or delimiter is a node of its own (t-4eb7bfa9), empty fragments and
     /// the bibliography marker skipped). A row the editor has no node for (a list's later items) gets a fresh UUID. A new id that is
     /// already a row of the table is never reused (it would break the primary key): that copy gets a fresh UUID too. Every difference
     /// that remains is reported in `copiesMismatch`; the caller then pushes the database's ids to the editor, so both sides agree.

@@ -204,9 +204,11 @@ extension BlockParser {
         // Bullet list: starts with - * +
         if firstScalar == "-" || firstScalar == "*" || firstScalar == "+",
            trimmed.range(of: "^\\s*[-*+]\\s+", options: .regularExpression) != nil { return .bulletList }
-        // Ordered list: starts with 1. 2. etc (`\\d` is any Unicode decimal digit, not only 0-9)
+        // Ordered list: starts with 1. 2. or 1) 2) etc (`\\d` is any Unicode decimal digit, not only 0-9). The `)` form is what the
+        // Rich Text editor writes for an ordered list that directly follows another one (CommonMark starts a new list when the
+        // delimiter changes), t-4eb7bfa9.
         if let firstScalar, firstScalar.properties.generalCategory == .decimalNumber,
-           trimmed.range(of: "^\\s*\\d+\\.\\s+", options: .regularExpression) != nil { return .orderedList }
+           trimmed.range(of: "^\\s*\\d+[.)]\\s+", options: .regularExpression) != nil { return .orderedList }
         // Table: starts with |
         if trimmed.hasPrefix("|") { return .table }
         // Caption + Image: <!-- caption: text -->\n...\n![alt](url)
@@ -234,10 +236,32 @@ extension BlockParser {
             return .bulletList
         }
         if first.properties.generalCategory == .decimalNumber,
-           trimmedLine.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil {
+           trimmedLine.range(of: "^\\d+[.)]\\s+", options: .regularExpression) != nil {
             return .orderedList
         }
         return nil
+    }
+
+    /// The character that tells one list from the next in CommonMark: the bullet itself ("-", "*" or "+") or the delimiter after
+    /// the number of an ordered item ("." or ")"). An item with a different one starts a NEW list. nil when `trimmedLine` is
+    /// not a list item, and for a thematic break written with spaces (`* * *`, `- - -`), which CommonMark reads as a rule before it
+    /// reads it as an item, so it never continues a list. Used by `RawBlockSplitter` to keep a loose list (a blank line between its
+    /// items) in one row without merging two lists the editor holds apart (t-4eb7bfa9), and by `alignmentPairs`.
+    static func listMarkerSignature(_ trimmedLine: String) -> Character? {
+        guard let kind = listMarkerKind(trimmedLine), !isSpacedThematicBreak(trimmedLine) else { return nil }
+        if kind == .bulletList { return trimmedLine.first }
+        return trimmedLine.first { $0 == "." || $0 == ")" }
+    }
+
+    /// Whether the already-trimmed `line` is a thematic break (three or more of one of `-`, `*`, `_`, spaces allowed between them),
+    /// CommonMark's `^ {0,3}([-*_])(\s*\1){2,}\s*$`. `detectBlockType`'s rule test only knows the unspaced form (`***`).
+    static func isSpacedThematicBreak(_ line: String) -> Bool {
+        guard let first = line.first, first == "-" || first == "*" || first == "_" else { return false }
+        var count = 0
+        for character in line {
+            if character == first { count += 1 } else if character != " " && character != "\t" { return false }
+        }
+        return count >= 3
     }
 
     // MARK: - Text Extraction
@@ -285,9 +309,29 @@ extension BlockParser {
         // MarkdownUtils.stripMarkdownSyntax's `stripListMarkers` doc
         // comment.
         let blockTypeCannotBeAList = blockType == .heading || blockType == .codeBlock || blockType == .blockquote
-        text = MarkdownUtils.stripMarkdownSyntax(from: text, stripListMarkers: !blockTypeCannotBeAList)
+        // A backslash in a code block or in display math is literal text (`a\.b`, `\{ x \}`), not an escape (t-4eb7bfa9).
+        let backslashIsLiteral = blockType == .codeBlock || blockType == .mathDisplay
+        text = MarkdownUtils.stripMarkdownSyntax(
+            from: text, stripListMarkers: !blockTypeCannotBeAList, unescaping: !backslashIsLiteral)
 
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return hasNoTextBeyondSyntax(result, blockType: blockType) ? "" : result
+    }
+
+    /// Whether `text` (stripped and trimmed) holds no text the editor would call content: an empty table (only pipes, dashes,
+    /// colons and spaces: its header and separator rows with empty cells) or a paragraph that is only a hard-break backslash.
+    /// The editor's own text for such a node is "" (`node.textContent`), and `BlockAlignmentMeta.nonEmpty` is judged from this
+    /// text, so a row that kept the syntax would claim content the editor's node does not have (t-4eb7bfa9). An empty list item
+    /// is already "" by `strippingListMarkers`.
+    private static func hasNoTextBeyondSyntax(_ text: String, blockType: BlockType) -> Bool {
+        switch blockType {
+        case .table:
+            return text.allSatisfy { "|-: \t\n\r".contains($0) }
+        case .paragraph:
+            return text == "\\"
+        default:
+            return false
+        }
     }
 
     /// Removes every leading `>` marker (and the space after it) from each line.
@@ -309,7 +353,8 @@ extension BlockParser {
         text.components(separatedBy: "\n")
             .map { line in
                 var l = line.trimmingCharacters(in: .whitespaces)
-                if let range = l.range(of: "^[-*+]\\s+|^\\d+\\.\\s+", options: .regularExpression) {
+                // A marker at the end of the line is an empty item (`*`, `1.`); it has no text after it, so it needs no space behind it.
+                if let range = l.range(of: "^[-*+]\\s+|^\\d+[.)]\\s+|^[-*+]$|^\\d+[.)]$", options: .regularExpression) {
                     l.removeSubrange(range)
                 }
                 return l

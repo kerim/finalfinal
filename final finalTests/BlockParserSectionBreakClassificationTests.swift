@@ -308,9 +308,23 @@ struct BlockParserSectionBreakTests {
         // flushes the footnote-def block). Without the reset, inFootnoteDef stays
         // stuck true, so the following blank line's footnote-continuation lookahead
         // (which only checks "is the NEXT line 4-space indented") fires incorrectly,
-        // absorbing the blank line and merging "- list item" with the indented line
+        // absorbing the blank line and merging the list item with the indented line
         // into one block -- 2 blocks instead of the correct 3.
-        let markdown = "[^1]: note text\n- list item\n\n    indented line"
+        //
+        // The list item is "100. list item", not "- list item" (t-4eb7bfa9). A loose
+        // list is now kept in one row: a blank line followed by a line indented to the
+        // item's content column continues the list. "- list item" has content column
+        // 2, so its 4-space line became a list continuation: the CORRECT result turned
+        // into 2 blocks (footnote def; list item + indented line), the same count the
+        // stuck-flag bug gives, and the test could no longer tell the reset from the
+        // bug. "100. " has content column 5, so a 4-space line is NOT a continuation,
+        // and "100." still triggers the list-interruption guard exactly as "- " did
+        // (`listMarkerKind` reads digits, "." and a space as an ordered item; the open
+        // footnote def is not an ordered list). Correct result: 3 blocks. With the
+        // stuck flag, the blank line is absorbed by the footnote lookahead BEFORE the
+        // list check is reached, and "100. list item\n\n    indented line" becomes ONE
+        // ordered-list block: 2 blocks, so this test fails if the reset is removed.
+        let markdown = "[^1]: note text\n100. list item\n\n    indented line"
         let blocks = BlockParser.parse(markdown: markdown, projectId: "p1")
 
         #expect(
@@ -321,8 +335,8 @@ struct BlockParserSectionBreakTests {
         #expect(blocks[0].markdownFragment == "[^1]: note text")
         #expect(blocks[0].textContent == "note text")
 
-        #expect(blocks[1].blockType == .bulletList)
-        #expect(blocks[1].markdownFragment == "- list item")
+        #expect(blocks[1].blockType == .orderedList)
+        #expect(blocks[1].markdownFragment == "100. list item")
 
         #expect(
             blocks[2].markdownFragment == "indented line",

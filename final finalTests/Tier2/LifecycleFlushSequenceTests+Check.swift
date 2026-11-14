@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import GRDB
 import Testing
 import WebKit
 @testable import final_final
@@ -130,11 +131,12 @@ extension LifecycleFlushSequenceTests {
     // MARK: - X1 (code review): textContent is part of the comparison
 
     @Test("""
-        X1 (code review): a paragraph holding a citation and a footnote reference, edited as plain text, does NOT close \
-        `.unchanged`. The per-edit path stores ProseMirror's textContent (inline atoms contribute no text), which differs \
-        from the text FB re-derives, so skipping FB would leave a different stored textContent; FB runs instead and the \
-        stored textContent becomes what FB derives (the citation kept). Since t-0b70d1e9 the per-edit update counts its \
-        words from its markdown fragment, so the word count is already the full one before FB runs and FB keeps it
+        X1 (code review): a paragraph holding a citation and a footnote reference, whose stored textContent is the editor's \
+        own (ProseMirror's textContent: inline atoms contribute no text; since t-4eb7bfa9 the per-edit path no longer stores \
+        it, so the row is set up directly), does NOT close `.unchanged`. The stored text differs from the text FB \
+        re-derives, so skipping FB would leave a different stored textContent; FB runs instead and the stored textContent \
+        becomes what FB derives (the citation kept). Since t-0b70d1e9 the per-edit update counts its words from its markdown \
+        fragment, so the word count is already the full one before FB runs and FB keeps it
         """)
     func editedParagraphWithCitationAndFootnoteRef_rebuildsAndKeepsTheFullWordCount() async throws {
         let key = "fbtextkey2026"
@@ -149,8 +151,20 @@ extension LifecycleFlushSequenceTests {
         let update = BlockUpdate(
             id: paragraph.id, textContent: perEditText, markdownFragment: editedFragment, headingLevel: nil, blockType: "paragraph")
         _ = try rig.db.applyBlockChangesFromEditor(BlockChanges(updates: [update]), for: rig.pid)
+        // t-4eb7bfa9 (S14): the per-edit path now stores what FB derives from the fragment, not the editor's own text, so the update
+        // alone leaves FB nothing to rebuild. X1 is about a stored text that DIFFERS (a row from an older version, or from a path that
+        // sent no fragment, holds the editor's own text), so the editor's text is put into the row directly to build that premise.
+        let afterUpdate = try #require(try rig.blocks().first { $0.id == paragraph.id })
+        #expect(
+            afterUpdate.textContent == BlockParser.extractTextContent(from: editedFragment, blockType: .paragraph),
+            "the per-edit text is the text a close derives from the fragment")
+        try rig.db.write { db in
+            guard var row = try Block.fetchOne(db, key: paragraph.id) else { return }
+            row.textContent = perEditText
+            try row.update(db)
+        }
         let stored = try #require(try rig.blocks().first { $0.id == paragraph.id })
-        #expect(stored.textContent == perEditText, "precondition: the per-edit text is what the table holds")
+        #expect(stored.textContent == perEditText, "precondition: the table holds the editor's own text")
 
         // The editor's whole document (what the fresh fetch carries), and the row FB derives from it.
         let content = BlockParser.assembleMarkdownForEditor(from: try rig.blocks())

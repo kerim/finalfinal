@@ -283,12 +283,16 @@ struct MarkdownUtilsPinnedOutputTests {
             annotationsStripped: "emoji \u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{1F642} text and a\u{200D}b",
             forWordCount: "emoji \u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{1F642} text and a\u{200D}b",
             words: 4),
+        // CHANGED ON PURPOSE by t-4eb7bfa9 (the only row of this table that is): the stripped text now drops the backslash of an
+        // escape and no longer reads an escaped `*` or a `_` inside a word as emphasis (the editor writes `snake_case_name` bare and
+        // `\*` only where a star would otherwise open emphasis). Before: `\escaped\ and abc and snakecasename`. The word count (5)
+        // is unchanged. See MarkdownUtilsEscapeAwareStrippingTests for the rule.
         PinnedCase(
             input: "\\*escaped\\* and a_b_c and snake_case_name",
-            stripped: "\\escaped\\ and abc and snakecasename",
-            strippedKeepingListMarkers: "\\escaped\\ and abc and snakecasename",
+            stripped: "*escaped* and a_b_c and snake_case_name",
+            strippedKeepingListMarkers: "*escaped* and a_b_c and snake_case_name",
             annotationsStripped: "\\*escaped\\* and a_b_c and snake_case_name",
-            forWordCount: "\\escaped\\ and abc and snakecasename",
+            forWordCount: "*escaped* and a_b_c and snake_case_name",
             words: 5),
         PinnedCase(
             input: "[x](y) ![a](b) [c](d)(e)",

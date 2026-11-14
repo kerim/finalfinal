@@ -348,7 +348,8 @@ struct RestorePrimitivesTests {
     // MARK: - U-S2-P4: the payload for rows that are not in the database (a section fragment with a loose list)
 
     /// A restored section's fragment: a heading, a paragraph, a bullet list and an ordered list each written loose (a blank line
-    /// between items, so the parser makes one row per item), a figure and a closing paragraph.
+    /// between items; the parser keeps each list in ONE row since t-4eb7bfa9, an earlier version cut one row per item), a figure and
+    /// a closing paragraph.
     private static let looseListSectionMarkdown = """
         ## Loose list section
 
@@ -374,12 +375,28 @@ struct RestorePrimitivesTests {
             markdown: markdown, projectId: projectId, bibliographyHeaderName: "Bibliography", graceNames: [], notesHeaderName: "Notes")
     }
 
+    /// The rows a version before t-4eb7bfa9 wrote for the same fragment: the parser cut the text at EVERY blank line, so each loose
+    /// list item was a row of its own, and the editor payload builders merge such rows into one node. Documents saved by that version
+    /// still hold them, so the builders must keep handling them (each blank-line-separated piece parsed alone, in order).
+    private static func perItemRows(_ markdown: String) -> [Block] {
+        var rows: [Block] = []
+        for piece in markdown.components(separatedBy: "\n\n") {
+            guard var row = parseFragment(piece, projectId: "fragment").first else { continue }
+            row.sortOrder = Double(rows.count + 1)
+            rows.append(row)
+        }
+        return rows
+    }
+
     @Test("U-S2-P4: editorPayload(for: a fragment with loose lists) has one id per top-level node and the whole-document builder's types")
     func testEditorPayloadOfAFragmentWithLooseListsHasOnePairPerNode() throws {
-        let rows = Self.parseFragment(Self.looseListSectionMarkdown, projectId: "fragment")
+        // t-4eb7bfa9: the parser no longer cuts a loose list into one row per item, so the rows an EARLIER version wrote are built
+        // by hand here (`perItemRows`); the same assertions as before, for documents saved by that version. The rows the parser
+        // writes now are checked by the next test.
+        let rows = Self.perItemRows(Self.looseListSectionMarkdown)
         // Hand count of the fragment: the heading, the paragraph, the bullet list (three items, ONE editor node), the ordered list (two
         // items, one node), the figure and the closing paragraph are SIX top-level nodes, written as nine rows.
-        #expect(rows.count == 9, "precondition: the parser writes one row per loose list item, \(rows.count) rows")
+        #expect(rows.count == 9, "precondition: one row per loose list item (the earlier parser's rows), \(rows.count) rows")
         #expect(rows.filter { $0.blockType == .bulletList }.count == 3 && rows.filter { $0.blockType == .orderedList }.count == 2)
 
         let payload = StructuralUndoController.editorPayload(for: rows)
@@ -395,6 +412,29 @@ struct RestorePrimitivesTests {
         #expect(payload.bibBoundaryIndex == nil && payload.managedBlockIds.isEmpty, "a plain section fragment has no managed content")
 
         // The same rows in a table, read by the whole-document builder: the same markdown, node count and types.
+        let (db, pid) = try makeDatabase(rows)
+        let whole = try #require(StructuralUndoController().fetchFullBlocksWithIds(db: db, pid: pid))
+        let problem = Self.payloadProblem(whole, payload)
+        #expect(problem == nil, "the fragment builder and the whole-document builder differ: \(problem ?? "")")
+    }
+
+    @Test("U-S2-P4b (t-4eb7bfa9): the rows the parser writes for a fragment with loose lists are one row per top-level node")
+    func testEditorPayloadOfParsedLooseListsHasOneRowPerNode() throws {
+        let rows = Self.parseFragment(Self.looseListSectionMarkdown, projectId: "fragment")
+        // The heading, the paragraph, the bullet list (three items), the ordered list (two items), the figure and the closing
+        // paragraph: six top-level nodes, six rows now.
+        #expect(rows.map(\.blockType) == [.heading, .paragraph, .bulletList, .orderedList, .image, .paragraph],
+                "types: \(rows.map(\.blockType))")
+        #expect(rows[2].markdownFragment == "- first item\n\n- second item\n\n- third item", "got \(rows[2].markdownFragment.debugDescription)")
+        #expect(rows[3].markdownFragment == "1. step one\n\n2. step two", "got \(rows[3].markdownFragment.debugDescription)")
+
+        let payload = StructuralUndoController.editorPayload(for: rows)
+        #expect(payload.blockIds == rows.map(\.id), "one id per row, one row per node")
+        #expect(payload.expectedBlocks.map(\.blockType) == ["heading", "paragraph", "bullet_list", "ordered_list", "image", "paragraph"],
+                "types: \(payload.expectedBlocks.map(\.blockType))")
+        #expect(payload.markdown.contains("- first item\n\n- second item\n\n- third item\n\n1. step one\n\n2. step two"),
+                "the markdown the editor parses must keep the lists loose")
+
         let (db, pid) = try makeDatabase(rows)
         let whole = try #require(StructuralUndoController().fetchFullBlocksWithIds(db: db, pid: pid))
         let problem = Self.payloadProblem(whole, payload)
@@ -505,7 +545,9 @@ extension RestorePrimitivesTests {
         [
             ("article", ComplexDocumentFixture.parse(ComplexDocumentFixture.article.editorMarkdown)),
             ("book6", ComplexDocumentFixture.parse(ComplexDocumentFixture.book6.editorMarkdown)),
-            ("looseListSection", Self.parseFragment(Self.looseListSectionMarkdown, projectId: "alignment-fixture"))
+            // The per-item rows an earlier parser wrote (t-4eb7bfa9: the parser now keeps a loose list in ONE row), so this fixture keeps
+            // exercising the editor-side merge of several rows into one list node, and the committed file stays the same bytes.
+            ("looseListSection", Self.perItemRows(Self.looseListSectionMarkdown))
         ]
     }
 

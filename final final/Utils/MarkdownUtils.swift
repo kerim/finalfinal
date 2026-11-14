@@ -102,9 +102,14 @@ enum MarkdownUtils {
     ///   so this regex genuinely cannot distinguish a quoted list from quoted
     ///   text that merely looks like one — preserving the literal text is the
     ///   safer default there.
-    static func stripMarkdownSyntax(from content: String, stripListMarkers: Bool = true) -> String {
+    ///
+    /// - Parameter unescaping: Whether the last step drops the backslash of an escape (`\$`, `\_`, `\*`, ...). Defaults to `true`:
+    ///   the editor escapes text that would otherwise read as formatting, so in prose the backslash is not part of the text.
+    ///   `BlockParser.extractTextContent` passes `false` for a code block and for display math, where a backslash is literal
+    ///   (`a\.b`, `\{ x \}`) and the stored text must keep it (t-4eb7bfa9).
+    static func stripMarkdownSyntax(from content: String, stripListMarkers: Bool = true, unescaping: Bool = true) -> String {
         var work = GuardedText(content)
-        strippingSyntax(&work, stripListMarkers: stripListMarkers)
+        strippingSyntax(&work, stripListMarkers: stripListMarkers, unescaping: unescaping)
         return work.text
     }
 
@@ -112,7 +117,7 @@ enum MarkdownUtils {
     /// character scan is already current. Every pattern is compiled once (`rxStrip...`, further down) and is run only when
     /// the text holds the characters it needs (see `GuardedText`), so a plain paragraph costs one scan instead of sixteen
     /// regular-expression passes. The order of the steps is unchanged.
-    private static func strippingSyntax(_ work: inout GuardedText, stripListMarkers: Bool) {
+    private static func strippingSyntax(_ work: inout GuardedText, stripListMarkers: Bool, unescaping: Bool = true) {
         // Remove heading markers: # ## ### etc at line start
         work.replace(rxStripHeadingMarker, with: "") { $0.hash }
 
@@ -139,10 +144,10 @@ enum MarkdownUtils {
         // is belt-and-braces in case the image stripper missed an unusual variant.
         work.replace(rxStripLink, with: "$1") { $0.linkJoin }
 
-        // Remove list markers: - * + or 1. 2. etc (unless the caller already
+        // Remove list markers: - * + or 1. 2. or 1) 2) etc (unless the caller already
         // knows this isn't really list content -- see stripListMarkers's doc)
         if stripListMarkers {
-            work.replace(rxStripListMarker, with: "") { $0.dash || $0.star || $0.plus || $0.dot }
+            work.replace(rxStripListMarker, with: "") { $0.dash || $0.star || $0.plus || $0.dot || $0.closeParen }
         }
 
         // Remove blockquote markers: > at line start
@@ -183,6 +188,13 @@ enum MarkdownUtils {
 
         // Remove annotations: <!-- ::type:: content -->
         work.replace(rxAnnotation, with: "") { $0.commentOpen }
+
+        // LAST: drop the backslash of an escape (`\$5`, `\_`, `\*`). Every step above treats an escaped delimiter as no delimiter
+        // (the emphasis pattern, the list-marker and heading patterns need their characters bare), so the escapes are still in the
+        // text here and nothing above can read what they protected as syntax (t-4eb7bfa9).
+        if unescaping {
+            work.replace(rxStripEscape, with: "$1") { $0.backslash }
+        }
     }
 
     /// Strip `==highlight==` markers from markdown content, reducing highlighted text to
@@ -613,14 +625,25 @@ extension MarkdownUtils {
         pattern: "^#{1,6}\\s+", options: .anchorsMatchLines
     )
     private static let rxStripBold = try! NSRegularExpression(pattern: "\\*\\*(.+?)\\*\\*|__(.+?)__")
-    private static let rxStripItalic = try! NSRegularExpression(pattern: "\\*([^*]+)\\*|_([^_]+)_")
+    // Emphasis, read the way CommonMark reads it where the editor's own text depends on it (t-4eb7bfa9): a `*` with white space on
+    // BOTH sides cannot open or close (`2 * 3 * 4` is text, and may sit inside an emphasis); a `_` with a letter or digit on BOTH
+    // sides cannot (`snake_case_name` is a word, and may sit inside an emphasis); an escaped delimiter (backslash, then `*` or `_`)
+    // is no delimiter. Group 1 is the text of a `*` emphasis, group 2 the text of a `_` emphasis.
+    private static let rxStripItalic = try! NSRegularExpression(
+        pattern: #"(?<!\\)(?:(?<!\s)\*|\*(?!\s))((?:[^*]|(?<=\s)\*(?=\s))+?)(?<!\\)(?:(?<!\s)\*|\*(?!\s))"#
+            + #"|(?<!\\)(?:(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}]))((?:[^_]|(?<=[\p{L}\p{N}])_(?=[\p{L}\p{N}]))+?)"#
+            + #"(?<!\\)(?:(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}]))"#
+    )
+    /// A backslash before ASCII punctuation: the editor's serializer escapes text that would otherwise read as formatting
+    /// (a dollar sign, the underscores of `__init__`, the dot of `1.`), and the text the reader sees has no backslash there.
+    private static let rxStripEscape = try! NSRegularExpression(pattern: #"\\([!-/:-@\[-`{-~])"#)
     private static let rxStripStrikethrough = try! NSRegularExpression(pattern: "~~(.+?)~~")
     private static let rxStripHighlight = try! NSRegularExpression(pattern: "==(.+?)==")
     private static let rxStripInlineCode = try! NSRegularExpression(pattern: "`([^`]+)`")
     private static let rxStripImage = try! NSRegularExpression(pattern: "!\\[[^\\]]*\\]\\([^)]+\\)(\\s*\\{[^}]*\\})?")
     private static let rxStripLink = try! NSRegularExpression(pattern: "(?<!!)\\[([^\\]]+)\\]\\([^)]+\\)")
     private static let rxStripListMarker = try! NSRegularExpression(
-        pattern: "^\\s*(?:[-*+]|\\d+\\.)\\s+", options: .anchorsMatchLines
+        pattern: "^\\s*(?:[-*+]|\\d+[.)])\\s+", options: .anchorsMatchLines
     )
     private static let rxStripBlockquoteMarker = try! NSRegularExpression(
         pattern: "^>+\\s*", options: .anchorsMatchLines
@@ -655,6 +678,8 @@ extension MarkdownUtils {
         var plus = false
         var dash = false
         var dot = false
+        var closeParen = false
+        var backslash = false
         var backtick = false
         var greaterThan = false
         var lessThan = false
@@ -711,6 +736,8 @@ extension MarkdownUtils {
             plus = has(0x2B)
             dash = has(0x2D)
             dot = has(0x2E)
+            closeParen = has(0x29)
+            backslash = has(0x5C)
             backtick = has(0x60)
             greaterThan = has(0x3E)
             lessThan = has(0x3C)

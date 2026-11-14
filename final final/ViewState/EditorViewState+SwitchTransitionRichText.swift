@@ -140,9 +140,11 @@ extension EditorViewState {
         DebugLog.alwaysPersisted(
             "[TRANS] swapped kind=switch to rich text (flip) after \(EditorPreloader.milliseconds(clock.now - pressed)) ms")
 
-        // TransSwap, second half: the catch-up and the carry.
+        // TransSwap, second half: the catch-up and the carry. The page's scroll position is applied here, after the flip, once the page
+        // is in the window (see `richTextScrollCall`).
         await carryTypingOntoRichTextPage(
-            blockSync, token: token, pageToken: pageToken, outgoing: outgoing, page: page, first: first, db: db, pid: pid)
+            blockSync, token: token, pageToken: pageToken, outgoing: outgoing, page: page, first: first, db: db, pid: pid,
+            scrollCall: Self.richTextScrollCall(for: cursor))
         transitionHolds.preparedRichTextPage = false
         contentState = .idle
         DebugLog.alwaysPersisted("[TRANS] switch to rich text done in \(EditorPreloader.milliseconds(clock.now - pressed)) ms")
@@ -182,10 +184,20 @@ extension EditorViewState {
             DebugLog.alwaysPersisted("[TRANS] the incoming Rich Text page did not take its text")
             return nil
         }
-        if useScrollRestore, let topLine = cursor?.topLine {
-            _ = try? await page.evaluateJavaScript("window.FinalFinal.scrollToLine(\(topLine))")
-        }
+        // No scroll here: a page that is not in the window has no layout, so neither the caret's scroll-into-view above nor a
+        // `scrollToLine` could move it (the page came up at the top of the document). The scroll is applied after the flip.
         return token
+    }
+
+    /// The call (on `window.FinalFinal`) that puts the incoming Rich Text page's view where the Markdown page's was, as today's mount does
+    /// once its content has arrived (`restoreCursorPositionIfNeeded`): the caret was on screen, so the view centres on it; it was not, so
+    /// the view goes back to the line that was at the top. Nil for the default caret at the start of the document (nothing to scroll to) or
+    /// when no caret was saved. Runs only after the flip, when the page is in the window and has a layout.
+    static func richTextScrollCall(for saved: CursorPosition?) -> String? {
+        guard let saved else { return nil }
+        if !saved.cursorIsVisible, saved.topLine > 1.0, saved.topLine.isFinite { return "scrollToLine(\(saved.topLine))" }
+        if saved.line != 1 || saved.column != 0 { return "scrollCursorToCenter()" }
+        return nil
     }
 
     /// The outgoing Markdown page's text at the begin and now, and its caret, WITHOUT ending its hold. Nil when it could not answer.
@@ -200,15 +212,20 @@ extension EditorViewState {
     /// TransSwap's carry: once the outgoing page has left the window, its last text (the catch-up); its hold ends with the owed push dropped
     /// (the text is written here). With nothing typed since the begin the incoming page's hold just ends; otherwise the text goes through
     /// the per-block writer, the rows are read again and swapped onto the incoming page with its own typing put back on top.
+    ///
+    /// The page's scroll position (`scrollCall`, see `richTextScrollCall`) is applied the moment the outgoing page has left the window,
+    /// which is when the incoming one is the visible page with a layout: nothing was waited for to make room for it (a fire-and-forget
+    /// call, queued behind nothing), and the page is where the caret was from the first frame, not after the carry.
     private func carryTypingOntoRichTextPage( // swiftlint:disable:this function_parameter_count
         _ blockSync: BlockSyncService, token: Int, pageToken: Int, outgoing: WKWebView, page: WKWebView,
-        first: MarkdownSwitchTake, db: ProjectDatabase, pid: String
+        first: MarkdownSwitchTake, db: ProjectDatabase, pid: String, scrollCall: String?
     ) async {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: Self.switchDetachTimeout)
         while outgoing.window != nil, clock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
+        if let scrollCall { page.evaluateJavaScript("window.FinalFinal.\(scrollCall)") { _, _ in } }
         let last = await takeMarkdownText(token: token, from: outgoing) ?? first
         _ = try? await outgoing.evaluateJavaScript("JSON.stringify(window.FinalFinal.endTransition(\(token), 'discard'))")
         guard last.raw != last.base else {
@@ -237,13 +254,18 @@ extension EditorViewState {
             DebugLog.alwaysPersisted("[TRANS] carry: the rows could not be read; the page keeps the text it had")
             return
         }
-        await swapCarriedRowsIn(Self.fullDocumentTarget(from: rows), pageToken: pageToken, page: page, cursor: last.cursor, blockSync)
+        await swapCarriedRowsIn(
+            Self.fullDocumentTarget(from: rows), pageToken: pageToken, page: page, cursor: last.cursor, scrollCall: scrollCall, blockSync)
     }
 
     /// A7's swap on the incoming page: the rows' text in, the typing done on it since the flip put back on top; the caret from the outgoing
-    /// page when nothing was typed on the new one. A refusal writes the held typing and pushes the rows the old way (the one catch-up).
-    private func swapCarriedRowsIn(
-        _ target: ZoomTargetDocument, pageToken: Int, page: WKWebView, cursor: CursorPosition, _ blockSync: BlockSyncService
+    /// page when nothing was typed on the new one, and then the scroll again (`scrollCall`: the swap replaced the document and re-places
+    /// the page's scroll from its own anchor, and the caret just set is the new target; a scroll already applied is applied again to the
+    /// same place). With typing on the new page (`replayed > 0`) the caret is the user's and nothing is scrolled. A refusal writes the held
+    /// typing and pushes the rows the old way (the one catch-up).
+    private func swapCarriedRowsIn( // swiftlint:disable:this function_parameter_count
+        _ target: ZoomTargetDocument, pageToken: Int, page: WKWebView, cursor: CursorPosition, scrollCall: String?,
+        _ blockSync: BlockSyncService
     ) async {
         // The rows hold the keys typed in the outgoing page before the flip; keys typed on the new page after it at the same place go after
         // them (`carriedTextFirst`), never before.
@@ -255,9 +277,10 @@ extension EditorViewState {
             await blockSync.endTransition(token: pageToken, on: page)
             return
         }
+        let scrollJS = scrollCall.map { "ff.\($0);" } ?? ""
         let script = """
             (() => { const ff = window.FinalFinal; const s = ff.swapTransition(\(pageToken), \(payloadJSON));
-            if (s.ok && s.replayed === 0) { ff.setCursorPosition({line: \(cursor.line), column: \(cursor.column)}); }
+            if (s.ok && s.replayed === 0) { ff.setCursorPosition({line: \(cursor.line), column: \(cursor.column)}); \(scrollJS) }
             return JSON.stringify(s); })()
             """
         let json = (try? await page.evaluateJavaScript(script)) as? String

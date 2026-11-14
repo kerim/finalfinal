@@ -30,15 +30,22 @@ struct EditorFirstFixRoundF1Tests: QuickUndoFixtures {
     // MARK: - A1: Insert as New Section after a list
 
     // A1: the editor's anchor for a multi-item list is its FIRST item; the database job inserted right after that row, between the
-    // list's first and second item. WHEN A LIST IS SEVERAL ROWS (found in the follow-up to fix round F1): `BlockParser` splits the
-    // document into rows at blank lines, so a TIGHT list ("- a\n- b\n- c") is ONE row, and so is every list the Rich Text editor writes
-    // (`block-sync-plugin.ts`, `case 'bullet_list'`: one fragment per list node). A LOOSE list (a blank line between the items) is one
-    // row per item; it comes from Markdown the editor did not write: an imported or pasted file, Markdown mode, a restored document that
-    // holds one. So the fixture below is loose. Break patch: `jobAnchorBlockId = nodeIds.last` in
-    // `performEditorFirstRestoreSectionDuplicate`. Predicted failure: "the copy was inserted inside the list".
-    @Test("A1: Insert as New Section after a section that ends in a three-row (loose) list puts the copy after the third item")
+    // list's first and second item. WHEN A LIST IS SEVERAL ROWS (found in the follow-up to fix round F1): the Rich Text editor writes
+    // a list as ONE row (`block-sync-plugin.ts`, one fragment per list node), and since t-4eb7bfa9 `BlockParser` keeps a loose list
+    // (a blank line between the items) in ONE row too. Several rows for one editor list node exist only in a document an EARLIER
+    // parser saved, which cut a loose list at every blank line: one row per item, all with the same marker. The fixture below
+    // builds exactly that, ONE list (`- first item`, `- second item`, `- third item`, one editor node) stored as three rows,
+    // by inserting the rows directly; the parser can no longer produce it from Markdown. Break patch: `jobAnchorBlockId =
+    // nodeIds.last` in `performEditorFirstRestoreSectionDuplicate`. Predicted failure: "the copy was inserted inside the list".
+    @Test("A1: Insert as New Section after a section that ends in a three-row (per-item) list puts the copy after the third item")
     func testInsertAsNewSectionGoesAfterTheWholeList() async throws {
-        let rig = try EditorFirstRig(markdown: Self.fourSections + "\n\n- first item\n\n- second item\n\n- third item")
+        let rig = try EditorFirstRig(markdown: Self.fourSections)
+        let lastSortOrder = try rig.blocks().map(\.sortOrder).max() ?? 0
+        for (index, item) in ["first item", "second item", "third item"].enumerated() {
+            try rig.db.insertBlock(Block(
+                projectId: rig.pid, sortOrder: lastSortOrder + Double(index + 1), blockType: .bulletList,
+                textContent: item, markdownFragment: "- \(item)"))
+        }
         defer { unpinAllVersions(rig) }
         try await rig.fillSectionTable()
         let version = try saveVersion(rig)

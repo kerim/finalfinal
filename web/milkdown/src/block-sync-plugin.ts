@@ -2,7 +2,9 @@
 // Tracks inserts, updates, and deletes via ProseMirror transactions
 // Exports pending changes for Swift polling via getBlockChanges()
 
-import type { Mark, Node } from '@milkdown/kit/prose/model';
+import { schemaCtx, serializerCtx } from '@milkdown/kit/core';
+import type { Ctx } from '@milkdown/kit/ctx';
+import type { Mark, Node, Schema } from '@milkdown/kit/prose/model';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
@@ -18,6 +20,8 @@ import {
   noteSettled as noteReportSettled,
   setRealMapsProbe,
 } from './report-outbox';
+import { cleanupSerializedMarkdown } from './serialized-markdown-cleanup';
+import { isSourceModeEnabled } from './source-mode-plugin';
 import { syncLog } from './sync-debug';
 import { isTraceTypingOn, noteRebuildReplacedPending } from './typing-trace';
 
@@ -82,13 +86,21 @@ export interface BlockSnapshot {
   nodeSize: number; // Detect atom node add/remove (citations)
   headingLevel?: number;
   node: Node; // Store node reference for markdown serialization
+  /** The list nodes directly before this one at the top level of the document, in order (empty unless this block is a list, and
+   * then empty unless a list or lists come right before it). Every top-level node counts, not only the blocks that are rows: any
+   * node that is not a list ends the run, exactly as in the whole document. Needed because the whole-document text of a list
+   * depends on the list before it (the other bullet), see `blockMarkdownFragment`. */
+  listRunBefore: readonly Node[];
+  /** `listRunBefore`'s count and node types as one string, so a list whose own node is unchanged is still seen as changed when the
+   * run before it changed (a block between two lists was deleted). */
+  listRunSignature: string;
   _cachedMarkdown: string | null; // Lazily computed markdown fragment
 }
 
 /** Get or compute the markdown fragment for a snapshot (lazy + cached) */
 function getMarkdownFragment(snapshot: BlockSnapshot): string {
   if (snapshot._cachedMarkdown === null) {
-    snapshot._cachedMarkdown = nodeToMarkdownFragment(snapshot.node);
+    snapshot._cachedMarkdown = blockMarkdownFragment(snapshot.node, snapshot.listRunBefore);
   }
   return snapshot._cachedMarkdown;
 }
@@ -121,9 +133,12 @@ export function isSyncPaused(): boolean {
 //
 // Reconstructs markdown mark syntax (link, bold, italic, code, strike, highlight)
 // from ProseMirror marks. See docs/plans/markdown-html-links-text-url-majestic-mountain.md
-// for the design. The alternative — calling Milkdown's own serializer — is
-// unavailable here because this plugin is created via `$prose(() => …)` with no
-// editor-ctx access at construction time.
+// for the design. This hand converter is no longer what a block change reports:
+// `blockMarkdownFragment` (below) writes the stock Milkdown serializer's text for
+// the block, the same text the whole-document save writes (t-4eb7bfa9). The hand
+// converter stays as the fallback for a block the serializer cannot take (no
+// ready editor for the node's schema, or the serializer throws), so a save path
+// never drops a block.
 //
 // Mark names: Milkdown exposes two naming conventions depending on preset/version,
 // so each mark accepts a primary name and optional alias. See the plan for the
@@ -615,7 +630,8 @@ function escapePipesOutsideCode(text: string): string {
 /**
  * Build a markdown fragment from a ProseMirror node.
  * Inline-aware: preserves citations and annotations that node.textContent strips.
- * Exported for unit testing. In production, reached via `getMarkdownFragment`.
+ * The hand converter. In production it is only the fallback of `blockMarkdownFragment` (no ready editor for the node's schema, or
+ * the stock serializer threw); a block change reports the stock serializer's text. Exported for unit testing.
  */
 export function nodeToMarkdownFragment(node: Node): string {
   const text = serializeInlineContent(node);
@@ -703,6 +719,73 @@ export function nodeToMarkdownFragment(node: Node): string {
 }
 
 /**
+ * Each editor's context, by the schema its nodes belong to: a node is serialized by the editor that made it (tests build several
+ * editors, a project switch builds a new schema), never by whichever editor was created last. Filled when the plugin is created
+ * (`blockSyncPlugin`, below); a node of a schema that is not in here (the hand-made schemas of the unit tests) takes the hand
+ * converter.
+ */
+const editorCtxBySchema = new WeakMap<Schema, Ctx>();
+
+const isListNode = (node: Node): boolean => node.type.name === 'bullet_list' || node.type.name === 'ordered_list';
+
+/** How many times `blockMarkdownFragment` has run the stock serializer. Read only by tests (they set `runs` to 0 and look at it after
+ * a detection, to show that a block whose node did not change is never serialized); nothing in production reads it. */
+export const blockSerializerStats = { runs: 0 };
+
+/**
+ * The text a block change reports for one top-level block (t-4eb7bfa9): the stock Milkdown serializer's text for the block, cleaned
+ * up exactly as `getContent()` cleans the whole document, so the per-block text is the block's own piece of the whole-document save
+ * and the close-time check (LifecycleWholeDocumentWrite+Check.swift) finds nothing to rebuild after typing. Escaping is shared too
+ * (`minimalEscapePlugin`, registered once in main.ts).
+ *
+ * `listRunBefore` is the list nodes directly before this one in the document: the whole-document text of a list depends on the list
+ * before it (mdast alternates the bullet `*` / `-` and the ordered marker `.` / `)` for two lists in a row, so they do not read back
+ * as one list). The run is serialized with the node and its own text subtracted. If the run's text is not a prefix of the run plus
+ * the node, the node is written alone and the surprise is logged.
+ *
+ * An EMPTY paragraph row holds '' wherever it sits. The stock serializer writes `<br />` for an empty paragraph that is not the last
+ * node of the LIVE view's document (Milkdown's paragraph runner reads `editorViewCtx`), so its text would depend on where the
+ * paragraph is and on a view that is not the node's own; the row stays empty, as the hand converter always wrote it. This is the one
+ * stated exception to "equal to the whole-document piece".
+ *
+ * A save path never drops a block: with no ready editor for the node's schema, or if the serializer throws, the block is written by
+ * the hand converter (`nodeToMarkdownFragment`), with a log line for a throw.
+ */
+export function blockMarkdownFragment(node: Node, listRunBefore: readonly Node[] = []): string {
+  if (node.type.name === 'paragraph' && node.content.size === 0) return '';
+  const editorCtx = editorCtxBySchema.get(node.type.schema);
+  if (!editorCtx) return nodeToMarkdownFragment(node);
+  try {
+    const serialize = editorCtx.get(serializerCtx);
+    const sourceEnabled = isSourceModeEnabled();
+    const topNodeType = node.type.schema.topNodeType;
+    const render = (nodes: readonly Node[]): string => {
+      blockSerializerStats.runs++;
+      return cleanupSerializedMarkdown(serialize(topNodeType.create(null, nodes)), sourceEnabled);
+    };
+    if (listRunBefore.length > 0) {
+      const runText = render(listRunBefore);
+      const withNode = render([...listRunBefore, node]);
+      if (withNode.startsWith(runText)) {
+        return withNode.slice(runText.length).replace(/^\n+/, '').replace(/\n+$/, '');
+      }
+      syncLog(
+        'BlockSync:serializerRun',
+        `run of ${listRunBefore.length} list(s) before ${node.type.name} is not a prefix of the run plus the block; serializing the block alone`
+      );
+    }
+    return render([node]).replace(/\n+$/, '');
+  } catch (error) {
+    syncLog(
+      'BlockSync:serializerFallback',
+      `${node.type.name}: stock serializer failed, using the hand converter`,
+      error
+    );
+    return nodeToMarkdownFragment(node);
+  }
+}
+
+/**
  * Get pending block changes and clear them
  * Called by Swift polling
  */
@@ -747,6 +830,8 @@ export function hasPendingChanges(): boolean {
   );
 }
 
+const NO_LISTS: readonly Node[] = [];
+
 /**
  * Take a snapshot of current blocks
  */
@@ -759,8 +844,14 @@ export function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
   const skippedOffsets: number[] = [];
   let syncBlockCount = 0;
 
+  // The list nodes directly before the current node (every top-level node counts, rows or not; any other node ends the run).
+  let listRun: Node[] = [];
+
   // Use doc.forEach() for top-level only traversal, matching BlockParser behavior
   doc.forEach((node, offset) => {
+    const listRunBefore: readonly Node[] = listRun.length > 0 && isListNode(node) ? listRun.slice() : NO_LISTS;
+    if (isListNode(node)) listRun.push(node);
+    else if (listRun.length > 0) listRun = [];
     if (SYNC_BLOCK_TYPES.has(node.type.name)) {
       syncBlockCount++;
       const blockId = blockIds.get(offset);
@@ -788,6 +879,8 @@ export function snapshotBlocks(doc: Node): Map<string, BlockSnapshot> {
           nodeSize: node.nodeSize,
           headingLevel: effectiveLevel,
           node,
+          listRunBefore,
+          listRunSignature: listRunBefore.map((n) => n.type.name).join(','),
           _cachedMarkdown: null, // Lazily computed only when needed
         });
       } else {
@@ -861,10 +954,24 @@ function detectIntoQueues(
 }
 
 /**
+ * Whether the text a block change would report differs between two snapshots of one block. Two EQUAL nodes after the same run of
+ * lists are written identically, so they are not serialized: a replace of the whole document by equal text (a Restore Entire Project
+ * of an unchanged book) makes a new node object for every block, and serializing both sides of all of them took about 170 ms for
+ * 2,000 blocks (measured in the parity test), where the structural comparison takes about 3 ms.
+ */
+function reportedTextChanged(oldBlock: BlockSnapshot, newBlock: BlockSnapshot): boolean {
+  if (oldBlock.listRunSignature === newBlock.listRunSignature && oldBlock.node.eq(newBlock.node)) return false;
+  return getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock);
+}
+
+/**
  * The detection itself, as an ordered list of operations (no state is read or written): deletes and updates in the old snapshot's
  * order, then inserts. `applyOps` (report-outbox.ts) applies them with the merge rules this function used to apply inline.
  */
-function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: Map<string, BlockSnapshot>): BlockOp[] {
+export function computeChangeOps(
+  oldSnapshot: Map<string, BlockSnapshot>,
+  newSnapshot: Map<string, BlockSnapshot>
+): BlockOp[] {
   const ops: BlockOp[] = [];
   // Detect updates and deletes
   for (const [id, oldBlock] of oldSnapshot) {
@@ -876,14 +983,15 @@ function computeChangeOps(oldSnapshot: Map<string, BlockSnapshot>, newSnapshot: 
         'BlockSync:detect',
         `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} "${oldBlock.textContent.slice(0, 40)}"`
       );
-    } else if (oldBlock.node === newBlock.node) {
-      // Fast path: same ProseMirror node reference — nothing changed
+    } else if (oldBlock.node === newBlock.node && oldBlock.listRunSignature === newBlock.listRunSignature) {
+      // Fast path: same ProseMirror node reference — nothing changed. (Not for a list whose run of lists before it changed: its
+      // own node is the same object, but the whole-document text of a list depends on the list before it, so it is compared below.)
     } else if (
       oldBlock.textContent !== newBlock.textContent ||
       oldBlock.nodeSize !== newBlock.nodeSize ||
       oldBlock.headingLevel !== newBlock.headingLevel ||
       oldBlock.blockType !== newBlock.blockType ||
-      getMarkdownFragment(oldBlock) !== getMarkdownFragment(newBlock)
+      reportedTextChanged(oldBlock, newBlock)
     ) {
       // Block was updated — lazily compute markdownFragment only for changed blocks. If this block is already pending as an
       // insert, applyOps merges the update into the insert instead of adding a separate update (prevents INSERT+UPDATE overlap
@@ -1058,7 +1166,9 @@ export function hasUnsettledLocalEdit(): boolean {
 }
 
 // Wrap ProseMirror plugin with $prose for Milkdown compatibility
-export const blockSyncPlugin = $prose(() => {
+export const blockSyncPlugin = $prose((ctx) => {
+  // The editor this plugin belongs to, found again from the nodes' schema when a block's text is made (`blockMarkdownFragment`).
+  editorCtxBySchema.set(ctx.get(schemaCtx), ctx);
   return new Plugin<BlockSyncPluginState>({
     key: blockSyncPluginKey,
 

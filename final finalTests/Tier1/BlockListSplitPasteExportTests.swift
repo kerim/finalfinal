@@ -125,12 +125,14 @@ struct BlockListSplitPasteExportTests {
     /// NOTE the captured text: Milkdown's remark-stringify renders the second
     /// list half as a LOOSE list ("* Item 2\n\n* Item 3" -- blank line between
     /// items, "*" marker instead of "-") rather than the tight
-    /// "- Item 2\n- Item 3" the incremental JS diff computes. This is a REAL,
-    /// confirmed discrepancy between the two serialization paths for the exact
-    /// same document. BlockParser.splitIntoRawBlocks has no special-case for
-    /// "consecutive same-type list lines separated by a blank line stay one
-    /// block" -- it splits on every blank line -- so this text produces TWO
-    /// separate bullet_list blocks for "Item 2" and "Item 3" instead of one.
+    /// "- Item 2\n- Item 3" the incremental JS diff computed at the time. That was a REAL
+    /// discrepancy between the two serialization paths for the exact same
+    /// document. t-4eb7bfa9 closed it from both sides: the per-block text is now
+    /// the whole-document serializer's own piece, and BlockParser.splitIntoRawBlocks
+    /// keeps a LOOSE list together (a blank line followed by an item of the same
+    /// list, or by an indented continuation, does not end the row), so this text
+    /// produces ONE bullet_list block for "Item 2" and "Item 3", as the editor's
+    /// one list node has. (Before t-4eb7bfa9 it produced two.)
     @Test("Full re-parse (flushContentToDatabase path): real getContent() text loses no bullets")
     func fullReparseOfRealGetContentOutputPreservesAllBullets() throws {
         // Captured verbatim via vitest from api-content.ts's getContent() after
@@ -143,13 +145,12 @@ struct BlockListSplitPasteExportTests {
         let pid = "test-project"
         let blocks = BlockParser.parse(markdown: realGetContentOutput, projectId: pid)
 
-        // Confirm the loose-list artifact: splitIntoRawBlocks / detectBlockType
-        // produce SEPARATE bullet_list rows for "Item 2" and "Item 3" rather
-        // than one 2-item list row (documented above).
+        // t-4eb7bfa9: the loose list "Item 2 / Item 3" is ONE bullet_list row (it was two rows
+        // before), like the live doc's one list node; the list before the figure is its own row.
         let listBlocks = blocks.filter { $0.blockType == .bulletList }
-        #expect(listBlocks.count == 3,
-                Comment(rawValue: "Documents the loose-list split artifact: expected 3 separate bullet_list rows "
-                    + "(Item 1 / Item 2 / Item 3), got \(listBlocks.count): \(listBlocks.map { $0.markdownFragment })"))
+        #expect(listBlocks.map(\.markdownFragment) == ["* Item 1", "* Item 2\n\n* Item 3"],
+                Comment(rawValue: "expected 2 bullet_list rows (Item 1 / the loose list Item 2 + Item 3), "
+                    + "got \(listBlocks.count): \(listBlocks.map { $0.markdownFragment })"))
 
         // The actual question: is any bullet's TEXT actually lost or corrupted
         // by this parse, even though it's split into extra rows?
@@ -173,10 +174,10 @@ struct BlockListSplitPasteExportTests {
         // text pushed back to JS / to Pandoc) still contains everything.
         let pairs = BlockParser.alignmentPairs(blocks)
         // 5 real top-level nodes are expected in the live doc (before-para,
-        // list1, figure, list2, after-para) -- list2's two DB rows must
-        // collapse to exactly one alignment slot to match.
+        // list1, figure, list2, after-para) -- list2 is ONE DB row now (t-4eb7bfa9),
+        // so there is exactly one alignment slot for it with nothing to collapse.
         #expect(pairs.count == 5,
-                "Expected 5 alignment slots collapsing Item2+Item3 rows into one, got \(pairs.count)")
+                "Expected 5 alignment slots (list2 is one row), got \(pairs.count)")
 
         let reassembled = BlockParser.assembleMarkdown(from: blocks)
         #expect(reassembled.contains("Item 1"))
@@ -214,10 +215,9 @@ struct BlockListSplitPasteExportTests {
         let afterFirstFlush = try TestFixtureFactory.fetchBlocks(from: db)
         // Both rows exist immediately after this flush -- confirms no loss AT
         // the moment of the flush itself.
-        let item2Row = afterFirstFlush.first { $0.textContent == "Item 2" }
-        let item3Row = afterFirstFlush.first { $0.textContent == "Item 3" }
-        #expect(item2Row != nil, "Item 2 row must exist right after first full reparse")
-        #expect(item3Row != nil, "Item 3 row must exist right after first full reparse")
+        // t-4eb7bfa9: the loose list "Item 2 / Item 3" is ONE row (it was two before).
+        let item23Row = afterFirstFlush.first { $0.textContent == "Item 2\n\nItem 3" }
+        #expect(item23Row != nil, "the Item 2 + Item 3 list row must exist right after first full reparse")
 
         // Now simulate a SECOND flushContentToDatabase() (e.g. a second export,
         // or export after further edits) using the SAME live-doc markdown
@@ -230,13 +230,12 @@ struct BlockListSplitPasteExportTests {
         let afterSecondFlush = try TestFixtureFactory.fetchBlocks(from: db)
         let allTextAfterSecond = afterSecondFlush.map { $0.textContent }
         #expect(allTextAfterSecond.contains("Item 1"), "Item 1 must survive a second full reparse")
-        #expect(allTextAfterSecond.contains("Item 2"), "Item 2 must survive a second full reparse")
-        #expect(allTextAfterSecond.contains("Item 3"), "Item 3 must survive a second full reparse")
+        #expect(allTextAfterSecond.contains("Item 2\n\nItem 3"), "Item 2 and Item 3 must survive a second full reparse")
 
         // No permanent duplication either: replaceBlocks deletes-all before
-        // reinserting, so exactly one row per item across repeated reparses.
-        #expect(allTextAfterSecond.filter { $0 == "Item 2" }.count == 1)
-        #expect(allTextAfterSecond.filter { $0 == "Item 3" }.count == 1)
+        // reinserting, so exactly one row per list across repeated reparses.
+        #expect(allTextAfterSecond.filter { $0 == "Item 1" }.count == 1)
+        #expect(allTextAfterSecond.filter { $0 == "Item 2\n\nItem 3" }.count == 1)
     }
 
     // MARK: - Figure nested inside a list item (paste at end of a bullet)
@@ -400,7 +399,8 @@ struct BlockListSplitPasteExportTests {
         // asymmetry rather than removing every blank line uniformly.
         let list1 = "* First\n* second"
         let imageAndList2 = "![Screenshot 2026-07-12 at 1.42.52 PM.png](media/screenshot-2026-07-12-at-14252pm.png)\n* third \n* Fourth"
-        let fullDocument = "One can't fault the book for skipping this step.\n\n\(list1)\n\n\(imageAndList2)\n\nWhether we are looking at Israel, India, or the United States."
+        let fullDocument = "One can't fault the book for skipping this step.\n\n\(list1)\n\n\(imageAndList2)\n\n"
+            + "Whether we are looking at Israel, India, or the United States."
 
         let blocks = BlockParser.parse(markdown: fullDocument, projectId: pid)
 
@@ -417,7 +417,10 @@ struct BlockListSplitPasteExportTests {
                 "Image block must not swallow the following list's content: \(imageBlocks.first?.markdownFragment ?? "")")
 
         #expect(listBlocks.count == 2,
-                "Expected two separate bullet_list rows (before the image, and after), got \(listBlocks.count): \(listBlocks.map { $0.markdownFragment })")
+                """
+                Expected two separate bullet_list rows (before the image, and after), \
+                got \(listBlocks.count): \(listBlocks.map { $0.markdownFragment })
+                """)
         #expect(listBlocks[0].markdownFragment.contains("First"))
         #expect(listBlocks[0].markdownFragment.contains("second"))
         #expect(listBlocks[1].markdownFragment.contains("third"))
@@ -450,7 +453,10 @@ struct BlockListSplitPasteExportTests {
         let nestedAtomList = "- Item 1\n- Item 2\n  ![](projectmedia://test.png)\n- Item 3"
         let nestedBlocks = BlockParser.parse(markdown: nestedAtomList, projectId: pid)
         #expect(nestedBlocks.count == 1,
-                "A list with a nested indented atom continuation must stay ONE block, got \(nestedBlocks.count): \(nestedBlocks.map { $0.markdownFragment })")
+                """
+                A list with a nested indented atom continuation must stay ONE block, \
+                got \(nestedBlocks.count): \(nestedBlocks.map { $0.markdownFragment })
+                """)
         #expect(nestedBlocks.first?.markdownFragment.contains("projectmedia://test.png") == true)
 
         let orderedList = "1. First\n2. second\n3. third"

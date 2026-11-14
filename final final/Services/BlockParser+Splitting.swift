@@ -242,6 +242,12 @@ private struct RawBlockSplitter {
             return
         }
 
+        if isListContinuing(after: index, in: lines) {
+            // Absorb blank line — a loose list stays ONE row (t-4eb7bfa9)
+            currentBlock += line + "\n"
+            return
+        }
+
         flushCurrentBlockIfNotBlank()
     }
 
@@ -504,6 +510,63 @@ private struct RawBlockSplitter {
         }
         return nextIdx < lines.count
             && lines[nextIdx].trimmingCharacters(in: .whitespaces).hasPrefix("![")
+    }
+
+    /// Whether the blank line at `index` sits INSIDE the list `currentBlock` holds, so the list goes on after it: the next
+    /// non-blank line is either indented to the content column of the list's first item (a second paragraph, a nested list or
+    /// a figure of an item) or is another item of the SAME list (same bullet character, or same delimiter after the number).
+    ///
+    /// Why (t-4eb7bfa9): the Rich Text editor holds a list as ONE node and writes it as one row, in the form the whole-document
+    /// save also writes: a list read from Markdown is written loose (`* a\n\n* b`), and an item with two paragraphs is written
+    /// `* one\n\n  two\n* three`. Cutting at each blank line made the close save see several rows where the editor has one, so the
+    /// stored rows never matched and the close rebuilt them. Per CommonMark an item with a different bullet character or number
+    /// delimiter starts a NEW list, and the editor writes two lists in a row exactly that way (`* a`, then `- b`; `1.` then `1)`),
+    /// so such a line does not continue the list and the blank line still ends the row.
+    private func isListContinuing(after index: Int, in lines: [String]) -> Bool {
+        // The first line of the block must be a list item; a paragraph that merely contains list-like lines is not a list.
+        guard let firstLine = currentBlock.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first else {
+            return false
+        }
+        let firstTrimmed = firstLine.trimmingCharacters(in: .whitespaces)
+        guard let signature = BlockParser.listMarkerSignature(firstTrimmed) else { return false }
+
+        var nextIdx = index + 1
+        while nextIdx < lines.count, lines[nextIdx].trimmingCharacters(in: .whitespaces).isEmpty {
+            nextIdx += 1
+        }
+        guard nextIdx < lines.count else { return false }
+        let next = lines[nextIdx]
+        let firstIndent = Self.leadingSpaces(of: String(firstLine))
+        let nextIndent = Self.leadingSpaces(of: next)
+
+        // Another item of the same list, written at the same indentation as the first one (an indented marker is a nested
+        // item, which the indentation test below decides).
+        if nextIndent == firstIndent,
+           BlockParser.listMarkerSignature(next.trimmingCharacters(in: .whitespaces)) == signature {
+            return true
+        }
+        // A continuation: indented to the first item's content column (after its marker and the spaces behind it).
+        return nextIndent >= Self.contentColumn(ofListLine: String(firstLine))
+    }
+
+    /// The number of leading spaces of `line`; a tab counts as four.
+    private static func leadingSpaces(of line: String) -> Int {
+        var count = 0
+        for character in line {
+            if character == " " { count += 1 } else if character == "\t" { count += 4 } else { break }
+        }
+        return count
+    }
+
+    /// The column where the text of the list item on `line` starts: its indentation, the marker, and the spaces after it (one
+    /// to four; more than four means the text itself is indented code and the content column is one space after the marker).
+    private static func contentColumn(ofListLine line: String) -> Int {
+        let indent = leadingSpaces(of: line)
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let markerEnd = trimmed.firstIndex(where: { $0 == " " || $0 == "\t" }) else { return indent + 2 }
+        let marker = trimmed[trimmed.startIndex..<markerEnd]
+        let spaces = trimmed[markerEnd...].prefix { $0 == " " || $0 == "\t" }.count
+        return indent + marker.count + (spaces > 4 ? 1 : max(spaces, 1))
     }
 
     // MARK: - Block accumulation

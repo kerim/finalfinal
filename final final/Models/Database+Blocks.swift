@@ -402,7 +402,11 @@ extension ProjectDatabase {
         }
         // LAST, so it wins over the textContent-based recounts above (t-0b70d1e9): the update's markdown still holds the citations
         // that the editor's `textContent` leaves out. An update with no fragment keeps the count taken from its text.
-        if let markdownFragment = update.markdownFragment { recountWordsFromFragment(&block, markdownFragment) }
+        // The stored text then becomes what a close writes for the same markdown, under the final type (t-4eb7bfa9).
+        if let markdownFragment = update.markdownFragment {
+            recountWordsFromFragment(&block, markdownFragment)
+            applyTextContentFromFragment(&block, markdownFragment)
+        }
 
         block.updatedAt = Date()
         try block.update(db)
@@ -615,7 +619,10 @@ extension ProjectDatabase {
             existingBlock.headingLevel = headingLevel
         }
         // LAST, as in the primary path: the fragment's count wins over the textContent-based one (citations; t-0b70d1e9).
-        if let markdownFragment = update.markdownFragment { recountWordsFromFragment(&existingBlock, markdownFragment) }
+        if let markdownFragment = update.markdownFragment {
+            recountWordsFromFragment(&existingBlock, markdownFragment)
+            applyTextContentFromFragment(&existingBlock, markdownFragment)   // t-4eb7bfa9, as in the primary path
+        }
         existingBlock.updatedAt = Date()
         try existingBlock.update(db)
         DebugLog.log(.data, "[Database+Blocks] Merged temp update into insert: \(update.id) → \(permanentId)")
@@ -640,8 +647,11 @@ extension ProjectDatabase {
         if let headingLevel = update.headingLevel {
             existingBlock.headingLevel = headingLevel
         }
-        // LAST, as in the primary path (t-0b70d1e9).
-        if let markdownFragment = update.markdownFragment { recountWordsFromFragment(&existingBlock, markdownFragment) }
+        // LAST, as in the primary path (t-0b70d1e9; the stored text, t-4eb7bfa9).
+        if let markdownFragment = update.markdownFragment {
+            recountWordsFromFragment(&existingBlock, markdownFragment)
+            applyTextContentFromFragment(&existingBlock, markdownFragment)
+        }
         existingBlock.updatedAt = Date()
         try existingBlock.update(db)
     }

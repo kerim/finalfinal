@@ -82,7 +82,11 @@ struct EditorUpdateWordCountTests {
 
         let after = try reload(fixture, id: paragraph.id)
         #expect(after.wordCount == 8, "the update lost the citation's two words: 8 -> \(after.wordCount)")
-        #expect(after.textContent == "A claim about origins  stands firm.", "the editor's text is stored as it was sent")
+        // t-4eb7bfa9 (S14): the stored text is no longer the editor's own (ProseMirror's `node.textContent`, which lost the
+        // citation); it is what a close derives from the fragment (`BlockParser.extractTextContent`), which keeps the citation
+        // syntax, so a close finds nothing to rewrite.
+        #expect(
+            after.textContent == "A claim about origins [@smith2020] stands firm.", "the stored text is derived from the fragment, citation kept")
     }
 
     // A footnote renumber sends the paragraph back with only the reference changed (`[^1]` -> `[^10]`) and the same editor text. A

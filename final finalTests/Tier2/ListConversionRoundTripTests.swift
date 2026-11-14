@@ -11,11 +11,13 @@
 //
 //  Phase 3a-2 changed WHY it is green, and what it expects (plan-v2 U-C2, "checked FB", Option A per the user's
 //  decision). Step 1 makes the per-edit path store the conversion correctly (see `testParagraphConvertedToList_rowIsListWithoutFB`
-//  below), and FB now compares before it writes. After a list edit the comparison still says "different": the
-//  per-block serializer stores the item as `- word`, the whole-document serializer fetches `* word`. So FB RUNS
-//  (`fbSettledOutcome == .applied`), exactly as before; this is the safety net in action, and the test asserts
-//  that, with the same single-row assertions on the table afterwards. It is not a regression pin for the skip: the
-//  skip is pinned by `testPlainProseSession_closeReachesUnchanged` (plain paragraphs and headings only).
+//  below), and FB now compares before it writes. Until t-4eb7bfa9 the comparison said "different" after a list edit: the
+//  per-block serializer stored the item as `- word`, the whole-document serializer fetched `* word`, so FB RAN
+//  (`fbSettledOutcome == .applied`; the safety net in action). t-4eb7bfa9 made the per-block text Milkdown's own
+//  serializer's piece of the whole-document text, so both write `* word` and the stored row is exactly what FB would
+//  write: the same close now ends `.unchanged` (nothing rebuilt), with the same single-row assertions on the table
+//  afterwards. The skip is also pinned by `testPlainProseSession_closeReachesUnchanged` (plain paragraphs and headings) and,
+//  for the shapes the old per-block converter wrote differently, by `testRichTextShapes_closeReachesUnchanged`.
 //
 //  Phase 3a-2 also adds `testPlainProseSession_closeReachesUnchanged` (plan-v2 U-C2b): a session that only changed
 //  plain paragraph and heading text closes with FB `.unchanged`, writing nothing.
@@ -91,12 +93,12 @@ final class ListConversionRoundTripTests: XCTestCase {
         guard let token = SwitchFlushTestSupport.arm(editorState, kind: .close) else { return XCTFail("could not arm the close token") }
         let result = await SwitchFlushTestSupport.flush(editorState, token: token, webView: helper.webView)
         XCTAssertEqual(result.outcome, .flushed)
-        // U-C2: after a LIST edit FB still runs (`.applied`, not `.unchanged`): the stored row reads `- word...` (the
-        // per-block serializer) while the whole-document fetch reads `* word...`, so the check finds the rows different
-        // and FB rebuilds the table exactly as it did before checked FB existed. The safety net in action.
+        // U-C2, as changed by t-4eb7bfa9: after a LIST edit FB has nothing to rebuild (`.unchanged`): the stored row reads
+        // `* word...` (the per-block text is Milkdown's own serializer's piece) exactly as the whole-document fetch does. Before
+        // t-4eb7bfa9 the per-block converter wrote `- word...`, the check found the rows different and FB rebuilt the table.
         XCTAssertEqual(
-            result.fbSettledOutcome, .applied,
-            "FB (the whole-document write) must have run and written (the barrier waited for it); status \(result.fbStatus)")
+            result.fbSettledOutcome, .unchanged,
+            "a list conversion alone must close with FB .unchanged (the barrier waited for the check); status \(result.fbStatus)")
 
         // Reopen: read the project as opening it would.
         let blocks = try TestFixtureFactory.fetchBlocks(from: db).sorted { $0.sortOrder < $1.sortOrder }
@@ -251,6 +253,148 @@ final class ListConversionRoundTripTests: XCTestCase {
             "the heading edit is in the table: \(rowsAfter.map(\.markdownFragment))")
         XCTAssertEqual(try db.currentBlockWriteEpoch(projectId: pid), epochBefore, "an unchanged FB (and F) bump no epoch")
     }
+
+    // t-4eb7bfa9 (Rich Text per-block save matches the whole-document save): the shapes the old per-block converter wrote
+    // differently from the whole-document serializer. A session that types a quote of two paragraphs, plain text holding
+    // `_` and `*`, a line break, a tight list and a list item of two paragraphs must leave rows the close finds nothing to
+    // rebuild in: FB `.unchanged`.
+    //
+    // How the shapes get in. The quote, the line break, the tight list and the list item are TYPED with real NSEvents (Return is
+    // keyCode 36, the line break is Shift-Return). The symbol words are NOT typed: Milkdown's input rules would make a typed
+    // `__init__` bold and `*x*` italic. They go in as plain text through the page (`insertAtCursor`, a plain transaction that
+    // runs no input rule), and the second paragraph of the list item is a pasted plain-text paragraph (the editor has no key
+    // for a second paragraph in an item; a pasted one is how a user gets it).
+    //
+    // BEFORE the close, each stored row must already hold the intended shape, and no row may have been added, removed or
+    // re-keyed by the close; only then is `.unchanged` asserted (the order the plain-prose test uses).
+    //
+    // STOP RULE (as for the plain-prose test): if the close does not reach `.unchanged`, report which compared field differs
+    // (the failure message prints it); NEVER loosen `LifecycleWholeDocumentWrite.rowsMatch` to make this pass.
+    @MainActor
+    func testRichTextShapes_closeReachesUnchanged() async throws {
+        let stack = try await makeStack()
+        let (helper, db, pid, sync, editorState) = (stack.helper, stack.db, stack.pid, stack.sync, stack.editorState)
+        guard let window = hostWindow else { throw XCTSkip("no host window") }
+
+        let rowsBefore = try TestFixtureFactory.fetchBlocks(from: db)
+        let idsBefore = Set(rowsBefore.map(\.id))
+
+        // From the end of "convert me please.": a new paragraph, then the quote. "> " turns the empty paragraph into a quote; the
+        // second Return inside it leaves an empty paragraph there, and the third lifts that paragraph out of the quote.
+        try await placeCursorAtEnd(helper, tag: "p", startingWith: "convert me please.")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        try pressReturn(window: window)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        try typeViaNSEvents("> ", window: window)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try typeViaNSEvents("first", window: window)
+        try pressReturn(window: window)
+        try typeViaNSEvents("second", window: window)
+        try pressReturn(window: window)
+        try pressReturn(window: window)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        // Three paragraphs of plain text with the characters the serializer escapes (or must not escape).
+        for word in ["snake_case_name", "__init__", "2 * 3 * 4"] {
+            try await insertPlainText(word, helper: helper)
+            try pressReturn(window: window)
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        // A tight list of two items, left with two Returns (the second turns the empty item back into a paragraph).
+        try typeViaNSEvents("- ", window: window)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try typeViaNSEvents("a", window: window)
+        try pressReturn(window: window)
+        try typeViaNSEvents("b", window: window)
+        try pressReturn(window: window)
+        try pressReturn(window: window)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        // A line break inside a paragraph, and a paragraph after it to start the last list.
+        try typeViaNSEvents("line one", window: window)
+        try pressShiftReturn(window: window)
+        try typeViaNSEvents("line two", window: window)
+        try pressReturn(window: window)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        // A list whose first item holds two paragraphs, then a second item.
+        try typeViaNSEvents("- ", window: window)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try await pastePlainText("one\n\ntwo", helper: helper)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try pressReturn(window: window)
+        try typeViaNSEvents("three", window: window)
+
+        let observed = try await SwitchFlushTestSupport.waitForPendingEdit(helper, timeout: 10) { markdown in
+            markdown.contains("> first\n>\n> second") && markdown.contains("snake_case_name") && markdown.contains("line one\\\nline two")
+                && markdown.contains("* one\n\n  two") && markdown.contains("three")
+        }
+        XCTAssertTrue(observed.contentMatches, "the editor never showed all the shapes; editor content=\(observed.content.debugDescription)")
+        guard observed.isReady else { return }
+
+        // The per-edit path alone (no close): wait on the table, not on a fixed sleep, for the seven new rows.
+        let expected: [(kind: BlockType, fragment: String)] = [
+            (.blockquote, "> first\n>\n> second"),
+            (.paragraph, "snake_case_name"),
+            (.paragraph, "\\_\\_init\\_\\_"),
+            (.paragraph, "2 * 3 * 4"),
+            (.bulletList, "* a\n* b"),
+            (.paragraph, "line one\\\nline two"),
+            (.bulletList, "* one\n\n  two\n* three")
+        ]
+        _ = await sync.flushForDatabaseRebuild()
+        var stored = BlockParser.assemblySorted(try TestFixtureFactory.fetchBlocks(from: db))
+        let end = Date().addingTimeInterval(8)
+        while stored.count < rowsBefore.count + expected.count && Date() < end {
+            try await Task.sleep(nanoseconds: 150_000_000)
+            _ = await sync.flushForDatabaseRebuild()
+            stored = BlockParser.assemblySorted(try TestFixtureFactory.fetchBlocks(from: db))
+        }
+        let described = stored.map { "\($0.blockType.rawValue):\($0.markdownFragment.debugDescription)" }
+        XCTAssertEqual(stored.count, rowsBefore.count + expected.count, "the table must hold the four old rows and the seven new ones: \(described)")
+        XCTAssertTrue(idsBefore.isSubset(of: Set(stored.map(\.id))), "the four old rows keep their ids: \(described)")
+        let anchor = try XCTUnwrap(stored.firstIndex { $0.markdownFragment.contains("convert me please.") }, "the anchor row is gone: \(described)")
+        let newRows = Array(stored.dropFirst(anchor + 1).prefix(expected.count))
+        XCTAssertEqual(newRows.map { $0.blockType }, expected.map { $0.kind }, "the new rows' types, in order: \(described)")
+        XCTAssertEqual(
+            newRows.map { $0.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines) }, expected.map { $0.fragment },
+            "each stored row must hold the intended shape (the whole-document serializer's piece): \(described)")
+        // The stored text is what a close writes for the same Markdown (t-4eb7bfa9, step 5): derived from the fragment, under the row's type.
+        for row in newRows {
+            let fragment = row.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+            XCTAssertEqual(
+                row.textContent.trimmingCharacters(in: .whitespacesAndNewlines),
+                BlockParser.extractTextContent(from: fragment, blockType: row.blockType),
+                "stored text of \(fragment.debugDescription) must be what the close derives from it")
+        }
+        XCTAssertEqual(newRows.first?.textContent, "first\n\nsecond", "the quote's two paragraphs stay apart in the stored text")
+        XCTAssertEqual(newRows.dropFirst(2).first?.textContent, "__init__", "the escapes are not part of the stored text")
+
+        // Close: the save sequence (F, fresh fetch, FB, barrier). Nothing may be rebuilt: same rows, same ids, no epoch bump.
+        let idsAfterEdit = stored.map(\.id)
+        let epochBeforeClose = try db.currentBlockWriteEpoch(projectId: pid)
+        guard let token = SwitchFlushTestSupport.arm(editorState, kind: .close) else { return XCTFail("could not arm the close token") }
+        let result = await SwitchFlushTestSupport.flush(editorState, token: token, webView: helper.webView)
+        XCTAssertEqual(result.outcome, .flushed)
+
+        let rowsAfter = try TestFixtureFactory.fetchBlocks(from: db)
+        let sortedAfter = BlockParser.assemblySorted(rowsAfter)
+        let fetched = result.fetchedContent ?? ""
+        let wouldWrite = ProjectDatabase.preparedRowsForWholeReplace(
+            existing: sortedAfter,
+            parsed: BlockParser.parse(
+                markdown: fetched, projectId: pid, existingSectionMetadata: nil,
+                notesHeaderName: try? db.fetchNotesHeadingTitle(projectId: pid)))
+        let difference = LifecycleWholeDocumentWrite.firstDifference(stored: sortedAfter, wouldWrite: wouldWrite) ?? "no compared field differs"
+        XCTAssertEqual(
+            result.fbSettledOutcome, .unchanged,
+            "STOP RULE: a session of these shapes must close with FB .unchanged; status \(result.fbStatus). "
+                + "Near tie: \(LifecycleWholeDocumentWrite.hasNearTie(sortedAfter)). Differing compared fields: \(difference). "
+                + "Fetched: \(fetched.debugDescription)")
+        XCTAssertEqual(sortedAfter.map(\.id), idsAfterEdit, "no row was added, removed or re-keyed by the close")
+        XCTAssertEqual(try db.currentBlockWriteEpoch(projectId: pid), epochBeforeClose, "an unchanged FB (and F) bump no epoch")
+    }
 }
 
 // MARK: - Harness
@@ -354,6 +498,81 @@ extension ListConversionRoundTripTests {
             window.sendEvent(down)
             window.sendEvent(keyUp)
         }
+    }
+
+    /// One real key press (keyDown, keyUp) with the key code of that key, the characters it types and the modifiers held.
+    /// `typeViaNSEvents` above sends key code 0 for every character, which is enough for letters, space and punctuation but is
+    /// not the Return key: Return needs key code 36 and the "\r" character (as in `QuitFlushDuplicateInsertTests.pressEnter`).
+    @MainActor
+    private func pressKey(_ keyCode: UInt16, characters: String, modifiers: NSEvent.ModifierFlags = [], window: NSWindow) throws {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard
+            let down = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: now, windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: keyCode
+            ),
+            let keyUp = NSEvent.keyEvent(
+                with: .keyUp, location: .zero, modifierFlags: modifiers,
+                timestamp: now, windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: keyCode
+            )
+        else {
+            throw NSError(
+                domain: "list-conversion-test", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "could not build NSEvent for key code \(keyCode)"]
+            )
+        }
+        window.sendEvent(down)
+        window.sendEvent(keyUp)
+    }
+
+    /// Return: splits the block, or leaves a quote or list when pressed in an empty block of one.
+    @MainActor
+    private func pressReturn(window: NSWindow) throws {
+        try pressKey(36, characters: "\r", window: window)
+    }
+
+    /// Shift-Return: the line break (Milkdown's hard break) inside a paragraph.
+    @MainActor
+    private func pressShiftReturn(window: NSWindow) throws {
+        try pressKey(36, characters: "\r", modifiers: .shift, window: window)
+    }
+
+    /// Puts `text` into the document at the caret as PLAIN text, through the page's own `insertAtCursor` (a plain transaction:
+    /// it runs no input rule, so `__init__` stays text instead of turning bold the way typing it would).
+    @MainActor
+    private func insertPlainText(_ text: String, helper: EditorTestHelper) async throws {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        let result = try await helper.webView.evaluateJavaScript(
+            "window.FinalFinal.insertAtCursor('\(escaped)'); 'ok'"
+        ) as? String
+        XCTAssertEqual(result, "ok", "failed to insert plain text (diagnostic: \(String(describing: result)))")
+    }
+
+    /// Pastes `text` as plain text: a real DOM `ClipboardEvent('paste')` on the editable root, the event the editor's own paste
+    /// handling reads (same technique as `PasteAboveHeadingOrderBugTests.dispatchSyntheticPaste`).
+    @MainActor
+    private func pastePlainText(_ text: String, helper: EditorTestHelper) async throws {
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        let result = try await helper.webView.evaluateJavaScript(
+            """
+            (() => {
+                const pm = document.querySelector('.ProseMirror');
+                if (!pm) return 'no-prosemirror-root';
+                const dt = new DataTransfer();
+                dt.setData('text/plain', '\(escaped)');
+                pm.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+                return 'ok';
+            })()
+            """
+        ) as? String
+        XCTAssertEqual(result, "ok", "failed to dispatch the paste (diagnostic: \(String(describing: result)))")
     }
 
     private struct EditorStack {

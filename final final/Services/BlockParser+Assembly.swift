@@ -411,17 +411,22 @@ extension BlockParser {
 
     /// Returns the node index (in ProseMirror alignment order) of the first bibliography
     /// block, or nil if no bibliography blocks exist.
-    /// MUST stay in sync with idsForProseMirrorAlignment list-merging logic.
+    /// MUST stay in sync with idsForProseMirrorAlignment list-merging logic (`mergesIntoPreviousList`: same list type AND same
+    /// marker signature, t-4eb7bfa9).
     static func firstBibliographyNodeIndex(_ blocks: [Block]) -> Int? {
         var nodeIndex = 0
         var prevListType: BlockType?
+        var prevListSignature: Character?
 
         for block in blocks {
             if isEmptyFragment(block.markdownFragment) { continue }
 
             let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+            let signature = isListBlock ? listRowSignature(block) : nil
 
-            if isListBlock && block.blockType == prevListType {
+            if mergesIntoPreviousList(
+                isListBlock: isListBlock, type: block.blockType, signature: signature,
+                prevType: prevListType, prevSignature: prevListSignature) {
                 // Merged into previous list node — same index
                 if block.isBibliography { return nodeIndex - 1 }
                 continue
@@ -430,6 +435,7 @@ extension BlockParser {
             if block.isBibliography { return nodeIndex }
             nodeIndex += 1
             prevListType = isListBlock ? block.blockType : nil
+            prevListSignature = isListBlock ? signature : nil
         }
         return nil
     }
@@ -441,18 +447,23 @@ extension BlockParser {
     /// always landing at the document's end (`BibliographySyncService.updateBibliographyBlock`),
     /// a cursor sitting in real trailing user content AFTER the section is a position the
     /// section's START index alone cannot distinguish from a position INSIDE the section.
-    /// MUST stay in sync with idsForProseMirrorAlignment list-merging logic.
+    /// MUST stay in sync with idsForProseMirrorAlignment list-merging logic (`mergesIntoPreviousList`: same list type AND same
+    /// marker signature, t-4eb7bfa9).
     static func lastBibliographyNodeIndex(_ blocks: [Block]) -> Int? {
         var nodeIndex = 0
         var prevListType: BlockType?
+        var prevListSignature: Character?
         var lastBibIndex: Int?
 
         for block in blocks {
             if isEmptyFragment(block.markdownFragment) { continue }
 
             let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
+            let signature = isListBlock ? listRowSignature(block) : nil
 
-            if isListBlock && block.blockType == prevListType {
+            if mergesIntoPreviousList(
+                isListBlock: isListBlock, type: block.blockType, signature: signature,
+                prevType: prevListType, prevSignature: prevListSignature) {
                 // Merged into previous list node — same index
                 if block.isBibliography { lastBibIndex = nodeIndex - 1 }
                 continue
@@ -461,8 +472,28 @@ extension BlockParser {
             if block.isBibliography { lastBibIndex = nodeIndex }
             nodeIndex += 1
             prevListType = isListBlock ? block.blockType : nil
+            prevListSignature = isListBlock ? signature : nil
         }
         return lastBibIndex.map { $0 + 1 }
+    }
+
+    /// The marker signature (bullet character, or number delimiter) of a list row's first line: what tells one list from the next
+    /// in CommonMark. Rich Text writes a list directly after another list with the OTHER bullet (`* a` then `- b`) or delimiter
+    /// (`1.` then `1)`), and Milkdown reads them as two list nodes, so such rows must not share one alignment slot.
+    private static func listRowSignature(_ block: Block) -> Character? {
+        let trimmed = block.markdownFragment.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstLine = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first else { return nil }
+        return listMarkerSignature(firstLine.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// Whether a list row joins the list node of the row before it: the same list type AND the same marker signature. Rows of one
+    /// list written one per item by an earlier version (`- a`, `- b`, `- c`) share a signature and still merge; two lists the editor
+    /// holds apart (`* a` then `- b`, `1.` then `1)`) do not. The ONE rule `firstBibliographyNodeIndex`,
+    /// `lastBibliographyNodeIndex` and `alignmentPairs` share.
+    private static func mergesIntoPreviousList(
+        isListBlock: Bool, type: BlockType, signature: Character?, prevType: BlockType?, prevSignature: Character?
+    ) -> Bool {
+        isListBlock && type == prevType && signature == prevSignature
     }
 
     /// Per-id ground-truth metadata handed to the JS side's optional `setBlockIdsForTopLevel`
@@ -482,6 +513,7 @@ extension BlockParser {
     static func alignmentPairs(_ blocks: [Block]) -> [(id: String, meta: BlockAlignmentMeta)] {
         var result: [(id: String, meta: BlockAlignmentMeta)] = []
         var prevListType: BlockType?
+        var prevListSignature: Character?
         for block in blocks {
             if isEmptyFragment(block.markdownFragment) { continue }
             // The standalone auto-bibliography MARKER block (distinct from ordinary blocks
@@ -492,17 +524,22 @@ extension BlockParser {
             // must contribute NEITHER an id NOR metadata, matching the JS-side exclusion exactly.
             if block.blockType == .bibliography { continue }
             let isListBlock = (block.blockType == .bulletList || block.blockType == .orderedList)
-            if isListBlock && block.blockType == prevListType { continue }
+            let signature = isListBlock ? listRowSignature(block) : nil
+            if mergesIntoPreviousList(
+                isListBlock: isListBlock, type: block.blockType, signature: signature,
+                prevType: prevListType, prevSignature: prevListSignature) { continue }
             let nonEmpty = !block.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             result.append((block.id, BlockAlignmentMeta(blockType: block.blockType.rawValue, nonEmpty: nonEmpty)))
             prevListType = isListBlock ? block.blockType : nil
+            prevListSignature = isListBlock ? signature : nil
         }
         return result
     }
 
-    /// Collapse consecutive same-type list block IDs for ProseMirror alignment.
-    /// ProseMirror merges consecutive list items (separated by \n\n in assembleMarkdown)
-    /// into a single list node. This produces an ID array matching PM's top-level node count.
+    /// Collapse consecutive same-type, same-marker list block IDs for ProseMirror alignment.
+    /// ProseMirror merges consecutive list items WITH THE SAME MARKER (separated by \n\n in assembleMarkdown; rows one per
+    /// item, as an earlier version wrote a loose list) into a single list node, while a list with the other bullet or delimiter
+    /// directly after it is a second node. This produces an ID array matching PM's top-level node count.
     /// Delegates entirely to `alignmentPairs` — see that function for the filtering/merging rules.
     /// - Parameter blocks: Must be sorted by `sortOrder` ascending.
     static func idsForProseMirrorAlignment(_ blocks: [Block]) -> [String] {
