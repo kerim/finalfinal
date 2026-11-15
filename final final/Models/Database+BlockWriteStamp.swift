@@ -410,18 +410,33 @@ extension ProjectDatabase {
     /// rows), because every row changed in one transaction (one re-emit). `recomputeSectionParents` runs after this in the
     /// same transaction and reads the new numbers. What keeps a row's OLD number across the batch is a zoom: its
     /// `[start, end)` range of raw numbers (`EditorViewState.zoomedBlockRange`), which is why every committed renumber is
-    /// logged (`SortOrderRenumberLog`) and a zoom range is an `AnchoredSortOrderRange` that is carried through the log. ONLY this
-    /// renumber is logged: the other `sortOrder` writers (`replaceBlocks`, `replaceBlocksInRange`, `reorderAllBlocks`,
-    /// `normalizeSortOrders`, the section shifts, the whole-table undo restores) are not, and a native structural-undo restore of
-    /// a deleted section's rows writes the whole table back at once.
+    /// logged (`SortOrderRenumberLog`) and a zoom range is an `AnchoredSortOrderRange` that is carried through the log. The writers
+    /// that re-space are logged: this one (a crowded editor batch), and, since t-bf66e4ee, the three that re-space before they
+    /// place rows in a gap (`duplicateSections(db:...)`, `insertRows`, `replaceFlatSectionRange`, through
+    /// `renumberAllSortOrders` and `logSortOrderRenumbersOnCommit`). The other `sortOrder` writers (`replaceBlocks`,
+    /// `replaceBlocksInRange`, `reorderAllBlocks`, `normalizeSortOrders`, the section shifts, the whole-table undo restores) are not,
+    /// and a native structural-undo restore of a deleted section's rows writes the whole table back at once.
     @discardableResult
     static func renumberSortOrdersIfCrowded(db: Database, projectId: String) throws -> [Double]? {
         let ordered = try assemblyOrderedSortOrders(db: db, projectId: projectId)
         guard zip(ordered, ordered.dropFirst()).contains(where: { $1.sortOrder - $0.sortOrder < crowdedSortOrderGap }) else {
             return nil
         }
+        let old = try renumberAllSortOrders(db: db, projectId: projectId)
+        DebugLog.log(.data, "[BlockWriteStamp] sort orders crowded - renumbered \(old.count) rows (no restamp, no epoch bump)")
+        return old
+    }
+
+    /// Renumbers the project's `sortOrder`s as 1.0, 2.0, 3.0, ... in assembly order whether or not any two rows are crowded, and
+    /// returns the OLD numbers in that order (what `SortOrderRenumberLog` keeps). The same plain `UPDATE block SET sortOrder`
+    /// as `renumberSortOrdersIfCrowded`: no restamp, no epoch bump, the order of the rows unchanged. On the caller's `db` handle,
+    /// so inside the caller's own transaction. For a writer that is about to put rows into a gap and sees that the gap would
+    /// leave them less than `crowdedSortOrderGap` apart: the table is not crowded yet, but the rows it is about to add would be
+    /// (t-bf66e4ee). The caller logs the result with `logSortOrderRenumbersOnCommit` and must READ AGAIN every `sortOrder` it
+    /// fetched before this call (they are the old numbers now).
+    static func renumberAllSortOrders(db: Database, projectId: String) throws -> [Double] {
+        let ordered = try assemblyOrderedSortOrders(db: db, projectId: projectId)
         try rewriteSortOrders(db: db, orderedIds: ordered.map { $0.id })
-        DebugLog.log(.data, "[BlockWriteStamp] sort orders crowded - renumbered \(ordered.count) rows (no restamp, no epoch bump)")
         return ordered.map { $0.sortOrder }
     }
 
@@ -474,8 +489,13 @@ extension ProjectDatabase {
     /// nothing). The hook runs inside the batch's own `write` call, so the entries are in the log before the writer returns and a
     /// zoom range read after that is already translated. Does nothing when the batch re-spaced nothing.
     private func logSortOrderRenumbersOnCommit(_ renumbers: [[Double]], db: Database) {
-        guard !renumbers.isEmpty else { return }
-        let log = sortOrderRenumberLog
+        Self.logSortOrderRenumbersOnCommit(renumbers, to: sortOrderRenumberLog, db: db)
+    }
+
+    /// The body of the instance method above, for a writer that runs as a static on an open `Database` and is handed the log (the
+    /// section jobs, t-bf66e4ee). Nothing when `renumbers` is empty or `log` is nil (a caller with no database of its own: a test).
+    static func logSortOrderRenumbersOnCommit(_ renumbers: [[Double]], to log: SortOrderRenumberLog?, db: Database) {
+        guard !renumbers.isEmpty, let log else { return }
         db.afterNextTransaction(onCommit: { _ in log.append(renumbers) })
     }
 
@@ -513,11 +533,10 @@ extension ProjectDatabase {
             db, sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?", arguments: [projectId]) ?? 0) + 1.0
         for insert in inserts {
             if try Self.insertWouldCrowd(db: db, insert: insert, projectId: projectId, idMapping: result.idMapping) {
-                let ordered = try Self.assemblyOrderedSortOrders(db: db, projectId: projectId)
-                try Self.rewriteSortOrders(db: db, orderedIds: ordered.map { $0.id })
-                renumbers.append(ordered.map { $0.sortOrder })
-                nextSortOrder = Double(ordered.count) + 1.0
-                DebugLog.log(.data, "[BlockWriteStamp] insert would crowd sort orders - renumbered \(ordered.count) rows first")
+                let old = try Self.renumberAllSortOrders(db: db, projectId: projectId)
+                renumbers.append(old)
+                nextSortOrder = Double(old.count) + 1.0
+                DebugLog.log(.data, "[BlockWriteStamp] insert would crowd sort orders - renumbered \(old.count) rows first")
             }
             if !options.dedupImagesWithinBatch { insertedImageSources = [:] }
             try processEditorInserts(

@@ -61,6 +61,11 @@ struct StructuralReplaceJob: Sendable {
     /// The key this job's record has in the `EFJobRegistry`: nil means `opId` (the entry's first job); a redo's job registers under a
     /// fresh id, because `EFJobRegistry.register` hands back the record already there for a repeated id.
     var registryKey: UUID?
+    /// The database's `sortOrderRenumberLog`. A section restore (`section`, `insertAfter`) whose room between saved positions is used up
+    /// re-spaces every saved position first (t-bf66e4ee), and the numbers it replaced are logged here on commit, so a zoom range taken
+    /// before still picks the same rows. Nil (a test with no database of its own): the re-spacing happens, nothing is logged. `whole`
+    /// writes the table by `replaceProjectRows` (1, 2, 3 ... already) and never uses it.
+    var renumberLog: SortOrderRenumberLog?
 
     /// What the job is for. `restore`: a Version History restore (the default). `snapshotUndo` and `snapshotRedo` (t-18b7fa48 round 3c):
     /// the SLOW undo or redo of an entry, in Rich Text (`queuedSnapshotUndo`). The writes are the same (`whole` mode: the snapshot of the
@@ -147,12 +152,16 @@ struct StructuralReplaceJob: Sendable {
             try ProjectDatabase.replaceProjectRows(db: db, projectId: projectId, rows: plan.rows)
         case .section:
             let rootId = plan.rootBlockId.map { idMap[$0] ?? $0 } ?? ""
-            guard try ProjectDatabase.replaceFlatSectionRange(db: db, projectId: projectId, headingId: rootId, rows: plan.rows) else {
+            guard try ProjectDatabase.replaceFlatSectionRange(
+                db: db, projectId: projectId, headingId: rootId, rows: plan.rows, renumberLog: renumberLog
+            ) else {
                 throw JobError.rootNotReplaceable(rootId)
             }
         case .insertAfter:
             let anchorId = plan.anchorBlockId.map { idMap[$0] ?? $0 }
-            guard try ProjectDatabase.insertRows(db: db, projectId: projectId, afterBlockId: anchorId, rows: plan.rows) else {
+            guard try ProjectDatabase.insertRows(
+                db: db, projectId: projectId, afterBlockId: anchorId, rows: plan.rows, renumberLog: renumberLog
+            ) else {
                 throw JobError.anchorNotUsable(anchorId ?? "(none)")
             }
         }

@@ -240,7 +240,9 @@ extension ProjectDatabase {
     /// Duplicate a section's full subtree: every Block row in it is deep-copied verbatim with a
     /// fresh UUID, placed immediately after the original via fractional sortOrder midpoints
     /// between the subtree's last block and whatever follows it -- so no other row's sortOrder
-    /// ever changes. The `" copy"` suffix is applied to the top heading's title/fragment only;
+    /// changes, unless the room after the section is used up (a copy's step would fall below `crowdedSortOrderGap`, after a few
+    /// duplicates of a long section in one spot). Then every row is first re-spaced 1, 2, 3 ... in order, in the same write, and
+    /// the old numbers are logged (`renumberLog`, t-bf66e4ee). The `" copy"` suffix is applied to the top heading's title/fragment only;
     /// descendant headings and body content are copied unchanged. Refuses (`nil`) for
     /// bibliography/notes sections or an unresolvable root id. Returns the new (suffixed) title
     /// on success, for use as a `StructuralEntry` title.
@@ -258,7 +260,8 @@ extension ProjectDatabase {
     @discardableResult
     func duplicateSections(rootId: String, projectId: String) throws -> String? {
         try write { db in
-            try Self.duplicateSections(db: db, rootId: rootId, projectId: projectId, copies: nil)?.newTitle
+            try Self.duplicateSections(
+                db: db, rootId: rootId, projectId: projectId, copies: nil, renumberLog: sortOrderRenumberLog)?.newTitle
         }
     }
 
@@ -289,7 +292,8 @@ extension ProjectDatabase {
     /// already a row of the table is never reused (it would break the primary key): that copy gets a fresh UUID too. Every difference
     /// that remains is reported in `copiesMismatch`; the caller then pushes the database's ids to the editor, so both sides agree.
     static func duplicateSections(
-        db: Database, rootId: String, projectId: String, copies: [(source: String, new: String)]?
+        db: Database, rootId: String, projectId: String, copies: [(source: String, new: String)]?,
+        renumberLog: SortOrderRenumberLog? = nil
     ) throws -> DuplicatedSubtree? {
         guard let subtree = try Self.resolveSectionSubtree(db: db, rootId: rootId, projectId: projectId) else {
             return nil
@@ -297,22 +301,20 @@ extension ProjectDatabase {
         let orderedIds = subtree.blockIds
         guard !orderedIds.isEmpty else { return nil }
 
-        let fetched = try Block.filter(keys: orderedIds).fetchAll(db)
-        guard fetched.count == orderedIds.count else { return nil }
-        let idOrder = Dictionary(uniqueKeysWithValues: orderedIds.enumerated().map { ($1, $0) })
-        let orderedBlocks = fetched.sorted { (idOrder[$0.id] ?? 0) < (idOrder[$1.id] ?? 0) }
-
-        guard let lastSortOrder = orderedBlocks.map(\.sortOrder).max() else { return nil }
-        let nextBlock = try Block
-            .filter(Block.Columns.projectId == projectId)
-            .filter(Block.Columns.sortOrder > lastSortOrder)
-            .order(Block.Columns.sortOrder)
-            .fetchOne(db)
-        // No following block (subtree is the last thing in the document): fabricate an
-        // upper bound far enough past lastSortOrder to give every copy its own fractional
-        // slot; there's nothing after it to collide with.
-        let upperBound = nextBlock?.sortOrder ?? (lastSortOrder + Double(orderedBlocks.count) + 1.0)
-        let step = (upperBound - lastSortOrder) / Double(orderedBlocks.count + 1)
+        guard var placement = try Self.duplicatePlacement(db: db, orderedIds: orderedIds, projectId: projectId) else { return nil }
+        if placement.step < Self.crowdedSortOrderGap {
+            // t-bf66e4ee: the room after the section is used up (earlier copies were squeezed into it). Spread every saved position out
+            // again first, in this same write, and log it for a zoom range; then work the placement out AGAIN from the table, because
+            // every number the first reading holds is an old one now.
+            let old = try Self.renumberAllSortOrders(db: db, projectId: projectId)
+            Self.logSortOrderRenumbersOnCommit([old], to: renumberLog, db: db)
+            DebugLog.log(.data, "[SectionOps] duplicate would crowd sort orders - renumbered \(old.count) rows first")
+            guard let respaced = try Self.duplicatePlacement(db: db, orderedIds: orderedIds, projectId: projectId) else { return nil }
+            placement = respaced
+        }
+        let orderedBlocks = placement.orderedBlocks
+        let lastSortOrder = placement.lastSortOrder
+        let step = placement.step
 
         var idMap: [String: String] = [:]
         var mismatch: String?
@@ -354,6 +356,37 @@ extension ProjectDatabase {
 
         return DuplicatedSubtree(
             newTitle: newTitle, copiedBlockIds: orderedBlocks.compactMap { idMap[$0.id] }, copiesMismatch: mismatch)
+    }
+
+    /// Where `duplicateSections(db:...)` puts the copies, read from the table as it stands NOW: the subtree's rows in document order,
+    /// the highest `sortOrder` among them, and the step between one copy and the next.
+    private struct DuplicatePlacement {
+        let orderedBlocks: [Block]
+        let lastSortOrder: Double
+        let step: Double
+    }
+
+    /// nil when a row of the subtree is gone, exactly as `duplicateSections(db:...)` refuses. The copies fill the room between the
+    /// subtree's last row and the row after it, at `room / (rows + 1)` apart; with nothing after it the room is made up
+    /// (`rows + 1`), so the step is 1.
+    private static func duplicatePlacement(db: Database, orderedIds: [String], projectId: String) throws -> DuplicatePlacement? {
+        let fetched = try Block.filter(keys: orderedIds).fetchAll(db)
+        guard fetched.count == orderedIds.count else { return nil }
+        let idOrder = Dictionary(uniqueKeysWithValues: orderedIds.enumerated().map { ($1, $0) })
+        let orderedBlocks = fetched.sorted { (idOrder[$0.id] ?? 0) < (idOrder[$1.id] ?? 0) }
+
+        guard let lastSortOrder = orderedBlocks.map(\.sortOrder).max() else { return nil }
+        let nextBlock = try Block
+            .filter(Block.Columns.projectId == projectId)
+            .filter(Block.Columns.sortOrder > lastSortOrder)
+            .order(Block.Columns.sortOrder)
+            .fetchOne(db)
+        // No following block (subtree is the last thing in the document): fabricate an
+        // upper bound far enough past lastSortOrder to give every copy its own fractional
+        // slot; there's nothing after it to collide with.
+        let upperBound = nextBlock?.sortOrder ?? (lastSortOrder + Double(orderedBlocks.count) + 1.0)
+        let step = (upperBound - lastSortOrder) / Double(orderedBlocks.count + 1)
+        return DuplicatePlacement(orderedBlocks: orderedBlocks, lastSortOrder: lastSortOrder, step: step)
     }
 
     /// Matches the editor's copies against the subtree's rows (see `duplicateSections(db:rootId:projectId:copies:)`). Returns the copy

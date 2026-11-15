@@ -11,6 +11,8 @@
 //    (a) the Version History snapshot of the whole document as it stands BEFORE the duplicate, written in every case. It is the
 //        snapshot the SLOW undo of this entry restores from (the entry has no snapshot id of its own, like an editor-first delete);
 //    (b) the section's rows copied (`ProjectDatabase.duplicateSections(db:rootId:projectId:copies:)`), section parents recomputed.
+//        When the room after the section is used up, every saved position is re-spaced first, in this same transaction, and logged in
+//        `renumberLog` on commit (t-bf66e4ee);
 //        The copies carry the ids the EDITOR minted for its top-level nodes (D4), matched through the writer's temp-id map; the rows
 //        the editor has no node for (a list's items) get fresh UUIDs minted here. A difference between the editor's copies and the
 //        rows is returned in `Output.copiesMismatch` for the caller to log (`duplicateCopiesMismatch`), never thrown. The caller's
@@ -64,6 +66,10 @@ struct SectionDuplicateJob: Sendable {
     /// The key this job's record has in the `EFJobRegistry`: nil means `opId` (the entry's first job); a redo's job registers under a
     /// fresh id, because `EFJobRegistry.register` hands back the record already there for a repeated id.
     var registryKey: UUID?
+    /// The database's `sortOrderRenumberLog`. When the room after the section is used up the copy re-spaces every saved position first
+    /// (t-bf66e4ee), and the numbers it replaced are logged here on commit, so a zoom range taken before still picks the same rows.
+    /// Nil (a test with no database of its own): the re-spacing happens, nothing is logged.
+    var renumberLog: SortOrderRenumberLog?
 
     struct Output: Sendable, Equatable {
         /// The Version History snapshot written before the duplicate. Pinned only when the slot was live at commit.
@@ -93,7 +99,7 @@ struct SectionDuplicateJob: Sendable {
         let rootId = idMap[rootBlockId] ?? rootBlockId
         let resolvedCopies = copies?.map { (source: idMap[$0.sourceId] ?? $0.sourceId, new: $0.newId) }
         guard let duplicated = try ProjectDatabase.duplicateSections(
-            db: db, rootId: rootId, projectId: projectId, copies: resolvedCopies
+            db: db, rootId: rootId, projectId: projectId, copies: resolvedCopies, renumberLog: renumberLog
         ) else {
             // Rolls the whole transaction back, the snapshot included.
             throw JobError.rootNotDuplicable(rootId)

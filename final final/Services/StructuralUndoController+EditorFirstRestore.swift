@@ -290,6 +290,7 @@ extension StructuralUndoController {
         heldJob.bodyHold = jobBodyHold()
         heldJob.holder = holder
         heldJob.registryKey = jobKey
+        heldJob.renumberLog = database.sortOrderRenumberLog   // t-bf66e4ee: a re-spacing of the saved positions is logged for a zoom
         let job = heldJob
         let identity = SystemWriteIdentity(projectId: projectId, database: database)
         let reserved = EFReservationSignal()

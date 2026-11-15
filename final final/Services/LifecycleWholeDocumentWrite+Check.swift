@@ -61,8 +61,11 @@ import GRDB
 extension LifecycleWholeDocumentWrite {
 
     /// Two adjacent stored rows (in reopen order) whose `sortOrder` values are closer than this, or equal,
-    /// are a near tie: the check reports "different" so FB runs and renumbers (plan-v2 D2). FB is the only
-    /// thing that renumbers `sortOrder`; the per-edit insert path halves the gap between neighbours
+    /// are a near tie: the check reports "different" so FB runs and renumbers (plan-v2 D2). FB is not the only
+    /// thing that renumbers `sortOrder` (editor batches re-space a crowded gap since t-75d20927; Duplicate Section,
+    /// Insert as New Section and Replace Current Section re-space before they place rows since t-bf66e4ee; the Notes
+    /// reconcile, `reconcileNotesBlocks` step 7, rewrites every row to 1..N), but a plain insert that none of those
+    /// guards covers still goes through the per-edit insert path, which halves the gap between neighbours
     /// (`Database+BlocksInsert`: the midpoint), so a long run of paragraphs added just before the Notes or
     /// bibliography heading squeezes the gap to the heading toward zero. The rule protects ACROSS closes:
     /// FB at close renumbers, so the squeeze cannot accumulate over sessions. WITHIN one session about 47
