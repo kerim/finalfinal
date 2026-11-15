@@ -868,8 +868,8 @@ class EditorViewState {
     var currentProjectId: String?
 
     // MARK: - Block Zoom State
-    /// Sort order boundaries for the zoomed block range
-    var zoomedBlockRange: (start: Double, end: Double?)?
+    /// Stored zoom range with its place in the renumber log; use `zoomedBlockRange` (EditorViewState+ZoomAnchor.swift), not this.
+    var zoomedBlockRangeAnchor: AnchoredSortOrderRange?
 
     /// Task for debounced block re-parse (source mode paste)
     var blockReparseTask: Task<Void, Never>?

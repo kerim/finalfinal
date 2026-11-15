@@ -163,9 +163,11 @@ extension BlockSyncService {
             return .skipped
         }
 
-        // `renumberSortOrdersIfCrowded: true`: only this entry passes it (plan 1(b), review M8).
+        // `renumberSortOrdersIfCrowded: true` (plan 1(b), review M8; Rich Text's `applyAndConfirm` passes it too since t-75d20927).
+        // `dedupImagesWithinBatch: false`: a Markdown document that holds the same image line twice keeps two rows; only Rich Text
+        // de-duplicates same-src images within one batch.
         let outcome = await ticket.writer.applyEditorBatch(
-            ticket.seq, changes, stamp: turn.stamp, renumberSortOrdersIfCrowded: true)
+            ticket.seq, changes, stamp: turn.stamp, renumberSortOrdersIfCrowded: true, dedupImagesWithinBatch: false)
         switch outcome {
         case .applied(let result):
             if result.rejectedWholeBatchForStaleEpoch {

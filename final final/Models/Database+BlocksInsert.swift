@@ -26,6 +26,12 @@ extension ProjectDatabase {
     /// causes look identical here (anchor id resolves to nothing) — `tombstones` is what
     /// tells them apart: only a genuinely tombstoned anchor gets the re-anchor treatment,
     /// so a wholesale-rewrite orphan (never tombstoned) still falls through to rejection.
+    ///
+    /// `insertedImageSources` (imageSrc -> permanentId) is the within-batch image de-duplication map: an image insert whose `src`
+    /// is already in it maps onto that row instead of creating one (catches the race where multiple inserts of the same image
+    /// arrive in one sync cycle). It is a parameter, not a local, so the caller that feeds this function one insert at a time
+    /// (`processEditorInsertsRenumberingIfCrowded`) decides whether the de-duplication spans the whole batch (Rich Text) or
+    /// not (Markdown, which must keep two rows for two identical image lines); the plain path passes a fresh empty map.
     func processEditorInserts(
         db: Database,
         inserts: [BlockInsert],
@@ -34,12 +40,9 @@ extension ProjectDatabase {
         idMapping: inout [String: String],
         tombstones: [String: DeletedAnchor] = [:],
         reanchored: inout [String],
-        rejected: inout [String]
+        rejected: inout [String],
+        insertedImageSources: inout [String: String]
     ) throws {
-        // Track image sources inserted within this batch to prevent duplicates
-        // (catches the race condition where multiple inserts of the same image arrive in one sync cycle)
-        var insertedImageSources: [String: String] = [:]  // imageSrc -> permanentId
-
         for insert in inserts {
             var effectiveInsert = insert
             var forceUnmanaged = false

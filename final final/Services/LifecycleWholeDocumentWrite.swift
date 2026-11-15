@@ -45,8 +45,11 @@ struct LifecycleWholeDocumentPrepared: Sendable {
     /// The parsed incoming blocks (Notes title already threaded through the parse).
     let blocks: [Block]
     let projectId: String
-    /// The zoom block range, when the editor was zoomed; nil for a whole-document replace.
-    let range: (start: Double, end: Double?)?
+    /// The zoom block range, when the editor was zoomed (with its place in the renumber log); nil for a whole-document replace.
+    let rangeAnchor: AnchoredSortOrderRange?
+    /// The zoom block range in the numbers the rows have when it is READ (`LifecycleWholeDocumentWrite.body` reads it inside its own
+    /// transaction, so it sees every re-spacing committed before the write: a paste applied between the capture and the save).
+    var range: (start: Double, end: Double?)? { rangeAnchor?.current }
     /// The zoom ROOT heading id (`replaceBlocksInRange`'s `anchorHeadingId`); nil when not
     /// zoomed. `anchorHeadingId != nil && range == nil` is the "zoom in flight, no block
     /// range yet" shape the primitive REFUSES (judge adjustment B1): building a
@@ -73,14 +76,14 @@ struct LifecycleWholeDocumentPrepared: Sendable {
     init(
         blocks: [Block],
         projectId: String,
-        range: (start: Double, end: Double?)?,
+        range: AnchoredSortOrderRange?,
         anchorHeadingId: String?,
         miniNotes: String?,
         skipIfUnchanged: Bool = false
     ) {
         self.blocks = blocks
         self.projectId = projectId
-        self.range = range
+        self.rangeAnchor = range
         self.anchorHeadingId = anchorHeadingId
         self.miniNotes = miniNotes
         self.miniNoteDefinitions = miniNotes.map { FootnoteSyncService.extractFootnoteDefinitions(from: $0) } ?? [:]
@@ -145,7 +148,7 @@ enum LifecycleWholeDocumentWrite {
         content: String,
         database: ProjectDatabase,
         projectId: String,
-        zoomedRange: (start: Double, end: Double?)?,
+        zoomedRange: AnchoredSortOrderRange?,
         zoomedSectionId: String?,
         skipIfUnchanged: Bool = false
     ) -> LifecycleWholeDocumentPrepared? {

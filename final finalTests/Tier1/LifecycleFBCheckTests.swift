@@ -361,7 +361,8 @@ struct LifecycleFBCheckBodyTests {
         // The zoomed section's own rows, unchanged: a whole-document body would call this a match.
         let prepared = try #require(LifecycleWholeDocumentWrite.prepare(
             content: "# Alpha\n\none two three.\n", database: db, projectId: pid,
-            zoomedRange: (start: alpha.sortOrder, end: beta.sortOrder), zoomedSectionId: alpha.id, skipIfUnchanged: true))
+            zoomedRange: AnchoredSortOrderRange(unanchored: (start: alpha.sortOrder, end: beta.sortOrder)), zoomedSectionId: alpha.id,
+            skipIfUnchanged: true))
         let body = LifecycleWholeDocumentWrite.body(prepared)
 
         let verdict = try db.dbWriter.write { try body($0) }.value

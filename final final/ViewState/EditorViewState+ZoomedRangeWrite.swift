@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import GRDB
 
 extension EditorViewState {
     /// Writes the zoomed text `text` (anchors already stripped, mini-Notes still in it) over the rows of the zoom range: the mini-Notes back
@@ -16,7 +17,9 @@ extension EditorViewState {
     /// add-only `zoomedSectionIds` union, the range recomputed from where the written rows landed, and the lost-root recovery when no heading
     /// survived. Requires `zoomedBlockRange != nil` (the callers check it). Throws when a database call throws.
     func applyZoomedRangeWrite(text: String, db: ProjectDatabase, pid: String) throws {
-        guard let range = zoomedBlockRange else { return }
+        // The anchor, not its numbers: `replaceBlocksInRange` translates it inside its own write transaction (t-75d20927), after any
+        // re-spacing the writer committed while this call waited for the database.
+        guard let rangeAnchor = zoomedBlockRangeAnchor else { return }
         // Strip zoom notes once and reuse for both mini-Notes sync and content parsing.
         let stripResult = SectionSyncService.stripZoomNotes(from: text)
         if let miniNotes = stripResult.miniNotes, !miniNotes.isEmpty {
@@ -36,13 +39,16 @@ extension EditorViewState {
         // Zoomed: only replace blocks within the zoom range. `anchorHeadingId` pins the zoom ROOT by position (see
         // replaceBlocksInRange's doc comment) so a rename keeps its id/metadata instead of churning to a fresh parser id -- the root cause
         // of the rename-empties-sidebar bug this fixes.
-        let inserted = try db.replaceBlocksInRange(
+        // The live rows are read in the same transaction (`afterReplace`): the range recomputed below takes its numbers from the very
+        // transaction that replaced the old range, never from a later read a re-spacing could slip in front of.
+        let (inserted, allBlocksAfterWrite) = try db.replaceBlocksInRange(
             blocks,
             for: pid,
-            startSortOrder: range.start,
-            endSortOrder: range.end,
+            rangeAnchor: rangeAnchor,
             anchorHeadingId: zoomedSectionId
-        )
+        ) { database, _ in
+            try Block.filter(Block.Columns.projectId == pid).order(Block.Columns.sortOrder).fetchAll(database)
+        }
 
         // Resolve the zoom root from `inserted` (the rows replaceBlocksInRange actually wrote), add-only: never remove an id from
         // zoomedSectionIds, only ever add to it (SectionSyncService pairs its own Section rows to zoomedSectionIds by array position --
@@ -92,7 +98,6 @@ extension EditorViewState {
         // `blocks.count` equals the number of rows actually inserted (false whenever handleMachineManagedBlock skips or merges a row) --
         // both together let the range overshoot its real end, so the NEXT flush would delete the following section's heading. Re-fetches
         // every inserted row's LIVE, post-renumberSortOrders position instead of trusting `inserted`'s own sortOrder fields.
-        let allBlocksAfterWrite = try db.fetchBlocks(projectId: pid)
         let insertedIds = Set(inserted.map { $0.id })
         let insertedLiveSortOrders = allBlocksAfterWrite
             .filter { insertedIds.contains($0.id) }

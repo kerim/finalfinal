@@ -268,7 +268,9 @@ struct LifecycleCapture {
     let blockSync: BlockSyncService?
     let database: ProjectDatabase?
     let projectId: String?
-    let zoomedRange: (start: Double, end: Double?)?
+    /// The zoom range with its place in the renumber log (`zoomedBlockRangeAnchor`), so the save, which runs after the page's last
+    /// reports were applied, reads it in the numbers the rows have by then.
+    let zoomedRange: AnchoredSortOrderRange?
     let zoomedSectionId: String?
     /// Asks the CAPTURED WebView (never the service's own weak one) for the editor's live document.
     let fetch: (@MainActor (TimeInterval) async -> String?)?
@@ -620,7 +622,7 @@ extension EditorViewState {
 
     // MARK: Step 2
 
-    private func captureForLifecycle(host: LifecycleHost) -> LifecycleCapture {
+    func captureForLifecycle(host: LifecycleHost) -> LifecycleCapture {   // internal: a unit test takes the capture a close would take
         let webView = host.activeWebView()
         let blockSync = blockSyncService
         let fetch: (@MainActor (TimeInterval) async -> String?)?
@@ -638,7 +640,7 @@ extension EditorViewState {
             blockSync: blockSync,
             database: projectDatabase,
             projectId: currentProjectId,
-            zoomedRange: zoomedBlockRange,
+            zoomedRange: zoomedBlockRangeAnchor,
             zoomedSectionId: zoomedSectionId,
             fetch: fetch
         )

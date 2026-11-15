@@ -270,7 +270,7 @@ extension LifecycleFlushSequenceTests {
         ) -> LifecycleCapture {
             LifecycleCapture(
                 webView: nil, editorMode: mode, blockSync: nil, database: nil, projectId: nil,
-                zoomedRange: range, zoomedSectionId: section, fetch: nil)
+                zoomedRange: range.map { AnchoredSortOrderRange(unanchored: $0) }, zoomedSectionId: section, fetch: nil)
         }
         func result(
             watchdog: Bool = false, forced: Bool = false, fetched: String? = "x", fallback: Bool = false

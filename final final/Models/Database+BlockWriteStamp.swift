@@ -123,6 +123,9 @@ struct EditorApplyResult: Sendable {
     /// tombstone chain could not resolve it to a live row either -- a real,
     /// counted loss (`staleAnchorInsertsRejected`).
     var rejectedStaleAnchorInserts: [String] = []
+    /// How many times this write re-spaced the project's `sortOrder`s (t-75d20927; see `renumberSortOrdersIfCrowded(db:projectId:)`).
+    /// For logs and tests: the numbers themselves reach `ProjectDatabase.sortOrderRenumberLog` when the transaction commits.
+    var sortOrderRenumbers = 0
 
     var writtenCount: Int { writtenUpdateIds.count + writtenInsertIds.count + writtenDeleteIds.count }
     var droppedCount: Int { droppedUpdateIds.count + droppedDeleteIds.count }
@@ -229,15 +232,26 @@ extension ProjectDatabase {
     ///      the batch that minted it, so no newer batch can have written that block.
     /// Only rows actually written are stamped (rule 4, in `stamp(db:blockIds:stamp:)`).
     ///
-    /// `renumberSortOrdersIfCrowded` (Phase 4a, plan v2 section 1(b), review M8; default OFF, so every Rich Text
-    /// caller is unchanged): the per-block Markdown writer passes `true`. See `renumberSortOrdersIfCrowded(db:projectId:)`
-    /// for what it does, and for the answer to "does it restamp rows or bump the epoch" (no, neither).
+    /// `renumberSortOrdersIfCrowded` (Phase 4a, plan v2 section 1(b), review M8; default OFF): the per-block Markdown writer
+    /// passes `true`, and since t-75d20927 so does every editor batch that goes through `BlockSyncService.applyAndConfirm` (Rich
+    /// Text reports, zoom and switch batches, editor-first click batches). The unguarded two-argument entry and the writer's held-op
+    /// releases leave it off. See `renumberSortOrdersIfCrowded(db:projectId:)` for what it does, and for the answer to "does it
+    /// restamp rows or bump the epoch" (no, neither).
+    ///
+    /// `dedupImagesWithinBatch` (only read when `renumberIfCrowded` is true; the plain path always de-duplicates): whether two
+    /// image inserts of the same `src` in this batch become one row. Rich Text wants that (its poll race produced such pairs);
+    /// the Markdown writer does not (a Markdown document may hold the same image line twice and must keep two rows).
+    ///
+    /// When the batch re-spaced the positions, the old numbers are handed to `ProjectDatabase.sortOrderRenumberLog` when (and
+    /// only when) the transaction commits, still inside this call, so a zoom range read after the writer returns is already
+    /// translated.
     func applyBlockChangesFromEditor(
         _ changes: BlockChanges,
         for projectId: String,
         stamp batchStamp: BlockWriteStamp,
         tombstones: [String: DeletedAnchor] = [:],
-        renumberSortOrdersIfCrowded renumberIfCrowded: Bool = false
+        renumberSortOrdersIfCrowded renumberIfCrowded: Bool = false,
+        dedupImagesWithinBatch: Bool = true
     ) throws -> EditorApplyResult {
         var result = EditorApplyResult()
 
@@ -334,14 +348,19 @@ extension ProjectDatabase {
             // an insert whose anchor is missing at write time can re-anchor via the
             // tombstone chain instead of being silently dropped -- see
             // `processEditorInserts`'s own doc comment.
+            var renumbers: [[Double]] = []
             if renumberIfCrowded {
-                try processEditorInsertsRenumberingIfCrowded(
-                    db: db, inserts: changes.inserts, projectId: projectId, tombstones: tombstones, result: &result)
+                renumbers = try processEditorInsertsRenumberingIfCrowded(
+                    db: db, inserts: changes.inserts, projectId: projectId,
+                    options: InsertPassOptions(tombstones: tombstones, dedupImagesWithinBatch: dedupImagesWithinBatch),
+                    result: &result)
             } else {
+                var insertedImageSources: [String: String] = [:]
                 try processEditorInserts(db: db, inserts: changes.inserts, projectId: projectId,
                                          nextSortOrder: &nextSortOrder, idMapping: &result.idMapping,
                                          tombstones: tombstones, reanchored: &result.reanchoredInserts,
-                                         rejected: &result.rejectedStaleAnchorInserts)
+                                         rejected: &result.rejectedStaleAnchorInserts,
+                                         insertedImageSources: &insertedImageSources)
             }
             result.writtenInsertIds = Array(result.idMapping.values)
 
@@ -354,6 +373,9 @@ extension ProjectDatabase {
                            stamp: batchStamp)
 
             try Self.recomputeSectionParents(db: db, projectId: projectId)
+
+            result.sortOrderRenumbers = renumbers.count
+            logSortOrderRenumbersOnCommit(renumbers, db: db)
         }
 
         return result
@@ -365,14 +387,16 @@ extension ProjectDatabase {
     ///
     /// Why it exists. `resolveInsertPlacement` puts an insert at the midpoint between its anchor and the next row,
     /// so a run of paragraphs added in ONE spot halves the gap every time: after about 50 of them a double has no
-    /// room left, two rows get the SAME `sortOrder`, and their order is lost. Rich Text has the same latent collapse
-    /// (parked, not changed here: its callers pass `false`). Markdown typing makes it reachable in one batch: the
-    /// per-block writer sends a pasted run of paragraphs as ONE batch of chained inserts after one anchor.
+    /// room left, two rows get the SAME `sortOrder`, and their order is lost. Both editors send such a run as ONE batch of
+    /// chained inserts after one anchor (a paste), or as a report per Enter (typing), so both pass `true` since
+    /// t-75d20927: the Markdown writer and every Rich Text batch through `BlockSyncService.applyAndConfirm`. (Rich Text
+    /// was left off until then, which let a 200-paragraph paste tie or reverse its last rows.)
     static let crowdedSortOrderGap: Double = 1.0 / 1_073_741_824.0
 
     /// Renumbers the project's `sortOrder`s as 1.0, 2.0, 3.0, ... in assembly order (`BlockParser.assemblySorted`:
     /// by `sortOrder`, a heading before a non-heading at the same value) when any two adjacent rows are crowded.
-    /// Returns whether it renumbered. Runs on the caller's `db` handle, i.e. inside the batch's own transaction.
+    /// Returns the OLD `sortOrder`s of the rows in that order (what `SortOrderRenumberLog` keeps) when it renumbered, nil when
+    /// it did not. Runs on the caller's `db` handle, i.e. inside the batch's own transaction.
     ///
     /// RESOLVED VERIFY-FIRST (plan v2 section 1(b)): this restamps NOTHING and bumps NO epoch. It is a plain
     /// `UPDATE block SET sortOrder = ?`: `lastWriteEpoch`, `lastWriteSequence` and `project.blockWriteEpoch` are not
@@ -380,22 +404,25 @@ extension ProjectDatabase {
     /// because of it, and the per-row "newer write wins" rule is unaffected. The ORDER of the rows is unchanged;
     /// only the numbers move.
     ///
-    /// What the numbers feed, and what that means if this were on for Rich Text (it stays OFF there): nothing in the
-    /// editor holds a `sortOrder` (a block is identified by its id; the poll's anchors are ids), so a Rich Text
-    /// batch in flight is unaffected. What DOES observe the numbers re-reads once: the outline snapshot (`OutlineSnapshotPublisher`) and the
-    /// section word counts (sums over `sortOrder` ranges, recomputed from the rows), because every row changed in
-    /// one transaction (one re-emit). `recomputeSectionParents` runs after this in the same transaction and reads
-    /// the new numbers. Anything that keeps a row's OLD number across the batch would see it move; the only such
-    /// holder found is a native structural-undo restore of a deleted section's rows (Phase 4b territory).
+    /// What the numbers feed: nothing in the editor holds a `sortOrder` (a block is identified by its id; a report's
+    /// anchors are ids), so an editor batch in flight is unaffected. What DOES observe the numbers re-reads once: the outline
+    /// snapshot (`OutlineSnapshotPublisher`) and the section word counts (sums over `sortOrder` ranges, recomputed from the
+    /// rows), because every row changed in one transaction (one re-emit). `recomputeSectionParents` runs after this in the
+    /// same transaction and reads the new numbers. What keeps a row's OLD number across the batch is a zoom: its
+    /// `[start, end)` range of raw numbers (`EditorViewState.zoomedBlockRange`), which is why every committed renumber is
+    /// logged (`SortOrderRenumberLog`) and a zoom range is an `AnchoredSortOrderRange` that is carried through the log. ONLY this
+    /// renumber is logged: the other `sortOrder` writers (`replaceBlocks`, `replaceBlocksInRange`, `reorderAllBlocks`,
+    /// `normalizeSortOrders`, the section shifts, the whole-table undo restores) are not, and a native structural-undo restore of
+    /// a deleted section's rows writes the whole table back at once.
     @discardableResult
-    static func renumberSortOrdersIfCrowded(db: Database, projectId: String) throws -> Bool {
+    static func renumberSortOrdersIfCrowded(db: Database, projectId: String) throws -> [Double]? {
         let ordered = try assemblyOrderedSortOrders(db: db, projectId: projectId)
         guard zip(ordered, ordered.dropFirst()).contains(where: { $1.sortOrder - $0.sortOrder < crowdedSortOrderGap }) else {
-            return false
+            return nil
         }
         try rewriteSortOrders(db: db, orderedIds: ordered.map { $0.id })
         DebugLog.log(.data, "[BlockWriteStamp] sort orders crowded - renumbered \(ordered.count) rows (no restamp, no epoch bump)")
-        return true
+        return ordered.map { $0.sortOrder }
     }
 
     /// The project's `(id, sortOrder)` pairs in assembly order.
@@ -443,22 +470,44 @@ extension ProjectDatabase {
         return false
     }
 
-    /// `processEditorInserts` for the per-block Markdown writer: the inserts one at a time, with the crowding
+    /// t-75d20927: tells `sortOrderRenumberLog` what this batch re-spaced, but only if the transaction really commits (a rollback logs
+    /// nothing). The hook runs inside the batch's own `write` call, so the entries are in the log before the writer returns and a
+    /// zoom range read after that is already translated. Does nothing when the batch re-spaced nothing.
+    private func logSortOrderRenumbersOnCommit(_ renumbers: [[Double]], db: Database) {
+        guard !renumbers.isEmpty else { return }
+        let log = sortOrderRenumberLog
+        db.afterNextTransaction(onCommit: { _ in log.append(renumbers) })
+    }
+
+    /// What `processEditorInsertsRenumberingIfCrowded` needs besides the inserts themselves (bundled to keep its parameter list short).
+    private struct InsertPassOptions {
+        /// The writer's tombstones: a late insert whose anchor a newer batch deleted re-anchors through them.
+        let tombstones: [String: DeletedAnchor]
+        /// Whether one image map is shared across the batch (true) or every insert gets a fresh one (false); see the function's doc.
+        let dedupImagesWithinBatch: Bool
+    }
+
+    /// `processEditorInserts` for a batch that re-spaces the positions: the inserts one at a time, with the crowding
     /// check BEFORE each (renumber first when this insert would crowd, so a batch of 80 chained inserts after one
-    /// paragraph keeps every row distinct and in order), and one check after the last (any crowding left).
+    /// paragraph keeps every row distinct and in order), and one check after the last (any crowding left). Returns the old
+    /// `sortOrder`s of every renumber it made, in the order it made them (the caller logs them when the transaction commits).
     ///
     /// The check cannot wait until after the batch: by then the chained inserts have halved the same gap 50+ times,
-    /// rows share a `sortOrder`, and their order is already lost. One insert per call also means the within-batch
-    /// image de-duplication in `processEditorInserts` does not apply here, on purpose: it exists for Rich Text's
-    /// poll race, and a Markdown document that holds the same image line twice must keep two rows.
+    /// rows share a `sortOrder`, and their order is already lost. One insert per call means `processEditorInserts` cannot
+    /// keep its within-batch image de-duplication map by itself, so this function owns the map and hands it in:
+    /// `dedupImagesWithinBatch` true shares one map across the whole batch (Rich Text: its poll race can send the same image
+    /// twice, and the plain path de-duplicates); false gives every insert a fresh one, so a Markdown document that holds the
+    /// same image line twice keeps two rows.
     private func processEditorInsertsRenumberingIfCrowded(
         db: Database,
         inserts: [BlockInsert],
         projectId: String,
-        tombstones: [String: DeletedAnchor],
+        options: InsertPassOptions,
         result: inout EditorApplyResult
-    ) throws {
-        // Only the no-anchor fallback of `processEditorInserts` reads this; the Markdown writer never sends one, but
+    ) throws -> [[Double]] {
+        var renumbers: [[Double]] = []
+        var insertedImageSources: [String: String] = [:]
+        // Only the no-anchor fallback of `processEditorInserts` reads this; an editor insert nearly always carries an anchor, but
         // keep it truthful across a renumber (the end of the document is then `count + 1`).
         var nextSortOrder = (try Double.fetchOne(
             db, sql: "SELECT MAX(sortOrder) FROM block WHERE projectId = ?", arguments: [projectId]) ?? 0) + 1.0
@@ -466,16 +515,19 @@ extension ProjectDatabase {
             if try Self.insertWouldCrowd(db: db, insert: insert, projectId: projectId, idMapping: result.idMapping) {
                 let ordered = try Self.assemblyOrderedSortOrders(db: db, projectId: projectId)
                 try Self.rewriteSortOrders(db: db, orderedIds: ordered.map { $0.id })
+                renumbers.append(ordered.map { $0.sortOrder })
                 nextSortOrder = Double(ordered.count) + 1.0
                 DebugLog.log(.data, "[BlockWriteStamp] insert would crowd sort orders - renumbered \(ordered.count) rows first")
             }
+            if !options.dedupImagesWithinBatch { insertedImageSources = [:] }
             try processEditorInserts(
                 db: db, inserts: [insert], projectId: projectId, nextSortOrder: &nextSortOrder,
-                idMapping: &result.idMapping, tombstones: tombstones, reanchored: &result.reanchoredInserts,
-                rejected: &result.rejectedStaleAnchorInserts)
+                idMapping: &result.idMapping, tombstones: options.tombstones, reanchored: &result.reanchoredInserts,
+                rejected: &result.rejectedStaleAnchorInserts, insertedImageSources: &insertedImageSources)
         }
-        if !inserts.isEmpty {
-            try Self.renumberSortOrdersIfCrowded(db: db, projectId: projectId)
+        if !inserts.isEmpty, let old = try Self.renumberSortOrdersIfCrowded(db: db, projectId: projectId) {
+            renumbers.append(old)
         }
+        return renumbers
     }
 }

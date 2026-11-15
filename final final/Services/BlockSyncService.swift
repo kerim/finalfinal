@@ -531,7 +531,9 @@ class BlockSyncService {
         _ ticket: WriterTicket, _ changes: BlockChanges, webView: WKWebView, stamp: BlockWriteStamp,
         onApplied: (@MainActor ([String: String]) async -> Void)? = nil
     ) async {
-        let outcome = await ticket.writer.applyEditorBatch(ticket.seq, changes, stamp: stamp)
+        // `renumberSortOrdersIfCrowded: true` (t-75d20927): every Rich Text batch keeps the room between two saved positions, so
+        // a long paste or a run of Enters in one spot cannot tie or reverse its own rows. Same call the Markdown writer makes.
+        let outcome = await ticket.writer.applyEditorBatch(ticket.seq, changes, stamp: stamp, renumberSortOrdersIfCrowded: true)
         switch outcome {
         case .applied(let result) where onApplied != nil:
             // Phase 5 job B3: a report's ids are confirmed by its acknowledgement (one call, `ReportApplier.acknowledge`).

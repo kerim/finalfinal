@@ -2220,11 +2220,16 @@ actor DocumentWriter {
 
     // MARK: - Apply (actor-isolated: the synchronous DB write runs serialized, on the actor)
 
-    /// `renumberSortOrdersIfCrowded` (Phase 4a, default OFF): the per-block Markdown writer passes `true`; it is handed
-    /// straight to `ProjectDatabase.applyBlockChangesFromEditor`. A held op the writer cascades later never carries it
-    /// (those are updates and deletes). Rich Text's poll never passes it.
+    /// `renumberSortOrdersIfCrowded` (Phase 4a, default OFF): the per-block Markdown writer and, since t-75d20927, every batch
+    /// `BlockSyncService.applyAndConfirm` applies (Rich Text reports, zoom and switch batches, editor-first click batches) pass
+    /// `true`; it is handed straight to `ProjectDatabase.applyBlockChangesFromEditor`, with `dedupImagesWithinBatch` (true for
+    /// Rich Text, false for Markdown). A held op the writer releases later never carries it: held updates and deletes place
+    /// nothing, and held INSERTS (`releaseHeldInsertsOnly`, the inline release after a mint) go one at a time through the plain
+    /// path. That is safe for one halving, because every editor batch has left each gap at 2^-30 or more; a long run of
+    /// held-insert releases at one spot is not covered.
     func applyEditorBatch(
-        _ seq: UInt64, _ changes: BlockChanges, stamp: BlockWriteStamp, renumberSortOrdersIfCrowded: Bool = false
+        _ seq: UInt64, _ changes: BlockChanges, stamp: BlockWriteStamp,
+        renumberSortOrdersIfCrowded: Bool = false, dedupImagesWithinBatch: Bool = true
     ) -> WriterApplyOutcome {
         let admission: AdmissionResult = state.withLock { writerState in
             if writerState.skipped.contains(seq) { return .refuse(.skipped) }
@@ -2278,7 +2283,7 @@ actor DocumentWriter {
         do {
             let result = try database.applyBlockChangesFromEditor(
                 toApply, for: projectId, stamp: stamp, tombstones: tombstoneSnapshot,
-                renumberSortOrdersIfCrowded: renumberSortOrdersIfCrowded)
+                renumberSortOrdersIfCrowded: renumberSortOrdersIfCrowded, dedupImagesWithinBatch: dedupImagesWithinBatch)
             let (mintedTempIds, tombstoneSignal): ([String], Signal) = state.withLock { writerState in
                 for (tempId, permanentId) in result.idMapping { writerState.tempIdMap[tempId] = permanentId }
                 var sig = Signal(handler: writerState.testEventHandler)

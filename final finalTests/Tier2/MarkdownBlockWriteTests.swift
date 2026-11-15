@@ -224,7 +224,7 @@ struct MarkdownBlockWriteTests {
         }
     }
 
-    @Test("(i) control: the same 80 chained inserts through the Rich Text path (guard off) DO collapse sort orders")
+    @Test("(i) control: the same 80 chained inserts through the bare database entry (guard off) DO collapse sort orders")
     func eightyChainedInsertsCollapseWithoutTheGuard() throws {
         let db = try TestFixtureFactory.createTemporary(content: tenParagraphsAndABibliographyHeading)
         let before = try rows(db)

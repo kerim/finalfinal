@@ -9,6 +9,9 @@ import GRDB
 final class ProjectDatabase: Sendable {
     let dbWriter: any DatabaseWriter & Sendable
     let package: ProjectPackage
+    /// Every re-spacing of the block `sortOrder`s this session (t-75d20927), so a zoom range stored as raw numbers can follow
+    /// the rows across one. In memory only: a zoom range never outlives the session.
+    let sortOrderRenumberLog = SortOrderRenumberLog()
 
     init(package: ProjectPackage) throws {
         self.package = package

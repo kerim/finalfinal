@@ -261,7 +261,7 @@ struct LifecycleWholeDocumentWriteTests {
 
         let prepared = try #require(LifecycleWholeDocumentWrite.prepare(
             content: content, database: db, projectId: pid,
-            zoomedRange: (start: 3.0, end: 5.0), zoomedSectionId: "some-root"))
+            zoomedRange: AnchoredSortOrderRange(unanchored: (start: 3.0, end: 5.0)), zoomedSectionId: "some-root"))
 
         #expect(writer.nextSequence == seqBefore, "prepare reserved nothing")
         let strippedExpected = BlockParser.parse(markdown: "# Beta\n\nbeta zoomed[^1] body.", projectId: pid)
@@ -295,7 +295,7 @@ struct LifecycleWholeDocumentWriteTests {
 
         let prepared = try #require(LifecycleWholeDocumentWrite.prepare(
             content: "# Beta\n\nbeta zoomed edit.\n", database: stack.db, projectId: stack.pid,
-            zoomedRange: (start: betaHeading.sortOrder, end: gammaHeading.sortOrder),
+            zoomedRange: AnchoredSortOrderRange(unanchored: (start: betaHeading.sortOrder, end: gammaHeading.sortOrder)),
             zoomedSectionId: betaHeading.id))
         let result = await stack.sync.performLifecycleWholeDocumentWrite(
             identity: SystemWriteIdentity(projectId: stack.pid, database: stack.db), prepared: prepared)

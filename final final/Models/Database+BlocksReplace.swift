@@ -483,6 +483,28 @@ extension ProjectDatabase {
         }
     }
 
+    /// `replaceBlocksInRange` for a caller that holds its zoom range as an `AnchoredSortOrderRange` (t-75d20927): the range is
+    /// translated (`rangeAnchor.current`) INSIDE this write transaction, so every re-spacing of the `sortOrder`s that committed before
+    /// it (a Rich Text report the writer applied while this call waited for its turn at the database) is already in the numbers it
+    /// replaces. A plain tuple read before the call would be stale by then. `afterReplace` runs in the same transaction, after the
+    /// replace, and its answer comes back with the inserted rows: a caller that needs the rows' LIVE positions (the zoom range's new
+    /// boundaries) reads them there, in the same numbers the replace used.
+    func replaceBlocksInRange<T>(
+        _ newBlocks: [Block],
+        for projectId: String,
+        rangeAnchor: AnchoredSortOrderRange,
+        anchorHeadingId: String? = nil,
+        afterReplace: (Database, [Block]) throws -> T
+    ) throws -> (inserted: [Block], afterReplace: T) {
+        try write { db in
+            let range = rangeAnchor.current
+            let inserted = try Self.replaceBlocksInRange(
+                db: db, newBlocks, for: projectId, startSortOrder: range.start, endSortOrder: range.end,
+                anchorHeadingId: anchorHeadingId)
+            return (inserted, try afterReplace(db, inserted))
+        }
+    }
+
     /// The db-level body of `replaceBlocksInRange(_:for:startSortOrder:endSortOrder:anchorHeadingId:)`,
     /// extracted verbatim (t-94369a83 Phase 3a-1a, §2.3 "db-level statics") for the same reason
     /// as `replaceBlocks(db:_:for:preservingMachineManagedBlocks:)` -- see its doc comment. The

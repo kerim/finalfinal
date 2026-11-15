@@ -69,7 +69,7 @@ struct LifecycleMiniNotesWriteTests {
     ) async throws -> SystemWriteResult<LifecycleWholeDocumentWriteValue> {
         let prepared = try #require(LifecycleWholeDocumentWrite.prepare(
             content: content, database: stack.db, projectId: stack.pid,
-            zoomedRange: zoom.range, zoomedSectionId: zoom.alphaId))
+            zoomedRange: AnchoredSortOrderRange(unanchored: zoom.range), zoomedSectionId: zoom.alphaId))
         return await stack.sync.performLifecycleWholeDocumentWrite(
             identity: SystemWriteIdentity(projectId: stack.pid, database: stack.db), prepared: prepared)
     }
@@ -83,7 +83,7 @@ struct LifecycleMiniNotesWriteTests {
 
         let zoomed = try #require(LifecycleWholeDocumentWrite.prepare(
             content: Self.zoomedContent, database: stack.db, projectId: stack.pid,
-            zoomedRange: zoom.range, zoomedSectionId: zoom.alphaId))
+            zoomedRange: AnchoredSortOrderRange(unanchored: zoom.range), zoomedSectionId: zoom.alphaId))
         #expect(zoomed.miniNotes == "[^1]: Edited note.")
         #expect(zoomed.miniNoteDefinitions == ["1": "Edited note."])
 
@@ -171,7 +171,7 @@ struct LifecycleMiniNotesWriteTests {
 
         let prepared = LifecycleWholeDocumentPrepared(
             blocks: BlockParser.parse(markdown: "# Alpha\n\nAlpha body edited[^1].\n", projectId: stack.pid),
-            projectId: stack.pid, range: zoom.range, anchorHeadingId: zoom.alphaId, miniNotes: "")
+            projectId: stack.pid, range: AnchoredSortOrderRange(unanchored: zoom.range), anchorHeadingId: zoom.alphaId, miniNotes: "")
         #expect(prepared.miniNoteDefinitions.isEmpty)
         let result = await stack.sync.performLifecycleWholeDocumentWrite(
             identity: SystemWriteIdentity(projectId: stack.pid, database: stack.db), prepared: prepared)

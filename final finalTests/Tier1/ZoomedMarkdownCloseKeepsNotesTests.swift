@@ -114,7 +114,7 @@ struct ZoomedMarkdownCloseKeepsNotesTests {
         let prepared = try #require(
             LifecycleWholeDocumentWrite.prepare(
                 content: fetched, database: zoomed.rig.db, projectId: zoomed.rig.pid,
-                zoomedRange: zoomed.range, zoomedSectionId: zoomed.beta.id),
+                zoomedRange: AnchoredSortOrderRange(unanchored: zoomed.range), zoomedSectionId: zoomed.beta.id),
             "the fetched text is not empty, so a write is prepared")
 
         #expect(prepared.miniNotes != nil, "a zoomed text with the marker yields the small Notes")
@@ -179,7 +179,7 @@ struct ZoomedMarkdownCloseKeepsNotesTests {
         let prepared = try #require(
             LifecycleWholeDocumentWrite.prepare(
                 content: markerless, database: zoomed.rig.db, projectId: zoomed.rig.pid,
-                zoomedRange: zoomed.range, zoomedSectionId: zoomed.beta.id))
+                zoomedRange: AnchoredSortOrderRange(unanchored: zoomed.range), zoomedSectionId: zoomed.beta.id))
 
         #expect(prepared.miniNotes == nil, "nothing to split on: no small Notes")
         #expect(prepared.miniNoteDefinitions.isEmpty)
