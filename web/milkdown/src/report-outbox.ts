@@ -167,12 +167,32 @@ export function outboxEntries(): readonly Report[] {
   return outbox;
 }
 
-/** Applies `ops` to `maps` with the plugin's own merge rules (`detectChanges`): a delete removes a pending update and adds a
- * delete; an update of an id pending as an insert merges into the insert, otherwise it replaces the update; an insert sets the
- * insert. `onMergedIntoInsert` is the plugin's log hook. */
-export function applyOps(maps: PendingMaps, ops: readonly BlockOp[], onMergedIntoInsert?: (id: string) => void): void {
+/** Applies `ops` to `maps` with the plugin's own merge rules (`detectChanges`): a delete of an id still pending as an insert cancels
+ * that insert (t-80274c66: the insert was never sent, so the row it would make must never exist; the insert and any pending update
+ * of it go, the delete is not added, and every other pending insert anchored on it is re-anchored to the cancelled insert's own
+ * anchor, the document start included); any other delete removes a pending update and adds a delete; an update of an id pending as
+ * an insert merges into the insert, otherwise it replaces the update; an insert sets the insert. `onMergedIntoInsert` and
+ * `onInsertCancelled` are the plugin's log hooks.
+ *
+ * "Pending as an insert" means exactly "not sent": the plugin's maps are cleared on every post and a fold holds only reports Swift
+ * has not taken in, so an insert already sent is in the outbox, not in `maps`, and its delete is kept (and goes out by its temp id,
+ * or by the permanent id once the insert is confirmed). */
+export function applyOps(
+  maps: PendingMaps,
+  ops: readonly BlockOp[],
+  onMergedIntoInsert?: (id: string) => void,
+  onInsertCancelled?: (id: string) => void
+): void {
   for (const op of ops) {
     if (op.kind === 'delete') {
+      const cancelled = maps.pendingInserts.get(op.id);
+      if (cancelled) {
+        maps.pendingInserts.delete(op.id);
+        maps.pendingUpdates.delete(op.id);
+        reanchorInsertsAfter(maps, cancelled);
+        onInsertCancelled?.(op.id);
+        continue;
+      }
       maps.pendingDeletes.add(op.id);
       maps.pendingUpdates.delete(op.id);
     } else if (op.kind === 'update') {
@@ -195,7 +215,25 @@ export function applyOps(maps: PendingMaps, ops: readonly BlockOp[], onMergedInt
   }
 }
 
-/** A batch as ops in the order the plugin applies one detection: deletes, updates, then inserts (Swift's `ReportFold.merge`). */
+/** Every pending insert anchored on `cancelled` is placed where `cancelled` was to go: after the same block, or at the document start.
+ * A chain cancelled one by one resolves itself, because each cancel copies an anchor that is already resolved. The map's order does
+ * not change, so Swift (which places a batch's inserts in order and resolves a temp-id anchor from the ids it has just made) still
+ * has the new anchor before it is needed. */
+function reanchorInsertsAfter(maps: PendingMaps, cancelled: BlockInsert): void {
+  for (const [tempId, insert] of maps.pendingInserts) {
+    if (insert.afterBlockId !== cancelled.tempId) continue;
+    maps.pendingInserts.set(tempId, {
+      ...insert,
+      afterBlockId: cancelled.afterBlockId,
+      atDocumentStart: cancelled.atDocumentStart,
+    });
+  }
+}
+
+/** A batch as ops: its deletes, then its updates, then its inserts. `computeChangeOps` found them in a slightly different order (the
+ * deletes and updates interleaved in the old snapshot's order, then the inserts); that is harmless here because no id is in two of a
+ * batch's three lists. Folding batches oldest first with `applyOps` applies the cancel rule across them: a delete in a later batch
+ * cancels an insert still pending from an earlier one (a batch never holds both for one id, so only a later batch's delete cancels). */
 function opsOf(changes: BlockChanges): BlockOp[] {
   return [
     ...changes.deletes.map((id): BlockOp => ({ kind: 'delete', id })),
@@ -326,6 +364,12 @@ function postPending(kind: ReportKind): number | null {
 /** The plugin detected changes into its maps (records when the oldest unreported one was detected). */
 export function noteDetected(): void {
   if (!cfg().enabled) return;
+  // A detection that left the maps empty (an insert cancelled by its own delete, t-80274c66) left nothing unreported: forget the
+  // cancelled change's time, or the next report's `detectedAt` would be older than its own oldest change.
+  if (mapsAreEmpty(realMapsProbe())) {
+    pendingDetectedAt = null;
+    return;
+  }
   if (pendingDetectedAt === null) pendingDetectedAt = Date.now();
 }
 

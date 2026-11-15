@@ -126,6 +126,9 @@ struct EditorApplyResult: Sendable {
     /// How many times this write re-spaced the project's `sortOrder`s (t-75d20927; see `renumberSortOrdersIfCrowded(db:projectId:)`).
     /// For logs and tests: the numbers themselves reach `ProjectDatabase.sortOrderRenumberLog` when the transaction commits.
     var sortOrderRenumbers = 0
+    /// Temp ids of inserts this batch carried together with their own delete (t-80274c66): the insert, the delete and any update of
+    /// it were taken out before the write, so no row was made and no id is minted (`cancellingInsertsDeletedInSameBatch`).
+    var cancelledInsertIds: [String] = []
 
     var writtenCount: Int { writtenUpdateIds.count + writtenInsertIds.count + writtenDeleteIds.count }
     var droppedCount: Int { droppedUpdateIds.count + droppedDeleteIds.count }
@@ -218,6 +221,9 @@ extension ProjectDatabase {
 
     /// Apply an editor diff under the (epoch, sequence) write guard, in ONE transaction.
     ///
+    /// Before the rules: an insert whose own temp id the same batch deletes is taken out first, with that delete and any update of it
+    /// (t-80274c66, `cancellingInsertsDeletedInSameBatch`); `EditorApplyResult.cancelledInsertIds` names them.
+    ///
     /// Three rules, in order:
     ///   1. BATCH level - if the batch's epoch is below the project's current epoch, the
     ///      document has been wholesale rebuilt since this batch was fetched. Reject the
@@ -246,14 +252,18 @@ extension ProjectDatabase {
     /// only when) the transaction commits, still inside this call, so a zoom range read after the writer returns is already
     /// translated.
     func applyBlockChangesFromEditor(
-        _ changes: BlockChanges,
+        _ incomingChanges: BlockChanges,
         for projectId: String,
         stamp batchStamp: BlockWriteStamp,
         tombstones: [String: DeletedAnchor] = [:],
         renumberSortOrdersIfCrowded renumberIfCrowded: Bool = false,
         dedupImagesWithinBatch: Bool = true
     ) throws -> EditorApplyResult {
+        // t-80274c66: deletes run before inserts below, so an insert whose own delete is in this batch would make a row after its
+        // delete found nothing. The editor no longer sends such a pair; any that still arrives is taken out here first.
+        let (changes, cancelledInsertIds) = Self.cancellingInsertsDeletedInSameBatch(incomingChanges)
         var result = EditorApplyResult()
+        result.cancelledInsertIds = cancelledInsertIds
 
         try write { db in
             let currentEpoch = try Self.blockWriteEpoch(db: db, projectId: projectId)

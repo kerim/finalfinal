@@ -444,3 +444,61 @@ extension ProjectDatabase {
         return block
     }
 }
+
+// MARK: - An insert and its own delete in one batch (t-80274c66)
+
+extension ProjectDatabase {
+
+    /// A second line of defence: takes out of a batch every insert whose own temp id the same batch deletes, together with that
+    /// delete and any update of it. `applyBlockChangesFromEditor` runs a batch's deletes BEFORE its inserts, so such a delete would
+    /// find no row and the insert would then make one: a row the editor no longer has (a paragraph made with Return and removed
+    /// again before its insert was sent). The page's own fold (`applyOps` in report-outbox.ts) cancels the pair before a report
+    /// leaves, so a report does not carry it: a batch's deletes come before its inserts in the fold, so only a LATER batch's delete
+    /// cancels an earlier insert, and the page never builds one batch holding both.
+    ///
+    /// What it sees: an insert and a delete pair only when both reach `applyBlockChangesFromEditor` in ONE batch. A pair the writer's
+    /// hold has already separated (`DocumentWriter.processIncomingLocked` holds an op that waits on a temp id not yet minted) is two
+    /// calls by then, and is not seen. Only an id that starts with `temp-` pairs: the delete of a permanent id never does.
+    ///
+    /// A kept insert anchored on a cancelled one (a paste or a run of Enters chains each paragraph after the one before it) takes the
+    /// cancelled insert's own anchor, `atDocumentStart` included; the inserts are walked in the batch's order (the order the editor
+    /// chained them in), so a chain of cancelled inserts resolves itself, each one copying an anchor already resolved. A batch with
+    /// no such pair comes back as it was. No id is reported for a cancelled insert: no row is made for it.
+    ///
+    /// The undo premise matters only for an insert that was never minted. When the earlier insert WAS minted, the writer has already
+    /// turned a later delete of it into the minted id (`processIncomingLocked`, `resolve`), and nothing pairs here. For an insert
+    /// that was never minted, a block the editor re-creates after the removal (an undo) must come back under a NEW temp id; if it
+    /// came back under the removed one, its insert would pair with the removal's delete and be cancelled with it. The editor does
+    /// give it a new id (pinned by W7 in `report-outbox-insert-delete.test.ts`).
+    static func cancellingInsertsDeletedInSameBatch(_ changes: BlockChanges) -> (changes: BlockChanges, cancelled: [String]) {
+        guard !changes.inserts.isEmpty, !changes.deletes.isEmpty else { return (changes, []) }
+        let deleted = Set(changes.deletes)
+        let cancelledIds = Set(changes.inserts.map(\.tempId).filter { $0.hasPrefix("temp-") && deleted.contains($0) })
+        guard !cancelledIds.isEmpty else { return (changes, []) }
+
+        var placement: [String: (after: String?, atStart: Bool?)] = [:]   // each cancelled temp id -> where it was to go
+        var keptInserts: [BlockInsert] = []
+        var cancelled: [String] = []
+        for insert in changes.inserts {
+            var placed = insert
+            if let anchor = insert.afterBlockId, let moved = placement[anchor] {
+                placed = BlockInsert(
+                    tempId: insert.tempId, blockType: insert.blockType, textContent: insert.textContent,
+                    markdownFragment: insert.markdownFragment, headingLevel: insert.headingLevel,
+                    afterBlockId: moved.after, atDocumentStart: moved.atStart)
+            }
+            if cancelledIds.contains(insert.tempId) {
+                placement[insert.tempId] = (placed.afterBlockId, placed.atDocumentStart)
+                cancelled.append(insert.tempId)
+            } else {
+                keptInserts.append(placed)
+            }
+        }
+        DebugLog.log(.data, "[BlockWriteStamp] insert cancelled by its own delete in the same batch: " + cancelled.joined(separator: ", "))
+        let kept = BlockChanges(
+            updates: changes.updates.filter { !cancelledIds.contains($0.id) },
+            inserts: keptInserts,
+            deletes: changes.deletes.filter { !cancelledIds.contains($0) })
+        return (kept, cancelled)
+    }
+}

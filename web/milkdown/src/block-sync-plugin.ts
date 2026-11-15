@@ -932,13 +932,18 @@ export function detectChanges(
 
 /** Applies detected ops to the real maps (with the plugin's own log line for an update merged into a pending insert). */
 function applyDetectedOps(state: BlockSyncPluginState, ops: readonly BlockOp[]): void {
-  applyOps(state, ops, (id) => {
-    const insert = state.pendingInserts.get(id);
-    syncLog(
-      'BlockSync:detect',
-      `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${(insert?.textContent ?? '').slice(0, 40)}"`
-    );
-  });
+  applyOps(
+    state,
+    ops,
+    (id) => {
+      const insert = state.pendingInserts.get(id);
+      syncLog(
+        'BlockSync:detect',
+        `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${(insert?.textContent ?? '').slice(0, 40)}"`
+      );
+    },
+    (id) => syncLog('BlockSync:detect', `INSERT-cancelled-by-DELETE id=${id.slice(0, 13)}`)
+  );
 }
 
 /** Detection into the pending maps (Phase 5 job B3: and the note of when the oldest unreported change was detected, for the
@@ -977,7 +982,7 @@ export function computeChangeOps(
   for (const [id, oldBlock] of oldSnapshot) {
     const newBlock = newSnapshot.get(id);
     if (!newBlock) {
-      // Block was deleted (applyOps also removes a pending update of it)
+      // Block was deleted (applyOps also removes a pending update of it, or cancels its pending insert: t-80274c66)
       ops.push({ kind: 'delete', id });
       syncLog(
         'BlockSync:detect',
