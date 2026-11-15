@@ -386,13 +386,14 @@ class BlockSyncService {
     #endif
 
     /// The tail of an editor batch's journey, shared by the editor's reports (`applyReportBatch`) and the editor-first section
-    /// commands' click paths (t-94369a83 Phase 4b slice 2a): classify the batch, wait for the ticket's turn, then apply it through
+    /// commands' click paths (t-94369a83 Phase 4b slice 2a): settle an empty batch at once, wait for the ticket's turn, refuse a stale
+    /// snapshot judged against the rows as they are then (t-25eb1399), then apply it through
     /// the writer and confirm any minted ids back to the editor (a report's ids are confirmed by its acknowledgement, `onApplied`).
     /// Returns when the ticket has settled (applied, empty, discarded or skipped). The caller owns the "ticket always settles"
     /// `defer` for paths that never get here.
     ///
-    /// `abandonAfterTurn` runs once the turn is granted, before the apply: a report passes its duplicate / stale-session check
-    /// (true = write nothing); the click paths pass nothing.
+    /// `abandonAfterTurn` runs once the turn is granted and the stale-snapshot check has passed, before the apply: a report passes
+    /// its duplicate / stale-session check (true = write nothing); the click paths pass nothing.
     func applyFetchedBatch( // swiftlint:disable:this function_parameter_count
         ticket: WriterTicket, changes: BlockChanges, stamp: BlockWriteStamp, webView: WKWebView,
         database: ProjectDatabase, projectId: String, force: Bool,
@@ -400,20 +401,26 @@ class BlockSyncService {
         abandonOutcome: NonApplyOutcome = .discarded(.generationChanged("postTurnWait")),
         onApplied: (@MainActor ([String: String]) async -> Void)? = nil
     ) async {
-        switch classifyBatch(changes, database: database, projectId: projectId, force: force) {
-        case .apply:
-            break
-        case .empty:
+        // The empty check reads no rows: an empty batch still settles at once, without waiting for its turn.
+        guard !changes.isEmpty else {
             ticket.settleIfOpen(.empty)
-            return
-        case .staleSnapshot:
-            ticket.settleIfOpen(.discarded(.staleSnapshot))
             return
         }
 
         // A non-`.go` result means the writer's own `skip()` call already logged
         // (`DebugLog.alwaysPersisted`, item 1) and counted this sequence in its ledger.
         guard await ticket.waitForTurn() == .go else { return }
+
+        // t-25eb1399: the stale-snapshot check reads the rows, so it runs here at the turn, after every write queued ahead of this
+        // batch (a section command's job, for one) has landed -- not against the rows as they were when the batch arrived. The guard
+        // refuses a batch whose deletes EQUAL the current row count and that inserts nothing (it compares counts, not ids), so
+        // judged on arrival it could wrongly catch a legitimate report that deletes everything it knew of while the rows an earlier
+        // queued write (a Duplicate's job, or the previous report's inserts) was still to add had not been counted yet.
+        logChangeDigest(changes, force: force)
+        if shouldRejectStaleSnapshot(changes, database: database, projectId: projectId) {
+            ticket.settleIfOpen(.discarded(.staleSnapshot))
+            return
+        }
 
         if abandonAfterTurn() {
             ticket.settleIfOpen(abandonOutcome)
@@ -1309,26 +1316,35 @@ extension BlockSyncService {
         }
     }
 
-    /// Stale-snapshot guard + telemetry. Hard-reject only the pre-existing
+    /// Stale-snapshot guard + telemetry, run at the batch's writer turn. Hard-reject only the pre-existing
     /// 100%-delete-no-inserts pattern. Warning logs for mass delete or the
     /// balanced-churn type-theft signature — never reject on those.
     private func shouldRejectStaleSnapshot(_ changes: BlockChanges, database: ProjectDatabase, projectId: String) -> Bool {
         if !changes.deletes.isEmpty || !changes.inserts.isEmpty {
             do {
+                // Runs at the batch's writer turn (`applyFetchedBatch`, after `waitForTurn()`), so `blockCount` is the row count
+                // after every write queued ahead of the batch has landed -- a section command's job included -- and not the count
+                // when the batch arrived (t-25eb1399). The turn is held until this batch settles, so nothing else can write between
+                // this read and the apply. The guard compares counts, not ids: it refuses a batch whose deletes equal `blockCount`
+                // with no inserts. Judged at the turn it no longer wrongly catches a legitimate delete-everything report that was
+                // queued behind earlier work (a Duplicate's job), nor a report whose new paragraphs were in the previous report,
+                // still unwritten when this one arrived.
+                //
                 // Known latent race (tracked separately, deliberately not addressed here):
                 // this is a synchronous GRDB read running directly on MainActor, so it can
                 // block the MainActor for the duration of the read (e.g. while contending
                 // with the write lock a concurrent `applyChanges`'s `Task.detached` write is
-                // holding). The obvious fix — hop this read off MainActor the way
-                // `applyChanges` does for its write — would trade that blocking for a NEW
+                // holding). The obvious fix -- hop this read off MainActor the way
+                // `applyChanges` does for its write -- would trade that blocking for a NEW
                 // correctness window: `changes`/`database`/`projectId` are all captured
-                // on-MainActor above, and re-suspending here to read `blockCount` would let a
-                // concurrent wholesale rewrite (project switch, mode toggle, etc.) land in
-                // that gap, exactly like the residual windows already documented on
-                // `applyChanges` above — except unguarded on the way back in (the write's own
-                // epoch check would refuse a stale batch, but this read would already have
-                // judged it). Fixing the blocking without also closing that new window would be a
-                // net regression, not a fix; left for a follow-up that addresses both together.
+                // on-MainActor above, and re-suspending here to read `blockCount` would put a
+                // suspension between the turn and the apply, letting a concurrent wholesale
+                // rewrite (project switch, mode toggle, etc.) land in that gap, exactly like
+                // the residual windows already documented on `applyChanges` above -- except
+                // unguarded on the way back in (the write's own epoch check would refuse a
+                // stale batch, but this read would already have judged it). Fixing the blocking
+                // without also closing that new window would be a net regression, not a fix;
+                // left for a follow-up that addresses both together.
                 let blockCount = try database.fetchBlockCount(projectId: projectId)
                 if let reason = Self.shouldRejectAsStale(changes: changes, blockCount: blockCount) {
                     DebugLog.alwaysPersisted(
@@ -1356,26 +1372,5 @@ extension BlockSyncService {
             }
         }
         return false
-    }
-
-    /// Classifies a fetched batch right after the fetch: empty (nothing to apply),
-    /// rejected as a stale snapshot, or ready to apply. Not a pure predicate: it also
-    /// calls `logChangeDigest` (which logs) and runs the stale-snapshot rejection
-    /// check as a side effect before answering. Synchronous. Temp-id resolution is no longer
-    /// done here -- `DocumentWriter.applyEditorBatch` resolves (and, while a late
-    /// sequence is open, holds) temp-id references itself, as the only id authority.
-    private enum BatchApplicability { case apply, empty, staleSnapshot }
-
-    private func classifyBatch(
-        _ changes: BlockChanges, database: ProjectDatabase, projectId: String, force: Bool
-    ) -> BatchApplicability {
-        guard !changes.updates.isEmpty || !changes.inserts.isEmpty || !changes.deletes.isEmpty else {
-            return .empty
-        }
-        logChangeDigest(changes, force: force)
-        if shouldRejectStaleSnapshot(changes, database: database, projectId: projectId) {
-            return .staleSnapshot
-        }
-        return .apply
     }
 }
