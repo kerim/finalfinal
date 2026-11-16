@@ -157,31 +157,14 @@ extension FootnoteCursorPlacementE2ETests {
                 "got markdownFragment=\"\(row.markdownFragment)\"",
             file: file, line: line
         )
-        // CONFIRMED (by reading the source, not guessed): a Milkdown-authored footnote
-        // definition's body carries exactly one leading space ahead of its real text in
-        // `textContent`, even though `markdownFragment` does not. Root cause traced to
-        // `web/milkdown/src/footnote-plugin.ts`'s `remarkFootnotePlugin` (pass 1, ~line 74):
-        // parsing a `[^N]: text` GFM footnoteDefinition unconditionally builds the paragraph's
-        // text-node sibling to the atomic `footnote_def` pill as `` `${childText}` `` -- a
-        // deliberate ONE-space separator, since the pill's own `toMarkdown` emits `[^N]:` with
-        // no trailing space (block-sync-plugin.ts:472) and relies on that sibling text node to
-        // supply it on re-serialization. `web/milkdown/src/block-sync-plugin.ts`'s block-sync
-        // diffing (line 764) captures `Block.textContent` straight from ProseMirror's native
-        // `node.textContent` -- which concatenates that same leading-space-bearing text node
-        // verbatim, since `footnote_def` is an atom (`.textContent` is `''` for atoms; see the
-        // comment beside block-sync-plugin.ts:474) -- so the separator space that's supposed to
-        // be purely a markdown-serialization artifact leaks into the stored "body text" field.
-        // `markdownFragment` escapes this because the SAME leading space is exactly what
-        // supplies the "]: " separator this function already consumed above, leaving nothing
-        // extra for the sentinel to be prefixed by there. Out of scope for this test file (a
-        // pre-existing Milkdown round-trip quirk, unrelated to Notes H1/H2 unification) --
-        // asserting what the app actually and consistently does, not loosening to a bare
-        // `contains` that would also swallow a genuine prefix-boundary regression.
-        let expectedTextContent = " \(sentinel)"
+        // Since 64c26aff (t-4eb7bfa9) `textContent` is `BlockParser.extractTextContent` of the trimmed fragment, the same as the
+        // whole-document write, with the `[^N]:` prefix and surrounding white space removed. It no longer comes from
+        // ProseMirror's `node.textContent`, so the separator space beside the `footnote_def` pill never reaches it.
+        let expectedTextContent = sentinel
         XCTAssertTrue(
             row.textContent.hasPrefix(expectedTextContent),
-            "textContent (prefix-stripped) must start with the sentinel, prefixed by exactly the one known " +
-                "editor-internal separator space (see this assertion's comment) -- got textContent=\"\(row.textContent)\"",
+            "textContent must start with the sentinel, with no leading space (the stored text is derived from the fragment, " +
+                "prefix stripped and trimmed) -- got textContent=\"\(row.textContent)\"",
             file: file, line: line
         )
     }

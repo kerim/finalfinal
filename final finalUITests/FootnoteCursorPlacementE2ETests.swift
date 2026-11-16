@@ -101,7 +101,9 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
 
         clickIntoEditorBody(bodyLinePrefix: "A body paragraph with an existing reference")
         insertFootnoteAndWaitForLanding()
-        let sentinel = "SENT1_\(shortUUID())_"
+        // Every sentinel in this file is letters and digits only: Rich Text saves through Milkdown's serializer, which
+        // escapes `_` and `*` where they could read as emphasis (same reason as scenario 5's marker below).
+        let sentinel = "SENT1Q\(shortUUID())Z"
         typeSentinelWithNoIntervening(sentinel)
 
         assertSentinelAtDefinitionStart(sentinel)
@@ -173,7 +175,7 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
 
         clickIntoEditorBody(bodyLinePrefix: "Body paragraph with a reference")
         insertFootnoteAndWaitForLanding()
-        let sentinel = "SENT2_\(shortUUID())_"
+        let sentinel = "SENT2Q\(shortUUID())Z"
         typeSentinelWithNoIntervening(sentinel)
 
         assertSentinelAtDefinitionStart(sentinel)
@@ -237,7 +239,7 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
 
         clickIntoEditorBody(bodyLinePrefix: "Body paragraph with a reference")
         insertFootnoteAndWaitForLanding()
-        let sentinel = "SENT3_\(shortUUID())_"
+        let sentinel = "SENT3Q\(shortUUID())Z"
         typeSentinelWithNoIntervening(sentinel)
 
         assertSentinelAtDefinitionStart(sentinel)
@@ -273,7 +275,7 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
 
         clickIntoEditorBody(bodyLinePrefix: "Chapter body with a reference")
         insertFootnoteAndWaitForLanding()
-        let sentinel = "SENT4_\(shortUUID())_"
+        let sentinel = "SENT4Q\(shortUUID())Z"
         typeSentinelWithNoIntervening(sentinel)
 
         assertSentinelAtDefinitionStart(sentinel)
@@ -446,7 +448,7 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
     // to that suite. This is the only tier that can catch that class of regression.
 
     func testClickingFootnoteDefinitionInRichTextReturnsCursorAfterReference() throws {
-        let sentinel = "SENT_M3RT_\(shortUUID())_"
+        let sentinel = "SENTM3RTQ\(shortUUID())Z"
         FixtureDatabase.seedMarkdown(fixturePath: TestFixtureHelper.fixturePath, markdown: """
         Body text with a single reference[^1] here.
 
@@ -466,7 +468,7 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
     }
 
     func testClickingFootnoteDefinitionInMarkdownReturnsCursorAfterReference() throws {
-        let sentinel = "SENT_M3MD_\(shortUUID())_"
+        let sentinel = "SENTM3MDQ\(shortUUID())Z"
         FixtureDatabase.seedMarkdown(fixturePath: TestFixtureHelper.fixturePath, markdown: """
         Body text with a single reference[^1] here.
 
