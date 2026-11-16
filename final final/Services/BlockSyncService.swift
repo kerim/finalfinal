@@ -202,28 +202,8 @@ class BlockSyncService {
         if sameProject, let writer {
             writer.skipAllReserved(reason: .editorReplaced)
         } else {
-            let next = writer?.nextSequence ?? 1
-            // Test-only knobs (DEBUG-gated on DocumentWriter; no production effect) are
-            // per-INSTANCE, so replacing `writer` silently drops whatever a test wired
-            // onto the old one — a test that sets `testWriterEventHandler` (etc.) before
-            // triggering a writer replacement would otherwise see it go silently dark on
-            // the new instance. Carried forward here, mirroring "Sequence continuity"
-            // above for `nextSequence`.
-            #if DEBUG
-            let carriedEventHandler = writer?.testEventHandler
-            let carriedLateAfter = writer?.testLateAfterSeconds
-            let carriedDrainTimeout = writer?.testDrainTimeoutSeconds
-            let carriedLateAbandonAfter = writer?.testLateAbandonAfterSeconds
-            #endif
-            writer?.retire(reason: .writerReplaced)
-            writer = DocumentWriter(
-                database: database, projectId: projectId, firstSequence: next, assertsMainActorCallers: true)
-            #if DEBUG
-            writer?.testEventHandler = carriedEventHandler
-            writer?.testLateAfterSeconds = carriedLateAfter
-            writer?.testDrainTimeoutSeconds = carriedDrainTimeout
-            writer?.testLateAbandonAfterSeconds = carriedLateAbandonAfter
-            #endif
+            // Retire, sequence continuity and the DEBUG test knobs: `replaceWriter` (BlockSyncService+WriterReplacement.swift).
+            replaceWriter(database: database, projectId: projectId, retiringOldWriterFor: .writerReplaced)
         }
         self.projectDatabase = database
         self.projectId = projectId
@@ -263,25 +243,7 @@ class BlockSyncService {
         // force-send, FB and the writer barrier, then the tail's retire); `retire`
         // here refuses anything reserved after that, which the epoch bump below
         // already rejects today.
-        let next = writer?.nextSequence ?? 1
-        // See the matching comment in `configure`'s writer-replacement branch: these
-        // are DEBUG-only test knobs, per-INSTANCE on the writer, that must survive a
-        // replacement the same way `nextSequence` continuity already does.
-        #if DEBUG
-        let carriedEventHandler = writer?.testEventHandler
-        let carriedLateAfter = writer?.testLateAfterSeconds
-        let carriedDrainTimeout = writer?.testDrainTimeoutSeconds
-        let carriedLateAbandonAfter = writer?.testLateAbandonAfterSeconds
-        #endif
-        writer?.retire(reason: .projectSwitch)
-        writer = DocumentWriter(
-            database: database, projectId: projectId, firstSequence: next, assertsMainActorCallers: true)
-        #if DEBUG
-        writer?.testEventHandler = carriedEventHandler
-        writer?.testLateAfterSeconds = carriedLateAfter
-        writer?.testDrainTimeoutSeconds = carriedDrainTimeout
-        writer?.testLateAbandonAfterSeconds = carriedLateAbandonAfter
-        #endif
+        replaceWriter(database: database, projectId: projectId, retiringOldWriterFor: .projectSwitch)
         self.projectDatabase = database
         self.projectId = projectId
         // A fresh project means every batch still in flight from the OLD project was

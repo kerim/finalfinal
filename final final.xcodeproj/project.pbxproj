@@ -95,6 +95,7 @@
 		12BA40CF66378D505D841D27 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B2D7B12CDE1D0FA0F28C73C /* DebugLog.swift */; };
 		13123D5FA67B69A0919A707B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 05D19AFCC2206BEE8E92DDAE /* Sparkle */; };
 		135D44FB4D2BB6A12ABB783F /* OutlineSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75B3D65D281D81B769D7DF96 /* OutlineSidebar.swift */; };
+		1414F019445523EC6402E908 /* BlockSyncService+WriterReplacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BFE076A40C0F100B390912 /* BlockSyncService+WriterReplacement.swift */; };
 		1452D23217C6B480476DC48A /* ReportApplierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DDE722365B825AA60C9ECD7 /* ReportApplierTests.swift */; };
 		147353EFA228E6DB29ABD5B2 /* VersionHistoryRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E16C04BF596FF92B87F80CE /* VersionHistoryRestoreTests.swift */; };
 		14804AE763DDB9FF87BE6757 /* CAYWConcurrentInsertTestsHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC1C9D22BBFE109FF028FC72 /* CAYWConcurrentInsertTestsHelpers.swift */; };
@@ -535,6 +536,7 @@
 		88AB6DED4A2E398862C569CE /* ProjectPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8E40231CCB32EC98E3B48F /* ProjectPickerView.swift */; };
 		88B61C4F440AF8F8064E4363 /* ExportActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49156BCDB697F2AF0EA02421 /* ExportActivity.swift */; };
 		88BD575AFFB9F8F65C690532 /* ReportIntakeCompareTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A195FB328A29767A7C494E56 /* ReportIntakeCompareTests.swift */; };
+		88C9A021C34F13158D735CE8 /* BlockSyncServiceWriterReplacementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58E7859CDDE97DCD22DAAAC7 /* BlockSyncServiceWriterReplacementTests.swift */; };
 		890AA06467EF1F85654E9D36 /* EditorViewState+ProjectReset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F8236DBF123893D2CEFD1FC /* EditorViewState+ProjectReset.swift */; };
 		896CBFFEA06B65164A870BEF /* StructuralUndoController+EditorFirstStructural.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562573EBD06E30AEBFCA80FC /* StructuralUndoController+EditorFirstStructural.swift */; };
 		89C3D3E5B41D2C1F7895BC5D /* WriteQueuePhase4bMarkdownEFE2ETests+Drag.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBFA5C887B5D674FEF9F32E2 /* WriteQueuePhase4bMarkdownEFE2ETests+Drag.swift */; };
@@ -1251,6 +1253,7 @@
 		4841F7F108760152AC98A47B /* EditorViewState+Types.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewState+Types.swift"; sourceTree = "<group>"; };
 		489D81C798F92573EB2BF785 /* BibliographyRegenerationAnchorHijackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyRegenerationAnchorHijackTests.swift; sourceTree = "<group>"; };
 		48B20D65EC9C3C5D7DCCFE8C /* CitationErrorPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CitationErrorPresenter.swift; sourceTree = "<group>"; };
+		48BFE076A40C0F100B390912 /* BlockSyncService+WriterReplacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlockSyncService+WriterReplacement.swift"; sourceTree = "<group>"; };
 		49156BCDB697F2AF0EA02421 /* ExportActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportActivity.swift; sourceTree = "<group>"; };
 		4928580105FDF4B6C1D9E550 /* ProjectOpenErrorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOpenErrorState.swift; sourceTree = "<group>"; };
 		49EFD7BBAF8479D3AD512806 /* QuickUndoTamperTwinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickUndoTamperTwinTests.swift; sourceTree = "<group>"; };
@@ -1322,6 +1325,7 @@
 		5741EAE0DDD338AB4D025101 /* final final.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "final final.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		574D4E2E57B58CBB3CCCA8B1 /* FindBarState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindBarState.swift; sourceTree = "<group>"; };
 		58ADC21911BFA668F5E1118D /* MarkdownBlockWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockWriter.swift; sourceTree = "<group>"; };
+		58E7859CDDE97DCD22DAAAC7 /* BlockSyncServiceWriterReplacementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSyncServiceWriterReplacementTests.swift; sourceTree = "<group>"; };
 		5902C341D97A143E13EC44CA /* Database+BlocksReorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Database+BlocksReorder.swift"; sourceTree = "<group>"; };
 		5903AE3511C621FF3093E3C9 /* AnnotationCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationCardView.swift; sourceTree = "<group>"; };
 		59265E48CC81520EFF270286 /* ProjectCommandsCancelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandsCancelTests.swift; sourceTree = "<group>"; };
@@ -2319,6 +2323,7 @@
 				004F2B6934ECE802A7AAA043 /* BlockSyncService+Markdown.swift */,
 				BC14CFA5EB9F20D4F88F45ED /* BlockSyncService+Reports.swift */,
 				B95E5BD443680B0CBA2C4F76 /* BlockSyncService+Transition.swift */,
+				48BFE076A40C0F100B390912 /* BlockSyncService+WriterReplacement.swift */,
 				DDC98D54901B8744835E5EF4 /* BuiltInProvider.swift */,
 				1B5D550345EDFF2622F92011 /* CitationPrefill.swift */,
 				E5F134969EA90B8F23023EA3 /* CitationPrefillScheduler.swift */,
@@ -2664,6 +2669,7 @@
 				734A1698357BF2B6C27A498D /* BibliographyRegenerationPositionTestSupport.swift */,
 				D9C92ED5B2BE260D34B66182 /* BlockIdAlignmentHardeningLiveTests.swift */,
 				B96AF7E08739DE4D60305E95 /* BlockSyncFetchContentTimeoutTests.swift */,
+				58E7859CDDE97DCD22DAAAC7 /* BlockSyncServiceWriterReplacementTests.swift */,
 				59C494C6F45F9B2C4EB019EB /* CAYWConcurrentInsertTests.swift */,
 				FC1C9D22BBFE109FF028FC72 /* CAYWConcurrentInsertTestsHelpers.swift */,
 				3C093D047A50B1700205B6D0 /* CitationDeleteTests.swift */,
@@ -3433,6 +3439,7 @@
 				B4A5A572F785E929B8D232AD /* BlockReorderIntegrityTests.swift in Sources */,
 				0E73A2CA77ADED759B79CD01 /* BlockRoundtripTests.swift in Sources */,
 				7565D7B03ED156276015D609 /* BlockSyncFetchContentTimeoutTests.swift in Sources */,
+				88C9A021C34F13158D735CE8 /* BlockSyncServiceWriterReplacementTests.swift in Sources */,
 				1F5CD824C3B255DA2D04B0E0 /* BlockSyncStaleGuardTests.swift in Sources */,
 				706251B9E98284FA5B8A5605 /* BlockUpdateTypeTests.swift in Sources */,
 				67C2B617C3641856B7455573 /* BlockWriteStampGuardTests.swift in Sources */,
@@ -3974,6 +3981,7 @@
 				E40D3DADC6F987033CD70001 /* BlockSyncService+Markdown.swift in Sources */,
 				573D0FDF82FE6C346B32F65F /* BlockSyncService+Reports.swift in Sources */,
 				05B43AB89771191BF77242F9 /* BlockSyncService+Transition.swift in Sources */,
+				1414F019445523EC6402E908 /* BlockSyncService+WriterReplacement.swift in Sources */,
 				230D53A0B012FF234621652E /* BlockSyncService.swift in Sources */,
 				21E9D0A73D4F1709F165CC1E /* BuiltInProvider.swift in Sources */,
 				8A96868113B77FF320A4AFB9 /* CSLItem.swift in Sources */,

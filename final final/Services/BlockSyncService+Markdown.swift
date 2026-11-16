@@ -216,7 +216,7 @@ extension BlockSyncService {
     ///   project, and the tail's `reconfigure` creates the new writer.
     /// - No-op `.alreadyPresent` when a LIVE writer (not retired) already exists for this database and project.
     ///   `reconfigure` composes with this: before it, the mismatch rule makes this a no-op; after it, the writer exists.
-    /// - Otherwise mirrors `configure`'s new-writer branch: retire the old writer (`.writerReplaced`), continue the
+    /// - Otherwise mirrors `configure`'s new-writer branch (both call `replaceWriter`): retire the old writer (`.writerReplaced`), continue the
     ///   sequence numbers, carry the DEBUG test knobs, bump the epoch (a failed bump sets `needsEpochBump`, retried by
     ///   `reserveMarkdownTurn` and the poll). It touches neither the WebView nor polling, and not the service's own
     ///   database/project fields (those stay `configure`'s, so Milkdown's later `configure` still sees a different
@@ -237,23 +237,7 @@ extension BlockSyncService {
             return .alreadyPresent
         }
 
-        let next = writer?.nextSequence ?? 1
-        // Carry the per-INSTANCE DEBUG test knobs across the replacement, as `configure` and `reconfigure` do.
-        #if DEBUG
-        let carriedEventHandler = writer?.testEventHandler
-        let carriedLateAfter = writer?.testLateAfterSeconds
-        let carriedDrainTimeout = writer?.testDrainTimeoutSeconds
-        let carriedLateAbandonAfter = writer?.testLateAbandonAfterSeconds
-        #endif
-        writer?.retire(reason: .writerReplaced)
-        writer = DocumentWriter(
-            database: database, projectId: projectId, firstSequence: next, assertsMainActorCallers: true)
-        #if DEBUG
-        writer?.testEventHandler = carriedEventHandler
-        writer?.testLateAfterSeconds = carriedLateAfter
-        writer?.testDrainTimeoutSeconds = carriedDrainTimeout
-        writer?.testLateAbandonAfterSeconds = carriedLateAbandonAfter
-        #endif
+        let next = replaceWriter(database: database, projectId: projectId, retiringOldWriterFor: .writerReplaced)
         do {
             _ = try database.bumpBlockWriteEpoch(projectId: projectId)
             needsEpochBump = false
