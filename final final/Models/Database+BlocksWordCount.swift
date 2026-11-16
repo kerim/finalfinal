@@ -3,8 +3,9 @@
 //  final final
 //
 //  Heading-scoped word count aggregation. The single entry point is
-//  `batchWordCounts(blockIds:needsAggregate:)` — one DB read computes both
-//  section-only and aggregate counts for any number of heading blocks.
+//  `batchWordCounts(blockIds:needsAggregate:)` — one DB read, and one walk over the
+//  block rows, computes both section-only and aggregate counts for any number of
+//  heading blocks (t-58d64b34; it used to walk the rows once per heading).
 //
 
 import Foundation
@@ -45,15 +46,19 @@ extension ProjectDatabase {
         }
     }
 
-    /// The computation of `batchWordCounts(blockIds:needsAggregate:)` inside a read the caller already has open, so that
-    /// the outline snapshot (`readOutlineSnapshotData`) takes its heading rows and these counts from ONE read transaction
-    /// and the two cannot disagree.
-    static func batchWordCounts(
-        in db: Database,
-        blockIds: [String],
-        needsAggregate: Set<String> = []
-    ) throws -> [String: HeadingWordCounts] {
-        guard !blockIds.isEmpty else { return [:] }
+    /// The headings a word-count request is about. `requested` are the requested ids that are headings of the project;
+    /// `allHeadings` are every heading of that project in document order, because a section's end is found among ALL of them,
+    /// not only among the requested ones.
+    private struct WordCountHeadings {
+        let projectId: String
+        let requested: [Block]
+        let allHeadings: [Block]
+    }
+
+    /// Finds the headings `batchWordCounts(in:blockIds:needsAggregate:)` works on. nil when there is nothing to count: no ids, or
+    /// none of them is a heading.
+    private static func wordCountHeadings(in db: Database, blockIds: [String]) throws -> WordCountHeadings? {
+        guard !blockIds.isEmpty else { return nil }
 
         // Fetch the requested heading blocks
         let headingBlocks = try Block
@@ -62,7 +67,7 @@ extension ProjectDatabase {
             .order(Block.Columns.sortOrder)
             .fetchAll(db)
 
-        guard !headingBlocks.isEmpty else { return [:] }
+        guard !headingBlocks.isEmpty else { return nil }
 
         // Safety: callers should only pass blockIds from one project.
         // If multiple projects sneak in, only process the dominant one.
@@ -70,7 +75,7 @@ extension ProjectDatabase {
         if projectIds.count > 1 {
             DebugLog.log(.outline, "[batchWordCounts] WARNING: blockIds span \(projectIds.count) projects; using first")
         }
-        guard let projectId = headingBlocks.first?.projectId else { return [:] }
+        guard let projectId = headingBlocks.first?.projectId else { return nil }
 
         let inProject = headingBlocks.filter { $0.projectId == projectId }
 
@@ -81,59 +86,110 @@ extension ProjectDatabase {
             .order(Block.Columns.sortOrder)
             .fetchAll(db)
 
-        // Fetch every block in the project (just sortOrder + wordCount)
+        return WordCountHeadings(projectId: projectId, requested: inProject, allHeadings: allHeadings)
+    }
+
+    /// The walk of the one-pass count: reads the project's block rows ONCE, in document order, and returns for each heading (given by
+    /// its sortOrder, ascending) the words of every row whose sortOrder is below the heading's, plus the words of all rows.
+    ///
+    /// A heading is settled when the first row at or past its sortOrder arrives (every row seen so far is then below it); the
+    /// headings are in the same order as the rows, so one pointer serves them all.
+    private static func wordsBeforeEachHeading(
+        in db: Database,
+        projectId: String,
+        headingSortOrders: [Double]
+    ) throws -> (wordsBefore: [Int], total: Int) {
+        var wordsBefore = [Int](repeating: 0, count: headingSortOrders.count)
+        var nextHeading = 0
+        var running = 0
         // The COALESCE guards against the legacy column being NULL after migration drift.
-        let allBlocks = try Row.fetchAll(db, sql: """
+        let rows = try Row.fetchCursor(db, sql: """
             SELECT sortOrder, COALESCE(wordCount, 0) AS wordCount
             FROM block
             WHERE projectId = ?
             ORDER BY sortOrder
             """, arguments: [projectId])
-
-        // Sum block wordCounts whose sortOrder falls in [start, end). End nil = open.
-        // Single linear walk keeps this O(B) per call regardless of heading count.
-        func sumWords(from startSortOrder: Double, until endSortOrder: Double?) -> Int {
-            var total = 0
-            for row in allBlocks {
-                let rowSort: Double = row["sortOrder"] ?? 0
-                if rowSort < startSortOrder { continue }
-                if let limit = endSortOrder, rowSort >= limit { break }
-                total += (row["wordCount"] as Int?) ?? 0
+        while let row = try rows.next() {
+            let rowSort: Double = (row[0] as Double?) ?? 0
+            while nextHeading < headingSortOrders.count, headingSortOrders[nextHeading] <= rowSort {
+                wordsBefore[nextHeading] = running
+                nextHeading += 1
             }
-            return total
+            running += (row[1] as Int?) ?? 0
         }
+        // A heading past the last row (not possible inside one read transaction, where a heading is itself a row) has an empty
+        // section, as it had when each section was summed from its own row range.
+        while nextHeading < headingSortOrders.count {
+            wordsBefore[nextHeading] = running
+            nextHeading += 1
+        }
+        return (wordsBefore, running)
+    }
 
-        let headingSortOrders = allHeadings.map { $0.sortOrder }
+    /// The computation of `batchWordCounts(blockIds:needsAggregate:)` inside a read the caller already has open, so that
+    /// the outline snapshot (`readOutlineSnapshotData`) takes its heading rows and these counts from ONE read transaction
+    /// and the two cannot disagree.
+    ///
+    /// ONE WALK. The block rows are read once, in document order, and every heading's counts are taken from that single pass
+    /// (t-58d64b34; the old way walked the rows again for every heading, twice for a heading with an aggregate goal, so a book
+    /// with 200 headings and 5,000 blocks made hundreds of passes after every pause in typing). Every count is a difference of two
+    /// running totals: "words in all rows before position p" is recorded for each heading as the walk passes it, and a section from
+    /// heading A to heading B is `before(B) - before(A)`. Positions are compared by
+    /// `sortOrder` VALUE, as the old code did, so rows or headings that share a `sortOrder` (fractional insertion can run out of
+    /// room) all fall on the same side of a boundary, exactly as before.
+    ///
+    /// The ends of the sections are then found walking the headings backwards, once: the section-only end is the nearest later
+    /// heading with a LARGER `sortOrder`; the aggregate end is the nearest such heading whose level is the same or higher (a
+    /// smaller or equal number; a heading with no level counts as 99). `BatchWordCountsOnePassTests` keeps a copy of the old
+    /// per-heading computation (with its own heading lookup) and compares this one against it.
+    static func batchWordCounts(
+        in db: Database,
+        blockIds: [String],
+        needsAggregate: Set<String> = []
+    ) throws -> [String: HeadingWordCounts] {
+        guard let scope = try wordCountHeadings(in: db, blockIds: blockIds) else { return [:] }
+        let headings = scope.allHeadings
+        let headingSortOrders = headings.map { $0.sortOrder }
+        let (wordsBefore, total) = try wordsBeforeEachHeading(in: db, projectId: scope.projectId, headingSortOrders: headingSortOrders)
 
+        // The ends, walking the headings backwards one group at a time (a group = headings sharing one sortOrder; none of them
+        // ends another's section, so a group is settled before it becomes "later" for the headings above it).
+        let requested = Set(scope.requested.map { $0.id })
         var result: [String: HeadingWordCounts] = [:]
-        result.reserveCapacity(inProject.count)
+        result.reserveCapacity(requested.count)
+        var nextAnyBefore = total                      // `before` of the nearest later heading with a larger sortOrder (total: none)
+        var nearestBeforeByLevel: [Int: Int] = [:]     // the same, per heading level (nil level = 99)
+        var groupEnd = headings.count - 1
+        while groupEnd >= 0 {
+            var groupStart = groupEnd
+            while groupStart > 0, headingSortOrders[groupStart - 1] == headingSortOrders[groupEnd] { groupStart -= 1 }
 
-        for heading in inProject {
-            let headingSortOrder = heading.sortOrder
-
-            // Section-only ends at the next heading of any level
-            let nextAnyIdx = headingSortOrders.firstIndex(where: { $0 > headingSortOrder })
-            let nextAnySortOrder = nextAnyIdx.map { headingSortOrders[$0] }
-            let sectionOnly = sumWords(from: headingSortOrder, until: nextAnySortOrder)
-
-            // Aggregate ends at the next heading of same-or-higher level (lower number)
-            var aggregate = sectionOnly
-            if needsAggregate.contains(heading.id), let level = heading.headingLevel {
-                let nextSameOrHigherSO = allHeadings
-                    .first(where: { $0.sortOrder > headingSortOrder && ($0.headingLevel ?? 99) <= level })
-                    .map { $0.sortOrder }
-                aggregate = sumWords(from: headingSortOrder, until: nextSameOrHigherSO)
+            for index in groupStart...groupEnd where requested.contains(headings[index].id) {
+                let heading = headings[index]
+                // Section-only ends at the next heading of any level
+                let sectionOnly = nextAnyBefore - wordsBefore[index]
+                // Aggregate ends at the next heading of same-or-higher level (lower number)
+                var aggregate = sectionOnly
+                if needsAggregate.contains(heading.id), let level = heading.headingLevel {
+                    var end = total
+                    for (otherLevel, before) in nearestBeforeByLevel where otherLevel <= level { end = min(end, before) }
+                    aggregate = end - wordsBefore[index]
+                }
+                result[heading.id] = HeadingWordCounts(sectionOnly: sectionOnly, aggregate: aggregate)
             }
 
-            result[heading.id] = HeadingWordCounts(sectionOnly: sectionOnly, aggregate: aggregate)
+            let groupBefore = wordsBefore[groupStart]   // the same for every heading of the group
+            nextAnyBefore = groupBefore
+            for index in groupStart...groupEnd { nearestBeforeByLevel[headings[index].headingLevel ?? 99] = groupBefore }
+            groupEnd = groupStart - 1
         }
 
         // Gated so the total-reduce only runs when `.outline` logging is on.
         // `batchWordCounts` fires on every sidebar refresh, so the savings add up.
         if DebugLog.isEnabled(.outline) {
-            let total = result.values.reduce(0) { $0 + $1.sectionOnly }
-            let id8 = String(projectId.prefix(8))
-            DebugLog.log(.outline, "[batchWordCounts] project=\(id8) headings=\(result.count) total=\(total)")
+            let sectionTotal = result.values.reduce(0) { $0 + $1.sectionOnly }
+            let id8 = String(scope.projectId.prefix(8))
+            DebugLog.log(.outline, "[batchWordCounts] project=\(id8) headings=\(result.count) total=\(sectionTotal)")
         }
 
         return result

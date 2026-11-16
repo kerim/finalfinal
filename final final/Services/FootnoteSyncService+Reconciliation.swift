@@ -500,13 +500,7 @@ extension FootnoteSyncService {
     /// this write (or `.documentStart`, if none does). Bounded by `deletedIds.count`
     /// iterations per row so a (should-be-impossible) predecessor cycle can never loop
     /// forever.
-    ///
-    /// t-83251af6: this is the ORIGINAL one-query-per-step walk -- N adjacent deleted rows
-    /// cost about N squared over two queries inside the write. No production code calls it
-    /// any more: `resolveTombstoneChain` (`FootnoteSyncService+TombstoneChain.swift`) reads
-    /// the project's row ids once and gives the same answer. It stays only as the reference
-    /// `FootnoteTombstoneChainTests` compares that one-pass version against.
-    nonisolated static func resolveTombstoneChainOneQueryPerStep(
+    nonisolated static func resolveTombstoneChain(
         db: Database, projectId: String, deletedIds: Set<String>
     ) throws -> [String: DeletedAnchor] {
         var anchors: [String: DeletedAnchor] = [:]
