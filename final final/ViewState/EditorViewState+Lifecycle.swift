@@ -22,7 +22,9 @@
 //    - the same kind again  -> a SILENT duplicate (a repeated Cmd-W, a repeated Cmd-Q; B15);
 //    - a quit while a close or switch is armed -> JOINS: a new `.quit` token replaces the old one, so the
 //      old lifecycle's own clear becomes a no-op (compare-and-clear) and the gates stay armed;
-//    - a close or switch while anything else is armed -> refused ("busy").
+//    - a close or switch while anything else is armed -> `.refusedBusy` here. Since t-eb07cd67 `LifecycleEntry` never lets a close
+//      or open reach this while another runs (it holds the request, `LifecycleEntry.withTurn`), so the only token it can still find
+//      is the app's own quit, and it then does nothing.
 //
 
 import Foundation
@@ -55,7 +57,8 @@ enum ArmResult: Equatable {
     case armed(LifecycleToken)
     /// A quit took over from the close or switch that was armed. The returned token replaced it.
     case joined(LifecycleToken)
-    /// Another kind of lifecycle holds the editor; nothing changed. Carries the holder's kind for the notice.
+    /// Another kind of lifecycle holds the editor; nothing changed. Carries the holder's kind (in practice the app's own quit:
+    /// `LifecycleEntry` holds a close or open behind a running one before it gets here).
     case refusedBusy(active: LifecycleKind)
     /// The same kind already holds the editor; nothing changed and nothing is shown to the user.
     case duplicate
@@ -63,8 +66,7 @@ enum ArmResult: Equatable {
 
 extension LifecycleKind {
     /// What a request of this kind does while a lifecycle of kind `active` already holds the editor. The one
-    /// place the precedence rule lives: `armLifecycle` applies it to the editor's own token, and
-    /// `LifecycleEntry` applies it to the global busy slot.
+    /// place the precedence rule lives: `armLifecycle` applies it to the editor's own token.
     enum Precedence: Equatable {
         case duplicate
         case joins

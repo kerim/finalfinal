@@ -32,6 +32,8 @@ struct LifecycleBoundsTests {
         #expect(b.abortStep == 2)
         // Round C6 (N3): a joined close/switch tail starts its automatic version only if this much remains.
         #expect(b.joinedBackupMinimum == 0.5)
+        // t-eb07cd67: a command held behind a running close or open shows "Finishing the last change..." after one second.
+        #expect(b.heldNoticeDelay == 1)
     }
 
     @Test("floors are the plan's 3 / 6 before FB and 1 / 4 after it (close-switch / quit)")
@@ -59,6 +61,7 @@ struct LifecycleBoundsTests {
         #expect(abs(b.quitBackupReserve - 0.3) < 0.0001)
         #expect(abs(b.abortStep - 0.2) < 0.0001)
         #expect(abs(b.joinedBackupMinimum - 0.05) < 0.0001)
+        #expect(abs(b.heldNoticeDelay - 0.1) < 0.0001)
         #expect(abs(b.floorBeforeFB(quit: true) - 0.6) < 0.0001)
         #expect(abs(b.floorAfterFB(quit: true) - 0.4) < 0.0001)
     }
