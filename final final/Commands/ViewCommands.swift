@@ -32,6 +32,12 @@ struct ViewCommands: Commands {
             .keyboardShortcut("f", modifiers: [.command, .shift])
 
             Button(editorModeToggleLabel) {
+                // t-177a10f1: persisted the moment the press reaches the app, before the caret-save round trip and any gate, so a UI test
+                // can tell a press the app HAS (whose label flips late, or whose switch is held) from a keypress that never arrived, and
+                // never resend one it has. The status-bar badge click logs the same line (StatusBar.swift); `to=` is the mode at the press.
+                if let editorState {
+                    DebugLog.alwaysPersisted("[TRANS] toggle received to=\(editorState.editorMode == .wysiwyg ? "markdown" : "rich text")")
+                }
                 editorState?.requestEditorModeToggle()
             }
             .keyboardShortcut("/", modifiers: .command)

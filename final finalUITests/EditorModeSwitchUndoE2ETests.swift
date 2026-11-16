@@ -70,6 +70,10 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication.targetApp()
         app.terminate()
+        // t-177a10f1: the mode-toggle helpers read the app's diagnostic log to tell a toggle the app RECEIVED ("[TRANS] toggle received")
+        // from a dropped keypress, so the log must exist in every test of this class (the launch argument each test also adds is not
+        // enough on its own -- see "A test that reads diagnostic.log must launch with FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING").
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"
         try TestFixtureHelper.setupFixture(from: self)
     }
 
@@ -323,5 +327,134 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
             "Second Cmd-Z should have removed the user's typed marker text, restoring the " +
             "original heading -- it did not."
         )
+    }
+}
+
+// MARK: - A switch held past the helpers' retry window is never toggled twice (t-177a10f1)
+
+extension EditorModeSwitchUndoE2ETests {
+    /// How long the app holds each of the first three CARRIED switches (`FF_UI_TESTING_TRANS_HOLD_MS`): longer than the toggle
+    /// helpers' 2 s receipt window, so a helper that resends a press whose label has not flipped yet WILL resend here, which is what
+    /// a slow host (two VMs running) does to the real switch.
+    static let heldSwitchMs = 3000
+
+    /// The bounded time the probe watches for a held second press to show itself as a label that flips back: the hold, plus the time
+    /// the next switch needs to prepare its page, plus margin.
+    static let heldSwitchSettle: TimeInterval = 6
+
+    /// The carried switch flips the status-bar label only after the incoming page is ready, and the app HOLDS a second Cmd-/ and applies
+    /// it afterwards (never drops it). The toggle helpers used to press again whenever the label had not flipped within 2 s; on a slow
+    /// host that resend reached the app while the first switch was still running, and the app switched straight back, so the test
+    /// failed at "CodeMirror source editor should render the raw markdown" (or its mirror) with nothing wrong in the app.
+    ///
+    /// This probe asks the app (its own test seam, the first three carried switches) to hold each switch for `heldSwitchMs` and drives
+    /// Rich Text -> Markdown -> Rich Text -> Markdown with the real helpers. After EVERY call it asserts, from the app's own log, that
+    /// the app received exactly ONE toggle, and, polling for a CHANGE for a bounded `heldSwitchSettle`, that the label still shows the
+    /// mode the call asked for (a held second press would flip it back). After the Rich Text call the Markdown editor's evidence must
+    /// be gone; after the Markdown calls it must still be there.
+    ///
+    /// The hold is required only on call 2 (Markdown -> Rich Text, the carried switch the original failure was in). The first switch
+    /// after launch can take the app's OLD, unheld path: the driver's first run of this probe (run-1794811507-91803) logged "CodeMirror
+    /// claim failed: state=idle" and "[SWITCH->CM] Starting" with no "[TRANS-HOLD]" line, because a switch only takes the carried path
+    /// once the Rich Text page is registered with block sync (`usesCarriedSwitch`), which a freshly launched, slow VM may not have
+    /// reached yet. Such a switch is neither held nor counted against the hold budget, so calls 1 and 3 do not fail on a missing hold
+    /// line; they still must show exactly one received toggle and no flip-back.
+    func testSwitchHeldPastRetryWindowIsNotToggledTwice() throws {
+        app.launchArguments += ["-com.kerim.final-final.diagnosticsLoggingEnabled", "YES"]
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_MS"] = String(Self.heldSwitchMs)
+        app.launchEnvironment["FF_UI_TESTING_TRANS_HOLD_FIRST_N"] = "3"
+        app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
+        waitForEditorReady()
+        // Bounded, best-effort readiness nudge: the word count above reads "words" before the editor page exists, so wait for the
+        // document's own heading to render (an existing helper, no sleep). Not asserted: call 1 does not need the carried path.
+        _ = app.editorStaticText(startingWith: "Test Document", timeout: 20)
+
+        let editorMode = app.buttons["status-bar-editor-mode"]
+
+        func callAndWatch(_ step: String, expecting label: String, requireHold: Bool, toggle: () -> Void) {
+            let before = Self.diagnosticLogSizesNow()
+            toggle()
+            // Polls for a CHANGE, bounded: a held second press shows itself as the label leaving `label`; the pass case waits it out.
+            let flippedAway = editorMode.waitForLabelNot("== '\(label)'", timeout: Self.heldSwitchSettle)
+            let logText = Self.diagnosticLogText(since: before)
+            let received = Self.toggleReceivedCount(since: before)
+            let held = logText.contains("hold begins for \(Self.heldSwitchMs) ms")
+            let attachment = XCTAttachment(string: logText)
+            attachment.name = "diagnostic-log-\(step)-\(held ? "held" : "not-held")"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+
+            if requireHold {
+                XCTAssertTrue(
+                    held,
+                    "TEST-SETUP (\(step)): the app logged no \"[TRANS-HOLD] ... hold begins for \(Self.heldSwitchMs) ms\" line, so the " +
+                    "switch was not held past the helpers' 2 s receipt window and this run proves nothing about a resend."
+                )
+            }
+            XCTAssertEqual(
+                received, 1,
+                "\(step): the app received \(received) mode toggles for one helper call (expected 1) -- the helper pressed again " +
+                "for a switch the app already had, which the app holds and applies afterwards, switching straight back."
+            )
+            XCTAssertFalse(
+                flippedAway,
+                "\(step): the status-bar label left \"\(label)\" within \(Self.heldSwitchSettle)s of the helper returning -- a second " +
+                "toggle held behind the first switch was applied afterwards."
+            )
+        }
+
+        callAndWatch("1 Rich Text to Markdown", expecting: "Markdown", requireHold: false, toggle: toggleWysiwygToSource)
+        waitForSourceEditorMounted()
+
+        callAndWatch("2 Markdown to Rich Text", expecting: "Rich Text", requireHold: true, toggle: toggleSourceToWysiwyg)
+        waitForSourceEditorUnmounted()
+
+        callAndWatch("3 Rich Text to Markdown", expecting: "Markdown", requireHold: false, toggle: toggleWysiwygToSource)
+        waitForSourceEditorMounted()
+    }
+
+    // MARK: Diagnostic-log readers for the toggle-receipt checks
+
+    /// The line the app persists at its two press sites (the Cmd-/ menu command, `ViewCommands.swift`, and the status-bar badge click,
+    /// `StatusBar.swift`) the moment a press reaches it, before the caret-save round trip and any gate.
+    static let toggleReceivedMarker = "[TRANS] toggle received"
+
+    /// Each distinct diagnostic-log file's size right now. The helpers' candidate list names one file through several spellings, so
+    /// files are deduplicated by resolved path: a count over the text must not see the same line two or three times.
+    static func diagnosticLogSizesNow() -> [URL: UInt64] {
+        var sizes: [URL: UInt64] = [:]
+        var seenPaths = Set<String>()
+        for url in diagnosticLogCandidateURLs() {
+            guard seenPaths.insert(url.resolvingSymlinksInPath().standardizedFileURL.path).inserted else { continue }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
+                .flatMap { $0 }?.uint64Value ?? 0
+            sizes[url] = size
+        }
+        return sizes
+    }
+
+    /// The log text appended since `offsets` (from `diagnosticLogSizesNow()`), one block per file. Reads the files only, never
+    /// truncates the real, shared log, and keeps its own offsets so it never disturbs the shared checkpoint the hierarchy checks use.
+    /// A file now SMALLER than its stored offset was rotated (or truncated) since: everything in it is new, so it is read from 0.
+    /// Decoded with `String(decoding:as:)`, which turns a bad byte into U+FFFD instead of dropping the whole chunk the way
+    /// `String(data:encoding:)` does (a dropped chunk could hide the very line a check is looking for).
+    static func diagnosticLogText(since offsets: [URL: UInt64]) -> String {
+        offsets.keys.sorted { $0.path < $1.path }.compactMap { url -> String? in
+            guard let handle = FileHandle(forReadingAtPath: url.path) else { return nil }
+            defer { try? handle.close() }
+            let stored = offsets[url] ?? 0
+            let size = (try? handle.seekToEnd()) ?? 0
+            try? handle.seek(toOffset: size < stored ? 0 : stored)
+            let data = handle.readDataToEndOfFile()
+            guard !data.isEmpty else { return nil }
+            // The lossy decode is the point (a bad byte must not drop the chunk), which is what the rule below would forbid.
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: data, as: UTF8.self)
+        }.joined(separator: "\n---\n")
+    }
+
+    /// How many mode toggles the app has received since `offsets`.
+    static func toggleReceivedCount(since offsets: [URL: UInt64]) -> Int {
+        diagnosticLogText(since: offsets).components(separatedBy: toggleReceivedMarker).count - 1
     }
 }

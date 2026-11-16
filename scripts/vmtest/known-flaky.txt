@@ -160,8 +160,3 @@ final finalUITests/ShortcutTooltipE2ETests/testHoveringReplaceToggleShowsCustomT
 # Diagnosis: infra (app-console.log of run-1794412559-23379). The test now copies at every attempt, which narrows the race; the real fix
 # is `--no-clipboard` on the `tart run` line of the shared vmtest engine. Board t-5b41ac38. Remove this line once that flag is in.
 final finalUITests/E2ESectionReconcilerPseudoSectionTests/testSurvivingPseudoSectionKeepsOwnStatusNotNeighbors
-
-# A mode-switch undo test: failed once in a full run under host load (load average 11 to 16, two VMs), passed in two other runs
-# ("raw-markdown evidence should disappear after toggling back to WYSIWYG ... still present after 10.0s"). Cause not established.
-# Board t-5b41ac38.
-final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterSourceToWysiwygViaMenuShortcut

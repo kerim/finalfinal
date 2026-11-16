@@ -199,6 +199,9 @@ struct StatusBar: View {
 
             // Clickable editor mode badge
             Button {
+                // t-177a10f1: the same receipt line as the Cmd-/ menu command (ViewCommands.swift): persisted when the click reaches the app,
+                // before the caret-save round trip and any gate, so a UI test never resends a click the app already has.
+                DebugLog.alwaysPersisted("[TRANS] toggle received to=\(editorState.editorMode == .wysiwyg ? "markdown" : "rich text")")
                 editorState.requestEditorModeToggle()
             } label: {
                 Text(editorState.editorMode.displayName)

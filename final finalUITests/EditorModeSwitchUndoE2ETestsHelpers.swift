@@ -76,28 +76,87 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(wordCount.waitForValue("CONTAINS 'words'", timeout: 10), "Status bar should show word count (editor JS ready)")
     }
 
+    /// Sends a mode toggle (`press`) until the app has RECEIVED one, then waits for the status-bar
+    /// label to show `targetLabel` and never presses again (t-177a10f1).
+    ///
+    /// Why "press again if the label has not flipped" is wrong: since the carried switch (Phase 5,
+    /// 2026-11-06) the label flips only after the incoming page is ready (up to 15 s, slower with
+    /// two VMs running), and the app deliberately HOLDS a second toggle and runs it afterwards
+    /// (`handleEditorModeToggle` -> `runAfterPendingStructuralWork`; a keypress is never dropped).
+    /// A resend of a press the app already has therefore switches the app straight back, and the
+    /// test fails far from the cause. The label flips late, so never resend a received toggle.
+    ///
+    /// A press counts as received when the label already shows `targetLabel`, or the app's
+    /// diagnostic log has a "[TRANS] toggle received" line written since before the first press
+    /// (the app persists it the moment the press reaches the Cmd-/ menu command or the badge
+    /// button, before the caret-save round trip and any gate, which on a loaded host can take
+    /// longer than the receipt window by itself). Only a
+    /// press that neither shows nor logs within `receiptWindow` seconds is treated as dropped and
+    /// sent again, at most `maxPresses` times. The class launches the app with
+    /// `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1` (`setUpWithError`) so the log line exists.
+    /// Once received, the label gets a bounded 30 s: the carried switch is slow on a loaded host.
+    func pressModeToggleUntilReceived(
+        to targetLabel: String, trigger: String, maxPresses: Int, receiptWindow: TimeInterval,
+        press: () -> Void
+    ) {
+        let editorMode = app.buttons["status-bar-editor-mode"]
+        let logOffsets = Self.diagnosticLogSizesNow()
+        let labelIsTarget = "== '\(targetLabel)'"
+        var presses = 0
+        var received = false
+        while !received, presses < maxPresses {
+            press()
+            presses += 1
+            let deadline = Date().addingTimeInterval(receiptWindow)
+            repeat {
+                received = Self.toggleReceivedCount(since: logOffsets) > 0
+                    || editorMode.waitForLabel(labelIsTarget, timeout: 0.5)
+            } while !received && Date() < deadline
+            // A line written in the last half second of the window still counts.
+            if !received { received = Self.toggleReceivedCount(since: logOffsets) > 0 }
+        }
+        if !received { attachToggleLogTail(since: logOffsets, name: "never-received") }
+        XCTAssertTrue(
+            received,
+            "The app never received the \(trigger) to \(targetLabel): after \(presses) press(es) the " +
+            "label did not change and the diagnostic log has no \"\(Self.toggleReceivedMarker)\" line."
+        )
+
+        let started = Date()
+        let flipped = editorMode.waitForLabel(labelIsTarget, timeout: 30)
+        if !flipped { attachToggleLogTail(since: logOffsets, name: "label-did-not-flip") }
+        XCTAssertTrue(
+            flipped,
+            "Editor-mode button should report \(targetLabel) once the app had received the \(trigger) " +
+            "(\(presses) press(es) sent; waited \(String(format: "%.1f", Date().timeIntervalSince(started)))s " +
+            "for the carried switch to flip the label)."
+        )
+    }
+
+    /// Attaches the diagnostic-log text written since `offsets`, so a failed toggle explains itself.
+    private func attachToggleLogTail(since offsets: [URL: UInt64], name: String) {
+        let attachment = XCTAttachment(string: Self.diagnosticLogText(since: offsets))
+        attachment.name = "diagnostic-log-tail-mode-toggle-\(name)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     /// Toggles WYSIWYG -> Source via the Cmd-/ menu item path. Retry-the-keystroke pattern
     /// proven in SmokeTests.testEditorModeToggle: Cmd+/ can drop if the app isn't reliably
-    /// foreground at the instant it's sent.
+    /// foreground at the instant it's sent -- but only a press the app did NOT receive is ever
+    /// sent again (`pressModeToggleUntilReceived`): the carried switch flips the label late, so
+    /// never resend a received toggle.
     func toggleWysiwygToSource() {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
 
-        var toggleRegistered = false
-        for _ in 1...5 {
-            if editorMode.label == "Markdown" {
-                toggleRegistered = true
-                break
-            }
+        pressModeToggleUntilReceived(
+            to: "Markdown", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2
+        ) {
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) {
-                toggleRegistered = true
-                break
-            }
         }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Markdown after retrying the toggle keystroke")
 
         // Mount-completion gate: the label flip above is synchronous, but the actual
         // WYSIWYG->CodeMirror view swap runs through an async callback chain that can lag
@@ -113,26 +172,19 @@ extension EditorModeSwitchUndoE2ETests {
 
     /// Mirror of `toggleWysiwygToSource()` for the reverse direction -- same
     /// retry-the-keystroke rationale (Cmd+/ can drop if the app isn't reliably foreground at
-    /// the instant it's sent).
+    /// the instant it's sent), and the same rule: the carried switch flips the label late, so
+    /// never resend a received toggle.
     func toggleSourceToWysiwyg() {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 10), "Should be in Markdown mode before switching back")
 
-        var toggleRegistered = false
-        for _ in 1...5 {
-            if editorMode.label == "Rich Text" {
-                toggleRegistered = true
-                break
-            }
+        pressModeToggleUntilReceived(
+            to: "Rich Text", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2
+        ) {
             app.activateAndWaitForForeground()
             app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Rich Text'", timeout: 2) {
-                toggleRegistered = true
-                break
-            }
         }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Rich Text after retrying the toggle keystroke")
 
         // Mirror of the mount-completion gate in `toggleWysiwygToSource()`, for symmetry:
         // waits for the CodeMirror-only raw-markdown evidence to actually DISAPPEAR (proving
@@ -155,31 +207,21 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
 
         // Retry the click itself, not just the wait -- same shape as the keyboard-toggle
-        // helpers' own retry-the-keystroke loops above (`toggleWysiwygToSource()`/
+        // helpers' own retry loops above (`toggleWysiwygToSource()`/
         // `toggleSourceToWysiwyg()`). This click was found to silently drop (a real app-side
         // regression, StatusBar.swift's status-bar-editor-mode Button -- a hidden section-title
         // sizer used to live in the same HStack as this Button and re-rendered on every
         // editorState.sections change, which could land mid-click and cancel it; fixed
-        // app-side by isolating that sizer into its own subview). Attach the diagnostic-log
-        // tail on final failure so a future regression here is self-diagnosing without a
-        // repro session.
-        Self.recordDiagnosticLogStartOffsets()
-        var toggleRegistered = false
-        for _ in 1...3 {
+        // app-side by isolating that sizer into its own subview). A click the app did receive
+        // is never sent again (the carried switch flips the label late -- see
+        // `pressModeToggleUntilReceived`); the diagnostic-log tail is attached on failure so a
+        // future regression here is self-diagnosing without a repro session.
+        pressModeToggleUntilReceived(
+            to: "Markdown", trigger: "status-bar badge click", maxPresses: 3, receiptWindow: 5
+        ) {
             XCTAssertTrue(editorMode.isHittable, "status-bar-editor-mode button should be hittable for a plain click")
             editorMode.click()
-            if editorMode.waitForLabel("== 'Markdown'", timeout: 5) {
-                toggleRegistered = true
-                break
-            }
         }
-        if !toggleRegistered {
-            let attachment = XCTAttachment(string: Self.currentDiagnosticLogContents())
-            attachment.name = "diagnostic-log-tail-clickModeBadge-failure"
-            attachment.lifetime = .keepAlways
-            add(attachment)
-        }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Markdown after retrying the click up to 3 times")
 
         // Mount-completion gate, same rationale and technique as `toggleWysiwygToSource()`:
         // the label flip is synchronous with the click, but the actual WYSIWYG->CodeMirror
@@ -232,6 +274,7 @@ extension EditorModeSwitchUndoE2ETests {
         let editorArea = app.groups["editor-area"]
         let maxAttempts = 20
         let pollInterval: TimeInterval = 0.5
+        let started = Date()
 
         for attempt in 1...maxAttempts {
             var stillPresent = false
@@ -246,7 +289,17 @@ extension EditorModeSwitchUndoE2ETests {
                     break
                 }
             }
-            if !stillPresent { return }
+            if !stillPresent {
+                // Absence alone also reads true while the AX tree is empty or mid-swap, so ALSO require positive evidence that the
+                // Rich Text editor mounted: the fixture's first heading rendered (the idiom UnifiedUndoE2ETests uses).
+                XCTAssertNotNil(
+                    app.editorStaticText(startingWith: "Test Document", timeout: 10),
+                    "The raw-markdown evidence is gone after toggling back to WYSIWYG, but the Rich Text editor's own first " +
+                    "heading (\"Test Document\") never rendered within 10s -- the source editor may be gone without Milkdown " +
+                    "having mounted in its place."
+                )
+                return
+            }
             if attempt < maxAttempts {
                 Thread.sleep(forTimeInterval: pollInterval)
             }
@@ -255,8 +308,9 @@ extension EditorModeSwitchUndoE2ETests {
         XCTFail(
             "CodeMirror source editor's raw-markdown evidence should disappear after " +
             "toggling back to WYSIWYG, not just flip the status-bar label -- still present " +
-            "after \(Double(maxAttempts) * pollInterval)s of retrying with a fresh AX fetch " +
-            "each attempt."
+            "after \(String(format: "%.1f", Date().timeIntervalSince(started)))s measured " +
+            "(\(maxAttempts) attempts, a fresh AX fetch each; each fetch can take far longer " +
+            "than the \(pollInterval)s pause between them)."
         )
     }
 
