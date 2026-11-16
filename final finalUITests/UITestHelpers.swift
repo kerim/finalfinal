@@ -49,7 +49,11 @@ extension XCUIApplication {
     /// teardown. Prints frames only, no document text.
     func logLaunchWindowFrames() {
         let screen = NSScreen.main?.frame ?? .zero
-        let frames = windows.allElementsBoundByIndex.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" }
+        // `.exists`-guarded: a window the tree drops mid-loop is skipped, not a "No matches found for Element at index N" failure.
+        let frames = windows.allElementsBoundByIndex.compactMap { window -> String? in
+            guard window.exists else { return nil }
+            return "\(Int(window.frame.width))x\(Int(window.frame.height))"
+        }
         print("[LaunchFrame] windows=\(frames) screen=\(Int(screen.width))x\(Int(screen.height))")
     }
 
@@ -548,5 +552,192 @@ enum E2EShotDir {
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+// MARK: - Editor mode toggle: never resend a toggle the app already received (t-177a10f1, t-46e4c125)
+
+/// Readers for the app's own `diagnostic.log` (and its two rotated copies), plus the line the app writes where a mode-toggle press
+/// arrives. The app writes the file only when launched with `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1`.
+enum DiagnosticLogReader {
+    /// The line the app persists at its two press sites (the Cmd-/ menu command, `ViewCommands.swift`, and the status-bar badge click,
+    /// `StatusBar.swift`) the moment a press reaches it, before the caret-save round trip and any gate. It continues with
+    /// ` to=markdown` or ` to=rich text`: the mode the press switches TO.
+    static let toggleReceivedMarker = "[TRANS] toggle received"
+
+    /// Every spelling of the three log files' paths. One file is named through several home-directory spellings, so use `sizesNow()`
+    /// (deduplicated by resolved path) for anything that counts lines.
+    static func candidateURLs() -> [URL] {
+        let directory = "Library/Application Support/com.kerim.final-final/Diagnostics"
+        return ["diagnostic.log", "diagnostic.log.1", "diagnostic.log.2"].flatMap {
+            AppFileHelper.candidateURLs(appRelativePath: directory + "/" + $0)
+        }
+    }
+
+    /// Each distinct diagnostic-log file's size right now, deduplicated by resolved path: a count over the text must not see the same
+    /// line two or three times.
+    static func sizesNow() -> [URL: UInt64] {
+        var sizes: [URL: UInt64] = [:]
+        var seenPaths = Set<String>()
+        for url in candidateURLs() {
+            guard seenPaths.insert(url.resolvingSymlinksInPath().standardizedFileURL.path).inserted else { continue }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
+                .flatMap { $0 }?.uint64Value ?? 0
+            sizes[url] = size
+        }
+        return sizes
+    }
+
+    /// The log text appended since `offsets` (from `sizesNow()`), one block per file. Reads the files only, never truncates the real,
+    /// shared log, and keeps no offsets of its own. A file now SMALLER than its stored offset was rotated (or truncated) since:
+    /// everything in it is new, so it is read from 0. Decoded with `String(decoding:as:)`, which turns a bad byte into U+FFFD instead of
+    /// dropping the whole chunk the way `String(data:encoding:)` does (a dropped chunk could hide the very line a check is looking for).
+    static func text(since offsets: [URL: UInt64]) -> String {
+        offsets.keys.sorted { $0.path < $1.path }.compactMap { url -> String? in
+            guard let handle = FileHandle(forReadingAtPath: url.path) else { return nil }
+            defer { try? handle.close() }
+            let stored = offsets[url] ?? 0
+            let size = (try? handle.seekToEnd()) ?? 0
+            try? handle.seek(toOffset: size < stored ? 0 : stored)
+            let data = handle.readDataToEndOfFile()
+            guard !data.isEmpty else { return nil }
+            // The lossy decode is the point (a bad byte must not drop the chunk), which is what the rule below would forbid.
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: data, as: UTF8.self)
+        }.joined(separator: "\n---\n")
+    }
+
+    /// How many mode toggles the app has received since `offsets`. `target` (nil: any) is the mode the press switched to, spelled as the
+    /// app writes it: "markdown" or "rich text".
+    static func toggleReceivedCount(since offsets: [URL: UInt64], to target: String? = nil) -> Int {
+        let line = target.map { "\(toggleReceivedMarker) to=\($0)" } ?? toggleReceivedMarker
+        return text(since: offsets).components(separatedBy: line).count - 1
+    }
+}
+
+/// What `toggleEditorModeUntilReceived` saw.
+struct ModeToggleOutcome {
+    /// The app received a toggle (the label shows the target, or the log has the "toggle received" line).
+    let received: Bool
+    /// The status-bar label shows the target.
+    let flipped: Bool
+    /// How many presses were sent (0 when the label already showed the target).
+    let presses: Int
+    /// How long the wait for the label took after receipt.
+    let flipSeconds: TimeInterval
+}
+
+extension XCTestCase {
+    /// Sends a mode toggle until the app has RECEIVED one, then waits for the status-bar label to show `target` ("Markdown" or "Rich
+    /// Text") and never presses again.
+    ///
+    /// Why "press again if the label has not flipped" is wrong: since the carried switch (Phase 5, 2026-11-06) the label flips only after
+    /// the incoming page is ready (up to 15 s, slower with two VMs running), and the app deliberately HOLDS a second toggle and runs it
+    /// afterwards (`handleEditorModeToggle` -> `runAfterPendingStructuralWork`; a keypress is never dropped). A resend of a press the app
+    /// already has therefore switches the app straight back, and the test fails far from the cause.
+    ///
+    /// A press counts as received when the label already shows `target`, or the app's diagnostic log has a "[TRANS] toggle received to="
+    /// line for it, written since before the first press (the app persists it the moment the press reaches the Cmd-/ menu command or the
+    /// badge button, before the caret-save round trip and any gate, which on a loaded host can take longer than the receipt window by
+    /// itself). Only a press that neither shows nor logs within `receiptWindow` seconds is treated as dropped and sent again, at most
+    /// `maxPresses` times. Once received, the label gets `flipTimeout` seconds (the carried switch is slow on a loaded host).
+    ///
+    /// "Received" means the app's main thread ran the menu command or the badge click: a Cmd-/ queued behind a main thread blocked for
+    /// longer than `receiptWindow` is still resent, and the app then switches back, so this is not a guarantee against that.
+    ///
+    /// The app must be launched with `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1` (set it on `app.launchEnvironment` in `setUpWithError`,
+    /// before the launch), or no log file exists: without it this fails as a TEST-SETUP error and presses nothing.
+    ///
+    /// This asserts nothing but that setup: each caller keeps its own assertion and wording on the outcome. A failed toggle attaches the
+    /// diagnostic-log tail ("diagnostic-log-tail-mode-toggle-never-received" / "...-label-did-not-flip") so it explains itself.
+    /// `press` is one press of the trigger (default: bring the app to the front, then Cmd-/).
+    func toggleEditorModeUntilReceived(
+        _ app: XCUIApplication, to target: String, trigger: String = "Cmd-/ keystroke", maxPresses: Int = 5,
+        receiptWindow: TimeInterval = 2, flipTimeout: TimeInterval = 30, press: (() -> Void)? = nil
+    ) -> ModeToggleOutcome {
+        guard app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] == "1" else {
+            XCTFail(
+                "TEST-SETUP: the \(trigger) to \(target) cannot tell a dropped press from a slow switch: this test class must launch the " +
+                "app with FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1 (app.launchEnvironment, in setUpWithError, before the launch), or no " +
+                "diagnostic log exists for the app's \"\(DiagnosticLogReader.toggleReceivedMarker)\" line."
+            )
+            return ModeToggleOutcome(received: false, flipped: false, presses: 0, flipSeconds: 0)
+        }
+        let editorMode = app.buttons["status-bar-editor-mode"]
+        let labelIsTarget = "== '\(target)'"
+        if editorMode.exists, editorMode.label == target {
+            return ModeToggleOutcome(received: true, flipped: true, presses: 0, flipSeconds: 0)
+        }
+        let logTarget = target.lowercased()
+        let logOffsets = DiagnosticLogReader.sizesNow()
+        func appHasReceivedToggle() -> Bool {
+            DiagnosticLogReader.toggleReceivedCount(since: logOffsets, to: logTarget) > 0
+        }
+
+        var presses = 0
+        var received = false
+        while !received, presses < maxPresses {
+            if let press {
+                press()
+            } else {
+                app.activateAndWaitForForeground()
+                app.typeKey("/", modifierFlags: .command)
+            }
+            presses += 1
+            let deadline = Date().addingTimeInterval(receiptWindow)
+            repeat {
+                received = appHasReceivedToggle() || editorMode.waitForLabel(labelIsTarget, timeout: 0.5)
+            } while !received && Date() < deadline
+            // A line written in the last half second of the window still counts.
+            if !received { received = appHasReceivedToggle() }
+        }
+        guard received else {
+            attachDiagnosticLogTail(since: logOffsets, name: "never-received", note: "\(trigger) to \(target), \(presses) press(es)")
+            return ModeToggleOutcome(received: false, flipped: false, presses: presses, flipSeconds: 0)
+        }
+
+        let started = Date()
+        let flipped = editorMode.waitForLabel(labelIsTarget, timeout: flipTimeout)
+        let flipSeconds = Date().timeIntervalSince(started)
+        if !flipped {
+            attachDiagnosticLogTail(since: logOffsets, name: "label-did-not-flip", note: "\(trigger) to \(target), \(presses) press(es)")
+        }
+        return ModeToggleOutcome(received: true, flipped: flipped, presses: presses, flipSeconds: flipSeconds)
+    }
+
+    /// Attaches the diagnostic-log text written since `offsets`, so a failed toggle explains itself.
+    private func attachDiagnosticLogTail(since offsets: [URL: UInt64], name: String, note: String) {
+        let attachment = XCTAttachment(string: "// \(note)\n" + DiagnosticLogReader.text(since: offsets))
+        attachment.name = "diagnostic-log-tail-mode-toggle-\(name)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}
+
+extension XCUIApplication {
+    /// Waits until some node under the editor area shows `text` in its label or value (any element type), polling about every quarter
+    /// second for at most `timeout`. Crash-safe where the old `label CONTAINS ... OR value CONTAINS ...` predicate was not: an element
+    /// whose `value` is a number (a heading container carries its level) makes `value CONTAINS` throw NSInvalidArgumentException, so
+    /// `value` is read with `as? String`. Each poll takes one fresh snapshot of the whole editor subtree (one accessibility round trip),
+    /// never a handle reused from an earlier poll.
+    func waitForEditorText(_ text: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        var failedPolls = 0
+        repeat {
+            do {
+                if Self.snapshotShowsText(try editorArea.snapshot(), text) { return true }
+            } catch {
+                failedPolls += 1
+                if failedPolls == 1 { print("[waitForEditorText] snapshot() of editor-area failed: \(error)") }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return false
+    }
+
+    private static func snapshotShowsText(_ snapshot: XCUIElementSnapshot, _ text: String) -> Bool {
+        snapshot.children.contains { child in
+            child.label.contains(text) || ((child.value as? String)?.contains(text) ?? false) || snapshotShowsText(child, text)
+        }
     }
 }

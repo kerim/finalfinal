@@ -76,69 +76,28 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(wordCount.waitForValue("CONTAINS 'words'", timeout: 10), "Status bar should show word count (editor JS ready)")
     }
 
-    /// Sends a mode toggle (`press`) until the app has RECEIVED one, then waits for the status-bar
-    /// label to show `targetLabel` and never presses again (t-177a10f1).
-    ///
-    /// Why "press again if the label has not flipped" is wrong: since the carried switch (Phase 5,
-    /// 2026-11-06) the label flips only after the incoming page is ready (up to 15 s, slower with
-    /// two VMs running), and the app deliberately HOLDS a second toggle and runs it afterwards
-    /// (`handleEditorModeToggle` -> `runAfterPendingStructuralWork`; a keypress is never dropped).
-    /// A resend of a press the app already has therefore switches the app straight back, and the
-    /// test fails far from the cause. The label flips late, so never resend a received toggle.
-    ///
-    /// A press counts as received when the label already shows `targetLabel`, or the app's
-    /// diagnostic log has a "[TRANS] toggle received" line written since before the first press
-    /// (the app persists it the moment the press reaches the Cmd-/ menu command or the badge
-    /// button, before the caret-save round trip and any gate, which on a loaded host can take
-    /// longer than the receipt window by itself). Only a
-    /// press that neither shows nor logs within `receiptWindow` seconds is treated as dropped and
-    /// sent again, at most `maxPresses` times. The class launches the app with
-    /// `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1` (`setUpWithError`) so the log line exists.
-    /// Once received, the label gets a bounded 30 s: the carried switch is slow on a loaded host.
+    /// Sends a mode toggle until the app has RECEIVED one, then waits for the status-bar label to show `targetLabel` and never presses
+    /// again (t-177a10f1). A thin wrapper over the shared `toggleEditorModeUntilReceived` (`UITestHelpers.swift`, which documents why a
+    /// toggle the app already received is never resent), keeping this class's two assertions and their wording. The class launches the
+    /// app with `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1` (`setUpWithError`) so the log line the helper reads exists.
     func pressModeToggleUntilReceived(
         to targetLabel: String, trigger: String, maxPresses: Int, receiptWindow: TimeInterval,
-        press: () -> Void
+        press: (() -> Void)? = nil
     ) {
-        let editorMode = app.buttons["status-bar-editor-mode"]
-        let logOffsets = Self.diagnosticLogSizesNow()
-        let labelIsTarget = "== '\(targetLabel)'"
-        var presses = 0
-        var received = false
-        while !received, presses < maxPresses {
-            press()
-            presses += 1
-            let deadline = Date().addingTimeInterval(receiptWindow)
-            repeat {
-                received = Self.toggleReceivedCount(since: logOffsets) > 0
-                    || editorMode.waitForLabel(labelIsTarget, timeout: 0.5)
-            } while !received && Date() < deadline
-            // A line written in the last half second of the window still counts.
-            if !received { received = Self.toggleReceivedCount(since: logOffsets) > 0 }
-        }
-        if !received { attachToggleLogTail(since: logOffsets, name: "never-received") }
-        XCTAssertTrue(
-            received,
-            "The app never received the \(trigger) to \(targetLabel): after \(presses) press(es) the " +
-            "label did not change and the diagnostic log has no \"\(Self.toggleReceivedMarker)\" line."
+        let outcome = toggleEditorModeUntilReceived(
+            app, to: targetLabel, trigger: trigger, maxPresses: maxPresses, receiptWindow: receiptWindow, press: press
         )
-
-        let started = Date()
-        let flipped = editorMode.waitForLabel(labelIsTarget, timeout: 30)
-        if !flipped { attachToggleLogTail(since: logOffsets, name: "label-did-not-flip") }
         XCTAssertTrue(
-            flipped,
+            outcome.received,
+            "The app never received the \(trigger) to \(targetLabel): after \(outcome.presses) press(es) the " +
+            "label did not change and the diagnostic log has no \"\(DiagnosticLogReader.toggleReceivedMarker)\" line."
+        )
+        XCTAssertTrue(
+            outcome.flipped,
             "Editor-mode button should report \(targetLabel) once the app had received the \(trigger) " +
-            "(\(presses) press(es) sent; waited \(String(format: "%.1f", Date().timeIntervalSince(started)))s " +
+            "(\(outcome.presses) press(es) sent; waited \(String(format: "%.1f", outcome.flipSeconds))s " +
             "for the carried switch to flip the label)."
         )
-    }
-
-    /// Attaches the diagnostic-log text written since `offsets`, so a failed toggle explains itself.
-    private func attachToggleLogTail(since offsets: [URL: UInt64], name: String) {
-        let attachment = XCTAttachment(string: Self.diagnosticLogText(since: offsets))
-        attachment.name = "diagnostic-log-tail-mode-toggle-\(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 
     /// Toggles WYSIWYG -> Source via the Cmd-/ menu item path. Retry-the-keystroke pattern
@@ -151,12 +110,7 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
 
-        pressModeToggleUntilReceived(
-            to: "Markdown", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2
-        ) {
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-        }
+        pressModeToggleUntilReceived(to: "Markdown", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2)
 
         // Mount-completion gate: the label flip above is synchronous, but the actual
         // WYSIWYG->CodeMirror view swap runs through an async callback chain that can lag
@@ -179,12 +133,7 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 10), "Should be in Markdown mode before switching back")
 
-        pressModeToggleUntilReceived(
-            to: "Rich Text", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2
-        ) {
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-        }
+        pressModeToggleUntilReceived(to: "Rich Text", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2)
 
         // Mirror of the mount-completion gate in `toggleWysiwygToSource()`, for symmetry:
         // waits for the CodeMirror-only raw-markdown evidence to actually DISAPPEAR (proving
@@ -239,13 +188,12 @@ extension EditorModeSwitchUndoE2ETests {
     /// expose an element whose label or value contains "# Test Document", so its appearance
     /// is proof the source editor actually mounted, not just that the status-bar button
     /// re-labeled itself.
+    ///
+    /// The check is `waitForEditorText` (`UITestHelpers.swift`), not a `value CONTAINS` predicate: an element whose `value` is a number
+    /// makes that predicate throw NSInvalidArgumentException.
     func waitForSourceEditorMounted() {
-        let editorArea = app.groups["editor-area"]
-        let sourceEvidence = editorArea.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS '# Test Document' OR value CONTAINS '# Test Document'")
-        ).firstMatch
         XCTAssertTrue(
-            sourceEvidence.waitForExistence(timeout: 10),
+            app.waitForEditorText("# Test Document", timeout: 10),
             "CodeMirror source editor should render the raw markdown after toggling, not just flip the status-bar label"
         )
     }
@@ -259,7 +207,7 @@ extension EditorModeSwitchUndoE2ETests {
     /// different tests across this investigation, the same one `markerPresent()` below was
     /// already fixed for): the original version did a one-shot `waitForDisappearance`
     /// against an `NSPredicate`-resolved query -- safe for checking EXISTENCE
-    /// (`waitForSourceEditorMounted()` above still does exactly that), but
+    /// (`waitForSourceEditorMounted()` above checks existence, through `waitForEditorText`), but
     /// `waitForDisappearance` internally re-resolves the SAME captured element reference
     /// repeatedly against the live tree, and if the AX tree happens to be mid-mutation
     /// (WebKit swapping the WYSIWYG<->CodeMirror content) at the moment one of those

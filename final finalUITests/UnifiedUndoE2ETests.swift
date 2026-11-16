@@ -46,6 +46,7 @@ final class UnifiedUndoE2ETests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
         try TestFixtureHelper.setupFixture(from: self)
     }
 

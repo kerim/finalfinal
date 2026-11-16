@@ -84,6 +84,7 @@ final class ErrorPresenterE2ETests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
         try TestFixtureHelper.setupFixture(from: self)
         FixtureDatabase.seedMarkdown(fixturePath: TestFixtureHelper.fixturePath, markdown: Self.seedMarkdown)
     }
@@ -231,7 +232,7 @@ final class ErrorPresenterE2ETests: XCTestCase {
         // the sheet. There is no AX signal for "the animation has visually finished" to poll on;
         // this is the same gap UnifiedUndoE2ETests+Helpers.swift's restoreFullProject/saveVersion
         // keep an identical settle sleep for, right after their own waitForDisappearance checks.
-        Thread.sleep(forTimeInterval: 0.3) // e2e-lint: allow sleep -- sheet-close animation margin after confirmed AX disappearance, see comment above
+        Thread.sleep(forTimeInterval: 0.3) // e2e-lint: allow sleep -- sheet-close animation margin after AX disappearance, see comment above
 
         // Paste again and choose Insert this time.
         Self.putOversizedImageOnPasteboard()
@@ -275,7 +276,7 @@ final class ErrorPresenterE2ETests: XCTestCase {
         // Same reasoning as sub-test A's identical margin above (waitForDisappearance already
         // confirms AX-level removal; this covers AppKit's own close animation, for which no AX
         // signal exists -- see that comment for the full rationale and the codebase precedent).
-        Thread.sleep(forTimeInterval: 0.3) // e2e-lint: allow sleep -- sheet-close animation margin after confirmed AX disappearance, see sub-test A's identical comment above
+        Thread.sleep(forTimeInterval: 0.3) // e2e-lint: allow sleep -- sheet-close animation margin after AX disappearance, see sub-test A above
 
         openInsertMenuImageItem()
         selectFileInOpenPanel(path: oversizedFile.path)
@@ -308,14 +309,8 @@ final class ErrorPresenterE2ETests: XCTestCase {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
 
-        var toggled = false
-        for _ in 1...5 {
-            if editorMode.label == "Markdown" { toggled = true; break }
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
-        }
-        XCTAssertTrue(toggled, "Editor-mode button should report Markdown after retrying the toggle keystroke")
+        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 2)
+        XCTAssertTrue(toggle.flipped, "Editor-mode button should report Markdown after retrying the toggle keystroke")
 
         // Mount-completion gate -- same INTENT as UnifiedUndoE2ETests+Helpers.swift's own
         // switchToSourceMode(): the status-bar label flip above is synchronous, but the actual
