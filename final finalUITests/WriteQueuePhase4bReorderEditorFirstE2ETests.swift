@@ -1105,8 +1105,14 @@ extension WriteQueuePhase4bStructuralQueueE2ETests {
         guard mode.waitForExistence(timeout: 10) else { fail("the editor-mode button never appeared"); return false }
         tail.poll()
         let switchFrom = tail.lines.count
-        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 5)
-        guard toggle.flipped else { fail("the editor-mode button never reported Markdown after the toggle keystroke"); return false }
+        var toggled = false
+        for _ in 1...5 {
+            if mode.label == "Markdown" { toggled = true; break }
+            app.activateAndWaitForForeground()
+            app.typeKey("/", modifierFlags: .command)
+            if mode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
+        }
+        guard toggled else { fail("the editor-mode button never reported Markdown after the toggle keystroke"); return false }
         guard waitForMarkdownPageReady(from: switchFrom) else { return false }
         let quiet = waitForLogQuiet(quiet: 3, cap: capped(60))
         note("MODE: Markdown; the app's log was quiet for 3 s after the switch: \(Self.yesNo(quiet))")

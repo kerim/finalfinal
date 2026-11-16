@@ -29,11 +29,13 @@
 //    - `testUndoAfterWysiwygToSourceViaStatusBarBadge`: the status-bar mode-badge click
 //      trigger path, distinct from the keyboard shortcut.
 //    - `testUndoAfterHeadingBreakingEditPostModeSwitch` (Source) /
-//      `testUndoAfterHeadingBreakingEditInWysiwyg` (WYSIWYG): the two-press recovery
-//      guarantee for an automatic correction that overlaps text the user just typed right
-//      after a mode switch, in BOTH editors -- the first Cmd-Z undoes the correction (not
-//      the typing), the correction does not immediately re-fire, and a second Cmd-Z then
-//      removes the user's own typing and restores the original heading.
+//      `testUndoAfterHeadingBreakingEditInWysiwyg` (WYSIWYG): the recovery guarantee for an
+//      automatic correction that overlaps text the user just typed right after a mode
+//      switch, in BOTH editors -- the first Cmd-Z undoes the correction (not the typing) and
+//      the correction does not immediately re-fire. Source: a second Cmd-Z then removes the
+//      user's own typing and restores the original heading. WYSIWYG: the heading-breaking
+//      `### ` is the user's LAST keystroke (typed after a marker), so three presses: the
+//      correction, then the `### `, then the marker.
 //
 //  DELIBERATELY EXCLUDED: typing in the OLD editor BEFORE the switch, then undoing AFTER
 //  the switch (cross-editor undo-history transfer). A freshly-mounted CodeMirror/Milkdown
@@ -50,7 +52,7 @@
 //  within ONE app launch and asserts every iteration: this bug was intermittent (a
 //  content-push race, not a deterministic wiring defect), so a single pass proves nothing --
 //  one VM boot samples the race repeatedly instead of needing several boots for the same
-//  statistical power. The 2 dedicated two-press-recovery tests run their scenario once each
+//  statistical power. The 2 dedicated heading-breaking recovery tests run their scenario once each
 //  (the correction they pin is deterministic given the fixture, not intermittent).
 //
 
@@ -243,25 +245,53 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
         )
     }
 
-    /// WYSIWYG mirror of `testUndoAfterHeadingBreakingEditPostModeSwitch` -- same two-press
-    /// recovery guarantee, staying in WYSIWYG mode throughout (typing lands in Milkdown
-    /// after a Source->WYSIWYG switch, not CodeMirror).
+    /// WYSIWYG counterpart of `testUndoAfterHeadingBreakingEditPostModeSwitch` -- the same guarantee
+    /// that the first Cmd-Z undoes an automatic heading correction (not the user's typing), staying
+    /// in WYSIWYG mode throughout (typing lands in Milkdown after a Source->WYSIWYG switch, not
+    /// CodeMirror). Unlike the Source twin it takes three Cmd-Z presses, because a marker is typed
+    /// before the heading-breaking edit (see the order of the keystrokes below).
     ///
-    /// DIAGNOSED (live run, screen-recording-confirmed): unlike the Source-mode twin, the
-    /// raw unmoved post-switch caret alone does NOT break a heading here. After a
-    /// Source->WYSIWYG switch, the caret restores to position 0 INSIDE the H1 node, where
-    /// `#` is a node ATTRIBUTE (the heading's level), not literal text -- typing ordinary
-    /// characters there just renames the heading, leaving the document structurally valid,
-    /// so the reconciler correction never fires. Fixed by typing `"### "` before the
-    /// marker: Milkdown's commonmark heading input rule ADDS to a heading's level when
-    /// typed at position 0 of an EXISTING heading (verified against the installed
-    /// `@milkdown/preset-commonmark` source), so `"### "` turns the H1 into an H4 --
-    /// violating "first section must be H1" and triggering the same reconciler correction
-    /// the Source-mode test relies on. Level 3 specifically (not 1 or 2): leaves the H2
-    /// sibling untouched (its own delta-floor check exempts it), producing exactly one
-    /// heading change to correct -- cleanly mirroring the Source twin's single-change
-    /// scenario. No click, no cursor repositioning added -- the caret itself is still the
-    /// unmoved post-switch position; only the typed content changes.
+    /// ORDER OF THE KEYSTROKES (t-e006ebc5): the marker is typed FIRST and the heading-breaking
+    /// `"### "` is the user's LAST keystroke, as in the Source twin. This test used to type
+    /// `"### "` first and the marker after it, expecting the first Cmd-Z to undo the correction
+    /// while the marker typing was untouched. Since Phase 5 (a415ea93, 2026-11-08, the 2 s poll
+    /// is gone) the page reports the break at once and the correction lands about 0.9 s later,
+    /// BEFORE most of the marker's keystrokes; it is its own undo step (`dispatchDerivedCorrection`
+    /// closes the history around it), so the first Cmd-Z correctly undid the NEWEST step, the
+    /// marker typing, and the test failed on every run at "First Cmd-Z should undo the
+    /// automatic heading correction". Nothing was wrong in the app; the premise "the correction
+    /// is the newest history step" was false. With the break last, nothing is typed after it, so
+    /// the correction really is the newest step.
+    ///
+    /// Why `"### "` breaks the heading at all (diagnosed from a live run, screen-recording
+    /// confirmed): the raw unmoved post-switch caret alone does NOT break a heading here. After
+    /// a Source->WYSIWYG switch the caret restores to position 0 INSIDE the H1 node, where `#`
+    /// is a node ATTRIBUTE (the heading's level), not literal text, so typing ordinary
+    /// characters there just renames the heading and the document stays valid. That is why the
+    /// marker, typed there first, breaks nothing. Milkdown's commonmark heading input rule ADDS
+    /// to a heading's level when `"### "` is typed at position 0 of an EXISTING heading
+    /// (verified against the installed `@milkdown/preset-commonmark` source), so `"### "` turns
+    /// the H1 into an H4 -- violating "first section must be H1" and triggering the reconciler
+    /// correction the Source-mode test relies on. Level 3 specifically (not 1 or 2) leaves the
+    /// H2 sibling untouched, producing exactly one heading change to correct.
+    ///
+    /// The marker and the `"### "` must be separate undo steps: ProseMirror groups edits typed
+    /// within `newGroupDelay` (500 ms) of each other, and both sit at the start of the heading
+    /// (adjacent), so a 0.8 s pause separates them, and Cmd-Up moves the caret from the end of
+    /// the marker back to the start of the document before the `"### "`.
+    ///
+    /// What each Cmd-Z proves, in order (the heading row is read from the fixture database by
+    /// the marker it contains, because the marker is the only handle that survives the level
+    /// changes):
+    ///   1. Cmd-Z #1 undoes the CORRECTION: the marker is still on screen and the row is at level
+    ///      4 again. Undoing the user's `"### "` instead would have given level 1, and undoing
+    ///      the marker would have removed it. The correction must not re-fire for 2 s.
+    ///   2. Cmd-Z #2 undoes the user's `"### "` in ONE step: the row is back at level 1 and no `#`
+    ///      is left in its text after the heading's own `# ` (a leftover `#`, `##` or `###` would
+    ///      mean the four keystrokes landed in separate undo steps).
+    ///   3. Cmd-Z #3 undoes the marker typing: in the saved document no row holds the marker and
+    ///      the first heading is the fixture's `# Test Document` at level 1 again. Only the
+    ///      document's start is compared, not the rest of the fixture.
     func testUndoAfterHeadingBreakingEditInWysiwyg() throws {
         app.launchArguments += ["-com.kerim.final-final.diagnosticsLoggingEnabled", "YES"]
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
@@ -275,19 +305,12 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
         toggleSourceToWysiwyg()
 
         let marker = "HeadingBreak_W_\(shortUUID())"
-        Self.recordDiagnosticLogStartOffsets()
 
+        // The marker first, at the unmoved post-switch caret (position 0 inside the H1): this
+        // only renames the heading, so no hierarchy violation and no correction yet.
         Thread.sleep(forTimeInterval: 0.3)
         app.activateAndWaitForForeground()
-        // "### " at position 0 of the existing H1 invokes Milkdown's commonmark heading
-        // input rule, which ADDS to the heading's current level -- turning the H1 into an
-        // H4 (violates "first section must be H1") -- rather than just prefixing literal
-        // text onto it. This is what actually breaks the heading here; see this test's own
-        // doc comment for the full diagnosis of why the caret position alone doesn't.
-        app.typeText("### ")
-        Thread.sleep(forTimeInterval: 0.3)
         app.typeText(marker)
-        Thread.sleep(forTimeInterval: 0.5)
 
         XCTAssertTrue(
             markerPresent(marker),
@@ -295,20 +318,51 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
             "cannot evaluate the two-press recovery scenario without this landing first."
         )
 
+        // A pure time gap, nothing observable to wait for: ProseMirror's history merges edits
+        // typed within newGroupDelay (500 ms) of each other, and the `"### "` below lands next
+        // to the marker, so without this pause both could become one undo step.
+        Thread.sleep(forTimeInterval: 0.8)
+
+        // Back to the start of the document (the start of the H1), then the heading-breaking
+        // edit as the user's LAST keystroke. The log checkpoint sits after the marker, so the
+        // correction asserted below is proven to come after all of the user's typing.
+        app.activateAndWaitForForeground()
+        app.typeKey(.upArrow, modifierFlags: .command)
+        Self.recordDiagnosticLogStartOffsets()
+        // "### " at position 0 of the existing H1 invokes Milkdown's commonmark heading input
+        // rule, which ADDS to the heading's current level -- turning the H1 into an H4
+        // (violates "first section must be H1") rather than prefixing literal text onto it.
+        app.typeText("### ")
+
+        // The correction lands about 0.9 s after the break; 2 s leaves margin.
         Thread.sleep(forTimeInterval: 2.0)
         assertHierarchyCorrectionDidFire(direction: "WYSIWYG mode, post-Source->WYSIWYG switch")
 
+        // Cmd-Z #1: the correction is the newest history step, so it is undone and nothing else.
         app.activateAndWaitForForeground()
         app.typeKey("z", modifierFlags: .command)
-        Thread.sleep(forTimeInterval: 1.0)
+        Self.recordDiagnosticLogStartOffsets()
 
         XCTAssertTrue(
             markerPresent(marker),
             "First Cmd-Z should undo the automatic heading correction, NOT the user's own " +
             "typing -- the marker text should still be present immediately afterward."
         )
+        // Bounded wait for the undo to reach the database. Level 4 means the correction (H4 back
+        // to H1) was undone; undoing the user's `###` would have shown level 1 instead.
+        let afterFirstUndo = waitForHeadingLevel(containing: marker, toBe: 4, timeout: 2)
+        XCTAssertTrue(
+            afterFirstUndo?.reached == true,
+            "First Cmd-Z should undo the automatic heading correction (the heading comes back as an H4), " +
+            "but the database heading row holding marker \"\(marker)\" did not reach headingLevel 4 within 2s. " +
+            "Found: \(HeadingRowReading.describe(afterFirstUndo)). Level 1 means the undo also took out the user's " +
+            "own \"### \" (or had not reached the database); no row means it removed the marker."
+        )
 
-        Self.recordDiagnosticLogStartOffsets()
+        // The correction must not immediately re-fire (P3 §4d suppression) -- the user's own
+        // acceptance test: "wait two seconds without typing -- it should NOT immediately
+        // re-tidy it." The log window opened at the Cmd-Z and closes 2 s after the undo showed
+        // in the database.
         Thread.sleep(forTimeInterval: 2.0)
         let deltaAfterFirstUndo = Self.currentDiagnosticLogContents()
         XCTAssertFalse(
@@ -318,14 +372,30 @@ final class EditorModeSwitchUndoE2ETests: XCTestCase {
             "re-correction."
         )
 
+        // Cmd-Z #2: undoes the user's own `"### "` in one step, restoring the original level.
         app.activateAndWaitForForeground()
         app.typeKey("z", modifierFlags: .command)
-        Thread.sleep(forTimeInterval: 1.0)
+        let afterSecondUndo = waitForHeadingLevel(
+            containing: marker, toBe: 1, timeout: 3, textAfterLeadingHashesMustNotContain: "#")
+        XCTAssertTrue(
+            afterSecondUndo?.reached == true,
+            "Second Cmd-Z should undo the user's own \"### \" in one step, but the database heading row holding " +
+            "marker \"\(marker)\" did not reach headingLevel 1 with no leftover \"#\" in its text within 3s. " +
+            "Found: \(HeadingRowReading.describe(afterSecondUndo)). A row at level 1 that still has leftover \"#\" " +
+            "characters in its text means the four \"### \" keystrokes landed in separate undo steps."
+        )
 
-        XCTAssertFalse(
-            markerPresent(marker),
-            "Second Cmd-Z should have removed the user's typed marker text, restoring the " +
-            "original heading -- it did not."
+        // Cmd-Z #3: undoes the marker typing. Read from the database, not the accessibility tree:
+        // an absence check on the tree also passes when the tree is stale or empty. The saved
+        // start of the document must be the fixture's again; the rest is not compared.
+        app.activateAndWaitForForeground()
+        app.typeKey("z", modifierFlags: .command)
+        let afterThirdUndo = waitForDocumentStartBackToFixture(withoutMarker: marker, timeout: 3)
+        XCTAssertTrue(
+            afterThirdUndo?.reached == true,
+            "Third Cmd-Z should have removed the user's typed marker \"\(marker)\", but the saved document start did " +
+            "not return to the fixture's (no row holding the marker, first heading \"\(Self.fixtureFirstHeadingFragment)\" " +
+            "at level 1) within 3s. Found: \(DocumentStartReading.describe(afterThirdUndo))."
         )
     }
 }
@@ -372,12 +442,12 @@ extension EditorModeSwitchUndoE2ETests {
         let editorMode = app.buttons["status-bar-editor-mode"]
 
         func callAndWatch(_ step: String, expecting label: String, requireHold: Bool, toggle: () -> Void) {
-            let before = DiagnosticLogReader.sizesNow()
+            let before = Self.diagnosticLogSizesNow()
             toggle()
             // Polls for a CHANGE, bounded: a held second press shows itself as the label leaving `label`; the pass case waits it out.
             let flippedAway = editorMode.waitForLabelNot("== '\(label)'", timeout: Self.heldSwitchSettle)
-            let logText = DiagnosticLogReader.text(since: before)
-            let received = DiagnosticLogReader.toggleReceivedCount(since: before)
+            let logText = Self.diagnosticLogText(since: before)
+            let received = Self.toggleReceivedCount(since: before)
             let held = logText.contains("hold begins for \(Self.heldSwitchMs) ms")
             let attachment = XCTAttachment(string: logText)
             attachment.name = "diagnostic-log-\(step)-\(held ? "held" : "not-held")"
@@ -411,5 +481,50 @@ extension EditorModeSwitchUndoE2ETests {
 
         callAndWatch("3 Rich Text to Markdown", expecting: "Markdown", requireHold: false, toggle: toggleWysiwygToSource)
         waitForSourceEditorMounted()
+    }
+
+    // MARK: Diagnostic-log readers for the toggle-receipt checks
+
+    /// The line the app persists at its two press sites (the Cmd-/ menu command, `ViewCommands.swift`, and the status-bar badge click,
+    /// `StatusBar.swift`) the moment a press reaches it, before the caret-save round trip and any gate.
+    static let toggleReceivedMarker = "[TRANS] toggle received"
+
+    /// Each distinct diagnostic-log file's size right now. The helpers' candidate list names one file through several spellings, so
+    /// files are deduplicated by resolved path: a count over the text must not see the same line two or three times.
+    static func diagnosticLogSizesNow() -> [URL: UInt64] {
+        var sizes: [URL: UInt64] = [:]
+        var seenPaths = Set<String>()
+        for url in diagnosticLogCandidateURLs() {
+            guard seenPaths.insert(url.resolvingSymlinksInPath().standardizedFileURL.path).inserted else { continue }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
+                .flatMap { $0 }?.uint64Value ?? 0
+            sizes[url] = size
+        }
+        return sizes
+    }
+
+    /// The log text appended since `offsets` (from `diagnosticLogSizesNow()`), one block per file. Reads the files only, never
+    /// truncates the real, shared log, and keeps its own offsets so it never disturbs the shared checkpoint the hierarchy checks use.
+    /// A file now SMALLER than its stored offset was rotated (or truncated) since: everything in it is new, so it is read from 0.
+    /// Decoded with `String(decoding:as:)`, which turns a bad byte into U+FFFD instead of dropping the whole chunk the way
+    /// `String(data:encoding:)` does (a dropped chunk could hide the very line a check is looking for).
+    static func diagnosticLogText(since offsets: [URL: UInt64]) -> String {
+        offsets.keys.sorted { $0.path < $1.path }.compactMap { url -> String? in
+            guard let handle = FileHandle(forReadingAtPath: url.path) else { return nil }
+            defer { try? handle.close() }
+            let stored = offsets[url] ?? 0
+            let size = (try? handle.seekToEnd()) ?? 0
+            try? handle.seek(toOffset: size < stored ? 0 : stored)
+            let data = handle.readDataToEndOfFile()
+            guard !data.isEmpty else { return nil }
+            // The lossy decode is the point (a bad byte must not drop the chunk), which is what the rule below would forbid.
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: data, as: UTF8.self)
+        }.joined(separator: "\n---\n")
+    }
+
+    /// How many mode toggles the app has received since `offsets`.
+    static func toggleReceivedCount(since offsets: [URL: UInt64]) -> Int {
+        diagnosticLogText(since: offsets).components(separatedBy: toggleReceivedMarker).count - 1
     }
 }

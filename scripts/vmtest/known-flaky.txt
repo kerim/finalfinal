@@ -67,18 +67,6 @@ final finalUITests/EditorSmokeTests/testFocusModeToggle
 # unit-level coverage of the eviction behavior itself.
 final finalUITests/UnifiedUndoE2ETests/testEvictionCapEvictsOldestEntryAndStaysConsistent
 
-# Added 2026-08-27 during sd-wrap-up for t-18576cf7 (blank-document-open fix). Second
-# occurrence of the identical failure -- "First Cmd-Z should undo the automatic heading
-# correction, NOT the user's own typing -- the marker text should still be present
-# immediately afterward" -- first seen 2026-08-25 during an unrelated wrap-up
-# (bib-heading-false-positive) and deferred as t-e006ebc5. Neither branch that has
-# reproduced this touches heading-hierarchy auto-correction or undo/eviction code, and
-# both times an immediate scoped re-run of just this test passed cleanly. Reads as the
-# same suite-order/state-pollution class already documented for
-# testFocusModeToggle above. Quarantined rather than root-caused; revisit
-# t-e006ebc5 if it starts failing in isolation too.
-final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterHeadingBreakingEditInWysiwyg
-
 # Added 2026-09-02 during sd-wrap-up for the notes-heading-scanner-unify batch
 # (t-7f7e6ed2, t-mtianjujt9ub). Asserts that deleting the last footnote reference
 # under a Notes heading dissolves the whole section (heading + orphaned
@@ -99,9 +87,11 @@ final finalUITests/EditorModeSwitchUndoE2ETests/testUndoAfterHeadingBreakingEdit
 # prose beneath it — and confirmed correct behavior (the section dissolved,
 # their prose survived) before approving the merge. This is a
 # live-app-confirmed-correct / automated-check-unreliable-timing gap, the same
-# class already documented above for testFocusModeToggle and
-# testUndoAfterHeadingBreakingEditInWysiwyg — not a data-loss or correctness
-# regression. Quarantined rather than chasing a fourth timing fix; revisit if a
+# class already documented above for testFocusModeToggle — not a data-loss or correctness
+# regression. (An earlier version of this comment also named
+# `testUndoAfterHeadingBreakingEditInWysiwyg` as the same class; that was wrong. It was a
+# wrong test premise, not a timing case, fixed 2026-11-16 under t-e006ebc5, and it is no
+# longer quarantined.) Quarantined rather than chasing a fourth timing fix; revisit if a
 # live-app manual check ever fails, or if the debounce/dissolve mechanism
 # changes again.
 final finalUITests/FootnoteCursorPlacementE2ETests/testDeletingLastFootnoteReferencePreservesUserProseUnderNotes

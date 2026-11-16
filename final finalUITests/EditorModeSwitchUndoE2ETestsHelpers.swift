@@ -76,28 +76,69 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(wordCount.waitForValue("CONTAINS 'words'", timeout: 10), "Status bar should show word count (editor JS ready)")
     }
 
-    /// Sends a mode toggle until the app has RECEIVED one, then waits for the status-bar label to show `targetLabel` and never presses
-    /// again (t-177a10f1). A thin wrapper over the shared `toggleEditorModeUntilReceived` (`UITestHelpers.swift`, which documents why a
-    /// toggle the app already received is never resent), keeping this class's two assertions and their wording. The class launches the
-    /// app with `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1` (`setUpWithError`) so the log line the helper reads exists.
+    /// Sends a mode toggle (`press`) until the app has RECEIVED one, then waits for the status-bar
+    /// label to show `targetLabel` and never presses again (t-177a10f1).
+    ///
+    /// Why "press again if the label has not flipped" is wrong: since the carried switch (Phase 5,
+    /// 2026-11-06) the label flips only after the incoming page is ready (up to 15 s, slower with
+    /// two VMs running), and the app deliberately HOLDS a second toggle and runs it afterwards
+    /// (`handleEditorModeToggle` -> `runAfterPendingStructuralWork`; a keypress is never dropped).
+    /// A resend of a press the app already has therefore switches the app straight back, and the
+    /// test fails far from the cause. The label flips late, so never resend a received toggle.
+    ///
+    /// A press counts as received when the label already shows `targetLabel`, or the app's
+    /// diagnostic log has a "[TRANS] toggle received" line written since before the first press
+    /// (the app persists it the moment the press reaches the Cmd-/ menu command or the badge
+    /// button, before the caret-save round trip and any gate, which on a loaded host can take
+    /// longer than the receipt window by itself). Only a
+    /// press that neither shows nor logs within `receiptWindow` seconds is treated as dropped and
+    /// sent again, at most `maxPresses` times. The class launches the app with
+    /// `FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING=1` (`setUpWithError`) so the log line exists.
+    /// Once received, the label gets a bounded 30 s: the carried switch is slow on a loaded host.
     func pressModeToggleUntilReceived(
         to targetLabel: String, trigger: String, maxPresses: Int, receiptWindow: TimeInterval,
-        press: (() -> Void)? = nil
+        press: () -> Void
     ) {
-        let outcome = toggleEditorModeUntilReceived(
-            app, to: targetLabel, trigger: trigger, maxPresses: maxPresses, receiptWindow: receiptWindow, press: press
-        )
+        let editorMode = app.buttons["status-bar-editor-mode"]
+        let logOffsets = Self.diagnosticLogSizesNow()
+        let labelIsTarget = "== '\(targetLabel)'"
+        var presses = 0
+        var received = false
+        while !received, presses < maxPresses {
+            press()
+            presses += 1
+            let deadline = Date().addingTimeInterval(receiptWindow)
+            repeat {
+                received = Self.toggleReceivedCount(since: logOffsets) > 0
+                    || editorMode.waitForLabel(labelIsTarget, timeout: 0.5)
+            } while !received && Date() < deadline
+            // A line written in the last half second of the window still counts.
+            if !received { received = Self.toggleReceivedCount(since: logOffsets) > 0 }
+        }
+        if !received { attachToggleLogTail(since: logOffsets, name: "never-received") }
         XCTAssertTrue(
-            outcome.received,
-            "The app never received the \(trigger) to \(targetLabel): after \(outcome.presses) press(es) the " +
-            "label did not change and the diagnostic log has no \"\(DiagnosticLogReader.toggleReceivedMarker)\" line."
+            received,
+            "The app never received the \(trigger) to \(targetLabel): after \(presses) press(es) the " +
+            "label did not change and the diagnostic log has no \"\(Self.toggleReceivedMarker)\" line."
         )
+
+        let started = Date()
+        let flipped = editorMode.waitForLabel(labelIsTarget, timeout: 30)
+        if !flipped { attachToggleLogTail(since: logOffsets, name: "label-did-not-flip") }
         XCTAssertTrue(
-            outcome.flipped,
+            flipped,
             "Editor-mode button should report \(targetLabel) once the app had received the \(trigger) " +
-            "(\(outcome.presses) press(es) sent; waited \(String(format: "%.1f", outcome.flipSeconds))s " +
+            "(\(presses) press(es) sent; waited \(String(format: "%.1f", Date().timeIntervalSince(started)))s " +
             "for the carried switch to flip the label)."
         )
+    }
+
+    /// Attaches the diagnostic-log text written since `offsets`, so a failed toggle explains itself.
+    private func attachToggleLogTail(since offsets: [URL: UInt64], name: String) {
+        let attachment = XCTAttachment(string: Self.diagnosticLogText(since: offsets))
+        attachment.name = "diagnostic-log-tail-mode-toggle-\(name)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     /// Toggles WYSIWYG -> Source via the Cmd-/ menu item path. Retry-the-keystroke pattern
@@ -110,7 +151,12 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Rich Text'", timeout: 10), "Should start in Rich Text mode")
 
-        pressModeToggleUntilReceived(to: "Markdown", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2)
+        pressModeToggleUntilReceived(
+            to: "Markdown", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2
+        ) {
+            app.activateAndWaitForForeground()
+            app.typeKey("/", modifierFlags: .command)
+        }
 
         // Mount-completion gate: the label flip above is synchronous, but the actual
         // WYSIWYG->CodeMirror view swap runs through an async callback chain that can lag
@@ -133,7 +179,12 @@ extension EditorModeSwitchUndoE2ETests {
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
         XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 10), "Should be in Markdown mode before switching back")
 
-        pressModeToggleUntilReceived(to: "Rich Text", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2)
+        pressModeToggleUntilReceived(
+            to: "Rich Text", trigger: "Cmd-/ keystroke", maxPresses: 5, receiptWindow: 2
+        ) {
+            app.activateAndWaitForForeground()
+            app.typeKey("/", modifierFlags: .command)
+        }
 
         // Mirror of the mount-completion gate in `toggleWysiwygToSource()`, for symmetry:
         // waits for the CodeMirror-only raw-markdown evidence to actually DISAPPEAR (proving
@@ -188,12 +239,13 @@ extension EditorModeSwitchUndoE2ETests {
     /// expose an element whose label or value contains "# Test Document", so its appearance
     /// is proof the source editor actually mounted, not just that the status-bar button
     /// re-labeled itself.
-    ///
-    /// The check is `waitForEditorText` (`UITestHelpers.swift`), not a `value CONTAINS` predicate: an element whose `value` is a number
-    /// makes that predicate throw NSInvalidArgumentException.
     func waitForSourceEditorMounted() {
+        let editorArea = app.groups["editor-area"]
+        let sourceEvidence = editorArea.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS '# Test Document' OR value CONTAINS '# Test Document'")
+        ).firstMatch
         XCTAssertTrue(
-            app.waitForEditorText("# Test Document", timeout: 10),
+            sourceEvidence.waitForExistence(timeout: 10),
             "CodeMirror source editor should render the raw markdown after toggling, not just flip the status-bar label"
         )
     }
@@ -207,7 +259,7 @@ extension EditorModeSwitchUndoE2ETests {
     /// different tests across this investigation, the same one `markerPresent()` below was
     /// already fixed for): the original version did a one-shot `waitForDisappearance`
     /// against an `NSPredicate`-resolved query -- safe for checking EXISTENCE
-    /// (`waitForSourceEditorMounted()` above checks existence, through `waitForEditorText`), but
+    /// (`waitForSourceEditorMounted()` above still does exactly that), but
     /// `waitForDisappearance` internally re-resolves the SAME captured element reference
     /// repeatedly against the live tree, and if the AX tree happens to be mid-mutation
     /// (WebKit swapping the WYSIWYG<->CodeMirror content) at the moment one of those
@@ -408,6 +460,105 @@ extension EditorModeSwitchUndoE2ETests {
             }
         }
         return false
+    }
+
+    // MARK: - Heading rows in the fixture database (t-e006ebc5)
+    //
+    // Reads are safe while the app runs (WAL; see `FixtureDatabase`), but they see only what the app has saved: the page reports a change to
+    // Swift, and the write queue puts it in the table a moment later, which is exactly why these are bounded waits and not one read.
+
+    /// One reading of a heading row of the fixture database, taken in ONE query so the level and the text always belong together.
+    struct HeadingRowReading {
+        let level: Int
+        let fragment: String
+        /// Whether this reading met the condition the wait was for. The last reading of a wait that timed out did not.
+        let reached: Bool
+
+        /// The reading as plain text for a failure message ("no heading row ..." when nothing was ever read).
+        static func describe(_ reading: HeadingRowReading?) -> String {
+            guard let reading else { return "no heading row containing the marker could be read" }
+            return "headingLevel \(reading.level), markdownFragment \"\(reading.fragment)\""
+        }
+    }
+
+    /// One reading of the saved start of the document, taken in ONE query: how many rows hold the marker, and the document's first heading.
+    struct DocumentStartReading {
+        let markerRows: Int
+        let firstHeadingLevel: Int?
+        let firstHeadingFragment: String
+        /// Whether this reading was the fixture's start again. The last reading of a wait that timed out was not.
+        let reached: Bool
+
+        /// The reading as plain text for a failure message ("nothing" when no reading was ever possible).
+        static func describe(_ reading: DocumentStartReading?) -> String {
+            guard let reading else { return "nothing could be read from the block table" }
+            let level = reading.firstHeadingLevel.map { "headingLevel \($0)" } ?? "no heading row"
+            return "\(reading.markerRows) saved row(s) holding the marker; first heading: \(level), " +
+                "markdownFragment \"\(reading.firstHeadingFragment)\""
+        }
+    }
+
+    /// The committed fixture's first heading as the block table stores it (`final finalTests/Fixtures/test-fixture.ff`).
+    static let fixtureFirstHeadingFragment = "# Test Document"
+
+    /// Re-reads until `read` returns a reading whose `reached` is true or `timeout` runs out, with 0.25 s run-loop ticks in between (no
+    /// fixed sleep, always bounded). Returns the LAST reading, so a timed-out wait can say what it found, or nil if nothing was readable.
+    private func pollFixtureDatabase<Reading>(
+        timeout: TimeInterval, reached: KeyPath<Reading, Bool>, read: () -> Reading?
+    ) -> Reading? {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        var last: Reading?
+        repeat {
+            if let reading = read() {
+                last = reading
+                if reading[keyPath: reached] { return reading }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        } while Date() < deadline
+        return last
+    }
+
+    /// Waits (bounded by `timeout`) until the heading row whose text contains `marker` stores `level` and, when
+    /// `textAfterLeadingHashesMustNotContain` is given, the part of its `markdownFragment` after the heading's own leading `#` run does not
+    /// contain that text (pass "#" to require a heading with no `#` left in its text). Returns the LAST reading (`reached` says whether it
+    /// met the condition), or nil when no row was ever read. The marker is the handle because it is the one thing that stays in the
+    /// heading while its level changes.
+    func waitForHeadingLevel(
+        containing marker: String, toBe level: Int, timeout: TimeInterval, textAfterLeadingHashesMustNotContain forbidden: String? = nil
+    ) -> HeadingRowReading? {
+        let sql = "SELECT headingLevel, markdownFragment FROM block WHERE blockType = 'heading' "
+            + "AND instr(markdownFragment, '\(FixtureDatabase.escape(marker))') > 0 LIMIT 1;"
+        return pollFixtureDatabase(timeout: timeout, reached: \HeadingRowReading.reached) {
+            let raw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
+            // "level|text": the level is digits, so the first "|" is always the separator, whatever the text holds.
+            let parts = raw.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, let rowLevel = Int(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+            let fragment = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = String(fragment.drop(while: { $0 == "#" }))
+            let hasForbidden = forbidden.map { text.contains($0) } ?? false
+            return HeadingRowReading(level: rowLevel, fragment: fragment, reached: rowLevel == level && !hasForbidden)
+        }
+    }
+
+    /// Waits (bounded by `timeout`) until the saved document is back at the fixture's start: no row holds `marker`, and the first heading is
+    /// the fixture's own `# Test Document` at level 1. Only the document's start is compared, not the rest of the fixture. Returns the LAST
+    /// reading (`reached` says whether it was the fixture's start), or nil when nothing was readable.
+    func waitForDocumentStartBackToFixture(withoutMarker marker: String, timeout: TimeInterval) -> DocumentStartReading? {
+        let firstHeading = "FROM block WHERE blockType = 'heading' ORDER BY sortOrder LIMIT 1"
+        let sql = "SELECT (SELECT count(*) FROM block WHERE instr(markdownFragment, '\(FixtureDatabase.escape(marker))') > 0) || '|' "
+            + "|| ifnull((SELECT headingLevel \(firstHeading)), '') || '|' "
+            + "|| ifnull((SELECT markdownFragment \(firstHeading)), '');"
+        return pollFixtureDatabase(timeout: timeout, reached: \DocumentStartReading.reached) {
+            let raw = FixtureDatabase.read(fixturePath: TestFixtureHelper.fixturePath, sql: sql)
+            // "markerRows|level|text": the text comes last, so it may hold any "|".
+            let parts = raw.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count == 3, let markerRows = Int(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+            let level = Int(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
+            let fragment = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+            return DocumentStartReading(
+                markerRows: markerRows, firstHeadingLevel: level, firstHeadingFragment: fragment,
+                reached: markerRows == 0 && level == 1 && fragment == Self.fixtureFirstHeadingFragment)
+        }
     }
 
     // MARK: - Diagnostic log reading (permanent -- backs the hierarchy-correction

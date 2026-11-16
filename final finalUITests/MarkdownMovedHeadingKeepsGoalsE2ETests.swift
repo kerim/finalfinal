@@ -469,10 +469,13 @@ extension MarkdownMovedHeadingKeepsGoalsE2ETests {
         let tail = Phase4bDelLogTail()
         tail.poll()
         let from = tail.lines.count
-        // The keystroke can drop when the app is not reliably in front (a proven pattern): press, and press again only if neither the
-        // badge has flipped nor the app's log shows it received the toggle, after a long bounded wait (`toggleEditorModeUntilReceived`).
-        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 2, receiptWindow: 20) { self.pressChord("/", .command) }
-        try require(toggle.flipped, "Cmd-/ did not switch the editor to Markdown (the badge reads \"\(mode.label)\")")
+        // The keystroke can drop when the app is not reliably in front (a proven pattern): press, and press again only if the badge
+        // still has not flipped after a long bounded wait.
+        for _ in 1...2 where mode.label != "Markdown" {
+            pressChord("/", .command)
+            if mode.waitForLabel("== 'Markdown'", timeout: 20) { break }
+        }
+        try require(mode.label == "Markdown", "Cmd-/ did not switch the editor to Markdown (the badge reads \"\(mode.label)\")")
         let needle = Phase4bDelHarness.markdownPageReadyLogLine
         var signal = "none"
         let ready = pollUntilTrue(timeout: Self.saveBound, pollInterval: 0.25) {
