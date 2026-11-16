@@ -51,10 +51,19 @@ struct StructuralTraceTests {
         #expect(StructuralTrace.eventTypeName(.scrollWheel) == "other22")
     }
 
-    @Test("a key line carries the time, the key code, and whether the key went to the editor")
+    @Test("a key line carries the time and whether the key went to the editor; the key code only when one is given (t-561c4083)")
     func keyLineFormat() {
+        #expect(StructuralTrace.keyLine(t: 1_000, code: nil, inEditor: true) == "[TYPING-TRACE] key t=1000 editor=true")
         #expect(StructuralTrace.keyLine(t: 1_000, code: 6, inEditor: true) == "[TYPING-TRACE] key t=1000 code=6 editor=true")
         #expect(StructuralTrace.keyLine(t: 2_000, code: 53, inEditor: false) == "[TYPING-TRACE] key t=2000 code=53 editor=false")
+    }
+
+    @Test("the key monitor's line has no code= while the developer switch is off (t-561c4083)")
+    func keyPressLineGate() {
+        let off = StructuralTrace.keyPressLine(t: 2_000, code: 6, inEditor: true, developerDetail: false)
+        #expect(off == "[TYPING-TRACE] key t=2000 editor=true")
+        #expect(!off.contains("code="))
+        #expect(StructuralTrace.keyPressLine(t: 2_000, code: 6, inEditor: true, developerDetail: true).contains(" code=6 "))
     }
 
     @Test("an echo line says how many edits it covers; an echo without a count leaves it out")

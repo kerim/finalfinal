@@ -276,15 +276,9 @@ struct FileOperations {
     static func handleSaveProjectAs() {
         let dm = DocumentManager.shared
 
-        // Guard: must have an open project that isn't Getting Started
-        guard dm.hasOpenProject, let sourceURL = dm.projectURL else {
-            DebugLog.log(.fileOps, "[FileOperations] Save As: no project open")
-            return
-        }
-        if dm.isGettingStartedProject {
-            DebugLog.log(.fileOps, "[FileOperations] Save As: cannot Save As from Getting Started")
-            return
-        }
+        // The project the save panel names (t-eb07cd67): with no project open, or Getting Started open, the user is told why
+        // (`ProjectCommands.saveAsSource` shows the alert) instead of the menu item silently doing nothing.
+        guard let sourceURL = ProjectCommands.saveAsSource() else { return }
 
         let defaultName = dm.projectTitle ?? sourceURL.deletingPathExtension().lastPathComponent
 
@@ -304,6 +298,8 @@ struct FileOperations {
             // E4 (t-94369a83 3a-1b, round C8a): the copy is made inside the lifecycle entry, AFTER the save sequence
             // wrote the editor's fresh content through the ordered queue (the direct flush that used to sit here is
             // gone) -- see `ProjectCommands.saveAs` for the copy, the open, the non-fatal rename and the failure alert.
+            // `sourceURL` is the project this save panel named, taken when the panel was shown (t-eb07cd67): the command copies THAT
+            // project even if another one is opened while this waits for an earlier command.
             Task { @MainActor in
                 await ProjectCommands.saveAs(from: sourceURL, to: destURL)
             }

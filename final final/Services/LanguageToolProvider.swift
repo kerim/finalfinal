@@ -397,10 +397,10 @@ final class LanguageToolProvider: ProofingProvider {
         guard nsFull.length > 0 else { return }
         let previewLen = Self.boundaryPreviewChars
         let head = nsFull.substring(to: min(previewLen, nsFull.length))
-        DebugLog.log(.proofing, "[LT] head: \"\(head.replacingOccurrences(of: "\n", with: "⏎"))\"")
+        DebugLog.log(.proofing, "[LT] head: \(DebugLog.docText(head.replacingOccurrences(of: "\n", with: "⏎")))")
         if nsFull.length > previewLen {
             let tail = nsFull.substring(from: nsFull.length - previewLen)
-            DebugLog.log(.proofing, "[LT] tail: \"\(tail.replacingOccurrences(of: "\n", with: "⏎"))\"")
+            DebugLog.log(.proofing, "[LT] tail: \(DebugLog.docText(tail.replacingOccurrences(of: "\n", with: "⏎")))")
         }
     }
 

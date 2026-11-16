@@ -27,7 +27,7 @@ extension BlockParser {
         // Parse {width=N%} from Pandoc attributes
         let width = parseImageWidthPercent(from: trimmed)
         if width != nil {
-            DebugLog.log(.image, "[BlockParser] Parsed width=\(width ?? -1) from fragment: \(trimmed.prefix(60))")
+            DebugLog.log(.image, "[BlockParser] Parsed width=\(width ?? -1) from fragment: \(DebugLog.docText(trimmed))")
         }
         return ParsedImageMeta(src: meta.src, alt: meta.alt, caption: meta.caption, width: width)
     }

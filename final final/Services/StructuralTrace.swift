@@ -36,9 +36,11 @@
 //        `editorState.content`), and, from StructuralTraceRunLoop.swift, `wake-work took=<n>ms` and `ui-update took=<n>ms` (a
 //        main run-loop phase that took more than 50 ms). A delete started by the UI-test trigger (UITestingDeleteTrigger.swift)
 //        also writes `[UITEST-TRIGGER] t=<ms>ms deleteSection received title=<title>` just before its `click-start type=none` line.
-//    [TYPING-TRACE] key t=<ms> code=<keyCode> editor=<true|false>
+//    [TYPING-TRACE] key t=<ms> editor=<true|false>   (plus ` code=<keyCode>` after `t=` ONLY with FF_DEV_LOG_KEYS_AND_TEXT=1)
 //        One per key-down anywhere in the app, from ONE local event monitor (never a web-view subclass). `editor` is true when
-//        the key window's first responder is a WKWebView or inside one.
+//        the key window's first responder is a WKWebView or inside one. The key code is left out of the user's log on purpose
+//        (t-561c4083: a sequence of key codes reads back what was typed); the developer-only environment switch brings it
+//        back (`DebugLog.developerDetailOn`), and the UI-test harness that times Cmd-Z and Cmd-/ by code sets it.
 //    [TYPING-TRACE] echo t=<ms> n=<edits>
 //        Swift received the editor's `typingEcho` message. The Rich Text editor posts it from a task after the first frame that
 //        follows a real user edit; `n` is how many real user edits that one echo covers (edits made before the same frame).
@@ -251,9 +253,17 @@ enum StructuralTrace {
         return names[type] ?? "other\(type.rawValue)"
     }
 
-    /// `[TYPING-TRACE] key t=<ms> code=<keyCode> editor=<bool>`.
-    static func keyLine(t: Int, code: UInt16, inEditor: Bool) -> String {
-        "[TYPING-TRACE] key t=\(t) code=\(code) editor=\(inEditor)"
+    /// `[TYPING-TRACE] key t=<ms> code=<keyCode> editor=<bool>`; the `code=` part is left out when `code` is nil (t-561c4083).
+    static func keyLine(t: Int, code: UInt16?, inEditor: Bool) -> String {
+        "[TYPING-TRACE] key t=\(t)\(code.map { " code=\($0)" } ?? "") editor=\(inEditor)"
+    }
+
+    /// The key monitor's line: the key code (which would let anyone read back what was typed) is written only while the
+    /// developer-only switch is on (`DebugLog.developerDetailOn`, `FF_DEV_LOG_KEYS_AND_TEXT=1`).
+    static func keyPressLine(
+        t: Int, code: UInt16, inEditor: Bool, developerDetail: Bool = DebugLog.developerDetailOn
+    ) -> String {
+        keyLine(t: t, code: developerDetail ? code : nil, inEditor: inEditor)
     }
 
     /// `[TYPING-TRACE] echo t=<ms> n=<edits covered>`; the `n=` part is left out when the message did not carry a count.
@@ -363,7 +373,7 @@ enum StructuralTrace {
             if isOn {
                 DebugLog.log(
                     .undo,
-                    keyLine(
+                    keyPressLine(
                         t: ms(ofEventTimestamp: event.timestamp), code: event.keyCode,
                         inEditor: isInsideWebView(NSApp.keyWindow?.firstResponder))
                 )

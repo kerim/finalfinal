@@ -1094,9 +1094,9 @@ extension BlockSyncService {
 
         DebugLog.log(.sync, {
             let firstHeading = markdown.components(separatedBy: "\n")
-                .first(where: { $0.hasPrefix("#") })?.prefix(60) ?? "(none)"
+                .first(where: { $0.hasPrefix("#") }) ?? ""
             return "[SYNC-DIAG:BlockSync] setContentWithBlockIds: len=\(markdown.count) "
-                + "blocks=\(blockIds.count) firstH=\"\(firstHeading)\" "
+                + "blocks=\(blockIds.count) firstH=\(DebugLog.docText(firstHeading)) "
                 + "scrollToStart=\(scrollToStart) cursorBoundary=\(String(describing: cursorBoundary)) "
                 + "scrollToBlockId=\(String(describing: scrollToBlockId))"
         }())

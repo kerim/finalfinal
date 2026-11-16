@@ -226,7 +226,7 @@ function pmPosToMdLine(view: import('@milkdown/kit/prose/view').EditorView, pmPo
 
   (window as any).webkit?.messageHandlers?.errorHandler?.postMessage({
     type: 'debug',
-    message: `[CURSOR-SYNC] pmPosToMdLine: pmPos=${pmPos} parentText="${parentText.substring(0, 60)}" len=${parentText.length} matched=${matched} line=${line} method=${inTable ? 'table' : matched ? 'text' : 'scanning'}`,
+    message: `[CURSOR-SYNC] pmPosToMdLine: pmPos=${pmPos} len=${parentText.length} matched=${matched} line=${line} method=${inTable ? 'table' : matched ? 'text' : 'scanning'}`,
   });
 
   // Fallback: count blocks from document start
