@@ -57,10 +57,6 @@ export function noteSwitchTransaction(tr: Transaction): void {
   incoming.since = incoming.since.compose(tr.changes);
 }
 
-export function isIncomingSwitchActive(): boolean {
-  return incoming !== null;
-}
-
 /** TransIncomingReady: the page has the rows' text; from here every change is tracked and the typing push is held. */
 export function prepareIncomingSwitch(): { ok: boolean; chars: number } {
   const view = getEditorView();

@@ -152,11 +152,6 @@ export function reportSession(): string {
   return session;
 }
 
-/** The highest `es` posted so far in this session (0 before the first). */
-export function lastPostedEs(): number {
-  return lastEs;
-}
-
 /** Called with what makes a post wait (sync paused, typing held back). Set by api-content.ts, which can see both. */
 export function setReportHoldProbe(probe: () => boolean): void {
   holdProbe = probe;

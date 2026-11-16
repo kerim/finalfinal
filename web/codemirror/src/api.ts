@@ -1318,11 +1318,6 @@ export function setStructuralSettleOpId(opId: string | null, secondArgument?: st
   structuralSettleNotesHeading = null;
 }
 
-/** Test-only: the current flag. */
-export function getStructuralSettleOpId(): string | null {
-  return structuralSettleOpId;
-}
-
 // --- Image API ---
 
 /**

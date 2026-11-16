@@ -85,10 +85,6 @@ let tokenCounter = 0;
 let baseText = '';
 let recorded: RecordedChange[] = [];
 
-export function getMarkdownTransitionToken(): number | null {
-  return token;
-}
-
 /** Called by main.ts's update listener for every transaction. Records only while a transition holds. */
 export function noteTransitionTransaction(tr: Transaction): void {
   if (token === null || !tr.docChanged) return;

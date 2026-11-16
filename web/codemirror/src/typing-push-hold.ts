@@ -42,11 +42,6 @@ export function isTypingPushHeld(): boolean {
   return held;
 }
 
-/** True when a push is owed (typing happened while held and has not been sent). For tests. */
-export function hasOwedTypingPush(): boolean {
-  return owed !== null;
-}
-
 /** Forgets the owed push but keeps holding (the replay carried the typing; the press has not answered yet). */
 export function discardOwedTypingPush(): void {
   owed = null;

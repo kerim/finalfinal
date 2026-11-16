@@ -72,11 +72,6 @@ final class SectionDeleteSlotStore: Sendable {
         slots.withLock { $0[opId] }
     }
 
-    /// Whether the entry's slot still exists (it is removed by eviction and invalidation).
-    func isLive(_ opId: UUID) -> Bool {
-        slots.withLock { $0[opId] != nil }
-    }
-
     var count: Int {
         slots.withLock { $0.count }
     }

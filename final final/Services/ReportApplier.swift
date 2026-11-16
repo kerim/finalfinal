@@ -322,8 +322,6 @@ final class ReportApplier {
         DebugLog.alwaysPersisted("[PUSH] revoked \(sessions.count) page session(s): \(reason)")
     }
 
-    func isRevoked(_ session: String) -> Bool { revoked.contains(session) }
-
     // MARK: The covering reply (rule d)
 
     /// Taken in the same synchronous stretch as a route's reservation of N: the session last admitted and the highest number admitted
