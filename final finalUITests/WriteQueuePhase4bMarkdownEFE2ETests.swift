@@ -878,7 +878,7 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         let deadline = Date(timeIntervalSinceNow: appWait(300, before: "the project picker shows"))
         repeat {
             if app.groups["project-picker"].exists { return true }
-            if let message = toastMessage(), message.hasPrefix("The project wasn't closed") {
+            if let message = toastMessage(), message.hasPrefix("Couldn't close the project") {
                 fail("the close was cancelled by its time budget and the app said so: \"\(message)\"")
                 return false
             }

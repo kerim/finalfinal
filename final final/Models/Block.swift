@@ -479,6 +479,39 @@ struct Block: Codable, Identifiable, Equatable, Sendable, FetchableRecord, Mutab
 
 // MARK: - Block Insert/Update Helpers
 
+/// The six section-metadata fields of a heading row (t-b097670d): what a heading that is deleted and put back (cut and pasted,
+/// selected text dragged inside the editor, deleted and undone) takes over to its NEW row. Nothing else is carried: not the id,
+/// the position, the word count or the flags. Built from a stored row by `init(of:)`, put onto another row by `apply(to:)`.
+///
+/// Headings only. A section break (`BlockType.sectionBreak`) can have section metadata too (`canHaveSectionMetadata`), but every
+/// section-break marker is the same line, so a line match would hand one section's fields to another; section breaks are not
+/// covered (see `MarkdownBlockDiff.pairMovedHeadings`).
+struct SectionMetadataCarry: Codable, Sendable, Equatable {
+    var status: SectionStatus?
+    var tags: [String]?
+    var wordGoal: Int?
+    var goalType: GoalType
+    var aggregateGoal: Int?
+    var aggregateGoalType: GoalType
+}
+
+extension SectionMetadataCarry {
+    init(of block: Block) {
+        self.init(
+            status: block.status, tags: block.tags, wordGoal: block.wordGoal, goalType: block.goalType,
+            aggregateGoal: block.aggregateGoal, aggregateGoalType: block.aggregateGoalType)
+    }
+
+    func apply(to block: inout Block) {
+        block.status = status
+        block.tags = tags
+        block.wordGoal = wordGoal
+        block.goalType = goalType
+        block.aggregateGoal = aggregateGoal
+        block.aggregateGoalType = aggregateGoalType
+    }
+}
+
 /// Represents a block insert from the editor
 struct BlockInsert: Codable, Sendable {
     let tempId: String          // Temporary ID assigned by editor
@@ -488,9 +521,17 @@ struct BlockInsert: Codable, Sendable {
     let headingLevel: Int?
     let afterBlockId: String?   // Insert after this block
     let atDocumentStart: Bool?  // True when this block is literal doc position 0
+    /// t-b097670d, Markdown per-block writer only (Rich Text payloads never carry either field; absent on the wire decodes as nil):
+    /// the id of a heading row that THIS SAME BATCH deletes, whose status, tags and goals the new row takes over. Honoured only
+    /// when that row is one the batch deletes (`applyBlockChangesFromEditor` reads it before the deletes, in the same transaction).
+    let carryMetadataFromId: String?
+    /// t-b097670d: the same six fields, by value, for a heading whose old row went in an EARLIER save (`RemovedHeadingMemory`).
+    /// Never set together with `carryMetadataFromId`.
+    let carriedMetadata: SectionMetadataCarry?
 
     init(tempId: String, blockType: String, textContent: String, markdownFragment: String,
-         headingLevel: Int?, afterBlockId: String?, atDocumentStart: Bool? = nil) {
+         headingLevel: Int?, afterBlockId: String?, atDocumentStart: Bool? = nil,
+         carryMetadataFromId: String? = nil, carriedMetadata: SectionMetadataCarry? = nil) {
         self.tempId = tempId
         self.blockType = blockType
         self.textContent = textContent
@@ -498,6 +539,18 @@ struct BlockInsert: Codable, Sendable {
         self.headingLevel = headingLevel
         self.afterBlockId = afterBlockId
         self.atDocumentStart = atDocumentStart
+        self.carryMetadataFromId = carryMetadataFromId
+        self.carriedMetadata = carriedMetadata
+    }
+
+    /// This insert with a new anchor and every other field (the carried metadata included) as it was. Every place that moves an
+    /// insert's anchor (a re-anchor through the tombstone chain, a temp id resolved to a minted one, a cancelled insert's anchor
+    /// handed on) goes through this, so a field added to the insert cannot be dropped by one of them.
+    func reanchored(afterBlockId: String?, atDocumentStart: Bool?) -> BlockInsert {
+        BlockInsert(
+            tempId: tempId, blockType: blockType, textContent: textContent, markdownFragment: markdownFragment,
+            headingLevel: headingLevel, afterBlockId: afterBlockId, atDocumentStart: atDocumentStart,
+            carryMetadataFromId: carryMetadataFromId, carriedMetadata: carriedMetadata)
     }
 }
 

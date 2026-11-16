@@ -152,7 +152,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)")
             #expect(result == .lifecycle(.cancelled))
             #expect(recorder.order.isEmpty, "perform never called: no copy, no open, no post, no alert; got \(recorder.order)")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.saveAs).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
             #expect(!rig.log.contains { $0.hasPrefix("tail:") }, "log: \(rig.log)")
             #expect(rig.editorState.activeLifecycle == nil)
         }
@@ -172,7 +172,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)")
             #expect(result == .lifecycle(.cancelled))
             #expect(recorder.order.isEmpty, "perform never called; got \(recorder.order)")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.openProject).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
             #expect(rig.editorState.activeLifecycle == nil)
         }
 
@@ -190,7 +190,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)")
             #expect(result == .lifecycle(.cancelled))
             #expect(recorder.order.isEmpty, "perform never called; got \(recorder.order)")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.newProject).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
             #expect(rig.editorState.activeLifecycle == nil)
         }
 
@@ -208,7 +208,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)")
             #expect(result == .lifecycle(.cancelled))
             #expect(recorder.order.isEmpty, "perform never called; got \(recorder.order)")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.importMarkdown).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
             #expect(toasts.current?.style == .warning)
             #expect(rig.editorState.activeLifecycle == nil)
         }

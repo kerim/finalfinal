@@ -138,11 +138,10 @@ extension FootnoteSyncService {
                     // deleting-by-default on "no twin found".
                     deletedDefinitionTwins.append(row)
                 }
-                // B9 (t-561c4083): log only the fragment's LENGTH before it is destroyed. The diagnostic file must never hold
-                // document text, so a deleted footnote body can no longer be recovered from the log -- deliberately.
+                // B9: log the full fragment before it is destroyed.
                 DebugLog.log(.footnotes, "[FootnoteSyncService] removeNotesBlock: deleting " +
                     "id=\(row.id) blockType=\(row.blockType.rawValue) " +
-                    "fragment=\(DebugLog.docText(row.markdownFragment))")
+                    "fragment=\"\(row.markdownFragment)\"")
                 try Block.deleteOne(db, key: row.id)
                 deletedCount += 1
             case .userProse, nil:
@@ -154,7 +153,7 @@ extension FootnoteSyncService {
                 try unflagged.update(db)
                 retainedCount += 1
                 DebugLog.log(.footnotes, "[FootnoteSyncService] removeNotesBlock: retaining " +
-                    "id=\(row.id) fragment=\(DebugLog.docText(row.markdownFragment)) reason=user-prose-not-machine-owned")
+                    "id=\(row.id) fragment=\"\(row.markdownFragment)\" reason=user-prose-not-machine-owned")
             }
         }
         DebugLog.log(.footnotes, "[FootnoteSyncService] removeNotesBlock: deleted=\(deletedCount) " +

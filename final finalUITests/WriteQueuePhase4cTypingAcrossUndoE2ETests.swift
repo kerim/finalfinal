@@ -755,7 +755,7 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         let deadline = Date(timeIntervalSinceNow: appWait(300, before: "the project picker shows"))
         repeat {
             if app.groups["project-picker"].exists { return true }
-            if let message = toastMessage(), message.hasPrefix("The project wasn't closed") {
+            if let message = toastMessage(), message.hasPrefix("Couldn't close the project") {
                 fail("the close was cancelled by its time budget and the app said so: \"\(message)\"")
                 return false
             }
@@ -1380,9 +1380,7 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         shot("close-reopened")
         let undone = headingFragmentsInDatabase() == preHeadingFragments
         let rowCount = occurrencesInRows(Self.wordsTwo)
-        result("REGRESSION PIN (not a proof of the lifecycle release; it passes with and without it) "
-            + "REOPENED AFTER Cmd-W: the drag's undo was carried out before the close: \(Self.yesNo(undone)); "
-            + "\"\(Self.wordsTwo)\" occurs \(rowCount) time(s) "
+        result("REGRESSION PIN (not a proof of the lifecycle release; it passes with and without it) REOPENED AFTER Cmd-W: the drag's undo was carried out before the close: \(Self.yesNo(undone)); \"\(Self.wordsTwo)\" occurs \(rowCount) time(s) "
             + "in the rows; the Anchor05 row reads \"\(anchorRowInDatabase().prefix(100))\"")
         var soft = Phase4bFlowSoftChecks()
         soft.check(anchorShown, "after the reopen the Anchor05 line is not on screen")

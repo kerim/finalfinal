@@ -269,7 +269,7 @@ struct LifecycleWaitsForGateTests {
         #expect(replies.allSatisfy { $0.contains("'performed'") }, "both undos ran: \(replies)")
         let texts = Set(try rig.blocks().map(\.textContent))
         #expect(texts.contains(first.textContent) && texts.contains(second.textContent), "both chapters are back in the saved document")
-        #expect(rig.toasts.current?.message != ToastFactory.lifecycleCancelled(.close).message, "no cancel toast may be posted")
+        #expect(rig.toasts.current?.message != ToastFactory.lifecycleCloseCancelled().message, "no cancel toast may be posted")
         #expect(rig.toasts.current?.style != .warning, "and no warning toast at all: \(String(describing: rig.toasts.current?.message))")
         #expect(gate.isIdle && gate.preBarrierAllowance == 0)
     }

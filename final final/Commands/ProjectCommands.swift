@@ -9,7 +9,7 @@
 //    E1  Close Project (Cmd-W, the window's red button, File > Close Project)  -> `close`
 //    E2  Open Project (Cmd-O)                                                    -> `open(url:)`
 //    E3  Open Recent                                                             -> `openRecent`
-//    E4  Save As                                                                 -> `saveAsSource()`, then `saveAs(from:to:)`
+//    E4  Save As                                                                 -> `saveAs(from:to:)`
 //    E5  Finder open / the app's open-URL                                        -> `openFromFinder(url:)`
 //    E7  New Project                                                             -> `newProject(at:title:)`
 //    E8  Import Markdown                                                         -> `importMarkdown(_:to:)`
@@ -33,11 +33,8 @@
 //      (obligation 18). Opening the project that is ALREADY open arms nothing, for Open, Open Recent and Finder alike
 //      (A6: the guard sits in `switchProject`, above `run`).
 //    - Save As onto the open project's OWN path (the save panel defaults to the project's name in its folder, so
-//      Replace picks it) is refused before anything is armed (A3). t-eb07cd67: the project to copy is the one the SAVE PANEL NAMED
-//      (`saveAsSource()`, read when the panel is shown), also when the command is held behind an open or a close and that project
-//      is no longer the open one: its own close or switch saved it, so its package on disk is current. The guard refuses a
-//      destination equal to the named project OR to the project open when the turn runs, inside the turn: `copyProjectPackage`
-//      removes the destination first, which would delete that project.
+//      Replace picks it) is refused before anything is armed (A3): `copyProjectPackage` removes the destination first,
+//      which would delete the open project.
 //    - New Project and Import: `perform` returns `.create(content:)`, so the create tail seeds the new project
 //      (nil for New Project, the Markdown for Import); the post is `.projectDidCreate`, and Import's also carries the
 //      content, which the old handler seeds when the post is unkeyed (the picker, nothing to save).
@@ -59,16 +56,10 @@
 //  armed and the close tail never runs on a project that stays open (judge obligation E3). The alert is unreachable
 //  today (`DocumentManager.markDirty()` has no caller) but stays.
 //
-//  t-eb07cd67: every command runs its WHOLE body inside one turn (`LifecycleEntry.withTurn`; `inTurn` below for the commands that
-//  return a `ProjectCommandResult`). A command that arrives while another close or open is still saving is HELD, never refused, and
-//  runs when the first one ends, as if pressed after it: the guards below (A6's "already open", the Getting Started branch, the
-//  unsaved-changes alert) are therefore checked AFTER the wait. The last held command wins; a repeated Cmd-W is a silent duplicate;
-//  once the app is quitting the command does nothing. A Cmd-W held behind an open closes the project that has just opened.
-//
 //  What the entry reports is handled here, exhaustively: `.performed`, `.cancelled` (a section operation that never
-//  cleared: the abort routine already showed the cancel notice and the project is as it was), `.superseded` (held, then
-//  replaced by a later command: silent), `.duplicate` (a repeated Cmd-W: silent) and `.skippedForQuit` (a quit joined
-//  first, or the app is quitting: nothing happened, show nothing). A `perform` that throws (a moved recent project, an integrity failure) has
+//  cleared: the abort routine already showed the cancel notice and the project is as it was), `.refusedBusy` (the
+//  entry already showed the busy notice), `.duplicate` (a repeated Cmd-W: silent) and `.skippedForQuit` (a quit joined
+//  first: nothing happened, show nothing). A `perform` that throws (a moved recent project, an integrity failure) has
 //  already been through the abort routine, which restored the editor; the command then reports the failure to the
 //  user exactly as it did before (`ProjectOpenErrorState.report`).
 //
@@ -185,32 +176,9 @@ enum ProjectRepairOutcome {
     /// A repair step or the open itself threw: the sheet shows the error.
     case failed(Error)
     /// The lifecycle did not run `perform` at all (a section operation never cleared and the cancel notice was
-    /// shown, a repeated click, the command was held and then replaced by a later one, a quit took over): the
+    /// shown, another lifecycle was running and the busy notice was shown, a repeated click, a quit took over): the
     /// sheet stays as it was.
     case notRun(LifecycleRunOutcome)
-}
-
-/// Why Save As could not start (t-eb07cd67): File > Save As was chosen with no project open, or with Getting Started open. Shown in the
-/// "Could Not Save Project" alert, which prints `localizedDescription`. Proposed wording: the user approves it before merge.
-struct SaveAsNoSourceError: LocalizedError, Equatable {
-    let gettingStarted: Bool
-    var errorDescription: String? {
-        gettingStarted
-            ? "Save As didn't make a copy because Getting Started can't be saved as a new project."
-            : "Save As didn't make a copy because no project is open."
-    }
-}
-
-/// Why Save As refused a destination that is the project it was asked to copy, when that project is no longer the open one (a held
-/// Save As whose project was replaced meanwhile): copying onto it would delete it first (t-eb07cd67). Proposed wording, as above.
-struct SaveAsOntoNamedProjectError: LocalizedError, Equatable {
-    var errorDescription: String? { "Save As didn't make a copy because that name and folder belong to the project it was copying." }
-}
-
-/// Why Save As could not copy: the project the save panel named is no longer where it was (t-eb07cd67). Thrown BEFORE anything is
-/// removed, so a destination the user chose to replace is never deleted for a copy that cannot be made. Proposed wording, as above.
-struct SaveAsSourceMissingError: LocalizedError, Equatable {
-    var errorDescription: String? { "Save As didn't make a copy because the project it was copying is no longer where it was." }
 }
 
 /// Why Save As refused to run (A3): shown in the "Could Not Save Project" alert, which prints `localizedDescription`.
@@ -236,10 +204,6 @@ enum ProjectCommands {
     @discardableResult
     static func close(_ environment: ProjectCommandEnvironment? = nil) async -> ProjectCommandResult {
         let env = environment ?? .production
-        return await inTurn(.close) { await closeInTurn(env) }
-    }
-
-    private static func closeInTurn(_ env: ProjectCommandEnvironment) async -> ProjectCommandResult {
         // Getting Started is an ephemeral playground with nothing to save: close it cleanly, no lifecycle, no
         // confirmation (t-fa000add: edit awareness surfaces as an in-editor toast, via SectionSyncService, while it
         // is open; closing it must not raise that toast).
@@ -266,7 +230,7 @@ enum ProjectCommands {
         }
 
         do {
-            let outcome = try await LifecycleEntry.run(kind: .close, command: .close) {
+            let outcome = try await LifecycleEntry.run(kind: .close) {
                 env.closeProject()
                 DebugLog.log(.fileOps, "[ProjectCommands] close: posting .projectDidClose")
                 env.post(.projectDidClose, LifecycleEntry.keyedUserInfo())
@@ -308,27 +272,9 @@ enum ProjectCommands {
 
     // MARK: E4 -- Save As
 
-    /// File > Save As, step one (before the save panel): the project the panel will name, i.e. the one open now. With no project open, or
-    /// Getting Started open, nothing can be copied: the user is told why (an alert) instead of the menu item doing nothing. nil then.
-    /// This is the ONLY place the project to copy is chosen (t-eb07cd67): `saveAs(from:to:)` copies exactly that project, whatever is
-    /// open by the time the command runs.
-    static func saveAsSource(_ environment: ProjectCommandEnvironment? = nil) -> URL? {
-        let env = environment ?? .production
-        let gettingStarted = env.isGettingStartedProject()
-        guard !gettingStarted, let sourceURL = env.currentProjectURL() else {
-            DebugLog.log(.fileOps, "[ProjectCommands] save as: no regular project is open")
-            env.showErrorAlert("Could Not Save Project", SaveAsNoSourceError(gettingStarted: gettingStarted))
-            return nil
-        }
-        return sourceURL
-    }
-
-    /// Copies the project at `sourceURL` (the one the save panel named, `saveAsSource()`) to `destinationURL` and opens the copy. The
-    /// whole thing is `perform`: the save sequence (the old direct flush is gone) has already written the editor's fresh content
-    /// through the ordered queue, so the copy contains it; the copy's package is then checkpointed, copied and opened, and the open tail
-    /// follows. When the command was held behind an open or a close and `sourceURL` is no longer the open project, its own close or
-    /// switch saved it, so its package on disk is what gets copied; if that package is gone `copyProjectPackage` says so (an alert)
-    /// before touching anything.
+    /// Copies the open project to `destinationURL` and opens the copy. The whole thing is `perform`: the save sequence
+    /// (the old direct flush is gone) has already written the editor's fresh content through the ordered queue, so the
+    /// copy contains it; the copy's package is then checkpointed, copied and opened, and the open tail follows.
     ///
     /// The title update runs AFTER the copy was opened and is non-fatal (must-fix #23): a throw out of `perform` would
     /// run the abort routine, which restores the OLD project's editor (re-pushes its ids, restarts its polling) while
@@ -341,37 +287,30 @@ enum ProjectCommands {
         _ environment: ProjectCommandEnvironment? = nil
     ) async -> ProjectCommandResult {
         let env = environment ?? .production
-        return await inTurn(.projectSwitch) {
-            // A3: Save As onto a project's OWN path would delete it (`copyProjectPackage` removes the destination before copying,
-            // and the save panel defaults its name to the project's, in the project's folder, so Replace picks it). Refused BEFORE
-            // `run`: nothing is armed, saved or copied. t-eb07cd67: checked here, inside the turn, against BOTH the project to copy
-            // and the project open now, because a Save As held behind an open runs when those can be two different projects.
-            let ontoOpen = env.currentProjectURL().map { isSamePath(destinationURL, $0) } ?? false
-            if ontoOpen || isSamePath(destinationURL, sourceURL) {
-                DebugLog.log(.fileOps, "[ProjectCommands] save as refused: the destination is a project it would delete")
-                let error: any Error = ontoOpen ? SaveAsOntoOpenProjectError() : SaveAsOntoNamedProjectError()
-                env.showErrorAlert("Could Not Save Project", error)
-                return .failed
+        // A3: Save As onto the open project's OWN path would delete it (`copyProjectPackage` removes the destination
+        // before copying, and the save panel defaults its name to the project's, in the project's folder, so Replace
+        // picks it). Refused ABOVE `runManagedSwitch`: nothing is armed, saved or copied.
+        guard !isSamePath(destinationURL, sourceURL) else {
+            DebugLog.log(.fileOps, "[ProjectCommands] save as refused: the destination is the open project itself")
+            env.showErrorAlert("Could Not Save Project", SaveAsOntoOpenProjectError())
+            return .failed
+        }
+        return await runManagedSwitch("save as", failureTitle: "Could Not Save Project", env: env) {
+            try env.copyProjectPackage(sourceURL, destinationURL)
+            // Open the copy (this internally closes the current project).
+            try env.openProject(destinationURL)
+            let newTitle = destinationURL.deletingPathExtension().lastPathComponent
+            do {
+                try env.renameOpenedProject(newTitle)
+            } catch {
+                DebugLog.log(
+                    .fileOps,
+                    "[ProjectCommands] save as: the copy is open but naming it '\(newTitle)' failed (\(error)); "
+                        + "continuing, it keeps its old title")
             }
-            return await runManagedSwitch(
-                "save as", lifecycleCommand: .saveAs, failureTitle: "Could Not Save Project", env: env
-            ) {
-                try env.copyProjectPackage(sourceURL, destinationURL)
-                // Open the copy (this internally closes the current project).
-                try env.openProject(destinationURL)
-                let newTitle = destinationURL.deletingPathExtension().lastPathComponent
-                do {
-                    try env.renameOpenedProject(newTitle)
-                } catch {
-                    DebugLog.log(
-                        .fileOps,
-                        "[ProjectCommands] save as: the copy is open but naming it '\(newTitle)' failed (\(error)); "
-                            + "continuing, it keeps its old title")
-                }
-                DebugLog.log(.fileOps, "[ProjectCommands] save as completed: \(destinationURL.path), posting .projectDidOpen")
-                env.post(.projectDidOpen, LifecycleEntry.keyedUserInfo())
-                return .open
-            }
+            DebugLog.log(.fileOps, "[ProjectCommands] save as completed: \(destinationURL.path), posting .projectDidOpen")
+            env.post(.projectDidOpen, LifecycleEntry.keyedUserInfo())
+            return .open
         }
     }
 
@@ -407,9 +346,7 @@ enum ProjectCommands {
         _ environment: ProjectCommandEnvironment? = nil
     ) async -> ProjectCommandResult {
         let env = environment ?? .production
-        return await runManagedSwitch(
-            "new project", lifecycleCommand: .newProject, failureTitle: "Could Not Create Project", env: env
-        ) {
+        return await runManagedSwitch("new project", failureTitle: "Could Not Create Project", env: env) {
             try env.newProject(url, title)
             DebugLog.log(.fileOps, "[ProjectCommands] new project created, posting .projectDidCreate")
             env.post(.projectDidCreate, LifecycleEntry.keyedUserInfo())
@@ -429,9 +366,7 @@ enum ProjectCommands {
         _ environment: ProjectCommandEnvironment? = nil
     ) async -> ProjectCommandResult {
         let env = environment ?? .production
-        return await runManagedSwitch(
-            "import markdown", lifecycleCommand: .importMarkdown, failureTitle: "Could Not Import File", env: env
-        ) {
+        return await runManagedSwitch("import markdown", failureTitle: "Could Not Import File", env: env) {
             let title = url.deletingPathExtension().lastPathComponent
             try env.newProject(url, title)
             try env.saveContent(content)
@@ -469,7 +404,7 @@ enum ProjectCommands {
         _ environment: ProjectCommandEnvironment? = nil
     ) async -> ProjectRepairOutcome {
         let env = environment ?? .production
-        return await resolveIntegrity("repair", lifecycleCommand: .repair, env: env) { await env.repair(report, url) }
+        return await resolveIntegrity("repair", env: env) { await env.repair(report, url) }
     }
 
     /// Opens the broken project at `url` with the integrity checks skipped (the sheet's Open Anyway button); the same
@@ -477,33 +412,16 @@ enum ProjectCommands {
     @discardableResult
     static func openAnyway(url: URL, _ environment: ProjectCommandEnvironment? = nil) async -> ProjectRepairOutcome {
         let env = environment ?? .production
-        return await resolveIntegrity("open anyway", lifecycleCommand: .openProject, env: env) { env.openAnyway(url) }
+        return await resolveIntegrity("open anyway", env: env) { env.openAnyway(url) }
     }
 
     private static func resolveIntegrity(
         _ command: String,
-        lifecycleCommand: LifecycleCommand,
-        env: ProjectCommandEnvironment,
-        resolve: @escaping @MainActor () async -> IntegrityResolution.Outcome
-    ) async -> ProjectRepairOutcome {
-        switch await LifecycleEntry.withTurn(kind: .projectSwitch, {
-            await resolveIntegrityInTurn(command, lifecycleCommand: lifecycleCommand, env: env, resolve: resolve)
-        }) {
-        case .ran(let outcome): return outcome
-        case .duplicate: return .notRun(.duplicate)
-        case .superseded: return .notRun(.superseded)
-        case .skippedForQuit: return .notRun(.skippedForQuit)
-        }
-    }
-
-    private static func resolveIntegrityInTurn(
-        _ command: String,
-        lifecycleCommand: LifecycleCommand,
         env: ProjectCommandEnvironment,
         resolve: @escaping @MainActor () async -> IntegrityResolution.Outcome
     ) async -> ProjectRepairOutcome {
         do {
-            let outcome = try await LifecycleEntry.run(kind: .projectSwitch, command: lifecycleCommand) {
+            let outcome = try await LifecycleEntry.run(kind: .projectSwitch) {
                 switch await resolve() {
                 case .opened:
                     DebugLog.log(.fileOps, "[ProjectCommands] \(command): project opened, posting .projectDidOpen")
@@ -565,29 +483,21 @@ enum ProjectCommands {
             return .none
         }
 
-        // The whole body is one turn, so the "already open" check below is made AFTER any wait (t-eb07cd67).
-        return await inTurn(.projectSwitch) {
-            if env.isGettingStartedProject() {
-                DebugLog.log(.fileOps, "[ProjectCommands] Getting Started is already open: no lifecycle, nothing to save")
-                _ = perform()
-                return .gettingStartedPassedThrough
-            }
-            do {
-                let outcome = try await LifecycleEntry.run(kind: .projectSwitch, command: .gettingStarted) { perform() }
-                note(outcome, command: "getting started")
-                return .lifecycle(outcome)
-            } catch {
-                // `perform` cannot throw; kept so a future change cannot lose an error silently.
-                DebugLog.log(.fileOps, "[ProjectCommands] getting started failed: \(error)")
-                return .failed
-            }
+        if env.isGettingStartedProject() {
+            DebugLog.log(.fileOps, "[ProjectCommands] Getting Started is already open: no lifecycle, nothing to save")
+            _ = perform()
+            return .gettingStartedPassedThrough
+        }
+        do {
+            let outcome = try await LifecycleEntry.run(kind: .projectSwitch) { perform() }
+            note(outcome, command: "getting started")
+            return .lifecycle(outcome)
+        } catch {
+            // `perform` cannot throw; kept so a future change cannot lose an error silently.
+            DebugLog.log(.fileOps, "[ProjectCommands] getting started failed: \(error)")
+            return .failed
         }
     }
-
-}
-
-// The shared helpers live in this extension (t-eb07cd67): the enum body above stays under the project's type-body-length limit.
-extension ProjectCommands {
 
     // MARK: Shared
 
@@ -595,36 +505,18 @@ extension ProjectCommands {
     /// open-error sheet E2, E3 and E5 use). A throw is rethrown by `run` AFTER the abort routine restored the editor.
     private static func runManagedSwitch(
         _ command: String,
-        lifecycleCommand: LifecycleCommand,
         failureTitle: String,
         env: ProjectCommandEnvironment,
         perform: @escaping @MainActor () throws -> LifecycleTail
     ) async -> ProjectCommandResult {
-        await inTurn(.projectSwitch) {
-            do {
-                let outcome = try await LifecycleEntry.run(kind: .projectSwitch, command: lifecycleCommand) { try perform() }
-                note(outcome, command: command)
-                return .lifecycle(outcome)
-            } catch {
-                DebugLog.log(.fileOps, "[ProjectCommands] \(command) failed: \(error)")
-                env.showErrorAlert(failureTitle, error)
-                return .failed
-            }
-        }
-    }
-
-    /// Runs one command's whole body as a lifecycle turn (`LifecycleEntry.withTurn`): held while another close or open is saving,
-    /// then run as if pressed after it. A command that is not run at all (a repeated Cmd-W, a held command replaced by a later
-    /// one, a command pressed once the app is quitting) reports that as the lifecycle outcome, and shows nothing.
-    private static func inTurn(
-        _ kind: LifecycleKind,
-        _ body: @MainActor () async -> ProjectCommandResult
-    ) async -> ProjectCommandResult {
-        switch await LifecycleEntry.withTurn(kind: kind, body) {
-        case .ran(let result): return result
-        case .duplicate: return .lifecycle(.duplicate)
-        case .superseded: return .lifecycle(.superseded)
-        case .skippedForQuit: return .lifecycle(.skippedForQuit)
+        do {
+            let outcome = try await LifecycleEntry.run(kind: .projectSwitch) { try perform() }
+            note(outcome, command: command)
+            return .lifecycle(outcome)
+        } catch {
+            DebugLog.log(.fileOps, "[ProjectCommands] \(command) failed: \(error)")
+            env.showErrorAlert(failureTitle, error)
+            return .failed
         }
     }
 
@@ -632,8 +524,6 @@ extension ProjectCommands {
     /// carries the `-wal` and `-shm` files, so SQLite replays whatever remains when the copy is opened), a failure of
     /// which is only logged; then an existing destination is replaced and the whole `.ff` package is copied.
     static func copyProjectPackage(from sourceURL: URL, to destinationURL: URL) throws {
-        // t-eb07cd67: before ANYTHING is touched. The destination is removed below, so a source that is gone must never get that far.
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { throw SaveAsSourceMissingError() }
         do {
             _ = try DocumentManager.shared.projectDatabase?.dbWriter.writeWithoutTransaction { db in
                 try db.checkpoint(.passive)
@@ -676,31 +566,27 @@ extension ProjectCommands {
         env: ProjectCommandEnvironment,
         open: @escaping @MainActor () throws -> Void
     ) async -> ProjectCommandResult {
-        await inTurn(.projectSwitch) {
-            // A6: the project that is ALREADY open is a no-op, for Open, Open Recent and Finder alike (duplicate Apple
-            // Events for the open project are common). A switch onto itself would save, make an automatic version, wipe
-            // the undo history (`invalidateAll`) and reload what is already on screen. The guard is ABOVE `run`: nothing
-            // is armed. `targetURL` is only asked for when a project is open (a bookmark is not resolved for nothing).
-            // It sits INSIDE the turn (t-eb07cd67), so a command held behind another open checks it after the wait: a
-            // repeated Finder Apple Event for the project that was just opened does nothing.
-            if let currentURL = env.currentProjectURL(), isSamePath(currentURL, targetURL()) {
-                DebugLog.log(.fileOps, "[ProjectCommands] \(command): that project is already open, nothing armed")
-                return .sameProjectAlreadyOpen
+        // A6: the project that is ALREADY open is a no-op, for Open, Open Recent and Finder alike (duplicate Apple
+        // Events for the open project are common). A switch onto itself would save, make an automatic version, wipe
+        // the undo history (`invalidateAll`) and reload what is already on screen. The guard is ABOVE `run`: nothing
+        // is armed. `targetURL` is only asked for when a project is open (a bookmark is not resolved for nothing).
+        if let currentURL = env.currentProjectURL(), isSamePath(currentURL, targetURL()) {
+            DebugLog.log(.fileOps, "[ProjectCommands] \(command): that project is already open, nothing armed")
+            return .sameProjectAlreadyOpen
+        }
+        do {
+            let outcome = try await LifecycleEntry.run(kind: .projectSwitch) {
+                try open()
+                DebugLog.log(.fileOps, "[ProjectCommands] \(command): project opened, posting .projectDidOpen")
+                env.post(.projectDidOpen, LifecycleEntry.keyedUserInfo())
+                return .open
             }
-            do {
-                let outcome = try await LifecycleEntry.run(kind: .projectSwitch, command: .openProject) {
-                    try open()
-                    DebugLog.log(.fileOps, "[ProjectCommands] \(command): project opened, posting .projectDidOpen")
-                    env.post(.projectDidOpen, LifecycleEntry.keyedUserInfo())
-                    return .open
-                }
-                note(outcome, command: command)
-                return .lifecycle(outcome)
-            } catch {
-                DebugLog.log(.fileOps, "[ProjectCommands] \(command) failed: \(error)")
-                env.reportOpenError(error, targetURL())
-                return .failed
-            }
+            note(outcome, command: command)
+            return .lifecycle(outcome)
+        } catch {
+            DebugLog.log(.fileOps, "[ProjectCommands] \(command) failed: \(error)")
+            env.reportOpenError(error, targetURL())
+            return .failed
         }
     }
 
@@ -712,14 +598,14 @@ extension ProjectCommands {
         case .cancelled:
             // A section operation never cleared: the project is as it was, and the abort routine showed the notice.
             DebugLog.log(.fileOps, "[ProjectCommands] \(command): cancelled (the notice is already shown), project unchanged")
-        case .superseded:
-            // Held behind a running close or open, then replaced by a later command (the last one wins): silent by design.
-            DebugLog.log(.fileOps, "[ProjectCommands] \(command): held, then replaced by a later command")
+        case .refusedBusy(let active):
+            // The entry showed the busy notice.
+            DebugLog.log(.fileOps, "[ProjectCommands] \(command): refused, \(active) is running (the notice is already shown)")
         case .duplicate:
             // The same request again (a repeated Cmd-W): silent by design.
             DebugLog.log(.fileOps, "[ProjectCommands] \(command): duplicate request ignored")
         case .skippedForQuit:
-            // A quit joined first, or the app is quitting: nothing happened and nothing is shown; the quit saves and exits.
+            // A quit joined first: nothing happened and nothing is shown; the quit saves and exits.
             DebugLog.log(.fileOps, "[ProjectCommands] \(command): skipped, a quit took over")
         }
     }

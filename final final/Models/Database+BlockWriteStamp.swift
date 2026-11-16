@@ -96,6 +96,14 @@ enum DeletedAnchor: Sendable, Equatable {
     case documentStart
 }
 
+/// A heading row an editor batch deleted, as it was just before (t-b097670d): its six section-metadata fields and where it sat
+/// (`sortOrder`, the numbers of that moment). The Markdown writer's `RemovedHeadingMemory` keeps these so the heading can take its
+/// fields back when it comes back in a later save, and hands several back in the order the rows sat in the document.
+struct DeletedHeadingRecord: Sendable, Equatable {
+    let metadata: SectionMetadataCarry
+    let sortOrder: Double
+}
+
 /// What a stamped `applyBlockChangesFromEditor` actually wrote, so the caller can
 /// report and account for it without keeping any parallel in-memory state.
 struct EditorApplyResult: Sendable {
@@ -129,6 +137,10 @@ struct EditorApplyResult: Sendable {
     /// Temp ids of inserts this batch carried together with their own delete (t-80274c66): the insert, the delete and any update of
     /// it were taken out before the write, so no row was made and no id is minted (`cancellingInsertsDeletedInSameBatch`).
     var cancelledInsertIds: [String] = []
+    /// t-b097670d: every heading row (not Notes, not bibliography) this write ACTUALLY deleted, keyed by its id, with its section
+    /// metadata and `sortOrder` as they were before the delete. For the Markdown writer's `RemovedHeadingMemory`; empty for a batch
+    /// that deleted no heading.
+    var deletedHeadings: [String: DeletedHeadingRecord] = [:]
 
     var writtenCount: Int { writtenUpdateIds.count + writtenInsertIds.count + writtenDeleteIds.count }
     var droppedCount: Int { droppedUpdateIds.count + droppedDeleteIds.count }
@@ -344,6 +356,11 @@ extension ProjectDatabase {
                 }
             }
 
+            // t-b097670d: the heading rows about to go, with their section metadata, read in this same transaction BEFORE the deletes. An
+            // insert in this batch that names one of them (a heading moved in the Markdown editor) takes its fields; the ones the delete
+            // really removes are handed back to the caller (`result.deletedHeadings`).
+            let headingRowsBeingDeleted = try Self.headingRowsAmong(db: db, ids: deletesToApply)
+
             // Order preserved from the original: deletes, then inserts (so idMapping is
             // populated for temp-id updates), then updates.
             result.writtenDeleteIds = try processEditorDeletes(db: db, deletes: deletesToApply)
@@ -353,6 +370,8 @@ extension ProjectDatabase {
             // deletes.
             let writtenDeleteIdSet = Set(result.writtenDeleteIds)
             result.deletedAnchors = candidateDeletedAnchors.filter { writtenDeleteIdSet.contains($0.key) }
+            result.deletedHeadings = headingRowsBeingDeleted.filter { writtenDeleteIdSet.contains($0.key) }
+            let carrySources = headingRowsBeingDeleted.mapValues(\.metadata)
 
             // RULE 3 - inserts always run once rule 1 has not fired. Addendum A2 §2(a):
             // an insert whose anchor is missing at write time can re-anchor via the
@@ -362,7 +381,8 @@ extension ProjectDatabase {
             if renumberIfCrowded {
                 renumbers = try processEditorInsertsRenumberingIfCrowded(
                     db: db, inserts: changes.inserts, projectId: projectId,
-                    options: InsertPassOptions(tombstones: tombstones, dedupImagesWithinBatch: dedupImagesWithinBatch),
+                    options: InsertPassOptions(
+                        tombstones: tombstones, dedupImagesWithinBatch: dedupImagesWithinBatch, carrySources: carrySources),
                     result: &result)
             } else {
                 var insertedImageSources: [String: String] = [:]
@@ -370,7 +390,7 @@ extension ProjectDatabase {
                                          nextSortOrder: &nextSortOrder, idMapping: &result.idMapping,
                                          tombstones: tombstones, reanchored: &result.reanchoredInserts,
                                          rejected: &result.rejectedStaleAnchorInserts,
-                                         insertedImageSources: &insertedImageSources)
+                                         insertedImageSources: &insertedImageSources, carrySources: carrySources)
             }
             result.writtenInsertIds = Array(result.idMapping.values)
 
@@ -389,6 +409,25 @@ extension ProjectDatabase {
         }
 
         return result
+    }
+
+    // MARK: - Heading rows about to be deleted (t-b097670d)
+
+    /// The heading rows among `ids` (not Notes, not bibliography: the two kinds `processEditorDeletes` refuses, and the machine-managed
+    /// ones), keyed by id, each with its six section-metadata fields and its `sortOrder`. One point read per id on a cached statement
+    /// (the same shape as `processEditorDeletes`, no bound on the number of variables); an id with no such row is left out.
+    static func headingRowsAmong(db: Database, ids: [String]) throws -> [String: DeletedHeadingRecord] {
+        guard !ids.isEmpty else { return [:] }
+        let statement = try db.cachedStatement(sql: """
+            SELECT * FROM block WHERE id = ? AND blockType = ? AND isNotes = 0 AND isBibliography = 0
+            """)
+        var found: [String: DeletedHeadingRecord] = [:]
+        for id in ids {
+            if let row = try Block.fetchOne(statement, arguments: [id, BlockType.heading.rawValue]) {
+                found[id] = DeletedHeadingRecord(metadata: SectionMetadataCarry(of: row), sortOrder: row.sortOrder)
+            }
+        }
+        return found
     }
 
     // MARK: - Sort-order crowding (Phase 4a, plan v2 section 1(b), review M8)
@@ -515,6 +554,8 @@ extension ProjectDatabase {
         let tombstones: [String: DeletedAnchor]
         /// Whether one image map is shared across the batch (true) or every insert gets a fresh one (false); see the function's doc.
         let dedupImagesWithinBatch: Bool
+        /// The section metadata of the heading rows the batch deletes (t-b097670d); see `processEditorInserts`.
+        let carrySources: [String: SectionMetadataCarry]
     }
 
     /// `processEditorInserts` for a batch that re-spaces the positions: the inserts one at a time, with the crowding
@@ -552,7 +593,8 @@ extension ProjectDatabase {
             try processEditorInserts(
                 db: db, inserts: [insert], projectId: projectId, nextSortOrder: &nextSortOrder,
                 idMapping: &result.idMapping, tombstones: options.tombstones, reanchored: &result.reanchoredInserts,
-                rejected: &result.rejectedStaleAnchorInserts, insertedImageSources: &insertedImageSources)
+                rejected: &result.rejectedStaleAnchorInserts, insertedImageSources: &insertedImageSources,
+                carrySources: options.carrySources)
         }
         if !inserts.isEmpty, let old = try Self.renumberSortOrdersIfCrowded(db: db, projectId: projectId) {
             renumbers.append(old)

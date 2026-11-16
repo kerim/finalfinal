@@ -122,16 +122,65 @@ extension ProjectDatabase {
     ///   bare-title user heading a stale parse once mistook for the real one) would have its
     ///   stale flag OR'd back in by this title match, making the false positive permanent
     ///   instead of letting the corrected fresh parse win.
+    ///
+    /// Returns whether a queued heading was popped for `block` (t-b097670d: a heading that took no id is a candidate for the writer's
+    /// memory of deleted headings); every other caller ignores it.
+    @discardableResult
     static func applyPreservedHeading(
         to block: inout Block,
         queues: inout [String: [PreservedHeading]],
         restoringBibliography: Bool = true
-    ) {
+    ) -> Bool {
         if block.blockType == .heading,
            var queue = queues[block.textContent], !queue.isEmpty {
             let preserved = queue.removeFirst()
             queues[block.textContent] = queue
             applyPreserved(preserved, to: &block, restoringBibliography: restoringBibliography)
+            return true
+        }
+        return false
+    }
+
+    // MARK: The zoomed save and the memory of deleted headings (t-b097670d)
+
+    /// The key a freshly inserted block is matched by in the memory, or nil when it is not a candidate: only a plain heading (not Notes, not
+    /// bibliography) can take remembered fields.
+    static func carryCandidateKey(of block: Block) -> MarkdownBlockDiff.Key? {
+        guard block.blockType == .heading, !block.isNotes, !block.isBibliography else { return nil }
+        return MarkdownBlockDiff.Key(block)
+    }
+
+    /// Puts the fields of the remembered items `RemovedHeadingMemory.assign` gives the candidates onto the inserted rows (only the six
+    /// section-metadata columns are written; `insertedRows` is kept in step so the caller's returned rows carry them). Returns the tokens
+    /// of the items taken, in token order.
+    static func applyRememberedHeadings(
+        db: Database,
+        insertedRows: inout [Block],
+        candidates: [(index: Int, key: MarkdownBlockDiff.Key)],
+        remembered: [RemovedHeadingMemory.Item]
+    ) throws -> [Int] {
+        let assigned = RemovedHeadingMemory.assign(candidates: candidates, items: remembered)
+        let sectionColumns: [Block.Columns] = [.status, .tags, .wordGoal, .goalType, .aggregateGoal, .aggregateGoalType]
+        for (index, item) in assigned.sorted(by: { $0.key < $1.key }) {
+            item.metadata.apply(to: &insertedRows[index])
+            try insertedRows[index].update(db, columns: sectionColumns)
+        }
+        return assigned.values.map(\.token).sorted()
+    }
+
+    /// The heading rows the title queues still hold after the insert loop: deleted, and taken by no new heading (the unbound zoom root
+    /// included; the bound anchor is not in the queues). Notes and bibliography headings and the protected ones are never deleted, so they
+    /// are skipped. Each becomes a `RemovedHeadingMemory.Removal` with the row's six fields and `sortOrder`, ordered by `sortOrder`.
+    static func removedHeadingsLeft(
+        in queues: [String: [PreservedHeading]], existing: [Block], protectedHeadingIds: Set<String>
+    ) -> [RemovedHeadingMemory.Removal] {
+        let existingById = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let rows = queues.values.flatMap { $0 }.compactMap { existingById[$0.id] }
+            .filter { $0.blockType == .heading && !$0.isNotes && !$0.isBibliography && !protectedHeadingIds.contains($0.id) }
+            .sorted { $0.sortOrder < $1.sortOrder }
+        return rows.map {
+            RemovedHeadingMemory.Removal(
+                key: MarkdownBlockDiff.Key($0), metadata: SectionMetadataCarry(of: $0), sortOrder: $0.sortOrder)
         }
     }
 

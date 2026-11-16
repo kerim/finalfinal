@@ -313,10 +313,10 @@ extension LifecycleEntryStatic {
         // MARK: - Outcomes
 
         @Test("""
-            a close pressed while a switch is saving is HELD, not refused (t-eb07cd67): nothing shows, perform waits, and \
-            it runs after the switch, with no warning
+            busy and duplicate are handled, not raised: a different request is refused with the busy notice and a repeat \
+            is silent; neither reaches perform
             """)
-        func aCloseDuringASwitchIsHeldThenRuns() async throws {
+        func busyAndDuplicateNeverReachPerform() async throws {
             try await Harness.withWorld { world in
                 Harness.mount(world)
                 let gate = Harness.Gate()
@@ -330,21 +330,20 @@ extension LifecycleEntryStatic {
                 #expect(world.editorState.activeLifecycle?.kind == .projectSwitch, "positive proof: a switch is running")
                 let recorder = ProjectCommandRecorder()
 
-                let closing = Task { @MainActor in await ProjectCommands.close(recorder.environment) }
-                await Harness.waitUntil("the close to be held") {
-                    LifecycleEntry.testEvents.contains(.held(requested: .close, behind: .projectSwitch))
-                }
-                #expect(recorder.closes == 0, "perform waits for the switch")
+                let busy = await ProjectCommands.close(recorder.environment)
+                #expect(busy == .lifecycle(.refusedBusy(active: .projectSwitch)))
+                #expect(world.toasts.current?.message == ToastFactory.lifecycleBusy().message)
+                #expect(recorder.closes == 0, "perform never ran")
                 #expect(recorder.posts.isEmpty)
-                #expect(world.toasts.current == nil, "no refusal, nothing in the first second")
+
+                world.toasts.dismissCurrent()
+                let duplicate = await ProjectCommands.open(url: url, recorder.environment)
+                #expect(duplicate == .lifecycle(.duplicate))
+                #expect(world.toasts.current == nil, "a repeat says nothing")
+                #expect(recorder.openedURLs.isEmpty, "perform never ran")
 
                 gate.open()
                 _ = try await first.value
-                let result = await closing.value
-                #expect(result == .lifecycle(.performed))
-                #expect(recorder.closes == 1, "the held close ran once the switch had finished")
-                #expect(recorder.posts.map(\.name) == [.projectDidClose])
-                #expect(world.toasts.current?.style != .warning, "never a warning")
                 #expect(LifecycleEntry.current == nil)
             }
         }
@@ -380,41 +379,6 @@ extension LifecycleEntryStatic {
                 #expect(world.probe.log.isEmpty, "no tail ran for the skipped switch")
                 _ = world.editorState.clearLifecycle(quit.id)
             }
-        }
-    }
-}
-
-// t-eb07cd67's second held-command test is in an extension, so the struct body stays under the project's type-body-length limit.
-extension LifecycleEntryStatic.ProjectCommandsTests {
-
-    @Test("""
-        a second Open of the project the running switch is opening is HELD, then does nothing: its already-open check \
-        is made after the wait (t-eb07cd67), so the project is opened exactly once
-        """)
-    func aSecondOpenOfTheProjectBeingOpenedIsHeldThenDoesNothing() async throws {
-        let controller = StructuralUndoController()
-        await Harness.withWorld(controller: controller) { world in
-            Harness.mount(world)
-            controller.testSetIsPerforming(true)   // holds the first switch inside its save sequence (step 1)
-            let recorder = ProjectCommandRecorder()
-            // The recorder has no project open; follow the opens the way `DocumentManager.projectURL` does.
-            recorder.onOpen = { [unowned recorder] in recorder.currentProjectURL = url }
-            let first = Task { @MainActor in await ProjectCommands.open(url: url, recorder.environment) }
-            await Harness.waitUntil("the first switch to arm") { world.editorState.activeLifecycle?.kind == .projectSwitch }
-            let second = Task { @MainActor in await ProjectCommands.open(url: url, recorder.environment) }
-            await Harness.waitUntil("the second open to be held") {
-                LifecycleEntry.testEvents.contains(.held(requested: .projectSwitch, behind: .projectSwitch))
-            }
-            #expect(recorder.openedURLs.isEmpty, "nothing is opened while the first switch is still saving")
-            #expect(world.toasts.current == nil)
-
-            controller.testSetIsPerforming(false)   // the section operation clears: the first switch goes on
-            #expect(await first.value == .lifecycle(.performed))
-            #expect(await second.value == .sameProjectAlreadyOpen, "checked after the wait: that project is now open")
-            #expect(recorder.openedURLs == [url], "opened exactly once")
-            #expect(LifecycleEntry.testEvents.filter { $0 == .armed(.projectSwitch) }.count == 1, "the held open armed nothing")
-            #expect(LifecycleEntry.testEvents.contains(.admitted(.projectSwitch)))
-            #expect(world.toasts.current?.style != .warning)
         }
     }
 }

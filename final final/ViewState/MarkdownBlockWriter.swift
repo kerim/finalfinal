@@ -118,6 +118,9 @@ final class MarkdownBlockWriter {
     var structuralHoldState = StructuralHoldState()
     /// t-2fbe4c9b: the memo of the whole-text parse `prepare` needs (see the header). `reset()` empties it; `noteLoaded` does not.
     let parseCache: MarkdownParseCache
+    /// t-b097670d: the status, tags and goals of the headings this writer deleted, for a heading that comes back in a later save. A stored
+    /// property only because an extension cannot add one: its API and every write to it are in MarkdownBlockWriter+RemovedHeadings.swift.
+    var removedHeadings = RemovedHeadingMemory()
     #if DEBUG
     /// Test seams: the source of the temp ids the diff mints, and a look at the changes a step reserved.
     var testMakeTempId: (() -> String)?
@@ -556,7 +559,8 @@ extension MarkdownBlockWriter {
             line.align += clock.now - alignStart
         }
         let diffStart = clock.now
-        let result = MarkdownBlockDiff.diff(baseline: entries, new: parsed, makeTempId: tempIdSource)
+        let result = MarkdownBlockDiff.diff(
+            baseline: entries, new: parsed, remembered: removedHeadings.items(for: context.projectId), makeTempId: tempIdSource)
         line.diff = clock.now - diffStart
         return result
     }
@@ -657,6 +661,9 @@ extension MarkdownBlockWriter {
         emit(line)
 
         let context = write.prepared.context
+        if case .applied(let applied) = outcome {
+            updateRemovedHeadings(from: write.prepared.result, projectId: context.projectId, applied: applied)
+        }
         // A set-point (a push, a reset, a direct write) that landed while this write was in flight has already put the
         // baseline back to `.rows`: a completion must not put older text over it.
         let ours = version == write.versionAtReservation

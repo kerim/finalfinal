@@ -72,6 +72,21 @@ struct PreservedRowReservation {
     let count: Int
 }
 
+/// What a zoomed range replace tells the Markdown writer's `RemovedHeadingMemory` (t-b097670d): the heading rows it deleted without a
+/// same-title partner (`removed`, with their six fields and the `sortOrder` they had, ordered by it) and the tokens of the remembered
+/// items its new headings took (`usedTokens`). Handed back after the transaction committed; the writer consumes and records.
+struct ZoomedHeadingCarry: Sendable {
+    var removed: [RemovedHeadingMemory.Removal] = []
+    var usedTokens: [Int] = []
+}
+
+/// What `replaceBlocksInRangeCarrying` (the instance overload) returns: the rows inserted, the `afterReplace` answer, and the carry.
+struct ZoomedReplaceResult<T> {
+    let inserted: [Block]
+    let afterReplace: T
+    let carry: ZoomedHeadingCarry
+}
+
 /// The Notes-merge bookkeeping `handleMachineManagedBlock` threads through both call sites'
 /// insert loops, bundled into one `inout` value so the function stays under
 /// swiftlint's function_parameter_count limit. Field names are identical to the parameter
@@ -496,12 +511,29 @@ extension ProjectDatabase {
         anchorHeadingId: String? = nil,
         afterReplace: (Database, [Block]) throws -> T
     ) throws -> (inserted: [Block], afterReplace: T) {
+        let result = try replaceBlocksInRangeCarrying(
+            newBlocks, for: projectId, rangeAnchor: rangeAnchor, anchorHeadingId: anchorHeadingId, afterReplace: afterReplace)
+        return (result.inserted, result.afterReplace)
+    }
+
+    /// The same, for the zoomed Markdown save, which shares the writer's memory of deleted headings (t-b097670d): `remembered` are the
+    /// items a new heading with no same-title partner may take (the identical line), and `carry` is what the replace tells the memory
+    /// afterwards (`ZoomedHeadingCarry`; the caller records it once this transaction has committed).
+    func replaceBlocksInRangeCarrying<T>(
+        _ newBlocks: [Block],
+        for projectId: String,
+        rangeAnchor: AnchoredSortOrderRange,
+        anchorHeadingId: String? = nil,
+        remembered: [RemovedHeadingMemory.Item] = [],
+        afterReplace: (Database, [Block]) throws -> T
+    ) throws -> ZoomedReplaceResult<T> {
         try write { db in
             let range = rangeAnchor.current
-            let inserted = try Self.replaceBlocksInRange(
+            let replaced = try Self.replaceBlocksInRangeCarrying(
                 db: db, newBlocks, for: projectId, startSortOrder: range.start, endSortOrder: range.end,
-                anchorHeadingId: anchorHeadingId)
-            return (inserted, try afterReplace(db, inserted))
+                anchorHeadingId: anchorHeadingId, remembered: remembered)
+            return ZoomedReplaceResult(
+                inserted: replaced.inserted, afterReplace: try afterReplace(db, replaced.inserted), carry: replaced.carry)
         }
     }
 
@@ -519,6 +551,25 @@ extension ProjectDatabase {
         endSortOrder: Double?,
         anchorHeadingId: String? = nil
     ) throws -> [Block] {
+        try replaceBlocksInRangeCarrying(
+            db: db, newBlocks, for: projectId, startSortOrder: startSortOrder, endSortOrder: endSortOrder,
+            anchorHeadingId: anchorHeadingId, remembered: []).inserted
+    }
+
+    /// The body of `replaceBlocksInRange(db:...)`, which also takes part in the writer's memory of deleted headings (t-b097670d): a new
+    /// heading that found neither a title match nor the zoom-root anchor takes the fields of a remembered item with the identical line
+    /// (`RemovedHeadingMemory.assign`, the rule the per-block save uses), and the heading rows left in the title queues (deleted, taken
+    /// by no new heading, the unbound zoom root included) come back as `carry.removed`. The title queue stays first: it is the existing
+    /// same-save match here, and changing it is t-47694cc4's area.
+    static func replaceBlocksInRangeCarrying(
+        db: Database,
+        _ newBlocks: [Block],
+        for projectId: String,
+        startSortOrder: Double,
+        endSortOrder: Double?,
+        anchorHeadingId: String? = nil,
+        remembered: [RemovedHeadingMemory.Item] = []
+    ) throws -> (inserted: [Block], carry: ZoomedHeadingCarry) {
         // 1. Fetch existing blocks in range to preserve heading metadata and IDs
         var existingQuery = Block
             .filter(Block.Columns.projectId == projectId)
@@ -642,6 +693,7 @@ extension ProjectDatabase {
         // to the caller (see this function's doc comment); a rename-flush caller resolves
         // its new zoom root from this without a second DB round trip.
         var insertedRows: [Block] = []
+        var candidates: [(index: Int, key: MarkdownBlockDiff.Key)] = []   // t-b097670d: headings no title queue and no anchor took
         for (index, var block) in newBlocks.enumerated() {
             block.sortOrder = startSortOrder + Double(index)
 
@@ -659,10 +711,12 @@ extension ProjectDatabase {
             // 4 & 5. Preserve heading ID and metadata: the zoom-root anchor (position-based,
             // see resolveAnchorHeading) wins at its own bound index; every other heading is
             // still matched by occurrence-indexed title (see applyPreservedHeading).
+            var tookAnId = false
             if let resolvedAnchor, index == resolvedAnchor.newIndex {
                 applyPreserved(resolvedAnchor.preserved, to: &block, restoringBibliography: true)
+                tookAnId = true
             } else {
-                applyPreservedHeading(to: &block, queues: &headingsByTitle)
+                tookAnId = applyPreservedHeading(to: &block, queues: &headingsByTitle)
             }
 
             // 6. Preserve image metadata by imageSrc match (see applyPreservedImageMetadata).
@@ -670,7 +724,16 @@ extension ProjectDatabase {
 
             try block.insert(db)
             insertedRows.append(block)
+            if !tookAnId, let key = carryCandidateKey(of: block) { candidates.append((insertedRows.count - 1, key)) }
         }
+
+        // t-b097670d: the remembered fields go onto the headings that took no id (before anything moves a row: the `sortOrder`s are
+        // still the ones just inserted), and the heading rows nobody took are what the memory is told about.
+        let usedTokens = try applyRememberedHeadings(db: db, insertedRows: &insertedRows, candidates: candidates, remembered: remembered)
+        let carry = ZoomedHeadingCarry(
+            removed: removedHeadingsLeft(
+                in: headingsByTitle, existing: existingBlocks, protectedHeadingIds: protectedHeadingIds),
+            usedTokens: usedTokens)
 
         // Any continuation row the incoming batch never claimed -- the user deleted that
         // paragraph of the footnote -- must be deleted now, before the reanchor step
@@ -707,7 +770,7 @@ extension ProjectDatabase {
 
         try Self.recomputeSectionParents(db: db, projectId: projectId)
 
-        return insertedRows
+        return (insertedRows, carry)
     }
 
 }

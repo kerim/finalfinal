@@ -32,6 +32,11 @@ extension ProjectDatabase {
     /// arrive in one sync cycle). It is a parameter, not a local, so the caller that feeds this function one insert at a time
     /// (`processEditorInsertsRenumberingIfCrowded`) decides whether the de-duplication spans the whole batch (Rich Text) or
     /// not (Markdown, which must keep two rows for two identical image lines); the plain path passes a fresh empty map.
+    ///
+    /// `carrySources` (t-b097670d): the section metadata of the heading rows THIS batch deletes, by row id (read before the deletes,
+    /// in the same transaction). A heading insert that names one of them (`carryMetadataFromId`) takes its six fields; one that carries
+    /// the fields by value (`carriedMetadata`, from a row deleted in an earlier save) takes those; a name that is not in
+    /// `carrySources` (the delete was dropped or refused, so the row still exists) copies nothing.
     func processEditorInserts(
         db: Database,
         inserts: [BlockInsert],
@@ -41,7 +46,8 @@ extension ProjectDatabase {
         tombstones: [String: DeletedAnchor] = [:],
         reanchored: inout [String],
         rejected: inout [String],
-        insertedImageSources: inout [String: String]
+        insertedImageSources: inout [String: String],
+        carrySources: [String: SectionMetadataCarry] = [:]
     ) throws {
         for insert in inserts {
             var effectiveInsert = insert
@@ -53,15 +59,9 @@ extension ProjectDatabase {
                     if let substitute = try resolveTombstoneChain(anchorId: anchorId, tombstones: tombstones, db: db) {
                         switch substitute {
                         case .after(let liveId):
-                            effectiveInsert = BlockInsert(
-                                tempId: insert.tempId, blockType: insert.blockType,
-                                textContent: insert.textContent, markdownFragment: insert.markdownFragment,
-                                headingLevel: insert.headingLevel, afterBlockId: liveId, atDocumentStart: nil)
+                            effectiveInsert = insert.reanchored(afterBlockId: liveId, atDocumentStart: nil)
                         case .documentStart:
-                            effectiveInsert = BlockInsert(
-                                tempId: insert.tempId, blockType: insert.blockType,
-                                textContent: insert.textContent, markdownFragment: insert.markdownFragment,
-                                headingLevel: insert.headingLevel, afterBlockId: nil, atDocumentStart: true)
+                            effectiveInsert = insert.reanchored(afterBlockId: nil, atDocumentStart: true)
                         }
                         forceUnmanaged = true
                         // Bug fix (t-94369a83 addendum A2 v2 judge round): counting
@@ -93,6 +93,7 @@ extension ProjectDatabase {
                 isNotesContainment: placement.isNotes
             )
             let permanentId = block.id
+            Self.applyCarriedSectionMetadata(to: &block, insert: effectiveInsert, carrySources: carrySources)
 
             // Within-batch dedup: skip duplicate image inserts in the same sync cycle
             if block.blockType == .image, let src = block.imageSrc, !src.isEmpty, let existingId = insertedImageSources[src] {
@@ -112,6 +113,20 @@ extension ProjectDatabase {
 
             // Record the mapping from temp ID to permanent ID
             idMapping[insert.tempId] = permanentId
+        }
+    }
+
+    /// t-b097670d: a heading insert that names a heading row this batch deletes (`carryMetadataFromId`, found in `carrySources`) takes that row's
+    /// six section-metadata fields; one that carries them by value (`carriedMetadata`) takes those. Nothing for any other block, and nothing for a
+    /// name that is not in `carrySources` (the row is not deleted by this batch, so it still has its own fields).
+    private static func applyCarriedSectionMetadata(
+        to block: inout Block, insert: BlockInsert, carrySources: [String: SectionMetadataCarry]
+    ) {
+        guard block.blockType == .heading else { return }
+        if let sourceId = insert.carryMetadataFromId, let source = carrySources[sourceId] {
+            source.apply(to: &block)
+        } else if let carried = insert.carriedMetadata {
+            carried.apply(to: &block)
         }
     }
 
@@ -482,10 +497,7 @@ extension ProjectDatabase {
         for insert in changes.inserts {
             var placed = insert
             if let anchor = insert.afterBlockId, let moved = placement[anchor] {
-                placed = BlockInsert(
-                    tempId: insert.tempId, blockType: insert.blockType, textContent: insert.textContent,
-                    markdownFragment: insert.markdownFragment, headingLevel: insert.headingLevel,
-                    afterBlockId: moved.after, atDocumentStart: moved.atStart)
+                placed = insert.reanchored(afterBlockId: moved.after, atDocumentStart: moved.atStart)
             }
             if cancelledIds.contains(insert.tempId) {
                 placement[insert.tempId] = (placed.afterBlockId, placed.atDocumentStart)

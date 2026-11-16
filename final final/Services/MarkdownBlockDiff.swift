@@ -15,7 +15,8 @@
 //       order only when their `BlockType` is equal (same-type gap pairing). A pair becomes an update that keeps
 //       the row's id (so a paragraph keeps its id while edited, and a heading keeps its id, status, tags and
 //       goals when renamed or when its level changes). Everything else is a delete or an insert. A block whose
-//       type changes is therefore a delete plus an insert, and a MOVED block gets a new id. Never a full LCS
+//       type changes is therefore a delete plus an insert, and a MOVED block gets a new id (a moved or restored
+//       HEADING keeps its status, tags and goals all the same: point 5). Never a full LCS
 //       table (review M21): `CollectionDifference` is Myers' O((N+M)*D).
 //
 //    2. DIFF. From the alignment, `BlockChanges`: updates, inserts with CHAINED temp-id anchors, deletes.
@@ -43,6 +44,17 @@
 //       a row the alignment matched by text is never paired: a definition with a NEW label, a second hand-typed
 //       copy of a label that is already matched, a continuation of a NEW footnote and an extra continuation (an
 //       ordinal no baseline row of that owner has) stay inserts (N3 below). See `pairMovedNotes`.
+//
+//    5. MOVED HEADINGS (t-b097670d). A heading the user cuts and pastes, drags with selected text inside the editor, or deletes and
+//       brings back with Cmd-Z is a delete plus an insert to the alignment (a new id: the write cannot move a row), and a new
+//       row would come back without the status, tags and goals of the old one. Two carries, both only for a heading with the
+//       IDENTICAL line (same level, same text: the key), so a rename or a level change is not a move and keeps its own `.changed`
+//       update. In ONE save, a removed heading row and an inserted block with an equal key are paired in document order: the insert names the row
+//       (`BlockInsert.carryMetadataFromId`) and the database copies the row's six fields onto the new row in the same transaction,
+//       before the delete. ACROSS saves (the cut was saved, the paste comes a save later; a delete that was saved and is then
+//       undone), the writer remembers the fields of every heading row it deletes (`RemovedHeadingMemory`, per open project) and a
+//       later save's inserted heading with an equal key takes them by value (`BlockInsert.carriedMetadata`); `Result.removedHeadings`
+//       says which deletes to remember and `Result.usedRemembered` which items an insert took (`MarkdownBlockDiff+MovedHeadings.swift`).
 //
 //  THE KEY. (BlockType, headingLevel for headings only, trimmed fragment), hashed once. Whitespace around a
 //  fragment and blank lines between blocks do not matter (a whitespace-only change is an empty diff); a
@@ -300,40 +312,6 @@ enum MarkdownBlockDiff {
         }
     }
 
-    struct Result: Sendable {
-        /// What to send. Already pre-filtered.
-        var changes: BlockChanges
-        /// One entry per new block, in order: the baseline after a CLEAN write. An inserted block carries its
-        /// temp id until `resolvingTempIds` swaps in the permanent one; a dropped (filtered) insert has no id.
-        var entries: [Entry]
-        var filtered: Filtered
-        /// Changes the diff could not address because the baseline did not know the row's id (a baseline entry
-        /// with a nil id was removed or changed, or an insert had to be anchored past one).
-        var unaddressable: Int
-
-        var isEmpty: Bool { changes.isEmpty }
-
-        /// C4: nothing to send ONLY because the filter dropped everything the diff found (or the rest could not be
-        /// addressed). The caller keeps rows mode and schedules nothing: the editor and the database differ on text
-        /// the writer must not write.
-        var emptyOnlyBecauseFiltered: Bool { changes.isEmpty && (filtered.total > 0 || unaddressable > 0) }
-
-        /// After a write that carried any filtered or unaddressable change the baseline must be rows mode, never
-        /// `entries`: the entries describe text the database does not hold.
-        var baselineAfterWriteMustBeRows: Bool { filtered.total > 0 || unaddressable > 0 }
-
-        /// `entries` with each temp id replaced by the permanent id the write minted (`EditorApplyResult.idMapping`).
-        /// A temp id the write did not mint (a rejected or deduplicated insert) becomes nil.
-        func resolvingTempIds(_ idMapping: [String: String]) -> [Entry] {
-            entries.map { entry in
-                guard let id = entry.id, id.hasPrefix(MarkdownBlockDiff.tempIdPrefix) else { return entry }
-                var resolved = entry
-                resolved.id = idMapping[id]
-                return resolved
-            }
-        }
-    }
-
     /// Every temp id this file mints starts with this (the writer treats any `temp-` prefix as an unminted id).
     static let tempIdPrefix = "temp-md-"
 
@@ -354,12 +332,20 @@ enum MarkdownBlockDiff {
     /// paired with the baseline Notes row in the same slot (`pairMovedNotes`). The paired row is not a delete and
     /// the paired block is not an insert.
     ///
+    /// MOVED HEADINGS (t-b097670d): see point 5 of the header and `MarkdownBlockDiff+MovedHeadings.swift`; they only fill the inserts' carry fields.
+    /// - Parameter remembered: the writer's memory of headings deleted in earlier saves of this project.
     /// - Parameter makeTempId: injectable so a test can assert the exact `BlockChanges`.
-    static func diff(baseline: [Entry], new: [Block], makeTempId: () -> String = MarkdownBlockDiff.makeTempId) -> Result {
+    static func diff(
+        baseline: [Entry], new: [Block], remembered: [RemovedHeadingMemory.Item] = [],
+        makeTempId: () -> String = MarkdownBlockDiff.makeTempId
+    ) -> Result {
         let (alignment, movedNotes) = pairMovedNotes(
             alignment: align(
                 baseline: baseline.map(\.key), new: new.map { Key($0) }, rules: notesHeadingRules(baseline: baseline, new: new)),
             baseline: baseline, new: new)
+        let movedHeadings = pairMovedHeadings(alignment: alignment, baseline: baseline, new: new, movedNotes: movedNotes)
+        let rememberedHeadings = pairRememberedHeadings(
+            alignment: alignment, new: new, movedNotes: movedNotes, sameSave: movedHeadings, remembered: remembered)
         var builder = DiffBuilder()
         for index in alignment.removed {
             builder.addRemoved(baseline[index])
@@ -374,18 +360,24 @@ enum MarkdownBlockDiff {
                 if let rowIndex = movedNotes[index] {
                     builder.addMovedNotes(block, row: baseline[rowIndex])
                 } else {
-                    builder.addInserted(block, makeTempId: makeTempId)
+                    builder.addInserted(
+                        block, makeTempId: makeTempId, carryFromRowId: movedHeadings[index].flatMap { baseline[$0].id },
+                        remembered: rememberedHeadings[index])
                 }
             }
         }
         return Result(
             changes: BlockChanges(updates: builder.updates, inserts: builder.inserts, deletes: builder.deletes),
-            entries: builder.entries, filtered: builder.filtered, unaddressable: builder.unaddressable)
+            entries: builder.entries, filtered: builder.filtered, unaddressable: builder.unaddressable,
+            removedHeadings: builder.headingsRemoved(carriedBy: builder.inserts), usedRemembered: builder.usedRemembered)
     }
 
     /// Rows mode: the diff of `new` against the stored `rows`.
-    static func diff(rows: [Block], new: [Block], makeTempId: () -> String = MarkdownBlockDiff.makeTempId) -> Result {
-        diff(baseline: baselineEntries(rows: rows), new: new, makeTempId: makeTempId)
+    static func diff(
+        rows: [Block], new: [Block], remembered: [RemovedHeadingMemory.Item] = [],
+        makeTempId: () -> String = MarkdownBlockDiff.makeTempId
+    ) -> Result {
+        diff(baseline: baselineEntries(rows: rows), new: new, remembered: remembered, makeTempId: makeTempId)
     }
 
     /// Working state of one `diff` call, fed in this order: every removed baseline block, then the new blocks in
@@ -397,12 +389,15 @@ enum MarkdownBlockDiff {
         var entries: [Entry] = []
         var filtered = Filtered()
         var unaddressable = 0
+        var removedHeadings: [RemovedHeadingRef] = []
+        var usedRemembered: [UsedRemembered] = []
         /// The nearest earlier id-bearing block of the new sequence (a permanent id or an earlier insert's temp id).
         private var anchorId: String?
         /// A block with no known id lies between `anchorId` and the block being added.
         private var passedAnUnknownBlock = false
 
-        /// A baseline block that matches nothing: a delete, unless the database would refuse it.
+        /// A baseline block that matches nothing: a delete, unless the database would refuse it. Every heading row that is deleted is
+        /// listed in `removedHeadings` (t-b097670d); `headingsRemoved(carriedBy:)` marks the ones a moved row of this same save takes.
         mutating func addRemoved(_ row: Entry) {
             guard let id = row.id else {
                 unaddressable += 1
@@ -414,7 +409,16 @@ enum MarkdownBlockDiff {
                 filtered.notesDeletes += 1
             } else {
                 deletes.append(id)
+                if row.key.blockType == .heading { removedHeadings.append(RemovedHeadingRef(id: id, key: row.key)) }
             }
+        }
+
+        /// The listed heading rows, each marked with the temp id of the insert that names it (`carryMetadataFromId`), if any: the writer
+        /// remembers such a row only when that insert was not minted.
+        func headingsRemoved(carriedBy inserts: [BlockInsert]) -> [RemovedHeadingRef] {
+            var carrier: [String: String] = [:]
+            for insert in inserts { if let source = insert.carryMetadataFromId { carrier[source] = insert.tempId } }
+            return removedHeadings.map { RemovedHeadingRef(id: $0.id, key: $0.key, carriedByTempId: carrier[$0.id]) }
         }
 
         mutating func addUnchanged(_ row: Entry) {
@@ -485,8 +489,11 @@ enum MarkdownBlockDiff {
         }
 
         /// A new block that matches nothing: an insert anchored on the nearest earlier id, dropped when the parse flags
-        /// it bibliography.
-        mutating func addInserted(_ block: Block, makeTempId: () -> String) {
+        /// it bibliography. A heading may carry the section metadata of a row (`carryFromRowId`, a heading row this same save deletes)
+        /// or of a remembered item (`remembered`, a heading deleted in an earlier save); never both (t-b097670d).
+        mutating func addInserted(
+            _ block: Block, makeTempId: () -> String, carryFromRowId: String? = nil, remembered: RemovedHeadingMemory.Item? = nil
+        ) {
             if block.isBibliography {
                 filtered.bibliographyInserts += 1
                 entries.append(Entry(parsed: block, id: nil))
@@ -503,9 +510,57 @@ enum MarkdownBlockDiff {
             inserts.append(BlockInsert(
                 tempId: tempId, blockType: block.blockType.rawValue, textContent: block.textContent,
                 markdownFragment: block.markdownFragment, headingLevel: block.headingLevel,
-                afterBlockId: anchorId, atDocumentStart: anchorId == nil ? true : nil))
+                afterBlockId: anchorId, atDocumentStart: anchorId == nil ? true : nil,
+                carryMetadataFromId: carryFromRowId, carriedMetadata: remembered?.metadata))
+            if let remembered { usedRemembered.append(UsedRemembered(tempId: tempId, token: remembered.token)) }
             entries.append(Entry(parsed: block, id: tempId))
             anchorId = tempId
+        }
+    }
+}
+
+// MARK: - The result of a diff (in an extension so the enum body stays under the type-body-length limit)
+
+extension MarkdownBlockDiff {
+
+    struct Result: Sendable {
+        /// What to send. Already pre-filtered.
+        var changes: BlockChanges
+        /// One entry per new block, in order: the baseline after a CLEAN write. An inserted block carries its
+        /// temp id until `resolvingTempIds` swaps in the permanent one; a dropped (filtered) insert has no id.
+        var entries: [Entry]
+        var filtered: Filtered
+        /// Changes the diff could not address because the baseline did not know the row's id (a baseline entry
+        /// with a nil id was removed or changed, or an insert had to be anchored past one).
+        var unaddressable: Int
+        /// t-b097670d: the heading rows this diff deletes (not Notes, not bibliography, with an id), in baseline document order, each marked
+        /// with the insert of the same save that takes its fields directly (`RemovedHeadingRef.carriedByTempId`). The writer remembers the
+        /// fields of the ones the write really deletes and no minted insert took (`RemovedHeadingMemory`).
+        var removedHeadings: [RemovedHeadingRef] = []
+        /// t-b097670d: the remembered items an insert of this diff takes (the insert's temp id and the item's token). The writer
+        /// removes an item from the memory only when the write applied and minted that temp id.
+        var usedRemembered: [UsedRemembered] = []
+
+        var isEmpty: Bool { changes.isEmpty }
+
+        /// C4: nothing to send ONLY because the filter dropped everything the diff found (or the rest could not be
+        /// addressed). The caller keeps rows mode and schedules nothing: the editor and the database differ on text
+        /// the writer must not write.
+        var emptyOnlyBecauseFiltered: Bool { changes.isEmpty && (filtered.total > 0 || unaddressable > 0) }
+
+        /// After a write that carried any filtered or unaddressable change the baseline must be rows mode, never
+        /// `entries`: the entries describe text the database does not hold.
+        var baselineAfterWriteMustBeRows: Bool { filtered.total > 0 || unaddressable > 0 }
+
+        /// `entries` with each temp id replaced by the permanent id the write minted (`EditorApplyResult.idMapping`).
+        /// A temp id the write did not mint (a rejected or deduplicated insert) becomes nil.
+        func resolvingTempIds(_ idMapping: [String: String]) -> [Entry] {
+            entries.map { entry in
+                guard let id = entry.id, id.hasPrefix(MarkdownBlockDiff.tempIdPrefix) else { return entry }
+                var resolved = entry
+                resolved.id = idMapping[id]
+                return resolved
+            }
         }
     }
 }

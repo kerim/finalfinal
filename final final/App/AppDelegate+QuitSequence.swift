@@ -14,8 +14,7 @@
 //     10), so the proof is twofold: `LifecycleQuitSequenceTests` shows this function starts exactly one task and
 //     replies once, and the end-to-end quit test shows the app really exits. Returning `.terminateCancel` would
 //     risk cancelling the pending reply, so it is not used.
-//  2. A close or project switch is running (`LifecycleEntry.current`): JOIN it (`joinQuit`), after `LifecycleEntry.noteQuitStarted()`
-//     (t-eb07cd67: it drops a close or open held behind the running one, and every project command after it does nothing). The quit token
+//  2. A close or project switch is running (`LifecycleEntry.current`): JOIN it (`joinQuit`). The quit token
 //     replaces the lifecycle's on its editor state, the shared deadline is tightened to the quit's, and ONE task
 //     waits for the lifecycle's task, makes the automatic version if the lifecycle's tail did not, and replies.
 //  3. Nothing to save: no editor state, or empty content with NO project open, means `.terminateNow`. The old
@@ -23,8 +22,8 @@
 //     inside the 2s block-sync debounce, so the deletion never reached the database and the old text came back
 //     on reopen (review row C19). With a project open the sequence runs: F sends the deletion, and the empty
 //     fetch is a valid answer (N28).
-//  4. Otherwise quit's own sequence: arm the quit token, call `LifecycleEntry.noteQuitStarted()`, run the save sequence
-//     (`flushForQuit`), make the automatic version, reply.
+//  4. Otherwise quit's own sequence: arm the quit token, run the save sequence (`flushForQuit`), make the
+//     automatic version, reply.
 //
 //  Rules, every path: the reply is ALWAYS `true` (A36); the automatic version is ALWAYS attempted (N40; the
 //  5-minute throttle still applies); the writer barrier is held until the process exits; the version is made with
@@ -49,9 +48,6 @@ extension AppDelegate {
 
         // 2. A close or project switch is running: join it.
         if let running = LifecycleEntry.current {
-            // t-eb07cd67: a close or open held behind the running one is dropped, and so is every project command after this
-            // one: the app is quitting.
-            LifecycleEntry.noteQuitStarted()
             return joinQuit(to: running, bounds: env.bounds, reply: reply)
         }
 
@@ -70,14 +66,13 @@ extension AppDelegate {
             return .terminateNow
         }
 
-        // 4. Quit's own sequence. The token is armed before this function returns, and `noteQuitStarted` makes a Cmd-W or Cmd-O
-        // right behind the Cmd-Q do nothing (the app is quitting) instead of racing the quit for the editor.
+        // 4. Quit's own sequence. The token is armed before this function returns, so a Cmd-W or Cmd-O right
+        // behind the Cmd-Q is refused as busy instead of racing the quit for the editor.
         _ = editorState.armLifecycle(.quit, wasGettingStarted: env.isGettingStartedProject())
         guard let token = editorState.activeLifecycle, token.kind == .quit else {
             DebugLog.log(.lifecycle, "[Quit] could not arm a quit token: terminating now")
             return .terminateNow
         }
-        LifecycleEntry.noteQuitStarted()
         let controller = env.structuralUndoController()
         let bounds = env.bounds
         let deadline = LifecycleDeadline(total: bounds.quitTotal)

@@ -1462,14 +1462,13 @@ extension WriteQueuePhase4bDeleteFlowE2ETests {
         case neither
     }
 
-    /// Watches for the end of a close: the project picker, or the app's own "The project wasn't closed ..." notice
-    /// (`ToastFactory.lifecycleCancelled(.close)`, shown for nine seconds, so it is looked for in the same loop
-    /// that looks for the picker rather than after a long wait).
+    /// Watches for the end of a close: the project picker, or the app's own "Couldn't close the project ..." notice (`lifecycleCloseCancelled`,
+    /// shown for nine seconds, so it is looked for in the same loop that looks for the picker rather than after a long wait).
     func waitForCloseOutcome(timeout: TimeInterval) -> CloseOutcome {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
             if app.groups["project-picker"].exists { return .closed }
-            if let message = toastMessage(), message.hasPrefix("The project wasn't closed") { return .cancelledWithNotice(message) }
+            if let message = toastMessage(), message.hasPrefix("Couldn't close the project") { return .cancelledWithNotice(message) }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
         } while Date() < deadline
         return .neither

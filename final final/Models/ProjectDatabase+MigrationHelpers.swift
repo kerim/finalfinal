@@ -108,10 +108,8 @@ extension ProjectDatabase {
             }
 
             guard shouldDelete else { continue }
-            // t-561c4083: only the fragment's LENGTH is logged. The diagnostic file must never hold document text, so the
-            // deleted footnote body can no longer be recovered from the log -- deliberately.
             DebugLog.log(.footnotes, "[ProjectDatabase] v16_notes_orphan_sweep: deleting orphaned Notes " +
-                "definition id=\(id) fragment=\(DebugLog.docText(fragment))")
+                "definition id=\(id) fragment=\"\(fragment)\"")
             try db.execute(sql: "DELETE FROM block WHERE id = ?", arguments: [id])
         }
     }

@@ -48,13 +48,6 @@
 //  `LifecycleHost.backupForQuit` hands the quit the backup service this lifecycle CAPTURED (N4), never the weak
 //  `AppDelegate.autoBackupService`, which the next ContentView overwrites.
 //
-//  t-eb07cd67: ONE TURN for every project command. The busy slot used to REFUSE a request that arrived while another close or
-//  open was saving ("Try again in a moment") and drop it. Now every command runs its whole body inside `withTurn`: a command that
-//  finds the turn taken is HELD (never refused) and runs, as if pressed afterwards, when the running one ends by ANY path (the
-//  hand-on is a `defer`). The last held request wins (an earlier held one is `.superseded`); a repeated Cmd-W is a silent
-//  duplicate; a quit drops the held request and every later one (`noteQuitStarted`). After one second of waiting the held command
-//  shows "Finishing the last change..." (the UX contract 4.2 pattern). `run` called outside a turn wraps itself in one.
-//
 //  Route to the editor state (item 11). The command layer (menu commands, the Finder-open handler, the
 //  quit hook) has no view hierarchy to ask, so `LifecycleEnvironment.production` reads
 //  `AppDelegate.shared?.editorState`: the state of the app's MAIN window, resolved from the states every
@@ -150,56 +143,16 @@ struct LifecycleEnvironment {
 enum LifecycleRunOutcome: Equatable {
     /// `perform` ran (with or without the guard around it).
     case performed
-    /// The request was HELD behind a running close or open and then replaced by a later request (the last one wins): nothing ran
-    /// and nothing was shown. The later request is the one that runs.
-    case superseded
-    /// A repeated Cmd-W (the newest request is already a close): nothing ran and nothing was shown.
+    /// A different kind of lifecycle holds the editor: nothing ran, the busy notice was shown.
+    case refusedBusy(active: LifecycleKind)
+    /// The same kind is already running: nothing ran and nothing was shown (a repeated Cmd-W).
     case duplicate
     /// The save sequence gave up (a section operation never cleared, or the writer refused the barrier):
     /// `perform` was NOT called, the cancel notice was shown, and the project is as it was.
     case cancelled
-    /// A quit joined before `perform` ran (N6), or the request was held / arrived once the app is quitting
-    /// (`noteQuitStarted`): `perform` was NOT called and nothing is shown. The other project is not opened, a Save As copy is not
-    /// made; the quit saves and exits.
+    /// A quit joined before `perform` ran (N6): `perform` was NOT called and nothing is shown. The other project
+    /// is not opened, a Save As copy is not made; the quit saves and exits.
     case skippedForQuit
-}
-
-/// The project command a lifecycle run serves. It exists so the one notice that can still appear (an earlier change that did not
-/// finish within the save's time) can say WHICH command did not happen (`ToastFactory.lifecycleCancelled`). Open Project, Open
-/// Recent, Finder open and Open Anyway are all `.openProject`.
-enum LifecycleCommand: Equatable, CaseIterable {
-    case close
-    case openProject
-    case saveAs
-    case newProject
-    case importMarkdown
-    case gettingStarted
-    case repair
-}
-
-/// What `LifecycleEntry.withTurn` did with a command: ran its body (and what it returned), or did not run it.
-enum LifecycleTurnResult<Value> {
-    case ran(Value)
-    /// A repeated Cmd-W: the newest request was already a close.
-    case duplicate
-    /// Held, then replaced by a later request.
-    case superseded
-    /// A quit has started: the body was not run (a held request is dropped when the quit starts).
-    case skippedForQuit
-}
-
-/// How the turn answered a request.
-enum LifecycleTurn: Equatable {
-    case granted
-    case duplicate
-    case superseded
-    case skippedForQuit
-}
-
-/// The id of the turn the current task runs in, so `run` can tell it is already inside one. A task-local (inherited by tasks created
-/// in the body), compared with the turn that is actually running: a stray task that outlives its turn matches nothing.
-private enum LifecycleTurnLocal {
-    @TaskLocal static var turnID: UUID?
 }
 
 // MARK: - Entry
@@ -216,7 +169,7 @@ enum LifecycleEntry {
 
     /// The single global busy slot (N25): everything one lifecycle needs, captured at arm. Global (not per
     /// editor state) so it survives the E9 view swap and so a request routed to a different editor state
-    /// is still held while this one runs. Cleared, together with the editor's token, when `task` ends.
+    /// is still refused while this one runs. Cleared, together with the editor's token, when `task` ends.
     struct Current {
         let token: LifecycleToken
         /// Held strongly so the state outlives its view for the length of the tail (item 11).
@@ -296,175 +249,25 @@ enum LifecycleEntry {
         testUnkeyedPosts.append(name)
         #endif
     }
-}
-
-// The turn, the run and its internals live in this extension (t-eb07cd67): the enum body above stays under the project's
-// type-body-length limit. `private` members are visible across the type and its extensions in this file.
-extension LifecycleEntry {
-
-    // MARK: The turn (t-eb07cd67)
-
-    /// What holds the turn right now: one command, from the moment it is admitted until its body ends.
-    private struct TurnHolder {
-        let id: UUID
-        let kind: LifecycleKind
-    }
-
-    /// The ONE request waiting for the turn. A newer request replaces it (the earlier one is resumed with `.superseded`).
-    private struct HeldRequest {
-        let turnID: UUID
-        let kind: LifecycleKind
-        let continuation: CheckedContinuation<LifecycleTurn, Never>
-        /// "Finishing the last change..." after `heldNoticeDelay`; stopped when the request is admitted, superseded or dropped.
-        let notice: DelayedProgressToast?
-    }
-
-    private static var turnHolder: TurnHolder?
-    private static var heldRequest: HeldRequest?
-    /// Set by `noteQuitStarted()`. The quit always replies `true`, so production never needs to reset it.
-    private static var quitStarted = false
-
-    /// Whether the current task is running inside the turn that is running right now.
-    private static var isInTurn: Bool {
-        guard let id = LifecycleTurnLocal.turnID else { return false }
-        return turnHolder?.id == id
-    }
-
-    /// Runs `body` as one project command's turn. Every project command (`ProjectCommands`) runs its WHOLE body inside it, so its
-    /// own checks (the A6 "already open" guard, the Getting Started branch, the unsaved-changes alert) run AFTER any wait, exactly as
-    /// if the command had been pressed after the running one finished.
-    ///
-    /// - Nothing holds the turn and no quit has started: admitted at once, with no suspension (a fast second Cmd-W is a duplicate, not
-    ///   a race).
-    /// - A quit has started: `.skippedForQuit`, nothing shown.
-    /// - A close while the newest request (the held one if there is one, else the running one) is also a close: `.duplicate`, silent.
-    /// - Anything else becomes THE held request and waits; an earlier held request is resumed with `.superseded`.
-    ///
-    /// The turn is handed on in a `defer`, so the held request runs on EVERY way out of `body`: a normal return, a throw, a
-    /// cancelled save, a skipped-for-quit return, an early return in the command. No path may leave a held request waiting: it would
-    /// hang and every later command would queue behind it.
-    static func withTurn<Value>(
-        kind: LifecycleKind,
-        _ body: @MainActor () async throws -> Value
-    ) async rethrows -> LifecycleTurnResult<Value> {
-        if isInTurn { return .ran(try await body()) }
-        let id = UUID()
-        switch await acquireTurn(id: id, kind: kind) {
-        case .granted: break
-        case .duplicate: return .duplicate
-        case .superseded: return .superseded
-        case .skippedForQuit: return .skippedForQuit
-        }
-        defer { releaseTurn(id: id) }
-        return .ran(try await LifecycleTurnLocal.$turnID.withValue(id) { try await body() })
-    }
-
-    private static func acquireTurn(id: UUID, kind: LifecycleKind) async -> LifecycleTurn {
-        if quitStarted {
-            DebugLog.log(.lifecycle, "[Lifecycle] \(kind) request dropped: the app is quitting")
-            record(.droppedForQuit(kind))
-            return .skippedForQuit
-        }
-        guard let holder = turnHolder else {
-            turnHolder = TurnHolder(id: id, kind: kind)
-            return .granted
-        }
-        let newest = heldRequest?.kind ?? holder.kind
-        if kind == .close, newest == .close {
-            DebugLog.log(.lifecycle, "[Lifecycle] duplicate \(kind) ignored (\(newest) is running or waiting)")
-            record(.duplicate(kind))
-            return .duplicate
-        }
-        if let earlier = heldRequest {
-            heldRequest = nil
-            earlier.notice?.stop()
-            DebugLog.log(.lifecycle, "[Lifecycle] held \(earlier.kind) replaced by a later \(kind): the last one wins")
-            record(.superseded(earlier.kind))
-            earlier.continuation.resume(returning: .superseded)
-        }
-        DebugLog.log(.lifecycle, "[Lifecycle] \(kind) held behind \(holder.kind)")
-        record(.held(requested: kind, behind: holder.kind))
-        let notice = heldNotice()
-        return await withCheckedContinuation { continuation in
-            heldRequest = HeldRequest(turnID: id, kind: kind, continuation: continuation, notice: notice)
-        }
-    }
-
-    /// Hands the turn on: to the held request if there is one (the turn is RESERVED for it from this synchronous moment, so a newcomer
-    /// that arrives before the held task has actually resumed queues behind it), else it is simply free.
-    private static func releaseTurn(id: UUID) {
-        guard turnHolder?.id == id else { return }
-        turnHolder = nil
-        guard let held = heldRequest else { return }
-        heldRequest = nil
-        held.notice?.stop()
-        turnHolder = TurnHolder(id: held.turnID, kind: held.kind)
-        DebugLog.log(.lifecycle, "[Lifecycle] held \(held.kind) admitted")
-        record(.admitted(held.kind))
-        held.continuation.resume(returning: .granted)
-    }
-
-    /// The app's own quit has started (`AppDelegate.runQuitSequence`, checks 2 and 4): the held request, if any, is dropped, and
-    /// every later request is `.skippedForQuit`. Nothing is shown: the app is quitting. The quit always replies `true`, so the flag
-    /// is never reset in production.
-    static func noteQuitStarted() {
-        quitStarted = true
-        guard let held = heldRequest else { return }
-        heldRequest = nil
-        held.notice?.stop()
-        DebugLog.alwaysPersisted("[Lifecycle] a quit started: the held \(held.kind) request is dropped")
-        record(.droppedForQuit(held.kind))
-        held.continuation.resume(returning: .skippedForQuit)
-    }
-
-    /// The notice a request shows once it has waited `heldNoticeDelay`: through the RUNNING lifecycle's editor state (item 38, the
-    /// window the user is looking at), or the app's editor state when none is running.
-    private static func heldNotice() -> DelayedProgressToast? {
-        let env = environment
-        guard let toastCenter = current?.editorState.toastCenter ?? env.editorState()?.toastCenter else { return nil }
-        return DelayedProgressToast(
-            toastCenter: toastCenter,
-            message: DelayedProgressToast.finishingMessage,
-            delay: .seconds(env.bounds.heldNoticeDelay)
-        )
-    }
 
     // MARK: Run
 
-    /// Runs `perform`, inside the guard when there is something to protect, as one turn (see `withTurn`; a call made from inside a
-    /// command's own turn does not take a second one).
+    /// Runs `perform`, inside the guard when there is something to protect.
     ///
-    /// - Another command holds the turn: this one waits for it (a repeated Cmd-W is a silent `.duplicate`, a request replaced by a
-    ///   later one is `.superseded`, a request made once a quit has started is `.skippedForQuit`). `perform` does not run in those
-    ///   three cases.
+    /// - A lifecycle is already running: the same kind is a silent `.duplicate`, any other is
+    ///   `.refusedBusy` with the busy notice. `perform` does not run.
     /// - No open project, no editor state, or no mounted host: `perform` runs straight through, as it did
     ///   before this entry existed. Nothing is armed.
     /// - Otherwise: arm a token, run `perform`, run the tail it returned, clear. A throw from `perform` is
     ///   rethrown after the token and the slot are cleared.
-    ///
-    /// `command` names what the user asked for, for the one notice that can still appear (a stuck save). Tests may leave it out: a
-    /// close is `.close`, anything else `.openProject`.
     @discardableResult
     static func run(
         kind: LifecycleKind,
-        command: LifecycleCommand? = nil,
         perform: @escaping @MainActor () async throws -> LifecycleTail
     ) async throws -> LifecycleRunOutcome {
-        let command = command ?? (kind == .close ? .close : .openProject)
-        if isInTurn { return try await runInTurn(kind: kind, command: command, perform: perform) }
-        switch try await withTurn(kind: kind, { try await runInTurn(kind: kind, command: command, perform: perform) }) {
-        case .ran(let outcome): return outcome
-        case .duplicate: return .duplicate
-        case .superseded: return .superseded
-        case .skippedForQuit: return .skippedForQuit
+        if let holder = current {
+            return refuse(kind, holder: holder)
         }
-    }
-
-    private static func runInTurn(
-        kind: LifecycleKind,
-        command: LifecycleCommand,
-        perform: @escaping @MainActor () async throws -> LifecycleTail
-    ) async throws -> LifecycleRunOutcome {
         let env = environment
         guard env.hasOpenProject() else { return try await passThrough(.noOpenProject, perform) }
         guard let editorState = env.editorState() else { return try await passThrough(.noEditorState, perform) }
@@ -482,11 +285,10 @@ extension LifecycleEntry {
             record(.duplicate(kind))
             return .duplicate
         case .refusedBusy(let active):
-            // The turn means no close or open is running here, so the editor state's token can only be the app's own quit
-            // (its own sequence, check 4 of `runQuitSequence`, which has no `current`). Nothing to show: the app is quitting.
-            // No `.droppedForQuit` event here: that one is recorded only where `noteQuitStarted()` made the turn drop the request.
-            DebugLog.alwaysPersisted("[Lifecycle] \(kind) not run: \(active) holds the editor (the app is quitting)")
-            return .skippedForQuit
+            // The editor state's token is held by something that is not a `current` lifecycle.
+            record(.refusedBusy(requested: kind, active: active))
+            editorState.toastCenter.show(ToastFactory.lifecycleBusy())
+            return .refusedBusy(active: active)
         }
 
         let deadline = LifecycleDeadline(total: kind == .quit ? env.bounds.quitTotal : env.bounds.closeTotal)
@@ -495,7 +297,6 @@ extension LifecycleEntry {
         let result = ResultBox()
         let context = RunContext(
             token: token,
-            command: command,
             editorState: editorState,
             host: host,
             structuralUndoController: controller,
@@ -531,8 +332,6 @@ extension LifecycleEntry {
     /// Everything one lifecycle's task needs, captured at arm (N26).
     private struct RunContext {
         let token: LifecycleToken
-        /// What the user asked for; names the command in the stuck-save notice.
-        let command: LifecycleCommand
         let editorState: EditorViewState
         let host: LifecycleHost
         let structuralUndoController: StructuralUndoController?
@@ -559,9 +358,6 @@ extension LifecycleEntry {
         let token = context.token
         let editorState = context.editorState
         defer { finish(token: token, editorState: editorState) }
-        // UI-test-only: keeps the FIRST close of a launch saving for a while, so a test's next command is certain to arrive
-        // while it is (a plain suspension; returns at once in every normal launch).
-        if token.kind == .close { await TestMode.holdLifecycleSave() }
         let flush = await editorState.runLifecycleFlush(
             token: token,
             host: context.host,
@@ -578,12 +374,12 @@ extension LifecycleEntry {
             break
         case .cancelledSectionOperation:
             DebugLog.log(.lifecycle, "[Lifecycle] \(token.kind) cancelled (section operation) token=\(token.id): perform not called")
-            await abort(.sectionOperationRunning(command: context.command))
+            await abort(.sectionOperationRunning)
             result.cancelled = true
             return
         case .cancelledBarrierRefused:
             DebugLog.log(.lifecycle, "[Lifecycle] \(token.kind) cancelled (barrier refused) token=\(token.id): perform not called")
-            await abort(.barrierRefused(command: context.command))
+            await abort(.barrierRefused)
             result.cancelled = true
             return
         }
@@ -692,6 +488,23 @@ extension LifecycleEntry {
         return .performed
     }
 
+    /// A request while `holder` runs. The same kind is silent; anything else gets the busy notice, posted
+    /// through the RUNNING lifecycle's editor state (item 38), which is the window the user is looking at.
+    private static func refuse(_ kind: LifecycleKind, holder: Current) -> LifecycleRunOutcome {
+        let active = holder.editorState.activeLifecycle?.kind ?? holder.token.kind
+        switch kind.precedence(whileActive: active) {
+        case .duplicate:
+            DebugLog.log(.lifecycle, "[Lifecycle] duplicate \(kind) ignored (\(active) is running)")
+            record(.duplicate(kind))
+            return .duplicate
+        case .joins, .refused:
+            DebugLog.log(.lifecycle, "[Lifecycle] \(kind) refused: \(active) is running")
+            record(.refusedBusy(requested: kind, active: active))
+            holder.editorState.toastCenter.show(ToastFactory.lifecycleBusy())
+            return .refusedBusy(active: active)
+        }
+    }
+
     // MARK: Test seams
 
     /// What the entry did, in order. Tests use it to prove the guard path actually ran (item 32): a
@@ -699,15 +512,8 @@ extension LifecycleEntry {
     enum Event: Equatable {
         case passedThrough(PassThroughReason)
         case armed(LifecycleKind)
+        case refusedBusy(requested: LifecycleKind, active: LifecycleKind)
         case duplicate(LifecycleKind)
-        /// A request found the turn taken and is waiting for it (t-eb07cd67).
-        case held(requested: LifecycleKind, behind: LifecycleKind)
-        /// The held request was handed the turn when the running command ended.
-        case admitted(LifecycleKind)
-        /// The held request was replaced by a later one (the last one wins).
-        case superseded(LifecycleKind)
-        /// A request was dropped because a quit has started (a held one when the quit started, or one made afterwards).
-        case droppedForQuit(LifecycleKind)
         /// `finish` found the writer barrier still held at the end of the task and released it (round C5b). On a
         /// real path the tail's `retireForLifecycle` (or the abort routine) has already dropped it, so this
         /// should never appear.
@@ -723,16 +529,8 @@ extension LifecycleEntry {
     /// order. Empty on every production path.
     static var testUnkeyedPosts: [String] = []
 
-    /// Puts the entry's global state back to "nothing running, nothing recorded": no turn held, no quit started, and a request still
-    /// waiting is resumed with `.skippedForQuit` so no test task is left hanging.
+    /// Puts the entry's global state back to "nothing running, nothing recorded".
     static func resetForTests() {
-        if let held = heldRequest {
-            heldRequest = nil
-            held.notice?.stop()
-            held.continuation.resume(returning: .skippedForQuit)
-        }
-        turnHolder = nil
-        quitStarted = false
         current = nil
         testEvents = []
         testUnkeyedPosts = []

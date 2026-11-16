@@ -75,8 +75,8 @@ final class SpellCheckService {
                 "[Dispatch] LT post-filter: total=\(raw.count) " +
                 "droppedSpellingBucket=\(spellingDropped.count) kept=\(ltResults.count)")
             if !spellingDropped.isEmpty {
-                DebugLog.log(.proofing, "[Dispatch] spellingBucket sample: " +
-                    "\(spellingDropped.prefix(10).map { "\(DebugLog.docText($0.word))[\($0.ruleId ?? "?")]" }.joined(separator: ", "))")
+                let sample = spellingDropped.prefix(10).map { "\($0.word)[\($0.ruleId ?? "?")]" }
+                DebugLog.log(.proofing, "[Dispatch] spellingBucket sample: \(sample.joined(separator: ", "))")
             }
         }
 

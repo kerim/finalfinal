@@ -20,9 +20,8 @@ export function pushLiveContentToSwift(wasUndo: boolean): string | null {
   if (!editorInstance) return null;
   const md = editorInstance.action(getMarkdown());
   setCurrentContent(md);
-  // t-561c4083: the heading's length only, never its text (the diagnostic log must hold no pieces of the document).
-  const firstHeadingLen = md.match(/^#{1,6}\s+.*/m)?.[0]?.length ?? 0;
-  syncLog('ContentPush', `PUSHED: len=${md.length}, firstHLen=${firstHeadingLen}`);
+  const firstHeading = md.match(/^#{1,6}\s+.*/m)?.[0]?.slice(0, 60) || '(none)';
+  syncLog('ContentPush', `PUSHED: len=${md.length}, firstH="${firstHeading}"`);
   (window as any).webkit?.messageHandlers?.contentChanged?.postMessage({ content: md, wasUndo });
   return md;
 }

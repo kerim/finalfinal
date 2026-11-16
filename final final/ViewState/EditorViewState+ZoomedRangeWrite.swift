@@ -41,14 +41,22 @@ extension EditorViewState {
         // of the rename-empties-sidebar bug this fixes.
         // The live rows are read in the same transaction (`afterReplace`): the range recomputed below takes its numbers from the very
         // transaction that replaced the old range, never from a later read a re-spacing could slip in front of.
-        let (inserted, allBlocksAfterWrite) = try db.replaceBlocksInRange(
+        let replaced = try db.replaceBlocksInRangeCarrying(
             blocks,
             for: pid,
             rangeAnchor: rangeAnchor,
-            anchorHeadingId: zoomedSectionId
+            anchorHeadingId: zoomedSectionId,
+            remembered: markdownWriter.removedHeadings.items(for: pid)
         ) { database, _ in
             try Block.filter(Block.Columns.projectId == pid).order(Block.Columns.sortOrder).fetchAll(database)
         }
+        // t-b097670d: the transaction has committed. The zoomed save shares the writer's memory of deleted headings: the items its new
+        // headings took leave it, and the heading rows it deleted without a same-title partner are remembered. Straight after the call
+        // and ABOVE the lost-root exit below, which is where an unbound zoom root's own row (no heading survived) is exactly what
+        // `carry.removed` holds.
+        let inserted = replaced.inserted
+        let allBlocksAfterWrite = replaced.afterReplace
+        markdownWriter.recordZoomedHeadingCarry(replaced.carry, projectId: pid)
 
         // Resolve the zoom root from `inserted` (the rows replaceBlocksInRange actually wrote), add-only: never remove an id from
         // zoomedSectionIds, only ever add to it (SectionSyncService pairs its own Section rows to zoomedSectionIds by array position --

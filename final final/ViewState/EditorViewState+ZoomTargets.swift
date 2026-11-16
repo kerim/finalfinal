@@ -67,9 +67,9 @@ extension EditorViewState {
                 && (endSortOrder == nil || block.sortOrder < endSortOrder!)
         }
 
-        // t-561c4083: the heading's length only (`DebugLog.docText`), and the message is built INSIDE the call's argument.
-        DebugLog.log(.zoom, "[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), " +
-            "level=\(headingLevel), fragment=\(DebugLog.docText(headingBlock.markdownFragment))")
+        let headingLogMessage = "[Zoom] Heading: id=\(headingBlock.id), sort=\(headingBlock.sortOrder), " +
+            "level=\(headingLevel), fragment=\"\(String(headingBlock.markdownFragment.prefix(80)))\""
+        DebugLog.log(.zoom, headingLogMessage)
         DebugLog.log(.zoom, "[Zoom] endSortOrder=\(String(describing: endSortOrder)), zoomedBlocks=\(zoomedBlocks.count)")
         if let first = zoomedBlocks.first {
             DebugLog.log(.zoom, "[Zoom] First block: id=\(first.id), sort=\(first.sortOrder), type=\(first.blockType)")

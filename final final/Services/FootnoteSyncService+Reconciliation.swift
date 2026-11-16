@@ -198,7 +198,7 @@ extension FootnoteSyncService {
                 openIndex = index
                 everOpened = true
                 DebugLog.log(.footnotes, "[FootnoteSyncService] stripNotesSection: opened " +
-                    "index=\(index) line=\(DebugLog.docText(line))")
+                    "index=\(index) line=\"\(line.prefix(60))\"")
                 continue
             }
             // Any other heading of any level closes the run -- widened from the old
@@ -206,7 +206,7 @@ extension FootnoteSyncService {
             if inNotes && units[index].isAnyHeading {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] stripNotesSection: closed " +
                     "closedAtIndex=\(index) openIndex=\(openIndex ?? -1) reason=next-heading " +
-                    "line=\(DebugLog.docText(line))")
+                    "line=\"\(line.prefix(60))\"")
                 inNotes = false
                 openIndex = nil
             }
@@ -411,7 +411,7 @@ extension FootnoteSyncService {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] adoptUnflaggedNotesContinuations: heading seen " +
                     "index=\(index) id=\(block.id) isNotes=\(block.isNotes) " +
                     "selectorConfirmed=\(selectorConfirmed) " +
-                    "fragment=\(DebugLog.docText(block.markdownFragment))")
+                    "fragment=\"\(block.markdownFragment.prefix(60))\"")
                 if inNotesRun {
                     closeRun(reason: "next heading", closedAtIndex: index, closedByBlockId: block.id)
                 }
@@ -445,7 +445,7 @@ extension FootnoteSyncService {
                 if !block.isNotes {
                     DebugLog.log(.footnotes, "[FootnoteSyncService] adoptUnflaggedNotesContinuations: adopting " +
                         "index=\(index) id=\(block.id) kind=definition label=\(parsed.label) " +
-                        "fragment=\(DebugLog.docText(block.markdownFragment))")
+                        "fragment=\"\(block.markdownFragment.prefix(60))\"")
                     // B2(i): this is a FLAG-ONLY write -- do not restamp updatedAt. Dedup
                     // (see the `reconcileNotesBlocks` step-1 rewrite below) used to trust
                     // updatedAt as a recency signal to pick a winner between two same-labeled
@@ -463,7 +463,7 @@ extension FootnoteSyncService {
                 if !block.isNotes {
                     DebugLog.log(.footnotes, "[FootnoteSyncService] adoptUnflaggedNotesContinuations: adopting " +
                         "index=\(index) id=\(block.id) kind=continuation owner=\(currentOwnerLabel ?? "?") " +
-                        "fragment=\(DebugLog.docText(block.markdownFragment))")
+                        "fragment=\"\(block.markdownFragment.prefix(60))\"")
                     block.isNotes = true
                     try block.update(db)
                     runAdoptedCount += 1
@@ -474,7 +474,7 @@ extension FootnoteSyncService {
             // claimed. See this function's doc comment ("C1(3) -- THE ACTUAL B3 FIX").
             DebugLog.log(.footnotes, "[FootnoteSyncService] adoptUnflaggedNotesContinuations: skipping " +
                 "index=\(index) id=\(block.id) reason=user-prose-no-owning-definition-yet " +
-                "fragment=\(DebugLog.docText(block.markdownFragment))")
+                "fragment=\"\(block.markdownFragment.prefix(60))\"")
         }
         if inNotesRun {
             closeRun(reason: "end of document", closedAtIndex: docOrder.count, closedByBlockId: nil)
@@ -619,7 +619,7 @@ extension FootnoteSyncService {
                 snapshot[label] = winner
                 DebugLog.log(.footnotes, "[FootnoteSyncService] reconcileNotesBlocks:dedup PARKED " +
                     "label=\(label) reason=bodies-differ-non-blank canonicalId=\(winner.id) " +
-                    "blockIds=\(group.map(\.id)) bodies=\(bodies.map { DebugLog.docText($0.body) })")
+                    "blockIds=\(group.map(\.id)) bodies=\(bodies.map(\.body))")
                 continue
             }
             // All bodies blank, or every non-blank body among the group is identical text
@@ -628,11 +628,10 @@ extension FootnoteSyncService {
             let winner = bodies.first(where: { !$0.body.isEmpty })?.block ?? group[0]
             snapshot[label] = winner
             for block in group where block.id != winner.id {
-                // B9 (t-561c4083): log only the fragment's LENGTH before deleting. The diagnostic file must never hold document
-                // text, so a deleted footnote body can no longer be recovered from the log -- deliberately.
+                // B9: log the full fragment before deleting.
                 DebugLog.log(.footnotes, "[FootnoteSyncService] reconcileNotesBlocks:dedup DELETING loser " +
                     "label=\(label) loserId=\(block.id) winnerId=\(winner.id) reason=blank-or-identical-body " +
-                    "loserFragment=\(DebugLog.docText(block.markdownFragment))")
+                    "loserFragment=\"\(block.markdownFragment)\"")
                 // Phase 2 (t-94369a83), §2.3: a dedup loser's tombstone points `.after`
                 // the surviving winner. Review fix (finding #13): the old comment
                 // claimed the winner "is never itself deleted in this pass" -- true only
@@ -799,7 +798,7 @@ extension FootnoteSyncService {
             .fetchOne(db)
         DebugLog.log(.footnotes, "[FootnoteSyncService] reconcileNotesBlocks:step5 heading lookup " +
             (existingHeading.map {
-                "found id=\($0.id) headingLevel=\($0.headingLevel ?? -1) fragment=\(DebugLog.docText($0.markdownFragment))"
+                "found id=\($0.id) headingLevel=\($0.headingLevel ?? -1) fragment=\"\($0.markdownFragment.prefix(60))\""
             } ?? "none-found willCreate=\(!targetRefs.isEmpty)"))
 
         // Get max sort order from non-bibliography blocks. Notes should appear after
@@ -843,7 +842,7 @@ extension FootnoteSyncService {
             if var adopted = unflaggedNotesHeading {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] reconcileNotesBlocks:step5 adopting " +
                     "unflagged heading id=\(adopted.id) headingLevel=\(adopted.headingLevel ?? -1) " +
-                    "fragment=\(DebugLog.docText(adopted.markdownFragment)) instead of materializing a new one")
+                    "fragment=\"\(adopted.markdownFragment.prefix(60))\" instead of materializing a new one")
                 adopted.isNotes = true
                 try adopted.update(db)
             } else {
@@ -1176,14 +1175,14 @@ extension FootnoteSyncService {
             // 1. Label unparseable -- never delete.
             guard let parsedCandidate = parseNotesLabel(from: frag) else {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: skip " +
-                    "id=\(block.id) reason=unparseable-label fragment=\(DebugLog.docText(frag))")
+                    "id=\(block.id) reason=unparseable-label fragment=\"\(frag.prefix(60))\"")
                 continue
             }
             // 2. No same-label twin -- never delete.
             guard let twin = twinsByLabel[parsedCandidate.label] else {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: skip " +
                     "id=\(block.id) label=\(parsedCandidate.label) reason=no-twin-found " +
-                    "fragment=\(DebugLog.docText(frag))")
+                    "fragment=\"\(frag.prefix(60))\"")
                 continue
             }
             // 3. Body comparison -- the exhaustive four-way rule.
@@ -1214,7 +1213,7 @@ extension FootnoteSyncService {
             } else {
                 DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: skip " +
                     "id=\(block.id) label=\(parsedCandidate.label) reason=\(reason) " +
-                    "fragment=\(DebugLog.docText(frag)) twinId=\(twin.id)")
+                    "fragment=\"\(frag.prefix(60))\" twinId=\(twin.id)")
             }
         }
 
@@ -1226,12 +1225,11 @@ extension FootnoteSyncService {
 
         var deletedCount = 0
         for pending in toDelete {
-            // B9 (t-561c4083): log only the LENGTHS of the fragment and of the justifying twin before deleting. The diagnostic
-            // file must never hold document text, so the deleted footnote body can no longer be recovered from the log -- deliberately.
+            // B9: log the full fragment, and the justifying twin, before deleting.
             DebugLog.log(.footnotes, "[FootnoteSyncService] deleteOrphanedFootnoteDefinitions: DELETING " +
                 "id=\(pending.block.id) label=\(pending.label) reason=\(pending.reason) " +
-                "fragment=\(DebugLog.docText(pending.block.markdownFragment)) " +
-                "twinId=\(pending.twin.id) twinFragment=\(DebugLog.docText(pending.twin.markdownFragment))")
+                "fragment=\"\(pending.block.markdownFragment)\" " +
+                "twinId=\(pending.twin.id) twinFragment=\"\(pending.twin.markdownFragment)\"")
             try Block.deleteOne(db, key: pending.block.id)
             deletedCount += 1
         }

@@ -392,13 +392,11 @@ private struct RawBlockSplitter {
             // own serializer normally puts one. The exact upstream
             // trigger is still unconfirmed (see the investigation notes
             // above) — this log lets a real retest confirm whether this
-            // is the mechanism still in play. Only the LENGTHS of both
-            // sides of the boundary are logged (t-561c4083: the diagnostic
-            // file must never hold document text), so identifying the
-            // trigger takes the text from the reproducing document, not the
-            // log. `.data` is enabled by default in this build.
+            // is the mechanism still in play, and captures enough of
+            // both sides of the boundary to identify the trigger if it
+            // recurs. `.data` is enabled by default in this build.
             DebugLog.log(.data, "[BlockParser] list-interruption guard fired: " +
-                "currentBlock=\(DebugLog.docText(currentBlock)) newLine=\(DebugLog.docText(line))")
+                "currentBlock tail=\"\(currentBlock.suffix(80))\" newLine=\"\(line.prefix(80))\"")
             blocks.append(currentBlock)
             currentBlock = ""
             // Same reset as every other flush site in this file (see the two

@@ -1197,7 +1197,7 @@ extension WriteQueuePhase4bMdDuplicateEFE2ETests {
         let deadline = Date(timeIntervalSinceNow: mdDupAppWait(300, before: "the project picker shows"))
         repeat {
             if app.groups["project-picker"].exists { return true }
-            if let message = mdDupToastMessage(), message.hasPrefix("The project wasn't closed") {
+            if let message = mdDupToastMessage(), message.hasPrefix("Couldn't close the project") {
                 mdDupFailWithShot("the close was cancelled by its time budget and the app said so: \"\(message)\"", name: "md-dup-close-cancelled")
                 return false
             }
@@ -2234,7 +2234,7 @@ extension WriteQueuePhase4bMdDuplicateEFE2ETests {
     /// released at least once" passed whatever the close did and was dropped.
     /// TODAY: predicted to pass or fail, reported either way (the old body finished its work before the user could type).
     /// BREAK (predicted, not proven: no patch was run): never hand the writer hold on to the step-8 continuation (the second hunk of
-    /// swift-U22.patch): the hold stays raised, the close waits for it and is cancelled ("The project wasn't closed") or the sentence is
+    /// swift-U22.patch): the hold stays raised, the close waits for it and is cancelled ("Couldn't close the project") or the sentence is
     /// missing after the reopen. No practical 1-5 line patch makes the "close does not wait for the job" case itself fail.
     func testMdDupTypeInCopyThenCloseAtOnceReopen_book6() {
         let title = Self.conclusion

@@ -34,11 +34,6 @@ private final class Counter {
     var value = 0
 }
 
-/// The result of the close held behind the switch, recorded the moment it returns (a bounded wait reads it).
-private final class HeldCloseResult {
-    var value: ProjectCommandResult?
-}
-
 extension LifecycleEntryStatic {
     @Suite("Quit joins a close or switch — Tier 2 (t-94369a83 3a-1b C6)", .serialized, .timeLimit(.minutes(1)))
     @MainActor
@@ -186,60 +181,6 @@ extension LifecycleEntryStatic {
             #expect(rig.sync.testWriterLedger.lifecycleWholeDocumentApplied == 1)
             #expect(rig.editorState.content == LifecycleTailRig.seed, "the open tail stood down before the new project was set up")
             #expect(rig.editorState.lifecycleBarrier != nil, "the tail must not release or retire what the quit holds")
-        }
-
-        @Test("""
-            t-eb07cd67: a close HELD behind the switch a quit joins is dropped, not run after the quit: it returns \
-            .skippedForQuit before the switch ends, nothing is closed, a command pressed afterwards does nothing too, \
-            and the quit still replies
-            """)
-        func aQuitThatJoinsDropsAHeldCommand() async throws {
-            let rig = try LifecycleTailRig(mountedEditor: true)
-            defer { rig.shutdown() }
-            let delegate = makeDelegate(rig)
-            let replies = QuitReplies()
-            let gate = LifecycleEntryHarness.Gate()
-            let recorder = ProjectCommandRecorder()
-            var performEntered = false
-            var laterResult: ProjectCommandResult?
-            let heldBox = HeldCloseResult()
-
-            try await rig.withEntry(bounds: LifecycleBounds.production.scaled(0.25)) {
-                let switching = Task { @MainActor in
-                    try await LifecycleEntry.run(kind: .projectSwitch) {
-                        performEntered = true
-                        await gate.wait()
-                        return .open
-                    }
-                }
-                await LifecycleEntryHarness.waitUntil("perform to be entered") { performEntered }
-                let closing = Task { @MainActor in
-                    let result = await ProjectCommands.close(recorder.environment)
-                    heldBox.value = result
-                    return result
-                }
-                await LifecycleEntryHarness.waitUntil("the close to be held") {
-                    LifecycleEntry.testEvents.contains(.held(requested: .close, behind: .projectSwitch))
-                }
-
-                #expect(delegate.runQuitSequence(reply: { replies.values.append($0) }) == .terminateLater)
-                #expect(rig.editorState.activeLifecycle?.kind == .quit, "the quit joined the switch")
-                // Returns BEFORE the gate opens: dropped, not waiting for the switch (a bounded wait, not `closing.value`).
-                await LifecycleEntryHarness.waitUntil("the held close to be dropped by the quit") { heldBox.value != nil }
-                laterResult = await ProjectCommands.close(recorder.environment)
-                gate.open()
-                _ = try await switching.value
-                _ = await closing.value
-                await delegate.quitTask?.value
-            }
-
-            #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran")
-            #expect(rig.entryEvents.contains(.droppedForQuit(.close)), "events: \(rig.entryEvents)")
-            #expect(heldBox.value == .lifecycle(.skippedForQuit), "the held close was dropped by the quit")
-            #expect(laterResult == .lifecycle(.skippedForQuit), "a command pressed after the quit started does nothing")
-            #expect(recorder.closes == 0, "nothing was closed: the quit saves and exits")
-            #expect(recorder.posts.isEmpty)
-            #expect(replies.values == [true])
         }
 
         @Test("""

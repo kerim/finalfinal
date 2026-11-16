@@ -2760,10 +2760,7 @@ actor DocumentWriter {
                                               holderSeq: holderSeq, holderStamp: holderStamp)))
             } else {
                 let resolvedAfter = insert.afterBlockId.map(resolve)
-                keepInserts.append(BlockInsert(
-                    tempId: insert.tempId, blockType: insert.blockType, textContent: insert.textContent,
-                    markdownFragment: insert.markdownFragment, headingLevel: insert.headingLevel,
-                    afterBlockId: resolvedAfter, atDocumentStart: insert.atDocumentStart))
+                keepInserts.append(insert.reanchored(afterBlockId: resolvedAfter, atDocumentStart: insert.atDocumentStart))
             }
         }
         for update in changes.updates {
@@ -2884,10 +2881,7 @@ actor DocumentWriter {
             return BlockChanges(deletes: [tempIdMap[id] ?? id])
         case .insert(let insert):
             let after = insert.afterBlockId.map { tempIdMap[$0] ?? $0 }
-            return BlockChanges(inserts: [BlockInsert(
-                tempId: insert.tempId, blockType: insert.blockType, textContent: insert.textContent,
-                markdownFragment: insert.markdownFragment, headingLevel: insert.headingLevel,
-                afterBlockId: after, atDocumentStart: insert.atDocumentStart)])
+            return BlockChanges(inserts: [insert.reanchored(afterBlockId: after, atDocumentStart: insert.atDocumentStart)])
         }
     }
 

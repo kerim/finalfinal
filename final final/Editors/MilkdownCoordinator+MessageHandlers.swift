@@ -709,8 +709,8 @@ extension MilkdownEditor.Coordinator {
         let receivedFirstLine = Self.firstLine(of: content)
         if pushedFirstLine.hasPrefix("#") && receivedFirstLine.hasPrefix("<br") { return }
 
-        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len(utf16)=\(content.utf16.count) firstH=" +
-            "\(DebugLog.docText(Self.firstLine(of: content, startingWith: "#") ?? ""))")
+        DebugLog.log(.sync, "[SYNC-DIAG:ContentPush] ACCEPTED: len(utf16)=\(content.utf16.count) firstH=\"" +
+            "\(Self.firstLine(of: content, startingWith: "#")?.prefix(60) ?? "(none)")\"")
         self.lastReceivedFromEditor = Date()
         self.lastPushedContent = content
         self.adoptingEditorContent = true   // a view update inside this write must push nothing (`adoptingEditorContent`'s doc)

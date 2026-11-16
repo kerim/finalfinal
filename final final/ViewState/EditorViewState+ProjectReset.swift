@@ -19,6 +19,9 @@ extension EditorViewState {
         // Phase 4a: the Markdown per-block writer's baseline describes the project that is going away. A write still in
         // flight is not cancelled (its reserved sequence must settle); it sees the new version and leaves the baseline alone.
         markdownWriter.reset()
+        // t-b097670d: the headings the writer remembered (for a later paste or Cmd-Z) belong to the project that is going away.
+        // `reset()` above is also a zoom's and a mode switch's, which keep the same document and so keep them.
+        markdownWriter.forgetRemovedHeadings()
         currentPersistTask?.cancel()
         currentPersistTask = nil
 
