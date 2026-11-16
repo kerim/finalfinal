@@ -993,15 +993,15 @@ describe('undo-coordinator live wiring (real Milkdown editor, always-empty Phase
 // === Live-wiring regression: the stale-pendingMapsEmpty redo race (notes.md 2026-08-17/18) ===
 //
 // Bug: pendingMapsEmpty() used to read block-sync-plugin's hasPendingChanges() directly --
-// that map is only CLEARED once Swift's poll drains it via getBlockChanges(), up to
-// BlockSyncService's 2.0s cadence, not synchronously when the local 100ms debounce settles.
+// that map is only CLEARED once a report takes it (in the 2-second poll's time: once Swift's poll
+// drained it via getBlockChanges(), up to a 2.0s cadence), not synchronously when the local 100ms debounce settles.
 // A text edit that lands, settles, and leaves the DOCUMENT already matching the routing
 // target (docsEqual) could still read hasPendingChanges() === true purely because Swift
-// hadn't polled yet -- silently falling through to a text-redo no-op instead of firing the
+// hadn't been reported yet -- silently falling through to a text-redo no-op instead of firing the
 // structural redo. These tests exercise the REAL block-sync-plugin machinery (not a fake)
 // with fake timers standing in for its 100ms debounce, so they fail against the old
 // `!hasPendingChanges()` implementation and pass against the fixed `hasUnsettledLocalEdit()`
-// one -- Swift's poll never runs in this test environment at all, so the old implementation
+// one -- no report or Swift drain ever takes the maps in this test environment, so the old implementation
 // would leave pendingUpdates permanently non-empty for the rest of the test.
 describe('undo-coordinator live wiring — stale pendingMapsEmpty redo/undo race', () => {
   let editor: Editor | null = null;
@@ -1055,7 +1055,7 @@ describe('undo-coordinator live wiring — stale pendingMapsEmpty redo/undo race
     // Text edit #1 (stands in for the canonical scenario's "redo1: text-redo of A"): diverges
     // the doc, then settle block-sync's 100ms debounce so its diff gets computed and
     // committed into the pending-change maps -- exactly the moment hasPendingChanges()
-    // becomes true and (under the old implementation) would stay true until a Swift poll that
+    // becomes true and (under the old implementation) would stay true until a report or drain that
     // never happens in this test.
     view.dispatch(view.state.tr.insertText('X'));
     await vi.advanceTimersByTimeAsync(150);
@@ -1070,8 +1070,8 @@ describe('undo-coordinator live wiring — stale pendingMapsEmpty redo/undo race
     expect(view.state.doc.eq(originalDoc)).toBe(true);
     await vi.advanceTimersByTimeAsync(150);
 
-    // Both debounces have now settled, but Swift never polled -- hasPendingChanges() is still
-    // (and, absent a real Swift poll, will remain) true. This is the exact stale-but-safe
+    // Both debounces have now settled, but nothing took the maps -- hasPendingChanges() is still
+    // (and, absent a report or drain, will remain) true. This is the exact stale-but-safe
     // condition the fix targets.
     expect(hasPendingChanges()).toBe(true);
 

@@ -120,7 +120,7 @@ struct ContentSyncObserverHost<Content: View>: View {
             editorState.reconcileSuppression = token.isFullyConsumed ? nil : token
         }
 
-        // BlockSyncService handles content -> block DB sync via polling
+        // BlockSyncService handles content -> block DB sync (Rich Text: the page's block reports)
         // SectionSyncService syncs the section table (used by version history snapshots)
         MdSpeed.timed("contentChange.sectionSync") {
             services.sectionSync.contentChanged(newValue, zoomedIds: editorState.zoomedSectionIds, suppressReconcile: suppressReconcile)

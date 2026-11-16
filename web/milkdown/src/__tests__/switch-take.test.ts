@@ -27,7 +27,7 @@ const cursor = () => ({ line: 3, column: 7 });
 
 describe('takeTransitionBatch (the switch to Markdown, TransSwap)', () => {
   // Break patch A9-BP-TakeEndsHold: call `endHold()` at the end of takeTransitionBatch.
-  // Predicted failure: the token is gone after the first take, the second take is refused and the polls see the later typing.
+  // Predicted failure: the token is gone after the first take, the second take is refused and the page's reports carry the later typing.
   it('drains the typing since the begin, keeps holding, and a second take sees only the later typing', async () => {
     const { view } = await makeEditor();
     await load(book);
@@ -41,7 +41,7 @@ describe('takeTransitionBatch (the switch to Markdown, TransSwap)', () => {
     expect(first.batch.updates[0].markdownFragment).toContain('alpha');
     expect(first.cursor).toEqual({ line: 3, column: 7 });
     expect(getTransitionToken()).toBe(began.token);
-    // Typing after the take is held from the polls and drained by the next take (the catch-up).
+    // Typing after the take is held back from the reports and drained by the next take (the catch-up).
     typeInto(view, 'Second', ' beta');
     await sleep(150);
     expect(hasReportablePending()).toBe(false);

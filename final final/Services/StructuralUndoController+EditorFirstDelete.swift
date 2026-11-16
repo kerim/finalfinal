@@ -12,7 +12,7 @@
 //
 //    1. `performEditorFirstDelete(rootId:)`: the click. Runs under the structural gate. Returns nil when this press must take
 //       today's whole sequence instead (Markdown mode, zoomed, no writer, the UI-test legacy flag, an undeletable root). The
-//       stretch it shares with every editor-first operation (poll pause, rebuild stamp, the one JavaScript call, the refusal
+//       stretch it shares with every editor-first operation (the report pause, rebuild stamp, the one JavaScript call, the refusal
 //       exits) is `runEditorFirstStructuralClick` (t-18b7fa48 round 1b, StructuralUndoController+EditorFirstStructural.swift).
 //    2. `editorFirstJobSettled(...)`: what happens when the job ends. Applied: the trailing resyncs. Anything else: the D6
 //       put-back (`putBackAfterFailedEditorFirstOp`, in the shared file), which gives the section back from the database and
@@ -165,9 +165,9 @@ extension StructuralUndoController {
         trace.log("start (editor-first) guardMs=\(guardMs) managedIdsMs=\(built.managedIdsMs)")
         let epoch = unifiedUndoService.generation
 
-        // D1.2 to D1.5: the shared click (StructuralUndoController+EditorFirstStructural.swift) pauses the routine polls, moves the
+        // D1.2 to D1.5: the shared click (StructuralUndoController+EditorFirstStructural.swift) parks the editor's reports, moves the
         // rebuild stamp (D6), reserves ticket N and submits the one call, applies the batch it returns, and calls back with the reply
-        // while the poll pause is still up.
+        // while the reports are still parked.
         let outcome = await runEditorFirstStructuralClick(
             kind: .sectionDelete, opId: opId, script: script, replyType: EditorFirstDeleteReply.self,
             database: db, projectId: pid, trace: trace

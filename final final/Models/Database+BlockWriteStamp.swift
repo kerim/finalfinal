@@ -41,9 +41,10 @@
 //  batch that gets its turn before FB applies normally and is then replaced by FB's content.
 //
 //  Why that is safe: the lifecycle makes FB's content cover every batch that could still apply
-//  after it (polling is stopped first, F drains the poll in flight and forces one more poll, FB
-//  writes a fresh fetch of the editor), so the refusal only lands on a late or orphaned batch
-//  holding OLDER content than FB's fetch; and because polling is stopped, no editor sequence is
+//  after it (F, `flushAndAck`, has the page post what it holds and waits until the writer has decided
+//  every report up to the number the page answered; FB writes a fresh fetch of the editor, taken with
+//  the page's reports held), so the refusal only lands on a late or orphaned batch holding OLDER
+//  content than FB's fetch; and because the reports are held from that fetch on, no editor sequence is
 //  reserved between FB's reservation and its commit (it would also read E and be refused
 //  wholesale although the writer orders it after FB). Only when the editor does not answer (FB
 //  falls back to `editorState.content`) can edits in flight be refused, lost and uncounted
@@ -75,8 +76,8 @@ struct BlockWriteStamp: Equatable, Sendable, Comparable {
     let epoch: Int64
     let sequence: Int64
 
-    /// Sentinel for callers outside the poll pipeline (tests, and any future
-    /// non-poll caller of the legacy 2-arg entry point): skip BOTH the batch-level
+    /// Sentinel for callers outside the writer's pipeline (tests, and any future
+    /// caller of the legacy 2-arg entry point): skip BOTH the batch-level
     /// and the per-row check, and do not stamp anything. Production never uses it -
     /// `BlockSyncService` is the only production caller and always passes a real stamp.
     static let unguarded = BlockWriteStamp(epoch: -1, sequence: -1)
@@ -257,7 +258,7 @@ extension ProjectDatabase {
     /// restamp rows or bump the epoch" (no, neither).
     ///
     /// `dedupImagesWithinBatch` (only read when `renumberIfCrowded` is true; the plain path always de-duplicates): whether two
-    /// image inserts of the same `src` in this batch become one row. Rich Text wants that (its poll race produced such pairs);
+    /// image inserts of the same `src` in this batch become one row. Rich Text wants that (the race of the old 2-second poll produced such pairs);
     /// the Markdown writer does not (a Markdown document may hold the same image line twice and must keep two rows).
     ///
     /// When the batch re-spaced the positions, the old numbers are handed to `ProjectDatabase.sortOrderRenumberLog` when (and
@@ -566,8 +567,8 @@ extension ProjectDatabase {
     /// The check cannot wait until after the batch: by then the chained inserts have halved the same gap 50+ times,
     /// rows share a `sortOrder`, and their order is already lost. One insert per call means `processEditorInserts` cannot
     /// keep its within-batch image de-duplication map by itself, so this function owns the map and hands it in:
-    /// `dedupImagesWithinBatch` true shares one map across the whole batch (Rich Text: its poll race can send the same image
-    /// twice, and the plain path de-duplicates); false gives every insert a fresh one, so a Markdown document that holds the
+    /// `dedupImagesWithinBatch` true shares one map across the whole batch (Rich Text: the race of the old 2-second poll sent the
+    /// same image twice, and the plain path de-duplicates); false gives every insert a fresh one, so a Markdown document that holds the
     /// same image line twice keeps two rows.
     private func processEditorInsertsRenumberingIfCrowded(
         db: Database,

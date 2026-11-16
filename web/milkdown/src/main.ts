@@ -790,8 +790,8 @@ window.FinalFinal = {
   receiveRedoOutcome,
   // Slice 2a: how many Cmd-Z / Cmd-Shift-Z presses are held behind an in-flight undo (Swift reads it when a close starts).
   heldUndoPressCount,
-  // Phase 4c job 2: the typing done while a press waits is held back from Swift's polls; the lifecycle flush calls this once before its
-  // forced poll so the poll sees it.
+  // Phase 4c job 2: the typing done while a press waits is held back from the page's reports; the lifecycle flush calls this once before
+  // its `flushAndAck` so the flush posts it.
   releaseHeldTypingPushes,
   // F7: the same release, plus the pending batch in the same call, for a press handed to the old whole-document body.
   releaseHeldTypingAndGetBatch,

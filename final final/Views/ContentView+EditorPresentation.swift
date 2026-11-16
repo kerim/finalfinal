@@ -207,7 +207,7 @@ extension ContentView {
                         // why a plain Bool couldn't serve both this closure's own fast
                         // consumer (ViewNotificationModifiers.handleContentChange) and the
                         // slow one (ContentView+ProjectLifecycle's onSectionsUpdated,
-                        // gated behind BlockSyncService's own ~2s poll).
+                        // gated behind the page's next block report being applied).
                         if wasUndo {
                             editorState.reconcileSuppression = EditorViewState.ReconcileSuppression(
                                 contentHash: newContent.hashValue,

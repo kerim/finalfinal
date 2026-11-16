@@ -4,7 +4,7 @@
 // (section delete / duplicate / version restore, or the undo of one) is running?
 //
 // Hypothesis under test (see the Phase 4b brief): during a section delete the editor stays typeable;
-// the operation flushes the editor's text to the database, switches off Swift's 2-second poll, mutates
+// the operation flushes the editor's text to the database, switches off Swift's 2-second poll (as it did then), mutates
 // the database, and pushes the database copy of the whole document back with `setContentWithBlockIds`
 // (`buildBlockLevelReplace`). Text typed after the flush is therefore not in the database copy, is
 // overwritten on screen at the push, and is never written because nothing drains the pending queue
@@ -190,7 +190,7 @@ async function nextFrame(): Promise<void> {
 interface Facts {
   /** The typed word is in the live document. */
   onScreen: boolean;
-  /** `hasPendingChanges()`: what Swift's poll would see as non-empty. */
+  /** `hasPendingChanges()`: what a report (or a route's drain) would take as non-empty. */
   queueNonEmpty: boolean;
   /** The pending queue holds an update or insert whose text contains the typed word. */
   queuedWithWord: boolean;

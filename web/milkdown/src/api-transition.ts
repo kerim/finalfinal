@@ -9,7 +9,7 @@
 //                               editor's own changes, never a cached copy), the collector starts recording, the hold starts (`pend' = {}`:
 //                               no report leaves while the token is set: the hold probe of report-outbox.ts).
 //   TransCarryWindow            from `beginTransition` to `swapTransition`: every change is recorded (`TypingCollector`), none reaches
-//                               Swift's polls. The window begins at the flush, stricter than the model (which opens it after), and must:
+//                               Swift in a report. The window begins at the flush, stricter than the model (which opens it after), and must:
 //                               the take and the hold are one turn, so no key can be both in the batch and in the recording.
 //   TransBarrier                Swift's side (`BlockSyncService.flushForTransition`): `awaitSettled(through:)` after the batch is written.
 //   TransPushFrom + TransReplay `swapTransition`: the parsed target replaces the live document (the body of `setContentWithBlockIds`,
@@ -147,7 +147,7 @@ function endHold(): void {
 /**
  * Bridge target for `window.FinalFinal.beginTransition()` (TransBegin + TransLiveRead). ONE synchronous turn: flushes the 100 ms detection
  * debounce, drains the pending batch, starts the collector with a token drawn from the press counter, and sets the token, from which
- * moment the polls' pushes are held (undo-coordinator.ts `isTypingPushHeld`). Refuses, holding nothing, when there is no editor or a
+ * moment the page's reports hold the typing back (undo-coordinator.ts `isTypingPushHeld`). Refuses, holding nothing, when there is no editor or a
  * Cmd-Z press is latched (the two cannot coexist; Swift then takes today's path for this one transition). A token a previous transition
  * never ended (Swift's call threw) is ended first, so its hold cannot outlive it.
  */
@@ -179,7 +179,7 @@ export function beginTransition(): TransitionBeginResult {
 /**
  * Bridge target for `window.FinalFinal.endTransition(token)`: the failure paths of the Swift side (the barrier timed out, the swap call
  * threw before the page could answer). Ends the hold and forgets the records; the typing held meanwhile is still in block-sync's own
- * pending queue, so the next poll sends it as an ordinary batch (`'send'`). Returns whether a hold for `token` was ended.
+ * pending queue, so the page's next report sends it as an ordinary batch (`'send'`). Returns whether a hold for `token` was ended.
  */
 export function endTransition(token: number | null): { ended: boolean } {
   // `null`: Swift could not read the begin's reply (the bridge threw), so it does not know the token; whatever hold is on is ended.

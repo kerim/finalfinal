@@ -259,7 +259,7 @@ describe('duplicateSectionEditorFirst', () => {
       heading('c1', 2, 'Sub'),
       para('c1p', 'Sub text.'),
     ]);
-    typeInto(view, 'Sub text', ' (pending)'); // an edit not yet polled when the click arrives
+    typeInto(view, 'Sub text', ' (pending)'); // an edit not yet reported when the click arrives
 
     const r = duplicateSectionEditorFirst(OP, 'c', []);
 

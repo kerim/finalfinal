@@ -291,12 +291,13 @@ extension ContentView {
             if Self.hasHierarchyViolations(in: editorState.sections) {
                 // P3 §4d (undo-mode-switch-focus second timing gap, WYSIWYG mirror, M1
                 // fix): this is the REAL re-trigger mechanism for WYSIWYG mode.
-                // BlockSyncService polls independently of SectionSyncService (own ~2s
-                // timer, own doc-vs-DB diff) -- undoing a heading-level correction in
-                // Milkdown reverts the ProseMirror doc immediately, but the DB (and
+                // The DB is written from the page's own block reports, independently of
+                // SectionSyncService (own timing, own doc-vs-DB diff) -- undoing a heading-level
+                // correction in Milkdown reverts the ProseMirror doc immediately, but the DB (and
                 // therefore editorState.sections, and THIS handler firing) only catches up
-                // once BlockSyncService's next poll pushes that reverted level, ~2s later.
-                // Without this guard, that poll's own DB write would re-trigger
+                // once the page's next report carrying that reverted level has been applied
+                // (a report leaves at least 250 ms after the one before; a lost one is re-posted after 2 s).
+                // Without this guard, that report's own DB write would re-trigger
                 // hasHierarchyViolations here and immediately re-run the exact correction
                 // the user just undid -- well before SectionSyncService.contentChanged ever
                 // sees anything, since nothing has touched editorState.content at this
@@ -305,11 +306,11 @@ extension ContentView {
                 // ViewNotificationModifiers.handleContentChange's `consumedByContentSync`
                 // flag -- the whole reason the earlier plain-Bool design failed here is
                 // that consumer fires almost immediately (clearing a shared Bool) while
-                // THIS consumer doesn't fire until the ~2s poll catches up. No content-hash
+                // THIS consumer doesn't fire until the report has been applied. No content-hash
                 // check here (unlike the content-sync consumer): this handler operates on
                 // editorState.sections, derived from DB blocks, with no comparable markdown
-                // string at this call site to hash against -- the TTL (which exceeds the
-                // poll interval) plus explicit invalidation on a genuinely new edit is the
+                // string at this call site to hash against -- the TTL (which exceeds a lost
+                // report's 2 s re-post) plus explicit invalidation on a genuinely new edit is the
                 // staleness guard instead.
                 if var token = editorState.reconcileSuppression, !token.isExpired, !token.consumedByHierarchy {
                     token.consumedByHierarchy = true

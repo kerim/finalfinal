@@ -98,9 +98,10 @@ typealias IdMap = [String: String]
 /// FB's content.
 ///
 /// Why that is safe: the lifecycle makes FB's content cover every batch that could still apply
-/// after it (polling stopped at step 0, F drains the poll in flight and forces one more poll, FB
-/// writes a fresh fetch), so the refusal only lands on a late or orphaned batch holding OLDER
-/// content than FB's fetch; and because polling is stopped, no editor sequence is reserved between
+/// after it (F, `flushAndAck`, has the page post what it holds and waits until the writer has decided
+/// every report up to the number the page answered; FB writes a fresh fetch taken with the reports held),
+/// so the refusal only lands on a late or orphaned batch holding OLDER content than FB's fetch; and
+/// because the page's reports are held from that fetch on, no editor sequence is reserved between
 /// FB's reservation and its commit. Only when the editor does not answer (FB falls back to
 /// `editorState.content`) can edits in flight be refused, lost and uncounted
 /// (`rejectedWholeBatchForStaleEpoch` feeds no ledger counter): the known hung-editor gap. Every

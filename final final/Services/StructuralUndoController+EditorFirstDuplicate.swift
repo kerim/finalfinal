@@ -24,15 +24,17 @@
 //  the payload holder, which removes the copy). Its wiring is in StructuralUndoController+QuickUndo.swift, branching on the entry's
 //  kind.
 //
-//  THE RESERVATION WINDOW (round 1a verdict, "the uncovered hazard"). Typing into the copy and a forced poll in the gap between the
-//  click's reply and the job's reservation would send an update for a row the database does not hold yet. The reply is read and its
-//  job reserved without waiting for anything that can sit behind queued work: `consumeEditorFirstReply` is synchronous, the
-//  `afterReply` closure runs the sidebar update (synchronous main-actor work, during which no poll task can run) and
+//  THE RESERVATION WINDOW (round 1a verdict, "the uncovered hazard"; the verdict named the forced poll, which Phase 5 B4 replaced: a
+//  report now parks while the click is pending, `structuralClickPending`, until the job holds its place). Typing into the copy that
+//  took a writer turn in the gap between the click's reply and the job's reservation would send an update for a row the database
+//  does not hold yet. The reply is read and its job reserved without waiting for anything that can sit behind queued work:
+//  `consumeEditorFirstReply` is synchronous, the
+//  `afterReply` closure runs the sidebar update (synchronous main-actor work, during which no report can be taken in) and
 //  `startEditorFirstDuplicateJob`, which creates the job's task and suspends ONCE, at `await reserved.wait()`. The task's first
 //  statements run `SectionDuplicateJob.perform`, whose `performSystemWrite` runs its steps 1 to 4 (nesting check, wanted, writer and
 //  identity, `reserveSystem`) without a suspension. So the only suspension between the reply and the reservation is that one hop onto
 //  the main actor; it waits behind main-actor turns already queued, never behind the writer's queue, a JavaScript call or a
-//  database call. That keeps the window as the judge's RARE case (a keystroke into the copy AND a forced poll reserved inside the
+//  database call. That keeps the window as the judge's RARE case (a keystroke into the copy AND a writer turn taken inside the
 //  hop). Typing in the copy that reaches the database before the job exists is applied as an update for an unknown id, which
 //  `processEditorUpdates` logs and skips (Database+Blocks.swift: "Block not found for update", `.data`).
 //
@@ -134,11 +136,11 @@ extension StructuralUndoController {
             kind: .sectionDuplicate, opId: opId, script: built.script, replyType: EditorFirstDuplicateReply.self,
             database: db, projectId: pid, trace: trace
         ) { reply in
-            // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no poll task runs inside it): the
+            // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no report is taken in inside it): the
             // copy's leaders appear in the sidebar, kept by an overlay until the job has put their rows into the database.
             efDuplicateCopies[opId] = reply.copies
             showDuplicateInSidebar(opId: opId, rootId: rootId, reply: reply, database: db)
-            // Reserve the job and wait for its `onReserved` before the poll pause is lifted. The job takes over the raised
+            // Reserve the job and wait for its `onReserved` before the reports are let through again. The job takes over the raised
             // `pendingEditorFirstJobs` and brings it down when its future has resolved.
             await startEditorFirstDuplicateJob(
                 opId: opId, rootId: rootId, copies: reply.copies, database: db, projectId: pid, ownsPendingJobCount: true)
@@ -300,9 +302,10 @@ extension StructuralUndoController {
     /// Only here, in the settle of a duplicate whose job applied and reported a difference, never on every duplicate. It follows the
     /// settle's own rules: the entry must still be this settle's (`efOpEpoch`, `editorRestoreGeneration`: a quick undo or redo has
     /// replaced the document and re-derives everything), and no close, quit or switch may be armed (their whole-document save
-    /// re-mints the ids itself, and a cancelled one re-pushes them: `EditorViewState+LifecycleAbort`). The ordered forced poll comes
-    /// first, so the editor's pending changes are in the table before it is read and the ids are assigned by position against the
-    /// document the editor holds; a poll that did not complete pushes nothing (the table could be older than the editor, and a
+    /// re-mints the ids itself, and a cancelled one re-pushes them: `EditorViewState+LifecycleAbort`). The ordered flush
+    /// (`flushForDatabaseRebuild`: the page posts what it holds, the writer settles it) comes first, so the editor's pending changes
+    /// are in the table before it is read and the ids are assigned by position against the document the editor holds; a flush that
+    /// did not complete pushes nothing (the table could be older than the editor, and a
     /// positional push onto a longer document would put ids on the wrong blocks).
     func pushDatabaseBlockIdsAfterCopiesMismatch(editorState: EditorViewState, opId: UUID, epoch: Int) async {
         guard let blockSync = blockSyncService else { return }

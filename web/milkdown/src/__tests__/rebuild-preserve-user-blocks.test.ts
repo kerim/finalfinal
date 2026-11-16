@@ -25,7 +25,7 @@ import { takePendingAsReport } from './pending-for-test';
 // Regression coverage for t-6a0d195d: a bibliography/Notes/footnote rebuild reads the whole
 // document from the database and pushes back every block that differs (buildBlockLevelReplace,
 // api-content.ts). Because the database can lag the live editor by the block-sync detect
-// debounce (100ms) plus Swift's own poll/flush cadence, a push landing inside that window used
+// debounce (100ms) plus the time a report takes to leave the page and be written, a push landing inside that window used
 // to overwrite perfectly good, more-recent user typing with the stale text the rebuild read
 // from the DB. `setContentWithBlockIds`'s `preserveUserBlocks` option fixes this by MERGING the
 // push instead of replacing wholesale -- see `mergeManagedBlocks`'s doc comment (api-content.ts)

@@ -214,7 +214,7 @@ extension StructuralUndoController {
 
         // 1. THE ONE SYNCHRONOUS STRETCH. Nothing below suspends until `submitEditorFirstDelete` hands the script to the web view
         // (reserve N' and evaluate are one stretch there too), so the order is: epoch, counters, cancels, marker, ticket, script.
-        blockSync.structuralClickPending = true   // routine polls step aside (the click path does the same)
+        blockSync.structuralClickPending = true   // the editor's reports park (the click path does the same)
         findBarState?.clearSearch()   // code review B-M2: the boundary hygiene every slow structural path does (the JS side does its own)
         let epoch = bumpEpoch(opId)
         editorState.editorRestoreGeneration += 1
@@ -355,7 +355,7 @@ extension StructuralUndoController {
     }
 
     /// `window.FinalFinal.resumeSyncAfterQuickUndo()`: ends the editor's pause and queues what was typed while it lasted (idempotent and
-    /// harmless when no quick undo is waiting), then lets routine polls run again.
+    /// harmless when no quick undo is waiting), then lets the editor's reports through again.
     private func resumeAfterQuickUndo(trace: StructTrace) async {
         await evalVoid("window.FinalFinal.resumeSyncAfterQuickUndo()")
         blockSyncService?.structuralClickPending = false

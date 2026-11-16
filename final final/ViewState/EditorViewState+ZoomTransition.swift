@@ -277,7 +277,7 @@ extension EditorViewState {
                 "[TRANS] swapped kind=zoom in replayed=\(replayed) outside u=\(outside.updates.count) i=\(outside.inserts.count) "
                     + "d=\(outside.deletes.count)")
             isZoomingContent = false
-            contentState = .idle // step 7, then the outside batch in the same main-actor turn: no poll slips between
+            contentState = .idle // step 7, then the outside batch in the same main-actor turn: no report takes a writer turn between
             blockSync.writeTransitionBatch(outside)
         case .refused(let reason, let batch):
             isResettingContent = false
@@ -295,7 +295,7 @@ extension EditorViewState {
         sectionSyncService?.noteContentAlreadySynced(markdown)
     }
 
-    /// The zoom in could not read its target after the barrier: the hold ends (the typing goes out with the next poll) and the zoom is
+    /// The zoom in could not read its target after the barrier: the hold ends (the typing goes out as the page's next report) and the zoom is
     /// abandoned as today's abort branches abandon it.
     private func abandonZoomIn(_ blockSync: BlockSyncService, token: Int) async {
         await blockSync.endTransition(token: token)

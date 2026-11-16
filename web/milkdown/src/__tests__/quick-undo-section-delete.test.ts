@@ -287,7 +287,7 @@ describe('quick undo of an editor-first section delete', () => {
     // Swift confirms that temp id AFTER the delete (the batch the delete consumed carried the insert): the block is gone from the
     // editor, so only the registry entry's log can learn of it.
     confirmBlockIdsApi({ [tempId]: 'perm-qu2' });
-    // A rewrite that landed after the delete (absorbed into the saved copy), diffed by block-sync and not yet polled by Swift: the
+    // A rewrite that landed after the delete (absorbed into the saved copy), diffed by block-sync and not yet reported to Swift: the
     // press consumes it as the batch Swift applies BEFORE the reinsert (the everyday case after a renumber or a text undo).
     automaticRewrite(view, 'Gamma', ' (pending-qu2)');
     await sleep(160);
@@ -330,7 +330,7 @@ describe('quick undo of an editor-first section delete', () => {
 
     expect(resumed.ok).toBe(true);
     expect(resumed.resumed).toBe(true);
-    // Swift's polls get nothing while the press is latched (phase 4c job 2); the reply ends the hold and the queued edits go out.
+    // No report leaves while the press is latched (phase 4c job 2); the reply ends the hold and the queued edits go out.
     expect(takePendingAsReport(), 'held until the reply').toEqual(EMPTY_BATCH);
     receiveUndoOutcome(OP_A, 'performed');
     const queued = takePendingAsReport();
@@ -394,7 +394,7 @@ describe('quick undo of an editor-first section delete', () => {
     expect(entryBefore?.redoCheckpoint).toBeUndefined();
     expect(getQuickUndoPausedOpId()).toBeNull();
     // Block-sync was never paused and the edit was never consumed: it is queued by the normal detection, and goes out once the reply has
-    // ended the hold on Swift's polls (phase 4c job 2).
+    // ended the hold on the page's reports (phase 4c job 2).
     await sleep(160);
     expect(takePendingAsReport(), 'held while the press is latched').toEqual(EMPTY_BATCH);
     expect(resumeSyncAfterQuickUndo()).toMatchObject({ ok: true, resumed: false });
@@ -409,7 +409,7 @@ describe('quick undo of an editor-first section delete', () => {
     await load(SPECS);
     expect(deleteSectionEditorFirst(OP_A, 'b', []).ok).toBe(true);
     // The rewrite lands after the delete (a footnote renumber, say), is absorbed into the saved copy, and goes to the database
-    // through the ordinary poll.
+    // through the ordinary report.
     automaticRewrite(view, 'Gamma', ' (renumbered)');
     await sleep(160);
     takePendingAsReport();
@@ -590,7 +590,7 @@ describe('quick undo of an editor-first section delete', () => {
     const { view } = await makeEditor();
     await load(SPECS);
     expect(deleteSectionEditorFirst(OP_A, 'b', []).ok).toBe(true);
-    automaticRewrite(view, 'Gamma', ' (pending-qu10)'); // diffed by block-sync, not yet polled: the press consumes it
+    automaticRewrite(view, 'Gamma', ' (pending-qu10)'); // diffed by block-sync, not yet reported: the press consumes it
     await sleep(160);
     const docAfterDelete = view.state.doc;
     const idsAfterDelete = idsInOrder();

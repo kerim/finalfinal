@@ -8,9 +8,9 @@
 //  Section is the second (round 1e-i, StructuralUndoController+EditorFirstDuplicate.swift).
 //
 //    1. `runEditorFirstStructuralClick`: the click's stretch under the structural gate (the entry point takes the gate with
-//       `waitsForRebuilds: false` and keeps it across a fall back to the old body): the poll pause, the rebuild stamp (D6), the ONE
+//       `waitsForRebuilds: false` and keeps it across a fall back to the old body): the report pause, the rebuild stamp (D6), the ONE
 //       JavaScript call through the writer's ticket N, the reply and its batch, the refusal exits (D6a), and room for the caller to
-//       reserve its job before the poll pause ends.
+//       reserve its job before the report pause ends.
 //    2. `putBackAfterFailedEditorFirstOp(kind:)`: the job did not apply; the database is the truth, so the document goes back.
 //    3. `startFreshSettleAfterRefusedEditorFirstClick(opId:)`: the click bumped the stamp and then reserved no job; one fresh settle.
 //    4. `settleManagedRegionsAtEndOfEditorFirstSettle`: the last step of every editor-first settle (round 1b-ii), see the last paragraph.
@@ -193,7 +193,7 @@ enum EditorFirstOpKind {
         case .sectionReorder:
             // t-0b70d1e9 (approved wording, UX contract 4.3). "Move" matches the existing bail-out toast ("Couldn't move the section").
             // Delete's sentence about the last moments' typing, not the duplicate's: the put-back gives the document back from the
-            // database, and a block typed in the last poll window can be older than that read.
+            // database, and a block typed since the editor's last report can be older than that read.
             return SectionOperationAlert(
                 title: "Couldn't Move Section",
                 message: "The move couldn't be saved, so the sections are back in their earlier order. "
@@ -231,12 +231,12 @@ enum EditorFirstClickOutcome<Reply: EditorFirstOpReply> {
 extension StructuralUndoController {
 
     /// The shared stretch of an editor-first click, called under the structural gate after the caller has checked eligibility,
-    /// set `efOpEpoch[opId]` and built `script`. In order: routine polls step aside (`structuralClickPending`; `contentState` is NOT
-    /// touched, which would bump `contentGeneration` and discard a batch some routine cycle already fetched, finding M1); the
+    /// set `efOpEpoch[opId]` and built `script`. In order: the editor's reports park (`structuralClickPending`; `contentState` is NOT
+    /// touched, which would bump `contentGeneration`, and in the 2-second poll's time that discarded a batch already fetched, finding M1); the
     /// rebuild stamp moves (D6); the one call is reserved as ticket N and submitted in ONE synchronous stretch, so reservation order
     /// equals execution order; the reply is read and its batch applied whatever the verdict (`consumeEditorFirstReply`).
     ///
-    /// On a successful reply, `afterReply` runs INSIDE the poll pause: it is where the caller shows what the user sees change and
+    /// On a successful reply, `afterReply` runs INSIDE the report pause: it is where the caller shows what the user sees change and
     /// reserves its job (`startEditorFirstJob`, which hands the raised `pendingEditorFirstJobs` over to the job), and the pause ends
     /// once it returns, i.e. once the job holds its place in the queue (D1.5).
     ///
@@ -249,7 +249,7 @@ extension StructuralUndoController {
     ) async -> EditorFirstClickOutcome<Reply> {
         guard let editorState, let blockSync = blockSyncService else { return .legacy }
 
-        // D1.2: routine polls step aside from here until the job holds its place.
+        // D1.2: the editor's reports park from here until the job holds its place.
         blockSync.structuralClickPending = true
         defer { blockSync.structuralClickPending = false }
         // UI-test seam FF_UI_TESTING_AUTOBACKUP_IDLE_SECONDS: dormant until the first editor-first structural click (a delete or a
@@ -450,7 +450,7 @@ extension StructuralUndoController {
     /// Plan D6: the database still holds the section plus every applied batch, so it is the truth. Put the document back from it
     /// with a whole-content push (deliberately NOT the merge-guarded one: the change must be undone everywhere), drop the entry, its
     /// slot and its pin, and tell the user (UX contract 4.3: a modal alert for an operation that did not happen; the wording is
-    /// per kind, `EditorFirstOpKind.putBackAlert`). A put-back can overwrite typing from the last poll window (parked as rare, plan
+    /// per kind, `EditorFirstOpKind.putBackAlert`). A put-back can overwrite typing since the editor's last report (parked as rare, plan
     /// section 7, P9). The caller has already brought `pendingEditorFirstJobs` down, so the push's stamp is current.
     func putBackAfterFailedEditorFirstOp(kind: EditorFirstOpKind, opId: UUID, removedLeaders: Set<String>, jobKey: UUID? = nil) async {
         if hasMarkdownGate(opId: opId, jobKey: jobKey) {   // B8: a Markdown job's put-back is its own

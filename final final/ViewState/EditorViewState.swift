@@ -148,9 +148,9 @@ class EditorViewState {
                     // contentState returns to .idle on every one of its own exit paths
                     // (success or failure, via `defer { isPerforming = false }` alongside
                     // explicit `contentState = .idle` on each return). A force-reset HERE,
-                    // mid-sequence, would let BlockSyncService's poll -- gated only on
-                    // contentState == .idle -- resume and read block state mid-restore: the
-                    // exact content-laundering hazard (H1) this whole design exists to
+                    // mid-sequence, would let the editor's content pushes -- gated only on
+                    // contentState == .idle -- resume and hand back a half-restored document:
+                    // the exact content-laundering hazard (H1) this whole design exists to
                     // prevent. If the sequence is genuinely stuck (a real bug), staying stuck
                     // and visible is safer than silently resuming sync over a half-restored
                     // document.
@@ -381,7 +381,7 @@ class EditorViewState {
     /// This flag is passed directly to editor views and read in the same updateNSView cycle as content.
     var isZoomingContent: Bool = false
 
-    /// When true, editor polling should skip updating the content binding.
+    /// When true, the editor's content pushes and the 3-second timer should skip updating the content binding.
     /// Used during project switch to prevent old editor content from bleeding into new projects.
     var isResettingContent = false
 
@@ -502,7 +502,7 @@ class EditorViewState {
     var isZoomRestoreInProgress: Bool { zoomRestoreInProgress }
 
     /// Incremented on every content state transition away from idle.
-    /// Polling captures this before JS calls and discards results if it changed.
+    /// The 3-second timer captures this before its JS call and discards the result if it changed.
     var contentGeneration: Int = 0
 
     /// Incremented every time `resetForProjectSwitch()` runs (project switch or close).
@@ -532,8 +532,8 @@ class EditorViewState {
     /// expiring, content-keyed suppression token, replacing an earlier plain-Bool design.
     /// The plain Bool broke for WYSIWYG specifically: its ONE real consumer is
     /// `onSectionsUpdated` (`ContentView+ProjectLifecycle.swift`), which only fires once
-    /// `BlockSyncService`'s OWN poll cycle (its own ~2s timer, independent of anything
-    /// here) pushes the reverted content to the DB -- by then, a plain "read-then-reset
+    /// the page's next block report (sent on the page's own timing, independent of anything
+    /// here) has put the reverted content into the DB -- by then, a plain "read-then-reset
     /// on the FIRST reader" Bool had already been consumed (or wiped by an intervening
     /// keystroke) by `ViewNotificationModifiers.handleContentChange`, which fires almost
     /// immediately after the same push. Two consumers, one shared flag, wildly different
@@ -837,7 +837,7 @@ class EditorViewState {
     var lifecycleBarrier: BarrierHandle?
 
     /// Every running bibliography / Notes / footnote rebuild Task, by id (item 21: a collection, not one
-    /// slot). The save sequence awaits all of them to completion before it forces a poll.
+    /// slot). The save sequence awaits all of them to completion before step F asks the page to flush.
     @ObservationIgnored
     var runningRebuildTasks: [UUID: Task<Void, Never>] = [:]
 

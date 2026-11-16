@@ -4,8 +4,8 @@
 // (`structuralSwapEditorFirst`, api-structural-swap.ts) with the real routes, the real plugins and the real Swift-facing calls:
 //
 //   * the press records its steps (typing-rebase.ts collector, registered as a plugin in the harness as in main.ts);
-//   * while a press is latched, what the user types is held back from Swift's polls (`hasBlockChanges`, `getBlockChanges` of the
-//     bridge), and every way the latch ends lets it go out once (D1);
+//   * while a press is latched, what the user types is held back from the page's reports (in the poll's time: from Swift's polls, via the
+//     removed `hasBlockChanges` / `getBlockChanges` bridge), and every way the latch ends lets it go out once (D1);
 //   * at the re-check the route compares the document AS IT WAS WHEN THE KEY WAS PRESSED, writes the trace line
 //     `typing-since-press press=P steps=N decision=...` whatever the outcome, tries the replay against the target before the swap
 //     (only a truly unplaceable step refuses, before the swap) and dispatches it after the swap; the reply says `typingReplayed`;
@@ -175,7 +175,7 @@ describe('typing across a waiting Cmd-Z: the slow route', () => {
     );
     swiftReplies(OP, { redoTopOpId: OP });
 
-    // Saved once, by the replay: the next poll has exactly this one update, and then nothing.
+    // Saved once, by the replay: the next report has exactly this one update, and then nothing.
     flushPendingBlockChanges();
     const batch = takePendingAsReport();
     expect(batch.updates.map((u) => u.id)).toEqual(['c2p']);

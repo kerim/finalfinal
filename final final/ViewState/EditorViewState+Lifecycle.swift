@@ -126,9 +126,9 @@ enum LifecycleFlushOutcome: Equatable, Sendable {
     /// to hold a barrier on, ...).
     case flushed
     /// A CLOSE or SWITCH gave up at step 1: a section operation (delete, duplicate, version restore) was
-    /// still running when the wait's bound passed. Nothing was captured, polled, fetched or reserved. Polling
-    /// is still stopped: the abort routine (`abortLifecycle`, round C5a) restarts it (N23) and shows the cancel
-    /// notice.
+    /// still running when the wait's bound passed. Nothing was captured, flushed, fetched or reserved. The
+    /// abort routine (`abortLifecycle`, round C5a) lets the editor's reports flow again (N23), resumes the sync
+    /// services and shows the cancel notice.
     case cancelledSectionOperation
     /// A CLOSE or SWITCH could not take the writer barrier at step 8: a writer exists but refused it (it is
     /// retired, or another barrier is already open). FB and step 7 had already run. The abort routine
@@ -366,7 +366,7 @@ extension EditorViewState {
     /// skipped, so the close/switch CONTINUES (#2, U7(c)).
     ///
     /// Never throws and never shows UI. A cancelled close/switch returns `.cancelledSectionOperation` (or
-    /// `.cancelledBarrierRefused`) and leaves polling stopped and the sync services suspended for the abort
+    /// `.cancelledBarrierRefused`) and leaves the editor's reports held and the sync services suspended for the abort
     /// routine (`abortLifecycle`, round C5a) to restore.
     func runLifecycleFlush(
         token: LifecycleToken,
@@ -571,7 +571,7 @@ extension EditorViewState {
     /// the gate and the editor receiving its reply, which is the same "the editor sends the held press the instant the undo replies"
     /// assumption the model makes (README, "Cmd-Z, Cmd-Z, Cmd-W"). This also keeps the save sequence's obligation N24 intact on every
     /// ordinary close: the editor is touched only after the guard has cleared (`captureForLifecycle`), and the one earlier look,
-    /// taken only when something is in flight, sets a counter and never fetches from or polls the view.
+    /// taken only when something is in flight, sets a counter and never fetches from or queries the view.
     func heldUndoPressCountForLifecycle(host: LifecycleHost) async -> Int {   // internal: a unit test reads the Markdown branch
         guard !structuralGate.isIdle else { return 0 }
         // Both editors hold presses in their own queue now (t-4a8fd8af round 7b: the Markdown page's undo coordinator does too), and both
@@ -689,7 +689,8 @@ extension EditorViewState {
     }
 
     /// Step F (Phase 5 job B3, design 3.4): `flushAndAck` on the captured view. A bound passed with
-    /// reports still undecided counts as the forced poll's timeout; a page that did not answer as a watchdog hit (the fetch is skipped).
+    /// reports still undecided counts as F's timeout (`forcedPollTimedOut`, the name of the forced poll it replaced); a page that did
+    /// not answer as a watchdog hit (the fetch is skipped).
     private func flushAndAckForLifecycle(
         blockSync: BlockSyncService, webView: WKWebView?, bound: TimeInterval, result: inout LifecycleFlushResult
     ) async {

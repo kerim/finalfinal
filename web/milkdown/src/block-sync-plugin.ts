@@ -1,6 +1,6 @@
 // Block Sync Plugin for tracking changes to blocks
 // Tracks inserts, updates, and deletes via ProseMirror transactions
-// Exports pending changes for Swift polling via getBlockChanges()
+// Pending changes go to Swift as numbered reports (report-outbox.ts), which take them from here; the routes' drains use getBlockChanges()
 
 import { schemaCtx, serializerCtx } from '@milkdown/kit/core';
 import type { Ctx } from '@milkdown/kit/ctx';
@@ -787,7 +787,7 @@ export function blockMarkdownFragment(node: Node, listRunBefore: readonly Node[]
 
 /**
  * Get pending block changes and clear them
- * Called by Swift polling
+ * Called by the page calls that Swift makes for a section command, a zoom or a switch (the routes' drain); reports take the pending maps through report-outbox.ts instead.
  */
 export function getBlockChanges(): BlockChanges {
   if (!currentState) {
@@ -1134,10 +1134,9 @@ function runPendingDetectChanges(): void {
  * Two callers:
  *  - Swift's `flushAndAck` (`flushReports`, api-content.ts; it was the forced poll until Phase 5 B4), to close a
  *    race where a confirming transaction (e.g. footnote-trigger → real footnote
- *    marker) lands just before its own 100ms detectTimer fires — the forced
- *    poll's `force: true` only skips a Swift-side generation check and does
- *    nothing about this JS-side timer on its own. Calling this first guarantees
- *    getBlockChanges() reflects the latest transaction, not a stale mid-burst one.
+ *    marker) lands just before its own 100ms detectTimer fires — posting what is
+ *    pending does nothing about this JS-side timer on its own. Calling this first
+ *    guarantees the report reflects the latest transaction, not a stale mid-burst one.
  *  - `decideLiveRouting` (undo-coordinator.ts), at the top of every Cmd-Z /
  *    Cmd-Shift-Z routing decision (t-dfc4fb02, sibling cause 1): the press that
  *    undid typing starts this timer, and a held or quickly tapped key repeats
@@ -1145,7 +1144,7 @@ function runPendingDetectChanges(): void {
  *    press routes, instead of the press falling through to a text undo.
  */
 export function flushPendingBlockChanges(): void {
-  if (detectTimer === null) return; // nothing pending — normal periodic-poll cadence untouched
+  if (detectTimer === null) return; // nothing pending — the normal report cadence is untouched
   runPendingDetectChanges();
 }
 
@@ -1156,15 +1155,16 @@ export function flushPendingBlockChanges(): void {
  * block-sync's bookkeeping yet.
  *
  * Deliberately NOT the same thing as `hasPendingChanges()`: that stays true from the
- * moment the debounce fires until Swift's poll drains it via `getBlockChanges()` --
- * bounded only by `BlockSyncService`'s fixed 2.0s cadence, not by anything local. A
+ * moment the debounce fires until a report (or a route's drain, `getBlockChanges()`)
+ * takes it -- bounded by the report interval (at least 250 ms between reports; in the
+ * 2-second poll's time, by that poll's fixed cadence), not by anything local. A
  * caller gating on `hasPendingChanges()` alone (as `undo-coordinator.ts`'s routing
- * check used to) would see a stale "non-empty" reading for up to ~2s after a text
- * edit that had already fully settled, purely because Swift hadn't polled yet --
+ * check used to) would see a stale "non-empty" reading after a text
+ * edit that had already fully settled, purely because it had not been reported yet --
  * see that file's `pendingMapsEmpty()` for the concrete bug this caused (a
  * mistimed redo silently falling through to a text-redo no-op). This function is
  * the race-free replacement: it settles within one 100ms debounce cycle,
- * independent of Swift's poll timing.
+ * independent of when the next report leaves.
  */
 export function hasUnsettledLocalEdit(): boolean {
   return detectTimer !== null;
@@ -1400,7 +1400,7 @@ export function detectPausedEditsAndSnapshot(doc: Node, baseline: Map<string, Bl
  *    no managed-id rebuild here to reconcile against, just a surgical heading-level
  *    edit. It deliberately relies on the RAW diff against `baseline` to pick up the
  *    heading-level change itself as an ordinary pending update: this is exactly what
- *    lets the corrected level survive and later persist through the normal poll-cycle
+ *    lets the corrected level survive and later persist through the normal report
  *    write path even when the Swift-side system write that's supposed to persist it
  *    directly fails (see `ContentView+HierarchyEnforcement.swift`'s
  *    `persistEnforcedSections`, review findings #5/#6) — and it's also the reason a

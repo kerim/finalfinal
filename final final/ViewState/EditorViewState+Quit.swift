@@ -8,11 +8,11 @@
 //  fresh content, then `flushAllSync()` (a direct database write, plus a bounded wait on the bibliography and
 //  footnote services), with a quit-only suppression flag armed first so a rebuild notification could not start a
 //  forced poll underneath it. All of that is now the one sequence close and project switch use
-//  (`runLifecycleFlush`, EditorViewState+Lifecycle.swift): the poll is stopped and drained, one forced poll sends
-//  the last keystrokes (F), the editor's live document is written through the ordered write queue (FB), the
-//  bibliography and footnotes are re-derived from it, and a writer barrier waits for everything queued. The quit
-//  token (`armLifecycle(.quit)`) replaces that flag: the three rebuild handlers defer while it is armed, so no
-//  forced poll can start.
+//  (`runLifecycleFlush`, EditorViewState+Lifecycle.swift): the page posts what it holds and the writer settles it (F,
+//  `flushAndAck`), the editor's live document is read with its reports held and written through the ordered write
+//  queue (FB), the bibliography and footnotes are re-derived from it, and a writer barrier waits for everything queued.
+//  The quit token (`armLifecycle(.quit)`) replaces that flag: the three rebuild handlers defer while it is armed, so no
+//  rebuild's flush can start underneath the save.
 //
 
 import Foundation

@@ -22,10 +22,12 @@
 //  makes the table equal "the rows before the op" the restore job kept in the payload holder). Its wiring is in
 //  StructuralUndoController+QuickUndo.swift, branching on the entry's kind.
 //
-//  THE RESERVATION WINDOW (round 1a and 2a verdicts, "the uncovered hazard"). Typing into the restored text and a forced poll in the
-//  gap between the click's reply and the job's reservation would send an update for a row the database does not hold yet. The reply is
+//  THE RESERVATION WINDOW (round 1a and 2a verdicts, "the uncovered hazard"; the verdicts named the forced poll, which Phase 5 B4
+//  replaced: a report now parks while the click is pending, `structuralClickPending`, until the job holds its place). Typing into the
+//  restored text that took a writer turn in the gap between the click's reply and the job's reservation would send an update for a
+//  row the database does not hold yet. The reply is
 //  read and its job reserved exactly as the duplicate does it: `consumeEditorFirstReply` is synchronous; the `afterReply` closure runs
-//  the sidebar swap (synchronous main-actor work, during which no poll task can run) and `startEditorFirstRestoreJob`, which creates
+//  the sidebar swap (synchronous main-actor work, during which no report can be taken in) and `startEditorFirstRestoreJob`, which creates
 //  the job's task and suspends ONCE, at `await reserved.wait()`. The task's first statements run `StructuralReplaceJob.perform`, whose
 //  `performSystemWrite` runs its steps 1 to 4 (nesting check, wanted, writer and identity, `reserveSystem`) without a suspension. So the
 //  only suspension between the reply and the reservation is that one hop onto the main actor; it waits behind main-actor turns already
@@ -172,12 +174,12 @@ extension StructuralUndoController {
             kind: kind, opId: opId, script: script, replyType: EditorFirstReplaceReply.self,
             database: db, projectId: pid, trace: trace
         ) { _ in
-            // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no poll task runs inside it): the
+            // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no report is taken in inside it): the
             // restored outline replaces the old one in the sidebar (a restore as duplicate adds its leaders), kept by an overlay until
             // the job has written the rows.
             efRestorePlans[opId] = plan
             showRestoreInSidebar(opId: opId, plan: plan)
-            // Reserve the job and wait for its `onReserved` before the poll pause is lifted. The job takes over the raised
+            // Reserve the job and wait for its `onReserved` before the reports are let through again. The job takes over the raised
             // `pendingEditorFirstJobs` and brings it down when its future has resolved.
             await startEditorFirstRestoreJob(
                 opId: opId, plan: plan, removedLeaders: removedLeaders, database: db, projectId: pid, ownsPendingJobCount: true)

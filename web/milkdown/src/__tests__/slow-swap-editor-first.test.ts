@@ -336,8 +336,8 @@ describe('structuralSwapEditorFirst: the slow undo in one turn', () => {
     expect(pressUndo(view, OP)).toBe(true);
     expect(structuralSwapEditorFirst(OP, 'undo', undoPayload()).ok).toBe(true);
 
-    // Typed in the very next task: before any animation frame, before Swift's reply. While the press is latched the polls get nothing
-    // (phase 4c job 2: the hold ends with the latch), so the poll that takes it comes after the reply.
+    // Typed in the very next task: before any animation frame, before Swift's reply. While the press is latched no report leaves
+    // (phase 4c job 2: the hold ends with the latch), so the report that takes it comes after the reply.
     typeInto(view, 'B body', ' next');
     flushPendingBlockChanges();
     expect(takePendingAsReport(), 'held while the press is latched').toEqual(EMPTY_BATCH);

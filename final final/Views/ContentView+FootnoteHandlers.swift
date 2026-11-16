@@ -89,8 +89,8 @@ extension ContentView {
         // (`commitImmediateInsertion`) is async now -- routed through the ordered
         // system-write queue -- so `contentState` deliberately stays `.idle` across
         // that wait (moved into the Task below, AFTER the commit returns) rather than
-        // being set busy before it: this is what keeps routine polls and editor
-        // pushes working normally while the write is in flight, instead of stalling
+        // being set busy before it: this is what keeps the editor's content
+        // pushes and the 3-second timer working normally while the write is in flight, instead of stalling
         // behind a `contentState` gate for the whole wait.
         let insertionGeneration = footnoteSyncService.beginImmediateInsertion()
 

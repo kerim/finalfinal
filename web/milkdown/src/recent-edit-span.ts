@@ -15,10 +15,11 @@ import type { Transaction } from '@milkdown/kit/prose/state';
 // Source-mode/CodeMirror-specific (shouldPushContent), and Milkdown's updateHeadingLevels
 // is invoked directly from ContentView.enforceHierarchyAsync's WYSIWYG branch via a JS
 // evaluate call, never through CodeMirrorCoordinator. The real constraint here is the
-// round trip THAT path actually takes: DB write -> EditorViewState.startObserving's
-// ValueObservation -> onSectionsUpdated -> enforceHierarchyAsync -> the
+// round trip THAT path actually takes: DB write -> OutlineSnapshotPublisher's next numbered
+// snapshot (shown by EditorViewState.acceptOutlineSnapshot, EditorViewState+OutlineSnapshots.swift)
+// -> onSectionsUpdated -> enforceHierarchyAsync -> the
 // updateHeadingLevels call. 2.5s matches the same order of magnitude as
-// BlockSyncService.pollInterval (2s, the slowest leg of a DIFFERENT round trip in this
+// the 2 s re-post of an unacknowledged report (the slowest leg of a DIFFERENT round trip in this
 // same investigation -- see EditorViewState.ReconcileSuppression's TTL) with margin for
 // the rest of that chain, not a number carried over from CodeMirror's cap.
 const RECENT_USER_EDIT_SPAN_TTL_MS = 2500;

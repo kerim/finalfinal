@@ -201,7 +201,7 @@ let holdReleasedForPress: number | null = null;
 
 // === A transition (Phase 5 job A7, api-transition.ts): a zoom's "send what you have, and start holding" ===
 // The token of the transition in progress (drawn from `pressCounter`, so the collector's tags stay ordered with the presses), or null.
-// While it is set the polls' pushes are held exactly as they are while a press is latched (`isTypingPushHeld`): what the user types
+// While it is set the page's reports hold the typing back exactly as they do while a press is latched (`isTypingPushHeld`): what the user types
 // between `beginTransition` and `swapTransition` is recorded by the collector and put back on top of the swapped-in document by the
 // replay, which block-sync then reports as new typing. Kept here, not in api-transition.ts, because `isTypingPushHeld` reads it and this
 // module cannot import a module that imports it. A latched press and a transition never coexist: the zoom waits for structural work first.
@@ -237,7 +237,7 @@ export function isTypingPushHeld(): boolean {
 }
 
 /** Bridge target for `window.FinalFinal.releaseHeldTypingPushes`: Swift's lifecycle flush (Cmd-W, Cmd-Q, project switch) calls it once
- * before its forced poll, so the poll sees the held typing. A press that has typing since it was pressed and is answered after this
+ * before its `flushAndAck`, so the flush posts the held typing. A press that has typing since it was pressed and is answered after this
  * is refused (`changed`), because that typing has already been sent. Returns true when a hold was released. */
 export function releaseHeldTypingPushes(): boolean {
   if (!isTypingPushHeld()) return false;
@@ -728,18 +728,19 @@ function docsEqual(a: Node, b: Node): boolean {
  *
  * Originally read `hasPendingChanges()` (block-sync-plugin's committed
  * pendingUpdates/pendingInserts/pendingDeletes maps directly), but those maps are only
- * CLEARED once Swift's poll drains them via `getBlockChanges()` -- BlockSyncService's
- * fixed 2.0s cadence -- not synchronously when a text edit settles. A redo/undo pressed
- * roughly 100ms-2000ms after a preceding text edit could see a STALE "non-empty"
- * reading purely because Swift hadn't polled yet, even though the document itself
+ * CLEARED once a report takes them (report-outbox.ts; in the 2-second poll's time, once Swift's
+ * poll drained them via `getBlockChanges()` on its fixed 2.0s cadence) -- not synchronously when a
+ * text edit settles. A redo/undo pressed shortly after a preceding text edit (up to ~2s after it, in
+ * the poll's time) could see a STALE "non-empty"
+ * reading purely because the edit hadn't been reported yet, even though the document itself
  * already matched the routing target (`docsEqual` below) -- silently falling through
  * to a text-redo no-op instead of firing the structural redo (confirmed via live e2e
  * testing; see notes.md 2026-08-17/18 for the reproduction).
  *
  * Fixed to key off block-sync's own LOCAL 100ms debounce settling
- * (`hasUnsettledLocalEdit()`) instead of Swift's poll cadence: true only in the narrow
+ * (`hasUnsettledLocalEdit()`) instead of the report cadence: true only in the narrow
  * window between a docChanged transaction landing and its diff being computed, which
- * settles independent of when Swift next polls. `StructuralUndoController.swift`'s
+ * settles independent of when the next report leaves. `StructuralUndoController.swift`'s
  * `performUndo`/`performRedo` now also flush live content to the DB unconditionally
  * (mirroring the forward op's H6 mode-aware flush) before snapshotting, so DB accuracy
  * no longer depends on this check either -- this is now purely about not swapping out
@@ -1324,7 +1325,7 @@ export function performStructuralSwap(opId: string, direction: 'undo' | 'redo'):
 /** Undo/redo-sequence tail of the swap: called by Swift once its follow-up `pushBlockIds()`
  * round-trip has landed real DB block ids onto the swapped-in doc. Rebaselines block-sync's
  * snapshot from the NOW-correct doc+ids and only then resumes change detection -- resuming
- * before this would let the very first post-swap poll see every block as a fresh
+ * before this would let the very first post-swap report see every block as a fresh
  * insert/delete pair against the stale pre-swap snapshot. */
 export function finishStructuralSwapSettle(): boolean {
   const editorInstance = getEditorInstance();
@@ -1716,7 +1717,7 @@ export function handleUndoReplyFromSwift(
       message: `[undo-coordinator] structural ${direction} cancelled at the lifecycle barrier (opId=${reply.opId}) -- document untouched, dropped ${dropped} held press(es) silently`,
     });
     queuedPresses.length = 0;
-    resetTypingCollector(); // D1: the latch is down above, so the held typing is the ordinary pending typing of the next poll
+    resetTypingCollector(); // D1: the latch is down above, so the held typing is the ordinary pending typing of the next report
     // No warning toast (`undoQueueDropped`): the window is closing. Swift is told the presses ended, so a close that counted
     // them as held does not wait for them.
     postHeldPressesSettled(dropped);

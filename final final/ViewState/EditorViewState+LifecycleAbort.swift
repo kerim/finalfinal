@@ -14,7 +14,7 @@
 //      broken, `newProject` failing).
 //
 //  What the save sequence did that the abort undoes, in the order it undoes it (the order is the point: N14
-//  re-pushes block ids BEFORE polling restarts, N23 restarts polling EVEN WHEN FB never applied):
+//  re-pushes block ids BEFORE the editor's reports flow again, N23 lets them flow EVEN WHEN FB never applied):
 //
 //    1. stand-down: if a quit joined (the editor's token is no longer ours) the quit owns every gate; do nothing;
 //    2. drop the Markdown content staged for the flush (`switchInProgressContent`);
@@ -22,8 +22,8 @@
 //    4. if FB was started, learn whether it applied (await its own Task, bounded);
 //    5. FB applied, Rich Text: re-push block ids to the editor, raced against a bound (FB's `replaceBlocks` is
 //       not id-preserving, so every non-heading block id the editor holds is now dead);
-//    6. `isResettingContent = false`, then ALWAYS restart polling (the common cancel is the section-operation
-//       wait timing out BEFORE FB, which re-pushes nothing but still stopped the poll timer at arm);
+//    6. `isResettingContent = false`, then ALWAYS let the editor's reports flow again (`releaseReportHold`; the common cancel
+//       is the section-operation wait timing out BEFORE FB, which re-pushes nothing and has no hold to release, so this is harmless);
 //    7. clear the token (see below), then Markdown's one catch-up re-parse, resume the sync services, re-post the
 //       deferred rebuild requests;
 //    8. forget that the flush was done, and show the cancel notice (section operation / refused barrier).
@@ -86,7 +86,7 @@ extension EditorViewState {
         bounds: LifecycleBounds
     ) async {
         // 1. Stand-down: a quit that joined replaced the token. It owns the gates, the services' suspension,
-        // polling and the barrier now, and (#18) none of it is ours to release.
+        // the report hold and the barrier now, and (#18) none of it is ours to release.
         guard activeLifecycle?.id == token.id else {
             DebugLog.log(
                 .lifecycle,
@@ -101,8 +101,8 @@ extension EditorViewState {
         // lifecycle (a later no-override flush would write it over new typing).
         switchInProgressContent = nil
 
-        // 3. The barrier is released without retiring: the project stays open, and polling cannot restart
-        // (step 6) while a barrier would park its writes.
+        // 3. The barrier is released without retiring: the project stays open, and the editor's reports cannot flow again
+        // (step 6) while a barrier would park their writes.
         releaseLifecycleBarrier()
 
         // 4 + 5. FB's whole-document write killed the editor's non-heading block ids: put them back.

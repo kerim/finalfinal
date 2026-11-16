@@ -467,7 +467,7 @@ export function buildExtensions(): Extension[] {
         noteSwitchTransaction(tr);
       }
     }),
-    // Debounced push-based content messaging to Swift (replaces 500ms polling as primary).
+    // Debounced push-based content messaging to Swift: how the Markdown editor hands its text over (Swift saves it block by block).
     // P3 (4c, undo-mode-switch-focus second timing gap): posts an OBJECT
     // `{content, wasUndo}` instead of a bare string. `wasUndo` is sticky-OR across the
     // whole 50ms aggregating window (true if ANY transaction folded into this debounced

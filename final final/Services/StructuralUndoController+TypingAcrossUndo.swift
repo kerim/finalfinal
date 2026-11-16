@@ -51,8 +51,8 @@ struct ReleasedTypingReply: EditorFirstBatchReply {
 extension StructuralUndoController {
 
     /// t-d2061b27 (judge D1, review F7): a Rich Text press that goes to the OLD whole-document body (zoomed, no plan, `noCheckpoint`, an
-    /// editor refusal that falls back, the legacy flags) is still latched on the page, which holds the typing it would report to the
-    /// polls. The old body's own flush would find that typing held back, so it is released here and the batch it takes is sent as batch N
+    /// editor refusal that falls back, the legacy flags) is still latched on the page, which holds the typing it would report to
+    /// Swift. The old body's own flush would find that typing held back, so it is released here and the batch it takes is sent as batch N
     /// FIRST: ticket reserved and the one call submitted in one synchronous stretch (`submitEditorFirstCall`), the batch applied by
     /// `consumeEditorFirstReply` (always). Called once per press, from `queuedSnapshotUndo`, when the editor-first route hands the press
     /// to the old body. Not for Markdown: its old body reads the page's live text itself. Costs one JavaScript call; a page with nothing

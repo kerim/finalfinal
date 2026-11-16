@@ -3,7 +3,8 @@
 //  final final
 //
 //  WKWebView wrapper for CodeMirror 6 source editor.
-//  Uses 500ms polling pattern for content synchronization.
+//  The page pushes its text to Swift (debounced `contentChanged` messages), which saves it block by block; a 3-second timer reads
+//  only the word count and the section title.
 //
 
 import SwiftUI

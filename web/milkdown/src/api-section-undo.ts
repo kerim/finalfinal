@@ -141,8 +141,8 @@ export interface QuickResumeResult {
    * resume, e.g. the undo was refused, or this is a second call. Then nothing was touched: block-sync's pause belongs to whoever
    * took it. */
   resumed: boolean;
-  /** What the diff added to block-sync's queue: edits made while it was paused. They are queued, not returned, and go out with
-   * the next poll, which Swift reserves AFTER the reinsert. */
+  /** What the diff added to block-sync's queue: edits made while it was paused. They are queued, not returned, and go out as
+   * the page's next report, which Swift reserves AFTER the reinsert. */
   pausedEdits: { updates: number; inserts: number; deletes: number };
   /** True when a `contentChanged` notification was scheduled (about 50 ms later, or at idle where the browser has an idle
    * callback). It carries the live Markdown, read when it runs, so it can never be older than the typing. */
@@ -434,7 +434,7 @@ export function undoSectionDeleteEditorFirst(opId: string): QuickUndoResult {
 /**
  * Bridge target for `window.FinalFinal.resumeSyncAfterQuickUndo`. Swift calls it after the reinsert job holds its writer ticket
  * (and in a `defer`, so on EVERY exit of the quick undo, including a refused one). Hands block-sync back, queues what was typed
- * while it was paused (they go out with the next poll, which takes its ticket after the reinsert's), and schedules the
+ * while it was paused (they go out with the next report, which takes its ticket after the reinsert's), and schedules the
  * `contentChanged` notification for the restored text. A no-op, touching nothing, when this editor has no quick undo to resume.
  */
 export function resumeSyncAfterQuickUndo(): QuickResumeResult {

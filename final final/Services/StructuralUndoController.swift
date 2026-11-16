@@ -502,7 +502,7 @@ final class StructuralUndoController {
         let epoch = unifiedUndoService.generation
 
         // Step 1: zoom out first if zoomed (autoZoomOut policy only); enter non-idle
-        // contentState (bumps contentGeneration, gating the 2s poll); cancel pending async
+        // contentState (bumps contentGeneration, which the 3-second timer's stale-result check reads); cancel pending async
         // insertions.
         //
         // No follow-up pushBlockIds() here (t-359bdd36): zoomOut()'s own
@@ -1716,11 +1716,9 @@ final class StructuralUndoController {
         // performSectionRestoreReplace step 2) -- MUST run BEFORE the checkpoint swap below
         // discards the live editor's in-memory content, and before `createUndoPointSnapshot()`
         // captures "the current DB state" as the future redo point. Without this, any text
-        // edit block-sync hasn't yet drained to the DB via BlockSyncService's periodic poll
-        // (which this method's own `editorState.contentState = .structuralUndo` transition
-        // above just froze for the rest of this sequence -- no further periodic poll will run
-        // until contentState returns to `.idle`) is silently discarded by the swap's
-        // `resetAndSnapshot`, never reaching the DB at all. The JS-side routing gate
+        // edit the editor hasn't yet reported to the DB (a report leaves some time after a
+        // change settles, so the last typing may still be waiting on the page) is silently
+        // discarded by the swap's `resetAndSnapshot`, never reaching the DB at all. The JS-side routing gate
         // (`pendingMapsEmpty` in undo-coordinator.ts) used to be the ONLY thing standing
         // between a fast-fingered undo/redo and this loss; this flush closes it at the source
         // instead, independent of that gate's timing.

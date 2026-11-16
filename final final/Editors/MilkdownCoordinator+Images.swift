@@ -97,8 +97,8 @@ extension MilkdownEditor.Coordinator {
     }
 
     /// Insert figure node into editor via JS (editor-first approach).
-    /// No DB write — BlockSyncService detects the new node on its next poll
-    /// and creates the block record via the normal insert path.
+    /// No DB write — the page's block sync detects the new node and reports it
+    /// in its next report, and the writer creates the block record via the normal insert path.
     ///
     /// `origin` is threaded through to JS's `insertImage()` so it can decide
     /// whether to consult a pending paste/drop caret position ("clipboard")

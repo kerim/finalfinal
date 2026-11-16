@@ -8,8 +8,8 @@
 //
 //    TransBegin + TransLiveRead  `beginTransition`: ticket N is reserved and the page call submitted in ONE synchronous stretch
 //                                (`submitEditorFirstCall`, so reservation order is execution order); the page drains its pending batch,
-//                                starts recording and holds every later key back from the polls (`pend' = {}`), in one turn.
-//    the batch                   written through the forced poll's write half (`applyFetchedBatch`), as ticket N.
+//                                starts recording and holds every later key back from its reports (`pend' = {}`), in one turn.
+//    the batch                   written through `applyFetchedBatch` (the write routine a report's batch goes through too), as ticket N.
 //    TransBarrier / BarrierOpen  `awaitTransitionBarrier`: `DocumentWriter.awaitSettled(through: N)`, everything reserved up to and
 //                                including our batch has settled. Read-only; on its bound nothing is changed and the caller abandons.
 //    TransPushFrom + TransReplay `swapTransition`: the page replaces its document with the rows' text and puts the recorded typing back on
@@ -51,8 +51,8 @@ enum TransitionBegin: Equatable {
     case ready(token: Int)
     /// Nothing is held (no page, the page refused, the bridge failed): the caller takes today's path for this one transition.
     case notStarted(reason: String)
-    /// The writer did not settle within the bound (a stuck writer, a fault): the hold has been ended and the held typing goes out with
-    /// the next poll. The caller abandons the transition and tells the user.
+    /// The writer did not settle within the bound (a stuck writer, a fault): the hold has been ended and the held typing goes out as
+    /// the page's next report. The caller abandons the transition and tells the user.
     case barrierTimedOut(token: Int)
 }
 
@@ -160,7 +160,7 @@ extension BlockSyncService {
             ticket.settleIfOpen(.empty)
             return .notStarted(reason: reply.reason ?? "refused")
         }
-        // The batch the page drained, written as ticket N through the forced poll's write half.
+        // The batch the page drained, written as ticket N through `applyFetchedBatch` (the write routine a report's batch goes through too).
         applyTransitionBatch(reply.batch, ticket: ticket, stamp: submission.stamp, database: database, projectId: projectId)
         DebugLog.alwaysPersisted(
             "[TRANS] begin token=\(token) batch u=\(reply.batch.updates.count) i=\(reply.batch.inserts.count) "
@@ -230,7 +230,7 @@ extension BlockSyncService {
     }
 
     /// Ends a hold whose swap never came (`token` nil: any hold, for a begin whose reply could not be read). The typing held meanwhile is
-    /// still in the page's own pending queue and goes out with the next poll.
+    /// still in the page's own pending queue and goes out as its next report.
     func endTransition(token: Int?, on page: WKWebView? = nil) async {
         guard let webView = page ?? webView else { return }
         let script = "JSON.stringify(window.FinalFinal.endTransition(\(token.map(String.init) ?? "null")))"
@@ -248,7 +248,8 @@ extension BlockSyncService {
         return ticket.seq
     }
 
-    /// Hands an already-taken batch to `applyFetchedBatch` (the forced poll's write half) on its own task; an empty one settles at once.
+    /// Hands an already-taken batch to `applyFetchedBatch` (the routine a report's batch goes through too) on its own task; an empty
+    /// one settles at once.
     private func applyTransitionBatch(
         _ changes: BlockChanges, ticket: WriterTicket, stamp: BlockWriteStamp, database: ProjectDatabase, projectId: String
     ) {

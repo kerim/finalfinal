@@ -9,8 +9,8 @@
 //  t-94369a83 Phase 3a-2, Step 1. A paragraph the user turns into a list ("- ", "1. ", "> ", three backticks) keeps
 //  its block id (block-id-plugin.ts phase1CanClaim), but the update used to carry only the new text and fragment, so
 //  the row stayed a paragraph holding a list's text. A reopen without the close-time rebuild then aligned the row as
-//  a paragraph against a list node (`BlockParser.alignmentPairs`), withheld its id, and the next poll inserted the
-//  list a second time.
+//  a paragraph against a list node (`BlockParser.alignmentPairs`), withheld its id, and the editor's next batch of changes
+//  inserted the list a second time.
 //
 
 import Foundation

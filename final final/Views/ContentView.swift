@@ -457,9 +457,9 @@ struct ContentView: View {
 extension ContentView {
     /// A sidebar card drag began (t-0b70d1e9). Only the debounced section sync is cancelled (cheap, idempotent, no ordering hazard).
     /// `contentState` is deliberately NOT touched: the drag-time state it used to set (a `contentState` case, now removed) bumped
-    /// `contentGeneration`, which discards a batch a routine poll had already fetched (finding M1: type, then drag at once, and the
-    /// typing is lost), and the editor-first reorder it precedes needs no such state. Testable on its own: after it, `contentState`
-    /// is still `.idle` and `contentGeneration` unchanged.
+    /// `contentGeneration`, which in the 2-second poll's time discarded a batch the poll had already fetched (finding M1: type, then
+    /// drag at once, and the typing is lost), and the editor-first reorder it precedes needs no such state. Testable on its own: after
+    /// it, `contentState` is still `.idle` and `contentGeneration` unchanged.
     func handleSectionDragStarted() {
         sectionSyncService.cancelPendingSync()
     }

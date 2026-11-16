@@ -29,7 +29,7 @@
 //  WHAT THE SWAP LEAVES FOR SWIFT, AND WHAT SWIFT DOES (each is a requirement of the model, a code review checks them):
 //    R1. The click never sets `contentState`, never bumps `contentGeneration`, runs no `modeAwareFlush` and sets no `.structuralUndo`: the
 //        editor's own 50 ms `contentChanged` push is accepted while the job waits. (None of these appears below; the shared click
-//        `runEditorFirstStructuralClick` only pauses routine polls.) Because nothing sets `contentState`, the footnote undo checkpoints
+//        `runEditorFirstStructuralClick` only parks the editor's reports.) Because nothing sets `contentState`, the footnote undo checkpoints
 //        are guarded explicitly in the reply turn (`guardFootnoteCheckpointsForNotesRewrite`, fix round F1, finding D): see
 //        StructuralUndoController+FootnoteCheckpointGuard.swift.
 //    R3. The job writes EXACTLY the payload's rows: no epoch bump, no restamp (`replaceProjectRows`, the restore job's whole mode).
@@ -92,8 +92,8 @@ extension StructuralUndoController {
     /// `entry`, editor first. Called under the structural gate with `snapshotId` already resolved. Returns the reply for the editor's
     /// latch, or nil when this press has to take the old body (nothing has been changed that the old body would not do itself).
     ///
-    /// t-d2061b27 (judge D1, review F7): while this press is latched on the Rich Text page, the page HOLDS the typing it would report to the
-    /// polls. When the press goes to the old body (zoomed, no plan, `noCheckpoint`, an editor refusal that falls back, the legacy flags)
+    /// t-d2061b27 (judge D1, review F7): while this press is latched on the Rich Text page, the page HOLDS the typing it would report to
+    /// Swift. When the press goes to the old body (zoomed, no plan, `noCheckpoint`, an editor refusal that falls back, the legacy flags)
     /// the old body's own flush would find that typing held back, so the hold is released and the released batch is sent as batch N
     /// FIRST (`releaseHeldTypingForOldBody`, StructuralUndoController+TypingAcrossUndo.swift), once, before the old body runs.
     func queuedSnapshotUndo(entry: StructuralEntry, direction: UndoDirection, snapshotId: String) async -> UndoResult? {
@@ -143,7 +143,7 @@ extension StructuralUndoController {
                 kind: kind, opId: opId, script: script, replyType: EditorFirstReplaceReply.self,
                 database: db, projectId: pid, trace: trace
             ) { _ in
-                // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no poll task runs inside it).
+                // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no report is taken in inside it).
                 self.showRestoreInSidebar(opId: opId, plan: plan)
                 // R3+: reserve the job with no suspension point between the reply and the reservation.
                 self.startSnapshotSwapJob(

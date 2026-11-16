@@ -290,7 +290,7 @@ extension ProjectDatabase {
     // MARK: - Bulk Operations
 
     /// Legacy, UNGUARDED entry point. Kept verbatim in signature and behaviour for the
-    /// existing test call sites that apply a hand-built batch with no poll pipeline
+    /// existing test call sites that apply a hand-built batch with no editor-report pipeline
     /// behind it. Production never reaches this: `BlockSyncService` is the only
     /// production caller and always passes a real stamp.
     @discardableResult
@@ -516,9 +516,12 @@ extension ProjectDatabase {
             // - All three CommonMark thematic-break characters (-, *, _) are
             //   covered — same `{3,}` character class as BlockParser.swift, not a
             //   narrower "---"-only pattern.
-            // - WYSIWYG-only: this whole applyBlockChangesFromEditor() function is
-            //   reached only via BlockSyncService.applyChanges(), which is fed by
-            //   the Milkdown webview's getBlockChanges() poll —
+            // - WYSIWYG-only (as first written; Markdown mode's per-block writer has
+            //   applied its batches through here too since Phase 4a, and the rest of
+            //   this bullet has not been rechecked for it): this whole
+            //   applyBlockChangesFromEditor() function was reached only through the
+            //   Rich Text editor's block batches (today the Milkdown page's reports:
+            //   ReportApplier, then BlockSyncService.applyFetchedBatch) —
             //   BlockSyncService.configure(webView:) is wired up exclusively from
             //   MilkdownEditor's onWebViewReady (ContentView+EditorPresentation.swift),
             //   never from CodeMirrorEditor's. Source Mode content instead flows
@@ -590,7 +593,7 @@ extension ProjectDatabase {
             try applyDefensiveTempIdUpdate(db: db, existingBlock: &existingBlock, update: update)
         } else {
             // Stale temp ID — block was already confirmed to a permanent ID
-            // in a previous poll cycle. Drop the update safely.
+            // by an earlier batch. Drop the update safely.
             // This fires only if both Fix 1 (JS remap) and Fix 2 (Swift resolution) failed.
             DebugLog.log(.data, "[Database+Blocks] Dropping stale temp update: \(update.id) (no matching block)")
         }

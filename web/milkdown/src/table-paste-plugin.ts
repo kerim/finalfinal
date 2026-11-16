@@ -77,7 +77,7 @@ function insertTableNode(view: EditorView, table: ParsedTable): boolean {
 
 /**
  * Fallback: insert the table as raw markdown text in a paragraph.
- * Block-sync will re-parse it on the next poll cycle.
+ * Block-sync will re-parse it and report it with the next batch of changes.
  */
 function insertTableMarkdown(view: EditorView, table: ParsedTable): void {
   const { schema } = view.state;

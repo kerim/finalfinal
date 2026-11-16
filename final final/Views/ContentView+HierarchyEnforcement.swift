@@ -390,12 +390,12 @@ extension ContentView {
             // a few lines below in that function) regardless of whether the DB write
             // above succeeded. So even on `.refused`/`.failed`, the editor's own live
             // content already shows the corrected level while the DB still has the
-            // stale one. That is a genuine, uncommitted diff from the poll's point of
-            // view -- the JS-side baseline-diff fix (an earlier round of this same
-            // plan) is what makes sure this reads as an ordinary pending edit rather
-            // than being silently swallowed as "no change" -- so the NEXT routine
-            // 2-second poll cycle persists it through the normal editor-diff write
-            // path, no special enforcement retry involved.
+            // stale one. That is a genuine, uncommitted diff from the page's block
+            // sync point of view -- the JS-side baseline-diff fix (an earlier round of
+            // this same plan) is what makes sure this reads as an ordinary pending
+            // edit rather than being silently swallowed as "no change" -- so the
+            // page's NEXT block report persists it through the normal editor-diff
+            // write path, no special enforcement retry involved.
             DebugLog.log(.sync, "[ContentView] persistEnforcedSections: system write did not apply (\(outcome))")
             return
         }

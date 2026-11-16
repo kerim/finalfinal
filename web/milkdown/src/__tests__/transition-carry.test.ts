@@ -73,7 +73,7 @@ describe('beginTransition (TransBegin + TransLiveRead)', () => {
     expect(result.batch.updates.map((update) => update.id)).toEqual(['p1']);
     expect(result.batch.updates[0].markdownFragment).toContain('alpha');
     expect(getTransitionToken()).toBe(result.token);
-    // A key typed after the begin is recorded, not sent: the polls see nothing while the hold is on.
+    // A key typed after the begin is recorded, not sent: no report leaves while the hold is on.
     typeInto(view, 'Second', ' beta');
     await sleep(150);
     expect(hasReportablePending()).toBe(false);

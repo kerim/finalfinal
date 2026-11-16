@@ -155,7 +155,7 @@ enum LifecycleWholeDocumentWrite {
         guard !content.isEmpty else {
             // N18: a nil here is silent to the caller, so say it. An empty fetch means "nothing to
             // save": whatever the editor sent (even a fully emptied document) reaches the database
-            // through the forced poll before this point, not through this write.
+            // through F (`flushAndAck`) before this point, not through this write.
             DebugLog.log(
                 .lifecycle,
                 "[LifecycleWholeDocumentWrite] prepare: empty content for project \(projectId) "
@@ -228,7 +228,7 @@ enum LifecycleWholeDocumentWrite {
     /// every other block in the replaced region with a fresh id, so the editor's ids for those
     /// blocks are dead after FB's commit, and the empty `deletedAnchors` means no tombstone exists
     /// to re-anchor an insert that points at one. A caller that keeps the editor running must
-    /// re-push the block ids before polling resumes (plan P1 abort path; 3a-1b obligation N14).
+    /// re-push the block ids before the editor's reports resume (plan P1 abort path; 3a-1b obligation N14).
     ///
     /// Mini-Notes (judge adjustment B9, plan §2.3(a), 3a-1b): for a ZOOMED write whose zoom-notes
     /// text carried definitions, they are written back to the Notes rows FIRST, in this same

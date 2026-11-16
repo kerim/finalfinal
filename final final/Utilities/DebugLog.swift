@@ -13,7 +13,7 @@ enum DebugLog {
     enum Category: String, CaseIterable {
         case sync        // [SYNC-DIAG:*] block sync diagnostics
         case contentPush // [ContentPush] per-keystroke content changes
-        case blockPoll   // [BlockPoll] polling cycle details
+        case blockPoll   // [BlockPoll] editor batch apply details (the name is from the removed 2-second poll)
         case editor      // [MilkdownEditor] [CodeMirrorEditor] lifecycle + errors
         case scheme      // [EditorSchemeHandler] [MediaSchemeHandler] asset serving
         case outline     // outline cache, [onSectionsUpdated]
@@ -79,7 +79,7 @@ enum DebugLog {
     ///
     /// HARD REQUIREMENT: the enable-check guard below must run BEFORE `message()` is called.
     /// `message` MUST stay `@autoclosure` so the interpolation/allocation at every one of this
-    /// app's ~500+ call sites (a 500ms polling loop, the GRDB writer queue, etc.) is never
+    /// app's ~500+ call sites (the 3-second stats timer, the GRDB writer queue, etc.) is never
     /// paid when logging is off — do not change `message` to a plain `String` parameter, and
     /// do not evaluate `message()` above the guard.
     @inline(__always)
@@ -179,7 +179,7 @@ enum DebugLog {
     nonisolated(unsafe) private static var _alwaysSink: ((String) -> Void)?
     /// Test-only sink: every always(...) line is forwarded here too, under the same
     /// lock that guards the assignment. Only tests asserting on unconditional lines
-    /// (e.g. the poll-watchdog timeout line's literal text) install it; tests that
+    /// (e.g. a timeout line's literal text) install it; tests that
     /// only need to observe a condition should prefer an instance-scoped seam, since
     /// this one is process-global and shared with concurrently running suites.
     static var alwaysSink: ((String) -> Void)? {

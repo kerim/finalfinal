@@ -1221,7 +1221,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
     resetAndSnapshot(view.state.doc);
 
     // Step (a): create an empty paragraph and let it flush as a real INSERT
-    // first — modeling "press Enter", wait for the sync poll to pick it up
+    // first — modeling "press Enter", wait for the next report to carry it
     // and Swift to assign+confirm a permanent id, all before the user types
     // anything into it.
     const emptyPara = view.state.schema.nodes.paragraph!.create();
@@ -1237,7 +1237,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
     // Simulate Swift's real confirmation round-trip via the SAME production
     // glue main.ts wires to window.FinalFinal.confirmBlockIds — re-keys
     // BOTH block-id-plugin's live id map AND block-sync's lastSnapshot,
-    // exactly like a real poll-driven confirmation would. Without this step,
+    // exactly like a real report acknowledgement's id confirmation would. Without this step,
     // the block would still carry its temp id and this test would silently
     // fall back to exercising the INSERT path again.
     const permanentId = 'confirmed-permanent-id';
@@ -1291,7 +1291,7 @@ describe('hr (horizontal_rule) — real schema block-sync/block-id integration',
     // Cycle 1: create a new empty paragraph and run change-detection ONLY
     // (flushPendingBlockChanges, not getBlockChanges) — the resulting
     // INSERT stays pending and unflushed, exactly like a real insert that
-    // hasn't been picked up by Swift's poll yet.
+    // hasn't been reported to Swift yet.
     const emptyPara = view.state.schema.nodes.paragraph!.create();
     const insertPos = view.state.doc.content.size;
     view.dispatch(view.state.tr.insert(insertPos, emptyPara));

@@ -92,7 +92,7 @@ import { isTypingPushHeld, releaseHeldTypingPushes, traceMidOpPushDrift } from '
  * whole point of the LCS diff is to leave unrelated undo history intact. But for a structural
  * rebuild like a project switch, prior undo-history entries anchored inside content that just
  * got replaced are no longer safe to leave replayable -- a user pressing Cmd-Z in the editor
- * could resurrect content from the PREVIOUS project, which the next block-sync poll could then
+ * could resurrect content from the PREVIOUS project, which the page's next block report could then
  * silently write back as a brand-new insert into the current one.
  *
  * Implementation -- WHY this needs two chained `reconfigure()` calls, not one: prosemirror-state's
@@ -245,7 +245,7 @@ export function redecorateBlockIds(view: EditorView): void {
  * Only called from the two content-push sites (`applyBlocks`, `setContentWithBlockIds`),
  * both already inside a `setIsSettingContent`/`setSyncPaused` window, after their own
  * imageMeta/figureBlocks loop, before `pausedPushBaseline` is captured. NOT called from the
- * two poll-driven sites (`confirmBlockIdsApi`, `syncBlockIds`) — dispatching a doc-mutating
+ * two Swift-driven id-sync sites (`confirmBlockIdsApi`, `syncBlockIds`) — dispatching a doc-mutating
  * correction from those outside the settle/pause machinery caused a caption-clobber race, a
  * spurious content push, and DELETE+INSERT churn (round 1). This function never clears an
  * attr — absence of a map entry isn't evidence of staleness, just "not decided yet here".
@@ -1316,7 +1316,7 @@ export function buildBlockLevelReplace(tr: Transaction, oldDoc: ProsemirrorNode,
 // A bibliography/Notes/footnote rebuild re-reads the WHOLE document from the database and
 // pushes back every block that differs from the live editor (buildBlockLevelReplace, above).
 // The database can lag behind the live editor by the block-sync detect debounce (100ms) plus
-// Swift's own poll/flush cadence, so a push landing inside that window used to overwrite
+// the time a report takes to leave the page and be written, so a push landing inside that window used to overwrite
 // perfectly good, more-recent user typing with the stale text the rebuild read from the DB —
 // distinct from a25cf1dc's fix (a parked-save-discarded boundary-timing bug in the same area).
 //
@@ -2390,7 +2390,7 @@ export function releaseReportHoldApi(): void {
 /**
  * Bridge target for `window.FinalFinal.releaseHeldTypingAndGetBatch` (F7): for a press that Swift hands to the OLD whole-document body
  * (zoomed, no plan, `noCheckpoint`, or an editor refusal that falls back) while the page is still holding the user's typing back from
- * the polls. In ONE synchronous call it ends the hold for the press in flight (`releaseHeldTypingPushes`), runs the block-sync
+ * its reports. In ONE synchronous call it ends the hold for the press in flight (`releaseHeldTypingPushes`), runs the block-sync
  * detection that the 100 ms timer has not yet run for what was typed a moment ago, and returns the pending batch, so Swift can send
  * the typing BEFORE the old body runs. `released` is true when a hold was ended. Nothing is held back afterwards; a press still
  * waiting on this page that has typing since is answered `changed` (the typing has been sent).

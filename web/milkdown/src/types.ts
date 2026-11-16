@@ -327,7 +327,7 @@ declare global {
       receiveRedoOutcome: (opId: string, outcome: 'performed' | 'fallback' | 'failed' | 'cancelled') => void;
       // Slice 2a: number of Cmd-Z / Cmd-Shift-Z presses held behind an in-flight undo right now (0 when none). No side effects.
       heldUndoPressCount: () => number;
-      // Phase 4c job 2: ends the hold on the typing done while a press waits (the lifecycle flush calls it once before its forced poll); true when a hold was released.
+      // Phase 4c job 2: ends the hold on the typing done while a press waits (the lifecycle flush calls it once before its `flushAndAck`); true when a hold was released.
       releaseHeldTypingPushes: () => boolean;
       // F7: releases the hold AND returns the pending batch in one call, for a press Swift hands to the old whole-document body.
       releaseHeldTypingAndGetBatch: () => { released: boolean; batch: BlockChanges };

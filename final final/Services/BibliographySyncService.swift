@@ -116,7 +116,7 @@ final class BibliographySyncService {
     /// Wired unconditionally by ContentView (both editor modes) to a closure that writes the
     /// live Markdown text into the block table, but the closure itself gates on
     /// `editorMode == .source` and self-guards to a no-op in WYSIWYG, where
-    /// `BlockSyncService`'s incremental poll already keeps the block table current.
+    /// the page's block reports (`ReportApplier`) already keep the block table current.
     ///
     /// Phase 4a (t-94369a83): the write is the per-block Markdown write on the ordered queue
     /// (`MarkdownBlockWriter.writeNow`: only the blocks whose text differs from what is stored are

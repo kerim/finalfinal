@@ -31,9 +31,9 @@ import Synchronization
 
 // MARK: - Public types
 
-/// One writer-assigned turn. The ONLY handle a poll cycle holds; every later call
+/// One writer-assigned turn. The ONLY handle a batch's apply (a report's, a click's, a Markdown write's) holds; every later call
 /// goes through this ticket, never back to `BlockSyncService.writer` directly (a
-/// writer replaced mid-cycle must not silently redirect an in-flight ticket to the
+/// writer replaced mid-apply must not silently redirect an in-flight ticket to the
 /// new instance).
 struct WriterTicket: Sendable {
     let writer: DocumentWriter
@@ -328,7 +328,7 @@ struct LossLedger: Sendable, Equatable {
     /// writer's baseline goes back to rows mode and the next gated fire re-sends it. A REAL, counted loss for that
     /// batch (not for the document: the editor still holds the text), reported by the caller through
     /// `noteMarkdownStaleEpochRejection`; the writer cannot see it itself (`rejectedWholeBatchForStaleEpoch` feeds no
-    /// other counter, only a log line). Counted for Markdown batches ONLY, so Rich Text's poll is unchanged.
+    /// other counter, only a log line). Counted for Markdown batches ONLY, so Rich Text's reports are unchanged.
     var markdownStaleEpochRejections = 0
     #if DEBUG
     /// DEBUG only (t-18b7fa48 Phase 4b slice 2, round 2d-i): how many editor batches the database refused WHOLE for a stale epoch
@@ -479,7 +479,7 @@ private struct WriterState {
     /// `performSystemWrite` reads this back after `waitForTurnAsync` returns
     /// `.skipped` so it can report the real reason rather than guessing. Recorded
     /// for system sequences only (see `skip(upTo:reason:)`); editor sequences don't
-    /// need it since the poll cycle never inspects the reason.
+    /// need it since an editor batch's apply never inspects the reason.
     ///
     /// Review fix (finding #13, and its own regression fix): entries must not
     /// accumulate for the writer's entire lifetime (sequences are never reused, and
@@ -2031,7 +2031,7 @@ actor DocumentWriter {
 
     /// Counts and logs a Markdown typing batch the database refused whole for a stale epoch
     /// (`LossLedger.markdownStaleEpochRejections`, Phase 4a). Reported by `BlockSyncService.applyMarkdownTurn`, the
-    /// only caller: the writer's own apply path counts nothing for a stale-epoch refusal (Rich Text's poll relies on
+    /// only caller: the writer's own apply path counts nothing for a stale-epoch refusal (Rich Text's reports rely on
     /// that, so the count is made here, for Markdown only). Synchronous and callable from anywhere.
     nonisolated func noteMarkdownStaleEpochRejection(updates: Int, inserts: Int, deletes: Int) {
         DebugLog.alwaysPersisted(
@@ -2562,7 +2562,7 @@ actor DocumentWriter {
     /// writer, an identity mismatch, a skipped sequence, or an out-of-turn one WITHOUT
     /// settling the phase entry -- `SystemReservation`'s deinit is the safety net that
     /// eventually does, exactly as `applyEditorBatch`'s own out-of-turn refusal relies
-    /// on the poll cycle's `defer { ticket.settleIfOpen(.noBatch) }`. No stamping
+    /// on the editor batch caller's `defer { ticket.settleIfOpen(.noBatch) }`. No stamping
     /// (§1.4): the single `dbWriter.write` transaction runs the caller's `body`
     /// directly, with no persisted (epoch, sequence) coordinate attached to the rows
     /// it touches.
@@ -2585,10 +2585,12 @@ actor DocumentWriter {
     /// FB's own content.
     ///
     /// Why that is safe: the lifecycle makes FB's content cover every batch that could still apply
-    /// after it. Polling is stopped at step 0, F (step 4) drains the poll cycle in flight and forces
-    /// one more poll, and FB writes a fresh fetch of the editor, which already contains what any
+    /// after it. F (step 4, `flushAndAck`) has the page post what it holds and waits until the writer has
+    /// decided every report up to the number the page answered, and FB writes a fresh fetch of the editor
+    /// (taken with the reports held, `fetchContentHoldingReports`), which already contains what any
     /// earlier batch carried; so the refusal only ever lands on a late or orphaned batch holding OLDER
-    /// content than FB's fetch. Because polling is stopped, no editor sequence is reserved between
+    /// content than FB's fetch. Because the page's reports are held from that fetch on (and the structural gate
+    /// closed at step 1), no editor sequence is reserved between
     /// FB's reservation and its commit (one would also read E and be refused wholesale although the
     /// writer orders it after FB). Only when the editor does not answer (the fallback to
     /// `editorState.content`) can edits in flight be refused, lost and uncounted
@@ -2596,8 +2598,8 @@ actor DocumentWriter {
     /// known hung-editor gap. Every OTHER system-write kind still never stamps or bumps.
     ///
     /// Why a SKIPPED (unchanged) FB is data-safe, restated for the checked FB (plan-v2 section 0; replaces
-    /// the "no batch can apply after FB" reading, which a clean F does not give: F's drain waits only for the
-    /// in-flight poll Task, and a writer sequence that already went `.late` stays free to apply after a
+    /// the "no batch can apply after FB" reading, which a clean F does not give: F waits only for the reports
+    /// the page had posted, and a writer sequence that already went `.late` stays free to apply after a
     /// whole-document write, see `isPassableLateLocked`). Today FB's epoch bump refuses such a batch; after
     /// a skip it is not refused. Safety rests on three things: (1) row rule 2 (`Database+BlockWriteStamp`)
     /// drops a late update or delete on any row a newer batch wrote; (2) updates and deletes naming a temp id

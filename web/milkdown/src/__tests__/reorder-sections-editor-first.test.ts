@@ -118,7 +118,7 @@ describe('reorderSectionsEditorFirst', () => {
   it('W1: moves B before A in ONE tagged transaction; every node keeps its id, and the pending batch comes back', async () => {
     const { view } = await makeEditor();
     await load(DOC);
-    typeInto(view, 'A body', ' (pending)'); // an edit not yet polled when the drag lands
+    typeInto(view, 'A body', ' (pending)'); // an edit not yet reported when the drag lands
     const before = blocks(view);
     const seen: Array<{ structuralReorder: unknown; addToHistory: unknown; steps: number }> = [];
     const dispatch = view.dispatch;

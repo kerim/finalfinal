@@ -23,8 +23,8 @@
 //
 //  Round C5a: every exit that does not reach a tail (the section-operation wait giving up, the writer refusing
 //  the barrier, a `perform` that throws) goes through ONE routine, `EditorViewState.abortLifecycle`
-//  (EditorViewState+LifecycleAbort.swift), which restores the editor: re-push block ids when FB applied, restart
-//  polling, resume the sync services, re-post deferred rebuilds, release the barrier, show the cancel notice.
+//  (EditorViewState+LifecycleAbort.swift), which restores the editor: re-push block ids when FB applied, let the
+//  editor's reports flow again, resume the sync services, re-post deferred rebuilds, release the barrier, show the cancel notice.
 //
 //  Round C5b: the tails behind the host's `runOpenTail` / `runCreateTail` / `runCloseTail` are real (ContentView+
 //  LifecycleTails.swift): the automatic version, the service stops and resets, the undo-history invalidation, the

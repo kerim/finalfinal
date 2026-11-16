@@ -3,7 +3,8 @@
 //  final final
 //
 //  WKWebView wrapper for Milkdown WYSIWYG editor.
-//  Uses 500ms polling pattern for content synchronization.
+//  The page reports each settled batch of block changes itself (numbered reports, `BlockSyncService+Reports.swift`) and pushes its
+//  text for the view; a 3-second timer reads only the word count and the section title.
 //
 
 import SwiftUI

@@ -29,7 +29,7 @@ import type { Block, ExpectedBlockMeta } from '../types';
 // row.
 //
 // Round 1 tried to fix this by having `setBlockIdsForTopLevel`'s withhold branch clear the
-// map entry (dispatching doc-mutating corrections from poll-driven call sites), and was
+// map entry (dispatching doc-mutating corrections from the id-sync call sites Swift drives), and was
 // rejected for a caption-clobber race, a spurious content push, DELETE+INSERT churn, and a
 // zoom-mode false-clear. Round 2 drops all of that and fixes the READ side instead:
 // - `resolveBlockId()` now prefers a real (non-temp), type-matched map id over the node attr
@@ -38,7 +38,7 @@ import type { Block, ExpectedBlockMeta } from '../types';
 // - `syncFigureBlockIdAttrs` (api-content.ts, not exported — exercised here only through the
 //   public entry points that call it) keeps a figure's attr in step with the map for the two
 //   CONTENT-PUSH call sites only (`applyBlocks`, `setContentWithBlockIds`) — never from the
-//   two poll-driven sites (`confirmBlockIdsApi`, `syncBlockIds`), and never clears an attr.
+//   two Swift-driven id-sync sites (`confirmBlockIdsApi`, `syncBlockIds`), and never clears an attr.
 
 function findFigure(view: EditorView): { pos: number; node: ProsemirrorNode } {
   let found: { pos: number; node: ProsemirrorNode } | undefined;
@@ -96,7 +96,7 @@ describe('figure blockId stays correct despite the block-id map/attr split', () 
 
   // ---------------------------------------------------------------------------------------
   // 1. Primary real path: resolveBlockId() prioritizes the map's confirmed real id over a
-  //    stale temp attr, exercised through confirmBlockIdsApi (a poll-driven site that no
+  //    stale temp attr, exercised through confirmBlockIdsApi (a Swift-driven id-sync site that no
   //    longer touches the figure's attr at all) plus a real caption-blur interaction.
   // ---------------------------------------------------------------------------------------
   it('resolveBlockId() returns the map-confirmed real id even though confirmBlockIdsApi never touches the attr', async () => {

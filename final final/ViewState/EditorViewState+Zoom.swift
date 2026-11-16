@@ -733,7 +733,7 @@ extension EditorViewState {
     /// blocks, then re-sync the editor's block ids so subsequent edits still land.
     /// Shared by export, manual/auto version snapshots, and idle-triggered
     /// auto-backup -- anywhere the block table must reflect live editor state
-    /// before it's read, not just what's landed via the incremental sync poll.
+    /// before it's read, not just what's landed via the editor's incremental block reports.
     ///
     /// block-sync-plugin.ts's incremental `detectChanges()` silently drops a pure
     /// block move (same id, same content, different position) when the ProseMirror

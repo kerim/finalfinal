@@ -25,7 +25,7 @@ extension View {
 
         // No fixed wait here. contentState stays .editorTransition until the new Rich Text editor has been handed its
         // content: onWebViewReady (ContentView+EditorPresentation.swift) sets .idle right after setContentWithBlockIds
-        // returns and before block polling starts. Backstop: the 5 s contentState watchdog (EditorViewState).
+        // returns and before the new page's block reports start. Backstop: the 5 s contentState watchdog (EditorViewState).
         // History: a 1.5 s Task.sleep stood here (added 2026-02-04 for a "missing # from headers" claim, no
         // reproduction on file); removed in the faster-switch work after VM runs showed headings survive without it.
     }

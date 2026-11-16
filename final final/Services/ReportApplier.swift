@@ -15,7 +15,7 @@
 //      just before the page is reset); a report of a revoked session is dropped at receipt AND at its writer turn. The "decided" mark
 //      (`decidedThrough`, the highest number below which everything is decided) never moves past a report still waiting for its turn:
 //      it is contiguous, and a waiting report is not decided until its turn has settled.
-//  (c) Never mixed with forced polls: `flushAndAck` (BlockSyncService+Reports.swift) asks the page to post what it has and to answer
+//  (c) Nothing forces a poll any more: `flushAndAck` (BlockSyncService+Reports.swift) asks the page to post what it has and to answer
 //      its highest number, and waits until that number is decided here; nothing is reserved before the reply.
 //  (d) The covering reply: a route's page call (a section command, the zoom / switch begin) reserves ticket N and notes, in the same
 //      synchronous stretch, the highest number admitted (`coverMark`); the page's reply covers every report after that number plus

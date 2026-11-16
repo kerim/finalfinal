@@ -9,8 +9,8 @@
 // `structuralSwapEditorFirst(opId, direction, payload)` is that turn. In order:
 //   (0) the boundary hygiene every structural op performs (`closeEditingPopupsAndClearBoundaryState`, `cancelPendingInsertions`);
 //   (a) flush the 100 ms detection debounce, so an edit typed a moment ago is a pending change now;
-//   (b) consume everything pending (`getBlockChanges`, block-sync-plugin's own: the bridge's `getBlockChanges` that Swift's polls call
-//       holds the typing back while a press is latched) as the batch Swift applies BEFORE the job. It is taken FIRST and in this very
+//   (b) consume everything pending (`getBlockChanges`, block-sync-plugin's own: it takes the pending maps even while the page's reports
+//       hold the typing back for a latched press) as the batch Swift applies BEFORE the job. It is taken FIRST and in this very
 //       turn: the re-check below and the swap can then never see a document that holds an edit the batch does not (binding
 //       requirement R2, README "Requirements the model puts on rounds 3b and 3c"). The batch comes back on EVERY path EXCEPT a
 //       swap that put the typing back (`typingReplayed`): the amended invariant is "typing is saved as batch N before any swap,

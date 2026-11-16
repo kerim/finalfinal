@@ -254,7 +254,7 @@ extension EditorViewState {
         return ((try? await page.evaluateJavaScript(script)) as? String) ?? "{\"ok\":false,\"reason\":\"no answer\"}"
     }
 
-    /// Ends the hold (the held typing goes out with the next poll), forgets any staged page and returns to `.idle`.
+    /// Ends the hold (the held typing goes out as the page's next report), forgets any staged page and returns to `.idle`.
     private func abandonCarriedSwitch(_ blockSync: BlockSyncService, token: Int, outgoing: WKWebView, why: String) async {
         DebugLog.alwaysPersisted("[TRANS] abandoned kind=switch to markdown: \(why)")
         await blockSync.endTransition(token: token, on: outgoing)

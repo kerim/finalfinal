@@ -20,8 +20,8 @@ import os
 /// rotated slots (`diagnostic.log`, `.log.1`, `.log.2`, ...) — a small, concrete total disk
 /// footprint (2 MiB × 3 files = ~6 MiB with the production defaults) instead of unbounded growth.
 ///
-/// **Thread-safety:** `DebugLog.log()` is called from arbitrary threads (the 500ms
-/// BlockSyncService polling loop, the GRDB writer queue, the main thread, etc.). This type
+/// **Thread-safety:** `DebugLog.log()` is called from arbitrary threads (the editor's
+/// report intake, the GRDB writer queue, the main thread, etc.). This type
 /// is `@unchecked Sendable`, guarded by an `NSLock` — same idiom as `WriterActivityRecorder`/
 /// `PipeDataAccumulator` in `ExportService.swift`. `isEnabled` deliberately reads the raw
 /// UserDefaults key directly (thread-safe for reads) instead of going through the `@MainActor`
@@ -74,8 +74,8 @@ final class DiagnosticLogFile: @unchecked Sendable {
         ProcessInfo.processInfo.environment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] == "1"
 
     /// Whether diagnostic logging is enabled. **Cached**, not a live UserDefaults read on every
-    /// call: `append()` below is invoked from arbitrary threads at high frequency (the 500ms
-    /// BlockSyncService polling loop, etc.), and a Time Profiler-verified investigation (see
+    /// call: `append()` below is invoked from arbitrary threads at high frequency (the editor's
+    /// report intake, etc.), and a Time Profiler-verified investigation (see
     /// `AppDelegate.flushWindowFrame`'s doc comment) found that a `UserDefaults.bool(forKey:)`
     /// read immediately after a write to the same UserDefaults domain reliably triggers a
     /// multi-second cfprefsd hang — exactly the failure mode a "just read it every time, it's

@@ -423,7 +423,7 @@ extension MilkdownEditor.Coordinator {
         guard isEditorReady, let webView else { return }
 
         lastPushedContent = markdown
-        lastPushTime = Date()  // Record push time to prevent poll feedback
+        lastPushTime = Date()  // Record push time: the page's own push right after this one is dropped (grace period in `handleContentPush`)
 
         // Use JSONEncoder to properly encode string with all special characters escaped
         // JSONEncoder handles strings directly (unlike JSONSerialization which needs Array/Dict)

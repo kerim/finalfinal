@@ -128,9 +128,9 @@ extension StructuralUndoController {
             kind: .sectionReorder, opId: opId, script: built.script, replyType: EditorFirstReorderReply.self,
             database: db, projectId: pid, trace: trace
         ) { reply in
-            // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no poll task runs inside it).
+            // What the user sees changes NOW, in the reply's own main-actor turn (synchronous: no report is taken in inside it).
             let working = showReorderInSidebar(opId: opId, plan: plan, changedLevels: changedLevels, skippedIds: Set(reply.skippedIds))
-            // Reserve the job and wait for its `onReserved` before the poll pause is lifted. The job takes over the raised
+            // Reserve the job and wait for its `onReserved` before the reports are let through again. The job takes over the raised
             // `pendingEditorFirstJobs` and brings it down when its future has resolved.
             await startEditorFirstReorderJob(
                 opId: opId, rootId: rootId, leaderIds: working.leaderIds, levels: working.levels, database: db, projectId: pid,

@@ -331,7 +331,7 @@ enum ProjectCommands {
     /// before touching anything.
     ///
     /// The title update runs AFTER the copy was opened and is non-fatal (must-fix #23): a throw out of `perform` would
-    /// run the abort routine, which restores the OLD project's editor (re-pushes its ids, restarts its polling) while
+    /// run the abort routine, which restores the OLD project's editor (re-pushes its ids, lets its reports flow again) while
     /// `DocumentManager` already has the copy open. So it is logged and the post is made regardless; at worst the copy
     /// keeps its old title until the user renames it.
     @discardableResult
@@ -456,7 +456,7 @@ enum ProjectCommands {
     ///   - `.opened`: the keyed `.projectDidOpen` is posted and the open tail runs (or, from Getting Started, the close
     ///     tail: N2). The sheet is dismissed, by the caller, ONLY now (must-fix #16).
     ///   - `.stillBroken` and `.failed`: `perform` THROWS, so the abort routine restores the editor (block ids
-    ///     re-pushed, polling restarted, services resumed, barrier released) and the project that was open stays open.
+    ///     re-pushed, reports flowing again, services resumed, barrier released) and the project that was open stays open.
     ///     The outcome goes back to the sheet, which keeps showing the updated report or the error.
     ///   - not run at all (cancelled, busy, duplicate, quit): the sheet stays; the entry already showed its notice.
     ///
@@ -665,7 +665,7 @@ extension ProjectCommands {
     }
 
     /// E2, E3 and E5: `open` runs inside `perform`; a throw is rethrown by `run` AFTER the abort routine restored the
-    /// editor (polling restarted, services resumed, barrier released), and is reported here as it always was.
+    /// editor (reports flowing again, services resumed, barrier released), and is reported here as it always was.
     ///
     /// `targetURL` is the project this command opens: the URL the user picked, Finder handed over, or the recent
     /// entry's resolved bookmark. It decides the A6 guard and is the URL the failure sheet shows (the actually

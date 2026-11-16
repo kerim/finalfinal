@@ -683,7 +683,7 @@ extension MilkdownEditor.Coordinator {
     // MARK: - Push-based content messaging
 
     /// Handle content pushed from JS via window.webkit.messageHandlers.contentChanged
-    /// This is the primary content sync path (replaces 500ms polling)
+    /// This is the view's content feed (word counts, section sync); the database is written from the page's block reports, not this push
     /// - Parameter wasUndo: P3 §4d -- forwarded to `onContentChange` so ContentView can
     ///   suppress re-correction for content that was just undone. KNOWN RESIDUAL: if any
     ///   guard below rejects this push (grace period, equality, corruption check), the

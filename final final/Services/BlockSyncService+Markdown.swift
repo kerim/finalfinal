@@ -23,9 +23,9 @@
 //  two functions above. There is deliberately NO combined `applyMarkdownBatch`: a caller that wrapped it in a Task
 //  would quietly bring the C1 defect back.
 //
-//  WHY THIS ROUTE (plan 1(b), confirmed by the reviewers). It is the editor-batch path, the one Rich Text's poll
-//  uses: per-row stamps and the project epoch refuse a batch that would land after a newer direct whole-document
-//  write (zoom and the mode-switch flush stay direct until Phase 5); the bibliography and Notes safety nets in the
+//  WHY THIS ROUTE (plan 1(b), confirmed by the reviewers). It is the editor-batch path, the one Rich Text's reports
+//  use (and the 2-second poll did, in the plan's time): per-row stamps and the project epoch refuse a batch that would land after
+//  a newer direct whole-document write (zoom and the mode-switch flush were direct until Phase 5); the bibliography and Notes safety nets in the
 //  database apply; sequences are one counter shared with system writes; `.nested` cannot be reached; and the
 //  sequence is marked fetched at reservation, so the 3 s late-expiry never applies to it.
 //
@@ -116,7 +116,7 @@ extension BlockSyncService {
     /// check that decided to write, before creating any Task.
     ///
     /// Steps: the writer's identity must be the caller's database and project (`.identityMismatch` otherwise); then
-    /// `reserveWriterTurn` (the poll's own body: retry a deferred `blockWriteEpoch` bump, read the epoch, `reserve()`);
+    /// `reserveWriterTurn` (the reports' own body: retry a deferred `blockWriteEpoch` bump, read the epoch, `reserve()`);
     /// then `noteFetched()` (a Markdown batch is "fetched" the moment it is reserved: the text is already in Swift,
     /// so the writer's 3 s late-expiry must not apply to it).
     ///
@@ -218,8 +218,8 @@ extension BlockSyncService {
     ///   `reconfigure` composes with this: before it, the mismatch rule makes this a no-op; after it, the writer exists.
     /// - Otherwise mirrors `configure`'s new-writer branch (both call `replaceWriter`): retire the old writer (`.writerReplaced`), continue the
     ///   sequence numbers, carry the DEBUG test knobs, bump the epoch (a failed bump sets `needsEpochBump`, retried by
-    ///   `reserveMarkdownTurn` and the poll). It touches neither the WebView nor polling, and not the service's own
-    ///   database/project fields (those stay `configure`'s, so Milkdown's later `configure` still sees a different
+    ///   `reserveMarkdownTurn` and the next reserved turn of any kind). It touches neither the WebView nor the editor's reports, and not
+    ///   the service's own database/project fields (those stay `configure`'s, so Milkdown's later `configure` still sees a different
     ///   project and installs its own writer).
     @discardableResult
     func ensureWriter(

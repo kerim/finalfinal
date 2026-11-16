@@ -392,7 +392,7 @@ extension CodeMirrorEditor.Coordinator {
         let anchorCount = markdown.components(separatedBy: "<!-- @sid:").count - 1
         DebugLog.log(.sync, "[CodeMirrorEditor] setContent len=\(markdown.count) anchorCount=\(anchorCount)")
         lastPushedContent = markdown
-        lastPushTime = Date()  // Record push time to prevent poll feedback
+        lastPushTime = Date()  // Record push time: the page's own push right after this one is dropped (grace period in `handleContentPush`)
         // Phase 4a: Swift is putting text into the editor, so the Markdown per-block writer's baseline (what the last write
         // says the stored rows look like) no longer describes what the editor shows; its next fire compares with the stored
         // rows. This is the one function every Swift-side push reaches (`updateSourceContentIfNeeded`, the direct
@@ -589,7 +589,7 @@ extension CodeMirrorEditor.Coordinator {
             return
         }
 
-        // Grace period: 150ms for push-based flow (reduced from 300ms polling)
+        // Grace period: 150ms for the push-based flow
         let timeSincePush = Date().timeIntervalSince(self.lastPushTime)
         if timeSincePush < 0.15 && content != self.lastPushedContent {
             self.onContentPushDropped?()
