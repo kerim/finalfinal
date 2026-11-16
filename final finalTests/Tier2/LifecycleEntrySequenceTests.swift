@@ -115,7 +115,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.close), "the guard path ran")
             #expect(outcome == .cancelled)
             #expect(performed == 0, "perform must never be called for a cancelled lifecycle")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCloseCancelled().message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.close).message)
             #expect(toasts.current?.style == .warning)
             #expect(!rig.log.contains { $0.hasPrefix("tail:") }, "no tail may run; log: \(rig.log)")
             #expect(rig.editorState.activeLifecycle == nil)
@@ -146,7 +146,7 @@ extension LifecycleEntryStatic {
 
             #expect(rig.entryEvents.first == .armed(.projectSwitch))
             #expect(performed == 0)
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.openProject).message)
         }
 
         // MARK: - Writer nil (#2)

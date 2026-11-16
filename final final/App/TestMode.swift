@@ -754,3 +754,34 @@ extension TestMode {
         DebugLog.alwaysPersisted("[TRANS-HOLD] \(label) hold ends")
     }
 }
+
+// MARK: - Lifecycle save hold (t-eb07cd67)
+
+// An extension, so the enum body above stays under the project's type-body-length limit.
+extension TestMode {
+    /// UI-test-only (t-eb07cd67): `FF_UI_TESTING_LIFECYCLE_SAVE_HOLD_MS=<n>` keeps the FIRST close (Cmd-W, the red button, File > Close
+    /// Project) of this launch saving for `n` milliseconds before its save sequence starts (`LifecycleEntry.execute`), so a test can be
+    /// certain its next command (Open Recent, say) arrives while the close is still saving and is therefore HELD. A plain suspension
+    /// (nothing is locked); only a close is held, and only the first one, so the close the test ends with runs free. `nil` (unset,
+    /// unparseable, <= 0, or `isUITesting` false) means no hold. Same `isUITesting &&` guard as every sibling flag here.
+    static var uiTestingLifecycleSaveHoldMs: Int? {
+        guard isUITesting,
+              let raw = ProcessInfo.processInfo.environment["FF_UI_TESTING_LIFECYCLE_SAVE_HOLD_MS"],
+              let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// Whether `holdLifecycleSave()` has already held a close in this launch.
+    private static var lifecycleSaveHoldGranted = false
+
+    /// Waits `uiTestingLifecycleSaveHoldMs` milliseconds (a plain suspension) for the first close of this launch; returns at once
+    /// otherwise (every normal launch and every non-UI-test run: the first guard). When the hold begins it persists one
+    /// `[LIFECYCLE-SAVE-HOLD]` line, the marker the e2e test reads to prove its next command came in during the hold.
+    @MainActor
+    static func holdLifecycleSave() async {
+        guard let milliseconds = uiTestingLifecycleSaveHoldMs, !lifecycleSaveHoldGranted else { return }
+        lifecycleSaveHoldGranted = true
+        DebugLog.alwaysPersisted("[LIFECYCLE-SAVE-HOLD] the first close holds its save for \(milliseconds) milliseconds")
+        try? await Task.sleep(for: .milliseconds(milliseconds))
+    }
+}

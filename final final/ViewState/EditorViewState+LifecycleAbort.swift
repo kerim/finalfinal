@@ -41,10 +41,11 @@ import Foundation
 
 /// Why a lifecycle left without reaching a tail.
 enum LifecycleAbortReason {
-    /// A close or switch gave up at step 1: a section operation never cleared inside its bound.
-    case sectionOperationRunning
-    /// A close or switch could not take the writer barrier at step 8 (the writer refused it).
-    case barrierRefused
+    /// A close or switch gave up at step 1: a section operation never cleared inside its bound. `command` is what the user asked
+    /// for (t-eb07cd67): the notice names it (`ToastFactory.lifecycleCancelled`).
+    case sectionOperationRunning(command: LifecycleCommand)
+    /// A close or switch could not take the writer barrier at step 8 (the writer refused it). `command` as above.
+    case barrierRefused(command: LifecycleCommand)
     /// `perform` threw. The error itself is re-reported by `LifecycleEntry.run` (it rethrows it), exactly as
     /// before the entry existed; the abort shows no notice of its own.
     case performFailed(Error)
@@ -129,7 +130,7 @@ extension EditorViewState {
 
         // 8.
         lifecycleFlushDoneFor = nil
-        showAbortNotice(reason, token: token)
+        showAbortNotice(reason)
     }
 
     // MARK: Steps 4 and 5
@@ -170,15 +171,14 @@ extension EditorViewState {
 
     // MARK: Step 8
 
-    /// The cancel notice, through this window's toast center (item 38): a close that gave up on a section
-    /// operation, any other open or switch that did, or a refused barrier. A failed `perform` shows nothing
-    /// here: `run` rethrows it and the caller reports it.
-    private func showAbortNotice(_ reason: LifecycleAbortReason, token: LifecycleToken) {
+    /// The cancel notice, through this window's toast center (item 38): a close or open that gave up on a section operation, or on a
+    /// writer that refused the barrier (both mean an earlier change did not finish), naming the command that did not happen
+    /// (`ToastFactory.lifecycleCancelled`, t-eb07cd67). A failed `perform` shows nothing here: `run` rethrows it and the caller
+    /// reports it.
+    private func showAbortNotice(_ reason: LifecycleAbortReason) {
         switch reason {
-        case .sectionOperationRunning:
-            toastCenter.show(token.kind == .close ? ToastFactory.lifecycleCloseCancelled() : ToastFactory.lifecycleCancelled())
-        case .barrierRefused:
-            toastCenter.show(ToastFactory.lifecycleBusy())
+        case .sectionOperationRunning(let command), .barrierRefused(let command):
+            toastCenter.show(ToastFactory.lifecycleCancelled(command))
         case .performFailed:
             break
         }
