@@ -36,6 +36,7 @@ final class AnnotationDeleteE2ETests: XCTestCase {
         continueAfterFailure = false
         try TestFixtureHelper.setupFixture(from: self)
         app = XCUIApplication.targetApp()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
     }
 
     override func tearDownWithError() throws {
@@ -426,14 +427,8 @@ extension AnnotationDeleteE2ETests {
     func switchToSourceMode() {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
-        var toggled = false
-        for _ in 1...5 {
-            if editorMode.label == "Markdown" { toggled = true; break }
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) { toggled = true; break }
-        }
-        XCTAssertTrue(toggled, "Editor-mode button should report Markdown after retrying the toggle keystroke")
+        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 2)
+        XCTAssertTrue(toggle.flipped, "Editor-mode button should report Markdown after retrying the toggle keystroke")
         // The status-bar label flip (already awaited above via waitForLabel) is synchronous,
         // but the actual WYSIWYG->CodeMirror view swap runs through an async callback chain
         // that can lag behind it; nothing this file queries exposes that mount completion as a

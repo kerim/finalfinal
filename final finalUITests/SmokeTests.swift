@@ -91,6 +91,7 @@ final class EditorSmokeTests: XCTestCase {
         // still-open file handle from that leftover process.
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
 
         // Copy committed fixture to /tmp/ for the app to open
         try TestFixtureHelper.setupFixture(from: self)
@@ -126,33 +127,27 @@ final class EditorSmokeTests: XCTestCase {
         // Verify the button is interactive
         XCTAssertTrue(editorMode.isHittable, "Editor mode button should be hittable")
 
+        // Positive control for the source-editor evidence below: in Rich Text the crash-safe text check must NOT find the raw
+        // markdown line, or finding it after the toggle would prove nothing (bounded: it answers false after the 2 s).
+        XCTAssertFalse(
+            app.waitForEditorText("# Test Document", timeout: 2),
+            "TEST-SETUP: the editor already shows the raw markdown '# Test Document' before the toggle, so the source-editor " +
+            "evidence after the toggle would prove nothing"
+        )
+
         // Drive the toggle for real, and prove the CodeMirror source editor
         // actually loaded -- not just that the button's label flipped.
         //
         // Cmd+/ can drop if the app isn't reliably foreground when it's sent
-        // (see `activateAndWaitForForeground`'s doc comment), so retry the
-        // keystroke itself -- not just the wait -- until the label actually
-        // moves. This mirrors the retry-the-action-not-just-the-wait pattern
-        // already proven in
-        // `E2ESectionReconcilerPseudoSectionTests.selectAllAndPasteReplacement`.
-        // Retrying is safe here specifically because we only re-send Cmd+/
-        // while the label still reads "Rich Text" -- once it flips we stop,
-        // since Cmd+/ is a toggle and a stray extra press would flip it
-        // straight back to Rich Text.
-        var toggleRegistered = false
-        for _ in 1...5 {
-            if editorMode.label == "Markdown" {
-                toggleRegistered = true
-                break
-            }
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== 'Markdown'", timeout: 2) {
-                toggleRegistered = true
-                break
-            }
-        }
-        XCTAssertTrue(toggleRegistered, "Editor-mode button should report Markdown after retrying the toggle keystroke")
+        // (see `activateAndWaitForForeground`'s doc comment), so the helper
+        // re-sends it -- but only a press the app did NOT receive: the label
+        // flips late (after the incoming page is ready) and the app holds a
+        // second toggle and applies it afterwards, so resending a press the app
+        // already has would flip it straight back. Receipt is read from the
+        // app's own "[TRANS] toggle received" log line
+        // (`toggleEditorModeUntilReceived`, UITestHelpers.swift).
+        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 2)
+        XCTAssertTrue(toggle.flipped, "Editor-mode button should report Markdown after retrying the toggle keystroke")
 
         // The label flips synchronously with the toggle request, but the
         // actual WYSIWYG->CodeMirror view swap runs through an async
@@ -171,12 +166,8 @@ final class EditorSmokeTests: XCTestCase {
         // element whose label or value contains "# Test Document", so its
         // appearance is proof the source editor actually loaded -- not just
         // that the status-bar button re-labeled itself.
-        let editorArea = app.groups["editor-area"]
-        let sourceEvidence = editorArea.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS '# Test Document' OR value CONTAINS '# Test Document'")
-        ).firstMatch
         XCTAssertTrue(
-            sourceEvidence.waitForExistence(timeout: 10),
+            app.waitForEditorText("# Test Document", timeout: 10),
             "CodeMirror source editor should render the raw markdown after toggling, not just flip the status-bar label"
         )
 

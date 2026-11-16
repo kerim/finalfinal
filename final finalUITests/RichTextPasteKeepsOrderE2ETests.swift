@@ -86,6 +86,7 @@ final class RichTextPasteKeepsOrderE2ETests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
         try TestFixtureHelper.setupFixture(from: self)
         FixtureDatabase.seedMarkdown(fixturePath: TestFixtureHelper.fixturePath, markdown: Self.seedMarkdown)
         // macOS inline predictive text can swallow keystrokes (e2e-verify, "Runner environment").
@@ -260,24 +261,13 @@ extension RichTextPasteKeepsOrderE2ETests {
     }
 
     /// Cmd-/ until the editor-mode button reports `target` ("Markdown" or "Rich Text"). The keystroke can drop when the app is not
-    /// reliably in the foreground at the instant it is sent (proven pattern in EditorModeSwitchUndoE2ETests): re-activate and retry.
+    /// reliably in the foreground at the instant it is sent (proven pattern in EditorModeSwitchUndoE2ETests): re-activate and retry, but
+    /// never resend a press the app already received (`toggleEditorModeUntilReceived`, UITestHelpers.swift).
     func switchMode(to target: String) throws {
         let editorMode = app.buttons["status-bar-editor-mode"]
         try require(editorMode.waitForExistence(timeout: 10), "TEST-SETUP: the editor-mode button did not appear")
-        var registered = false
-        for _ in 1...5 {
-            if editorMode.label == target {
-                registered = true
-                break
-            }
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== '\(target)'", timeout: 5) {
-                registered = true
-                break
-            }
-        }
-        try require(registered, "Cmd-/ did not switch the editor to \(target) (the mode button still reads \"\(editorMode.label)\")")
+        let toggle = toggleEditorModeUntilReceived(app, to: target, maxPresses: 5, receiptWindow: 5)
+        try require(toggle.flipped, "Cmd-/ did not switch the editor to \(target) (the mode button still reads \"\(editorMode.label)\")")
     }
 
     /// Cmd-Q, then the app is gone. Fails the test if it is still running after the wait.

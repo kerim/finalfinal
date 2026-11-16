@@ -77,6 +77,7 @@ final class FootnoteCursorPlacementE2ETests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
         try TestFixtureHelper.setupFixture(from: self)
     }
 
@@ -591,14 +592,8 @@ extension FootnoteCursorPlacementE2ETests {
     private func toggleEditorMode(to expectedLabel: String, file: StaticString = #filePath, line: UInt = #line) {
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear", file: file, line: line)
-        var toggled = false
-        for _ in 1...5 {
-            if editorMode.label == expectedLabel { toggled = true; break }
-            app.activateAndWaitForForeground()
-            app.typeKey("/", modifierFlags: .command)
-            if editorMode.waitForLabel("== '\(expectedLabel)'", timeout: 2) { toggled = true; break }
-        }
-        XCTAssertTrue(toggled, "Editor-mode button should report \(expectedLabel) after retrying the toggle keystroke", file: file, line: line)
+        let toggle = toggleEditorModeUntilReceived(app, to: expectedLabel, maxPresses: 5, receiptWindow: 2)
+        XCTAssertTrue(toggle.flipped, "Editor-mode button should report \(expectedLabel) after retrying the toggle keystroke", file: file, line: line)
         // KNOWN RISK (documented precedent: `E2ESectionReconcilerPseudoSectionTests`'s Source
         // Mode toggle): the status-bar label flips before the async WYSIWYG<->CodeMirror view
         // swap necessarily finishes. Generous settle as mitigation, not a guarantee, matching

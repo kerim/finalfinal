@@ -372,12 +372,12 @@ extension EditorModeSwitchUndoE2ETests {
         let editorMode = app.buttons["status-bar-editor-mode"]
 
         func callAndWatch(_ step: String, expecting label: String, requireHold: Bool, toggle: () -> Void) {
-            let before = Self.diagnosticLogSizesNow()
+            let before = DiagnosticLogReader.sizesNow()
             toggle()
             // Polls for a CHANGE, bounded: a held second press shows itself as the label leaving `label`; the pass case waits it out.
             let flippedAway = editorMode.waitForLabelNot("== '\(label)'", timeout: Self.heldSwitchSettle)
-            let logText = Self.diagnosticLogText(since: before)
-            let received = Self.toggleReceivedCount(since: before)
+            let logText = DiagnosticLogReader.text(since: before)
+            let received = DiagnosticLogReader.toggleReceivedCount(since: before)
             let held = logText.contains("hold begins for \(Self.heldSwitchMs) ms")
             let attachment = XCTAttachment(string: logText)
             attachment.name = "diagnostic-log-\(step)-\(held ? "held" : "not-held")"
@@ -411,50 +411,5 @@ extension EditorModeSwitchUndoE2ETests {
 
         callAndWatch("3 Rich Text to Markdown", expecting: "Markdown", requireHold: false, toggle: toggleWysiwygToSource)
         waitForSourceEditorMounted()
-    }
-
-    // MARK: Diagnostic-log readers for the toggle-receipt checks
-
-    /// The line the app persists at its two press sites (the Cmd-/ menu command, `ViewCommands.swift`, and the status-bar badge click,
-    /// `StatusBar.swift`) the moment a press reaches it, before the caret-save round trip and any gate.
-    static let toggleReceivedMarker = "[TRANS] toggle received"
-
-    /// Each distinct diagnostic-log file's size right now. The helpers' candidate list names one file through several spellings, so
-    /// files are deduplicated by resolved path: a count over the text must not see the same line two or three times.
-    static func diagnosticLogSizesNow() -> [URL: UInt64] {
-        var sizes: [URL: UInt64] = [:]
-        var seenPaths = Set<String>()
-        for url in diagnosticLogCandidateURLs() {
-            guard seenPaths.insert(url.resolvingSymlinksInPath().standardizedFileURL.path).inserted else { continue }
-            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
-                .flatMap { $0 }?.uint64Value ?? 0
-            sizes[url] = size
-        }
-        return sizes
-    }
-
-    /// The log text appended since `offsets` (from `diagnosticLogSizesNow()`), one block per file. Reads the files only, never
-    /// truncates the real, shared log, and keeps its own offsets so it never disturbs the shared checkpoint the hierarchy checks use.
-    /// A file now SMALLER than its stored offset was rotated (or truncated) since: everything in it is new, so it is read from 0.
-    /// Decoded with `String(decoding:as:)`, which turns a bad byte into U+FFFD instead of dropping the whole chunk the way
-    /// `String(data:encoding:)` does (a dropped chunk could hide the very line a check is looking for).
-    static func diagnosticLogText(since offsets: [URL: UInt64]) -> String {
-        offsets.keys.sorted { $0.path < $1.path }.compactMap { url -> String? in
-            guard let handle = FileHandle(forReadingAtPath: url.path) else { return nil }
-            defer { try? handle.close() }
-            let stored = offsets[url] ?? 0
-            let size = (try? handle.seekToEnd()) ?? 0
-            try? handle.seek(toOffset: size < stored ? 0 : stored)
-            let data = handle.readDataToEndOfFile()
-            guard !data.isEmpty else { return nil }
-            // The lossy decode is the point (a bad byte must not drop the chunk), which is what the rule below would forbid.
-            // swiftlint:disable:next optional_data_string_conversion
-            return String(decoding: data, as: UTF8.self)
-        }.joined(separator: "\n---\n")
-    }
-
-    /// How many mode toggles the app has received since `offsets`.
-    static func toggleReceivedCount(since offsets: [URL: UInt64]) -> Int {
-        diagnosticLogText(since: offsets).components(separatedBy: toggleReceivedMarker).count - 1
     }
 }
