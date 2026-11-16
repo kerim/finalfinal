@@ -13,7 +13,7 @@
 //      not waited on: it does not reliably fire while the test host sits in a `Task.sleep` loop, see
 //      `QuitFlushDuplicateInsertTests`)
 //    - a refused barrier (FB still queued behind a foreign one) waits for FB only within the abort's bound, then
-//      restarts polling and shows the cancel notice naming the command
+//      restarts polling and shows the busy notice
 //    - review row C8: a push that never returns cannot hold the abort past its bound, wedge the token, or stop a
 //      second close being accepted
 //    - #18: a quit that JOINED the lifecycle keeps its token and its barrier: neither the abort (stand-down) nor
@@ -32,23 +32,6 @@ import Testing
 @testable import final_final
 
 private struct AbortBoom: Error, Equatable {}
-
-/// Counts the `perform` calls of the commands in the stuck-writer test (a plain captured `var` cannot be mutated from a `Task`).
-private final class StuckPerformCounts: @unchecked Sendable {
-    var close = 0
-    var open = 0
-    var third = 0
-}
-
-/// The outcome of the held open in the stuck-writer test, recorded the moment it returns (a bounded wait reads it).
-private final class HeldOpenOutcome: @unchecked Sendable {
-    var value: LifecycleRunOutcome?
-}
-
-/// The toast center's own log lines (`ToastCenter.logSink`), in order: a record of every notice that was shown, not only the last.
-private final class ShownToastLines: @unchecked Sendable {
-    var lines: [String] = []
-}
 
 extension LifecycleEntryStatic {
     @Suite("LifecycleEntry abort routine — Tier 2 (t-94369a83 3a-1b C5a)", .serialized, .timeLimit(.minutes(1)))
@@ -254,7 +237,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.close), "the guard path ran")
             #expect(outcome == .cancelled)
             #expect(performed == 0, "a refused barrier cancels: perform is not called")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.close).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleBusy().message)
             #expect(rig.pushes.isEmpty, "FB had not settled when the abort gave up waiting: nothing is known to need a re-push")
             #expect(await rig.reportHoldReleased(), "the reports flow again whatever FB is doing")
             #expect(rig.editorState.activeLifecycle == nil)
@@ -393,91 +376,5 @@ extension LifecycleEntryStatic {
             rig.editorState.releaseLifecycleBarrier()
             rig.editorState.clearLifecycle(quitToken.id)
         }
-    }
-}
-
-// t-eb07cd67's test is in an extension, so the struct body stays under the project's type-body-length limit.
-extension LifecycleEntryStatic.LifecycleAbortTests {
-
-    @Test("""
-        t-eb07cd67: a command HELD behind a close that gives up on a stuck change still runs afterwards, starts its own \
-        save, and (the change is still stuck) gives up with its OWN notice; nothing runs, nothing is lost, the \
-        turn is free afterwards, and once the change lands a later command goes through
-        """)
-    func aHeldCommandRunsAfterAStuckCloseGivesUp_andCanGiveUpItself() async throws {
-        let rig = try LifecycleFlushHarness()
-        prime(rig)
-        rig.recordPushes()
-        let toasts = ToastCenter()
-        let shown = ShownToastLines()
-        toasts.logSink = { shown.lines.append($0) }
-        rig.editorState.toastCenter = toasts
-        let writer = try #require(rig.sync.testWriterHandle)
-        let foreign = try #require(writer.enqueueBarrier(), "precondition: another barrier is open")
-        let counts = StuckPerformCounts()
-        var closeOutcome: LifecycleRunOutcome?
-        var openOutcome: LifecycleRunOutcome?
-        var thirdOutcome: LifecycleRunOutcome?
-        var events: [LifecycleEntry.Event] = []
-
-        try await rig.withEntry(bounds: LifecycleBounds.production.scaled(0.25)) {
-            let closing = Task { @MainActor in
-                try await LifecycleEntry.run(kind: .close, command: .close) {
-                    counts.close += 1
-                    return .close
-                }
-            }
-            await LifecycleEntryHarness.waitUntil("the close to arm") { rig.editorState.activeLifecycle != nil }
-            // Pressed while the close is still saving: held, not refused.
-            let openBox = HeldOpenOutcome()
-            let opening = Task { @MainActor in
-                let outcome = try await LifecycleEntry.run(kind: .projectSwitch, command: .openProject) {
-                    counts.open += 1
-                    return .open
-                }
-                openBox.value = outcome
-                return outcome
-            }
-            closeOutcome = try await closing.value
-            // Bounded: a missing hand-on would leave the held open waiting forever, and `opening.value` would hang the run.
-            let openFinished = await waitUntil(seconds: 8) { openBox.value != nil }
-            #expect(openFinished, "the held open ran after the close gave up (and gave up itself)")
-            guard openFinished else {
-                foreign.release()
-                return
-            }
-            openOutcome = openBox.value
-            _ = try await opening.value
-            events = LifecycleEntry.testEvents
-
-            // Let FB through, and make sure it lands (never lost); then the turn and the writer are free for a later command.
-            foreign.release()
-            let landed = await waitUntil(seconds: 3) { rig.sync.testWriterLedger.lifecycleWholeDocumentApplied >= 1 }
-            #expect(landed, "FB lands once the foreign barrier leaves")
-            thirdOutcome = try await LifecycleEntry.run(kind: .projectSwitch, command: .openProject) {
-                counts.third += 1
-                return .open
-            }
-        }
-
-        #expect(events.contains(.held(requested: .projectSwitch, behind: .close)), "the open was held, not refused")
-        #expect(events.contains(.admitted(.projectSwitch)), "and admitted when the close ended; events: \(events)")
-        #expect(closeOutcome == .cancelled)
-        #expect(counts.close == 0, "the stuck close never performed")
-        #expect(openOutcome == .cancelled, "the held open ran its own save, found the change still stuck, and gave up")
-        #expect(counts.open == 0)
-        #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.openProject).message)
-        let closeNotice = ToastFactory.lifecycleCancelled(.close).message
-        let openNotice = ToastFactory.lifecycleCancelled(.openProject).message
-        let shownMessages = shown.lines.filter { $0.hasPrefix("[toast] show ") }
-        let closeIndex = shownMessages.firstIndex { $0.contains(closeNotice) }
-        let openIndex = shownMessages.firstIndex { $0.contains(openNotice) }
-        #expect(closeIndex != nil && openIndex != nil, "both notices were shown; lines: \(shownMessages)")
-        if let closeIndex, let openIndex {
-            #expect(closeIndex < openIndex, "the close's notice first, then the open's")
-        }
-        #expect(rig.editorState.activeLifecycle == nil)
-        #expect(thirdOutcome == .performed, "the turn was free again and the change had landed")
-        #expect(counts.third == 1)
     }
 }

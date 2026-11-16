@@ -88,7 +88,8 @@ final class SwitchKeyResendFilter {
         let onOutgoing = outgoing.map { responder?.isDescendant(of: $0) == true } ?? false
         if let first = seen.first(where: { $0.timestamp == timestamp && $0.keyCode == keyCode }) {
             guard first.toOutgoing, !onOutgoing else { return false }
-            DebugLog.alwaysPersisted("[TRANS] dropped the resend of a key typed in the outgoing page at the flip (code=\(keyCode))")
+            // t-561c4083: no key code in the log (a run of key codes reads back what was typed).
+            DebugLog.alwaysPersisted("[TRANS] dropped the resend of a key typed in the outgoing page at the flip")
             return true
         }
         seen.append(KeySighting(timestamp: timestamp, keyCode: keyCode, toOutgoing: onOutgoing))

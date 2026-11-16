@@ -939,7 +939,7 @@ function applyDetectedOps(state: BlockSyncPluginState, ops: readonly BlockOp[]):
       const insert = state.pendingInserts.get(id);
       syncLog(
         'BlockSync:detect',
-        `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} "${(insert?.textContent ?? '').slice(0, 40)}"`
+        `UPDATE-merged-into-INSERT id=${id.slice(0, 13)} len=${(insert?.textContent ?? '').length}`
       );
     },
     (id) => syncLog('BlockSync:detect', `INSERT-cancelled-by-DELETE id=${id.slice(0, 13)}`)
@@ -986,7 +986,7 @@ export function computeChangeOps(
       ops.push({ kind: 'delete', id });
       syncLog(
         'BlockSync:detect',
-        `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} "${oldBlock.textContent.slice(0, 40)}"`
+        `DELETE id=${id.slice(0, 8)} type=${oldBlock.blockType} len=${oldBlock.textContent.length}`
       );
     } else if (oldBlock.node === newBlock.node && oldBlock.listRunSignature === newBlock.listRunSignature) {
       // Fast path: same ProseMirror node reference — nothing changed. (Not for a list whose run of lists before it changed: its
@@ -1024,7 +1024,7 @@ export function computeChangeOps(
             : `type=${newBlock.blockType}`;
         syncLog(
           'BlockSync:detect',
-          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} "${newBlock.textContent.slice(0, 40)}"`
+          `UPDATE id=${id.slice(0, 8)} [${changes.join(',')}] ${typeStr} len=${newBlock.textContent.length}`
         );
       }
     }
@@ -1064,7 +1064,7 @@ export function computeChangeOps(
       });
       syncLog(
         'BlockSync:detect',
-        `INSERT tempId=${id.slice(0, 13)} type=${newBlock.blockType} L${newBlock.headingLevel ?? '-'} after=${afterBlockId?.slice(0, 8) ?? 'none'} "${newBlock.textContent.slice(0, 40)}"`
+        `INSERT tempId=${id.slice(0, 13)} type=${newBlock.blockType} L${newBlock.headingLevel ?? '-'} after=${afterBlockId?.slice(0, 8) ?? 'none'} len=${newBlock.textContent.length}`
       );
     }
   }

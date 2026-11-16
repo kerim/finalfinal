@@ -78,9 +78,9 @@ struct ProjectOpenErrorStateApplyTests {
         #expect(shownURL == url)
     }
 
-    @Test("not run (cancelled, held then replaced by a later command, duplicate, a quit took over): the sheet is left exactly as it was")
+    @Test("not run (cancelled, busy, duplicate, a quit took over): the sheet is left exactly as it was")
     func notRunLeavesTheSheetAlone() {
-        for ran in [LifecycleRunOutcome.cancelled, .superseded, .duplicate, .skippedForQuit] {
+        for ran in [LifecycleRunOutcome.cancelled, .refusedBusy(active: .projectSwitch), .duplicate, .skippedForQuit] {
             let (state, id) = stateShowingTheBrokenProject()
 
             state.apply(.notRun(ran), expectedId: id, url: url, blockedOpen: true)

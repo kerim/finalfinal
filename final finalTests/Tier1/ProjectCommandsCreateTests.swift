@@ -166,10 +166,10 @@ extension LifecycleEntryStatic {
         // MARK: - Busy, duplicate and a joined quit
 
         @Test("""
-            a New Project pressed while a close is saving is HELD and created after the close (t-eb07cd67), with no refusal \
-            notice; a second Import to a DIFFERENT file while an Import runs is held too and runs after it
+            busy and duplicate are handled, not raised: a New Project while a close is saving is refused with the busy notice \
+            (perform never runs); a repeated Import while an Import runs is silent
             """)
-        func aCommandDuringACloseOrAnImportIsHeldThenRuns() async throws {
+        func busyAndDuplicateNeverReachPerform() async throws {
             try await Harness.withWorld { world in
                 Harness.mount(world)
                 let gate = Harness.Gate()
@@ -182,23 +182,16 @@ extension LifecycleEntryStatic {
                 await Harness.waitUntil("the close to arm") { world.editorState.activeLifecycle != nil }
                 let recorder = ProjectCommandRecorder()
 
-                let creating = Task { @MainActor in
-                    await ProjectCommands.newProject(at: url, title: "C", recorder.environment)
-                }
-                await Harness.waitUntil("the New Project to be held") {
-                    LifecycleEntry.testEvents.contains(.held(requested: .projectSwitch, behind: .close))
-                }
-                #expect(recorder.order.isEmpty, "perform waits: nothing created while the close is saving")
-                #expect(world.toasts.current == nil, "no refusal notice")
+                let busy = await ProjectCommands.newProject(at: url, title: "C", recorder.environment)
+                #expect(busy == .lifecycle(.refusedBusy(active: .close)))
+                #expect(world.toasts.current?.message == ToastFactory.lifecycleBusy().message)
+                #expect(recorder.order.isEmpty, "perform never ran: nothing created")
 
                 gate.open()
                 _ = try await first.value
-                #expect(await creating.value == .lifecycle(.performed))
-                #expect(recorder.createdProjects.map(\.title) == ["C"], "created once the close had finished")
-                #expect(world.probe.log == ["close:true", "create:nil"], "the close tail, then the create tail")
                 #expect(LifecycleEntry.current == nil)
 
-                // An Import is running; an Import of a DIFFERENT file is held and runs after it (it used to be dropped silently).
+                // A second Import while a first is parked is a repeat of the SAME kind (a switch): silent.
                 let parked = Harness.Gate()
                 let importing = Task { @MainActor in
                     try await LifecycleEntry.run(kind: .projectSwitch) {
@@ -206,22 +199,14 @@ extension LifecycleEntryStatic {
                         return .create(content: nil)
                     }
                 }
-                await Harness.waitUntil("the first import to arm") { world.editorState.activeLifecycle?.kind == .projectSwitch }
-                let otherURL = URL(fileURLWithPath: "/tmp/command-create-other.ff")
-                let secondRecorder = ProjectCommandRecorder()
-                let second = Task { @MainActor in
-                    await ProjectCommands.importMarkdown(imported, to: otherURL, secondRecorder.environment)
-                }
-                await Harness.waitUntil("the second import to be held") {
-                    LifecycleEntry.testEvents.contains(.held(requested: .projectSwitch, behind: .projectSwitch))
-                }
-                #expect(secondRecorder.order.isEmpty, "the second import waits for the first")
-                #expect(world.toasts.current == nil)
+                await Harness.waitUntil("the switch to arm") { world.editorState.activeLifecycle?.kind == .projectSwitch }
+                world.toasts.dismissCurrent()
+                let duplicate = await ProjectCommands.importMarkdown(imported, to: url, recorder.environment)
+                #expect(duplicate == .lifecycle(.duplicate))
+                #expect(world.toasts.current == nil, "a repeat says nothing")
+                #expect(recorder.order.isEmpty, "perform never ran for the repeat")
                 parked.open()
                 _ = try await importing.value
-                #expect(await second.value == .lifecycle(.performed))
-                #expect(secondRecorder.createdProjects.map(\.url) == [otherURL], "the held import ran after the first")
-                #expect(secondRecorder.order == ["newProject", "saveContent", "post:projectDidCreate"], "order: \(secondRecorder.order)")
             }
         }
 

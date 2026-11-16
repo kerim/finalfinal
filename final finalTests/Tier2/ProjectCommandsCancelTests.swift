@@ -13,7 +13,7 @@
 //
 //  Each cancelled command also shows the section 8 string for ITS kind (a close has its own wording, B17) through
 //  the editor state's own toast center (item 38), leaves nothing armed or held, and a retry after the operation
-//  cleared goes through.
+//  cleared goes through ("Try again in a moment").
 //
 
 import Foundation
@@ -58,7 +58,7 @@ extension LifecycleEntryStatic {
             #expect(result == .lifecycle(.cancelled))
             #expect(recorder.closes == 0, "perform never called: the project must not be closed")
             #expect(recorder.posts.isEmpty, "perform never called: no .projectDidClose post")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.close).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCloseCancelled().message)
             #expect(toasts.current?.style == .warning)
             #expect(!rig.log.contains { $0.hasPrefix("tail:") }, "no tail may run; log: \(rig.log)")
             #expect(rig.editorState.activeLifecycle == nil)
@@ -84,7 +84,7 @@ extension LifecycleEntryStatic {
             #expect(recorder.openedURLs.isEmpty, "perform never called: no project was opened")
             #expect(recorder.posts.isEmpty)
             #expect(recorder.reported.isEmpty, "a cancel is not an open failure: no error sheet")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.openProject).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
             #expect(!rig.log.contains { $0.hasPrefix("tail:") }, "log: \(rig.log)")
             #expect(rig.editorState.activeLifecycle == nil)
         }
@@ -105,10 +105,10 @@ extension LifecycleEntryStatic {
             #expect(recorder.openedRecentIds.isEmpty, "perform never called")
             #expect(recorder.posts.isEmpty)
             #expect(recorder.reported.isEmpty)
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.openProject).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
         }
 
-        @Test("U5: a retry after the section operation cleared goes through")
+        @Test("U5: a retry after the section operation cleared goes through (Try again in a moment)")
         func retryAfterTheOperationClearedCloses() async throws {
             let (rig, toasts) = try rigWithRunningOperation()
             defer { rig.controller.testSetIsPerforming(false) }

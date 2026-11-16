@@ -83,43 +83,6 @@ extension LifecycleEntryStatic {
             #expect(rig.sync.testWriterLedger.lifecycleWholeDocumentApplied == 1, "one save, however many Cmd-Q")
         }
 
-        // MARK: - t-eb07cd67: a command after the quit's own sequence started
-
-        @Test("""
-            t-eb07cd67: once the quit's OWN sequence has started (nothing was running to join), an Open pressed right \
-            behind the Cmd-Q does nothing: it returns .skippedForQuit, opens and posts nothing, and shows no notice
-            """)
-        func aCommandAfterTheQuitsOwnSequenceStartsDoesNothing() async throws {
-            let rig = try LifecycleTailRig(mountedEditor: true)
-            defer { rig.shutdown() }
-            let delegate = makeDelegate(rig)
-            let replies = QuitReplies()
-            let recorder = ProjectCommandRecorder()
-            let toasts = ToastCenter()
-            rig.editorState.toastCenter = toasts
-            var result: ProjectCommandResult?
-
-            await rig.withEntry(bounds: LifecycleBounds.production.scaled(0.25)) {
-                #expect(LifecycleEntry.current == nil, "precondition: nothing is running, so the quit takes its own path")
-                #expect(delegate.runQuitSequence(reply: { replies.values.append($0) }) == .terminateLater)
-                #expect(rig.editorState.activeLifecycle?.kind == .quit)
-                result = await ProjectCommands.open(url: URL(fileURLWithPath: "/tmp/after-the-quit.ff"), recorder.environment)
-                await delegate.quitTask?.value
-            }
-
-            #expect(result == .lifecycle(.skippedForQuit))
-            // Only check 4's `noteQuitStarted()` makes the turn drop the request and record this event: without it the command
-            // reaches `armLifecycle`, whose refusal ends in the same `.skippedForQuit` result but records no `.droppedForQuit`.
-            #expect(
-                rig.entryEvents.contains(.droppedForQuit(.projectSwitch)),
-                "the quit's own sequence started the quit, so the command is dropped at the turn; events: \(rig.entryEvents)")
-            #expect(!rig.entryEvents.contains(.armed(.projectSwitch)), "the command never reached the guard path")
-            #expect(recorder.openedURLs.isEmpty, "nothing is opened while the app quits")
-            #expect(recorder.posts.isEmpty)
-            #expect(toasts.current == nil, "the app is quitting: no notice")
-            #expect(replies.values == [true])
-        }
-
         // MARK: - E1: a slow FB at quit
 
         @Test("""

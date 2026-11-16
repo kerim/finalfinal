@@ -445,32 +445,44 @@ enum ToastFactory {
         )
     }
 
-    // MARK: Close / Open Cancelled (t-94369a83 Phase 3a-1b, slice-3a-1b-everyday.md section 8; t-eb07cd67)
+    // MARK: Close / Open Cancelled or Refused (t-94369a83 Phase 3a-1b, slice-3a-1b-everyday.md section 8)
 
-    /// A project close or open (`LifecycleCommand`) gave up because an earlier change still had not finished when the save's time ran out
-    /// (about 12 seconds: a stuck writer, a fault, not everyday use). The project stays open and its text is on screen. One notice per
-    /// command, naming what did not happen and saying the text is safe: no "try again" and no "wait" (the app never asks the user to
-    /// time anything; a command pressed while another is saving is HELD and runs, `LifecycleEntry.withTurn`). Fades after 9s, the
-    /// same reasoning as `gettingStartedNotSaved()`: a notice like this must not camp in the app's one persistent-warning slot (a
-    /// queued Save Version / export confirmation would age past `ToastCenter.pendingSuccessCutoff` and be discarded behind it).
-    /// A repeated Cmd-W, a held command replaced by a later one, and a command pressed after Cmd-Q show nothing at all.
-    ///
-    /// The strings live here and nowhere else. Proposed wording (t-eb07cd67): the user approves or changes it before merge.
-    static func lifecycleCancelled(_ command: LifecycleCommand) -> Toast {
-        Toast(style: .warning, message: lifecycleCancelledMessage(command), fadeDelayOverride: .seconds(9))
+    // Three warnings for a project close or open that did not go ahead. All fade after 9s, the same
+    // reasoning as `gettingStartedNotSaved()`: a notice like this must not camp in the app's one
+    // persistent-warning slot (a queued Save Version / export confirmation would age past
+    // `ToastCenter.pendingSuccessCutoff` and be discarded behind it). They make no claim about keys typed
+    // during the wait. A repeated request of the SAME kind (Cmd-W during a close) shows nothing at all, so
+    // it has no factory method.
+
+    /// A close (Cmd-W, the red button, File > Close Project) gave up waiting for a section operation
+    /// that was still running. The project stays open and unchanged.
+    static func lifecycleCloseCancelled() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't close the project while an earlier change was still finishing. " +
+                "Try again in a moment.",
+            fadeDelayOverride: .seconds(9)
+        )
     }
 
-    private static func lifecycleCancelledMessage(_ command: LifecycleCommand) -> String {
-        let tail = " because an earlier change didn't finish. Your text is safe."
-        switch command {
-        case .close: return "The project wasn't closed" + tail
-        case .openProject: return "The other project wasn't opened" + tail
-        case .saveAs: return "Save As didn't make a copy" + tail
-        case .newProject: return "The new project wasn't created" + tail
-        case .importMarkdown: return "The file wasn't imported" + tail
-        case .gettingStarted: return "Getting Started wasn't opened" + tail
-        case .repair: return "The project wasn't repaired" + tail
-        }
+    /// Any other open or switch (Open Project, Open Recent, Getting Started, New Project, Import, Save As,
+    /// Finder open, Repair) gave up for the same reason.
+    static func lifecycleCancelled() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't do that while an earlier change was still finishing. " +
+                "Try again in a moment.",
+            fadeDelayOverride: .seconds(9)
+        )
+    }
+
+    /// A different close or open request arrived while one was already saving.
+    static func lifecycleBusy() -> Toast {
+        Toast(
+            style: .warning,
+            message: "Couldn't do that while the project was being saved. Try again in a moment.",
+            fadeDelayOverride: .seconds(9)
+        )
     }
 
     // MARK: Zoom Cancelled (Phase 5 job A7)

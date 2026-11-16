@@ -6,6 +6,9 @@ import Foundation
 ///   Diagnostics toggle is on (in any build).
 /// - `always()` prints unconditionally (for safety guards that must never be silenced).
 /// - To enable more categories during development, edit `enabled` below.
+/// - The diagnostic file the user's Diagnostics switch writes must never hold key codes or pieces of the document
+///   (t-561c4083). A log line that would carry document text builds it with `docText(_:)` inside the log call's argument;
+///   `docText` writes only a length unless the developer-only switch is on (see `developerDetailOn`).
 enum DebugLog {
     enum Category: String, CaseIterable {
         case sync        // [SYNC-DIAG:*] block sync diagnostics
@@ -95,6 +98,20 @@ enum DebugLog {
         #if DEBUG
         if forwardToConsole { print(text) }
         #endif
+    }
+
+    /// The developer-only switch (t-561c4083): the launch environment variable `FF_DEV_LOG_KEYS_AND_TEXT=1`, read once at
+    /// launch. Settings never offers it, and a UserDefaults key is deliberately not used (one `defaults write` would keep
+    /// logging text forever, unnoticed; a variable ends when the app quits). Set it in an Xcode scheme's Environment
+    /// Variables, in a UI test's `app.launchEnvironment`, or with `open --env FF_DEV_LOG_KEYS_AND_TEXT=1 "<app>"`.
+    /// It only adds detail to lines the Diagnostics switch already writes: with Diagnostics off nothing is logged either way.
+    static let developerDetailOn: Bool = ProcessInfo.processInfo.environment["FF_DEV_LOG_KEYS_AND_TEXT"] == "1"
+
+    /// How document text appears in a log line: `len=<characters>`, or the quoted text itself while the developer-only switch
+    /// is on. Every log line that would carry a piece of the document goes through this (the rule `DiagnosticLogPrivacyTests`
+    /// enforces). Call it INSIDE the log call's argument, never hoisted above it, so the work is skipped while logging is off.
+    static func docText<S: StringProtocol>(_ text: S, developerDetail: Bool = DebugLog.developerDetailOn) -> String {
+        developerDetail ? "\"\(text)\"" : "len=\(text.count)"
     }
 
     /// Check whether a category is currently logging. Use to short-circuit work

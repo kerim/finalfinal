@@ -107,6 +107,24 @@ struct DiagnosticLogFileTests {
         #expect(!FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("diagnostic.log").path))
     }
 
+    /// t-561c4083: user switch on, developer switch off — a key press and a footnote row reach the file as a time, an
+    /// editor flag and a length; no key code and no words.
+    @Test func userSwitchWritesNoKeyCodeAndNoDocumentText() throws {
+        let tempDir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let logFile = DiagnosticLogFile(logDirectory: tempDir)
+        withLoggingEnabled(true) {
+            logFile.append(StructuralTrace.keyPressLine(t: 1_234, code: 6, inEditor: true, developerDetail: false))
+            logFile.append("[FootnoteSyncService] removeNotesBlock: deleting id=x "
+                + "fragment=\(DebugLog.docText("[^1]: Zyxquorbit pasted words", developerDetail: false))")
+        }
+        let text = try String(contentsOf: tempDir.appendingPathComponent("diagnostic.log"), encoding: .utf8)
+        #expect(text.contains("[TYPING-TRACE] key t=1234 editor=true"))
+        #expect(!text.contains("code="))
+        #expect(!text.contains("Zyxquorbit"))
+        #expect(text.contains("fragment=len=29"))
+    }
+
     @Test func rotationNeverExceedsMaxRotatedFilesPlusOne() {
         let tempDir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: tempDir) }

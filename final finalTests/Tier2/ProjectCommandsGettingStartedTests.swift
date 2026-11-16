@@ -189,7 +189,7 @@ extension LifecycleEntryStatic {
             #expect(rig.entryEvents.first == .armed(.projectSwitch), "the guard path ran (item 32)")
             #expect(result == .lifecycle(.cancelled))
             #expect(recorder.gettingStartedOpens == 0 && shown == 0, "perform never called")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.gettingStarted).message)
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message)
             #expect(rig.editorState.activeLifecycle == nil)
         }
 

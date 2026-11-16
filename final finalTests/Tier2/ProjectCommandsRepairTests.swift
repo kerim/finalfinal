@@ -237,7 +237,7 @@ extension LifecycleEntryStatic {
             }
             #expect(ran == .cancelled)
             #expect(recorder.order.isEmpty, "the repair never ran; got \(recorder.order)")
-            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled(.repair).message, "the user is told")
+            #expect(toasts.current?.message == ToastFactory.lifecycleCancelled().message, "the user is told")
             #expect(rig.editorState.activeLifecycle == nil)
         }
 

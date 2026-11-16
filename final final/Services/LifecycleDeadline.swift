@@ -98,10 +98,6 @@ struct LifecycleBounds: Sendable, Equatable {
     /// N3: once a quit has joined a close or switch, that lifecycle's tail starts its automatic version only if at
     /// least this much of the (tightened) deadline remains, and races it against `min(quitBackupReserve, remaining)`.
     var joinedBackupMinimum: TimeInterval
-    /// t-eb07cd67: how long a close or open that is HELD behind a running close or project switch waits before the "Finishing the
-    /// last change..." progress toast shows (UX contract 4.2: nothing on screen for the first second). Not part of the save sequence's
-    /// budget: it only times the notice, and tests shorten it here rather than through the global `DelayedProgressToast.defaultDelay`.
-    var heldNoticeDelay: TimeInterval
 
     static let production = LifecycleBounds(
         closeTotal: 15,
@@ -116,8 +112,7 @@ struct LifecycleBounds: Sendable, Equatable {
         barrierFloor: 1,
         quitBackupReserve: 3,
         abortStep: 2,
-        joinedBackupMinimum: 0.5,
-        heldNoticeDelay: 1
+        joinedBackupMinimum: 0.5
     )
 
     /// Every bound multiplied by `factor` (so the floors, which are sums of bounds, scale with it). For
@@ -136,8 +131,7 @@ struct LifecycleBounds: Sendable, Equatable {
             barrierFloor: barrierFloor * factor,
             quitBackupReserve: quitBackupReserve * factor,
             abortStep: abortStep * factor,
-            joinedBackupMinimum: joinedBackupMinimum * factor,
-            heldNoticeDelay: heldNoticeDelay * factor
+            joinedBackupMinimum: joinedBackupMinimum * factor
         )
     }
 

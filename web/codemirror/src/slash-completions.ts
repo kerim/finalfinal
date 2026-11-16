@@ -254,7 +254,11 @@ class SlashMenuPlugin {
 
       // Match `/` followed by optional word chars at end of text
       const slashMatch = textBefore.match(/\/(\w*)$/);
-      slashLog('[SlashMenu] textBefore:', JSON.stringify(textBefore), 'slashMatch:', slashMatch);
+      // t-561c4083: lengths only. This runs on every keystroke and caret move; the line being typed must not reach the log.
+      slashLog(
+        '[SlashMenu] textBefore',
+        `len=${textBefore.length} slashMatch=${slashMatch !== null} queryLen=${slashMatch ? slashMatch[1].length : 0}`
+      );
       if (slashMatch) {
         const slashPos = textBefore.length - slashMatch[0].length;
         const query = slashMatch[1].toLowerCase();

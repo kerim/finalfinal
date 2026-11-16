@@ -934,6 +934,7 @@ class Phase4bDelHarness: Phase4bDelHarnessBase {
         // UI-test defaults wipe and is what switches the app's `.undo` log category on (StructuralTrace.isOn).
         app.launchArguments += ["-com.kerim.final-final.diagnosticsLoggingEnabled", "YES"]
         app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"
+        app.launchEnvironment["FF_DEV_LOG_KEYS_AND_TEXT"] = "1"   // t-561c4083: the measurement parsers read key codes (Z=6, /=44)
         try TestFixtureHelper.setupFixture(from: self)
     }
 

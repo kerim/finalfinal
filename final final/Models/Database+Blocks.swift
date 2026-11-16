@@ -753,7 +753,7 @@ extension ProjectDatabase {
                 block.imageWidth = width
                 // KEY FIX: Also encode width in the markdown fragment so it survives round-trips
                 block.markdownFragment = Self.updateWidthInMarkdown(block.markdownFragment, width: width)
-                DebugLog.log(.image, "[updateBlockImageMeta] id=\(id.prefix(8)) width=\(width) fragment=\(block.markdownFragment.prefix(80))")
+                DebugLog.log(.image, "[updateBlockImageMeta] id=\(id.prefix(8)) width=\(width) fragment=\(DebugLog.docText(block.markdownFragment))")
             }
 
             block.updatedAt = Date()
