@@ -95,7 +95,7 @@ final class RebuildFlushTypingRaceE2ETests: XCTestCase {
         let wordCount = app.staticTexts["status-bar-word-count"]
         XCTAssertTrue(wordCount.waitForValue("CONTAINS 'words'", timeout: 10), "Editor JS should be ready")
 
-        guard let alphaParagraph = app.editorStaticText(startingWith: Self.alphaText, timeout: 10) else {
+        guard let alphaParagraph = app.editorStaticText(startingWith: Self.alphaText, exactLine: Self.alphaText, timeout: 10) else {
             XCTFail("Seeded Alpha paragraph not found before edit.\n\(app.editorStaticTextsDump())")
             return
         }
@@ -140,7 +140,7 @@ final class RebuildFlushTypingRaceE2ETests: XCTestCase {
 
         // Re-resolve Beta AFTER the citation insertion above -- a handle captured earlier can go
         // stale once Alpha's own content (and the surrounding layout) has changed.
-        guard let betaParagraph = app.editorStaticText(startingWith: Self.betaText, timeout: 10) else {
+        guard let betaParagraph = app.editorStaticText(startingWith: Self.betaText, exactLine: Self.betaText, timeout: 10) else {
             XCTFail("Seeded Beta paragraph not found after citation insert.\n\(app.editorStaticTextsDump())")
             return
         }
