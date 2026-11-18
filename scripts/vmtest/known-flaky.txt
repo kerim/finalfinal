@@ -150,3 +150,10 @@ final finalUITests/ShortcutTooltipE2ETests/testHoveringReplaceToggleShowsCustomT
 # Diagnosis: infra (app-console.log of run-1794412559-23379). The test now copies at every attempt, which narrows the race; the real fix
 # is `--no-clipboard` on the `tart run` line of the shared vmtest engine. Board t-5b41ac38. Remove this line once that flag is in.
 final finalUITests/E2ESectionReconcilerPseudoSectionTests/testSurvivingPseudoSectionKeepsOwnStatusNotNeighbors
+
+# Added 2026-11-18 (release run of main 87b173fa). Diagnosed app-side (medium confidence): a Rich Text rebuild push right after a citation
+# can reset the caret to the paragraph the user just left, before a pending click is read, so words typed in the clicked paragraph land
+# in the first one (nothing is deleted). Failed in a full run and again alone; passed once alone earlier. User decision 2026-11-18: ship
+# with a task, fix afterwards. The fix touches the editor/database sync, so the sync model changes first. Board t-8aff315c. Remove this
+# line when that task is closed.
+final finalUITests/RebuildFlushTypingRaceE2ETests/testTypingIntoOtherParagraphDuringRebuildFlushWindowSurvives
