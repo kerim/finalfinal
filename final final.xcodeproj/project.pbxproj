@@ -1950,6 +1950,7 @@
 				6BDEEE9C10B3CB00393F7E53 /* VersionHistoryWindow.swift */,
 				C8498B4341C08418634FB2AC /* VersionHistoryWindow+Restore.swift */,
 				E99D04B51EB859A1BD1A73BB /* VersionListView.swift */,
+				964E1AB1F271D9B2EB7BBFAF /* .claude */,
 			);
 			path = VersionHistory;
 			sourceTree = "<group>";
@@ -2489,6 +2490,14 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		964E1AB1F271D9B2EB7BBFAF /* .claude */ = {
+			isa = PBXGroup;
+			children = (
+				A6570C3FD4EA45934CE1A406 /* .cc-writes */,
+			);
+			path = .claude;
+			sourceTree = "<group>";
+		};
 		96FDF83C9E576F31361DF979 /* final finalTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -2539,6 +2548,13 @@
 			children = (
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		A6570C3FD4EA45934CE1A406 /* .cc-writes */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = ".cc-writes";
 			sourceTree = "<group>";
 		};
 		A97A6B60AEBBB808E8AAC5AA /* final finalUITests */ = {
@@ -4546,7 +4562,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.137;
+				CURRENT_PROJECT_VERSION = 0.2.138;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
@@ -4599,7 +4615,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.137;
+				CURRENT_PROJECT_VERSION = 0.2.138;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				FUSE_BUILD_SCRIPT_PHASES = YES;
@@ -4630,7 +4646,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.137;
+				CURRENT_PROJECT_VERSION = 0.2.138;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FF_QUICKLOOK_EXTENSION_POINT = "com.kerim.final-final.debug-build-not-registered";
@@ -4662,7 +4678,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.137;
+				CURRENT_PROJECT_VERSION = 0.2.138;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -4691,7 +4707,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.137;
+				CURRENT_PROJECT_VERSION = 0.2.138;
 				DEVELOPMENT_TEAM = HBHZWD24V7;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FF_QUICKLOOK_EXTENSION_POINT = com.apple.quicklook.preview;
@@ -4730,7 +4746,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 0.2.137;
+				CURRENT_PROJECT_VERSION = 0.2.138;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				FUSE_BUILD_SCRIPT_PHASES = YES;
