@@ -201,6 +201,9 @@ struct FinalFinalApp: App {
         }
         .defaultSize(width: 1200, height: 800)
         .defaultLaunchBehavior(.suppressed)
+        // macOS must never bring this window back at launch: a restored copy is built before any project is
+        // open, loads an empty list once, and Cmd-Opt-V then reopens that stale empty window.
+        .restorationBehavior(.disabled)
     }
 
     /// Simple loading view while determining initial state
