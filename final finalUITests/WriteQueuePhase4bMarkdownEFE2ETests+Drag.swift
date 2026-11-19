@@ -1445,7 +1445,13 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     ///   Cmd-Z #2  undoes the DRAG, the queued slow route (`start (markdown queued undo`; "Undoing..." may show): the original order, rows
     ///             equal the document as loaded;
     ///   Cmd-Shift-Z #1 redoes the DRAG (the queued slow route again): the dragged order, the references read 1..N after the settle;
-    ///   Cmd-Shift-Z #2 is a TEXT step: it brings the sentence back, once, at the end of the Move06 line inside the moved chapter.
+    ///   Cmd-Shift-Z #2 is TEXT steps: they bring the sentence back, once, at the end of the Move06 line inside the moved chapter. The
+    ///             sentence went away in as many undo groups as the Cmd-Z #1 loop needed (t-012ce388), so as many text redo presses as
+    ///             that are allowed and counted; each is checked against the editor's own document length and the loop stops at the press
+    ///             that puts the whole sentence back (a structural redo must not run).
+    /// "Gone" and "back" are read from the EDITOR's own document length (the `docLength=` / `docLengthAfter=` figures of its
+    /// `[UnifiedUndo]` lines), never from the saved row: the row drops a trailing space, so it can read as the original line while the
+    /// editor still holds one more typed character; the rows are asserted afterwards, once the editor says the steps are done.
     /// FLIPPED by t-14f908b4 (the redo after a structural operation): this test used to pin the old limit, that typing done inside a
     /// dragged chapter could not be redone after the drag was undone (the undo's carry dropped the redo events inside the moved range, and
     /// the alternative put " KEPTMDONE" at the start of the hopped-over chapter's heading line). The editor now sets the redo steps aside at
@@ -1473,7 +1479,8 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
             + "then Cmd-Z, Cmd-Z, Cmd-Shift-Z, Cmd-Shift-Z; \(total) footnote references")
 
         let dragFrom = performDrag(drag)
-        typeNow(" " + Self.phraseOne)
+        let typedText = " " + Self.phraseOne
+        typeNow(typedText)
         soft.check(waitForHeadingOrder(movedHeadings, timeout: appWait(size.operationTimeout * 2, before: "the dragged order")),
             "after the job the block table's heading order is not the dragged one (\(orderDifference(movedHeadings)))")
         soft.check(waitForLine(moveLine + " " + Self.phraseOne, startingWith: "Move06", timeout: 90),
@@ -1485,22 +1492,42 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         addDragTraceChecks(from: dragFrom, drags: 1, to: &soft)
         newPhase()
 
-        // Cmd-Z #1: the sentence goes, as text steps.
+        // Cmd-Z #1: the sentence goes, as text steps. "Gone" is the EDITOR's own document: its length when the first press arrived (the
+        // whole sentence in it) less the typed characters is the length of the original line, and every text step reports the length it
+        // left (`docLengthAfter=`). The saved row cannot say it: it drops a trailing space, so it can read as the original line while the
+        // editor still holds one more typed character (and the next Cmd-Z would then be a text step, not the drag's undo).
         let firstFrom = traceLinesCount()
+        let typedLength = typedText.utf16.count
         var textPresses = 0
+        var lengthWithSentence: Int?
+        var lengthAfterUndo: Int?
         var sentenceGone = false
         while textPresses < 4, !sentenceGone {
             textPresses += 1
+            let pressFrom = traceLinesCount()
             let press = pressStepRefocusing(redo: false, number: textPresses, watchToasts: false,
                                             what: "Cmd-Z #\(textPresses) (the sentence)", soft: &soft)
             soft.check(!press.structural,
                 "Cmd-Z #\(textPresses) was decided \(press.decision) and ran a STRUCTURAL undo before the sentence was gone")
             if press.structural { break }
-            sentenceGone = waitForLine(moveLine, startingWith: "Move06", timeout: 20)
+            let lengths = editorLengths(direction: "undo", from: pressFrom)
+            lengthWithSentence = lengthWithSentence ?? lengths.before
+            lengthAfterUndo = lengths.after
+            guard let withSentence = lengthWithSentence, let after = lengthAfterUndo else { break }
+            sentenceGone = after == withSentence - typedLength
+            // Shorter than the original line: a step took more than the sentence, and no further press can put that right.
+            if after < withSentence - typedLength { break }
         }
+        let lengthGone = lengthWithSentence.map { $0 - typedLength }
+        let editorLine = "the editor's document was \(figure(lengthWithSentence)) characters long with the sentence, \(figure(lengthAfterUndo)) "
+            + "after the last press (the original line is \(figure(lengthGone)); \(typedLength) characters were typed)"
+        soft.check(sentenceGone, "after \(textPresses) Cmd-Z press(es) the editor's document is not the original line again: \(editorLine)")
+        // The saved row follows the editor (a queued save), so it is waited for; it reads the line without the sentence (no trailing space).
+        let rowGone = waitForLine(moveLine, startingWith: "Move06", timeout: 20)
         let moveNow = lineInDatabase(startingWith: "Move06") ?? "nothing"
-        result("CMD-Z #1: \(textPresses) text press(es) took the sentence away (the line reads \"\(moveNow)\")")
-        soft.check(sentenceGone, "after \(textPresses) Cmd-Z press(es) the Move06 line still reads \"\(moveNow)\", "
+        result("CMD-Z #1: \(textPresses) text press(es); the sentence is \(sentenceGone ? "gone" : "NOT gone") from the editor "
+            + "(\(editorLine); the saved line reads \"\(moveNow)\")")
+        soft.check(rowGone, "after \(textPresses) Cmd-Z press(es) the saved Move06 line still reads \"\(moveNow)\", "
             + "expected \"\(moveLine)\" (only the sentence removed)")
         soft.check(headingFragmentsInDatabase() == movedHeadings,
             "Cmd-Z #1 changed the heading order (\(orderDifference(movedHeadings))): it must remove only the sentence")
@@ -1536,15 +1563,46 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
         let afterRedo = addDragChecks("after Cmd-Shift-Z #1 (settled)", arrangement: arrangement, bibliographyExact: true, to: &soft)
         addFootnoteOrderCheck("after Cmd-Shift-Z #1 (settled)", rows: afterRedo, count: total, to: &soft)
 
-        // Cmd-Shift-Z #2: a TEXT step. The sentence comes back, once, at the end of the Move06 line of the moved chapter (t-14f908b4).
+        // Cmd-Shift-Z #2: TEXT steps. The sentence comes back, once, at the end of the Move06 line of the moved chapter (t-14f908b4). It went
+        // away in `textPresses` undo groups (typing split by the VM's keystroke gaps), so up to as many redo presses are allowed and counted
+        // (t-012ce388); each reports the editor's own document length (`docLengthAfter=`) and the loop stops when the whole sentence is back,
+        // measured from the length at the first of these presses (the document right after the drag's redo, whatever the footnote labels read).
         let fourthFrom = traceLinesCount()
-        let fourth = pressStepRefocusing(redo: true, number: textPresses + 3, watchToasts: false, what: "Cmd-Shift-Z #2 (the sentence)", soft: &soft)
+        var redoPresses = 0
+        var lengthBeforeRedo: Int?
+        var lengthAfterRedo: Int?
+        var editorBack = false
+        var redoStructural = false
+        while redoPresses < textPresses, !editorBack {
+            redoPresses += 1
+            let pressFrom = traceLinesCount()
+            let press = pressStepRefocusing(redo: true, number: textPresses + 2 + redoPresses, watchToasts: false,
+                                            what: "Cmd-Shift-Z text press \(redoPresses) (the sentence)", soft: &soft)
+            soft.check(!press.structural,
+                "Cmd-Shift-Z text press \(redoPresses) was decided \(press.decision) and ran a STRUCTURAL redo: it must be a plain text step")
+            if press.structural { redoStructural = true; break }
+            let lengths = editorLengths(direction: "redo", from: pressFrom)
+            lengthBeforeRedo = lengthBeforeRedo ?? lengths.before
+            lengthAfterRedo = lengths.after
+            guard let before = lengthBeforeRedo, let after = lengthAfterRedo else { break }
+            editorBack = after == before + typedLength
+            // Longer than the sentence: a step brought back more than the typing, and no further press can put that right.
+            if after > before + typedLength { break }
+        }
+        let redoLine = "the editor's document was \(figure(lengthBeforeRedo)) characters long before the first text press, "
+            + "\(figure(lengthAfterRedo)) after the last (the sentence is \(typedLength) characters; with the sentence it was "
+            + "\(figure(lengthWithSentence)) before Cmd-Z #1)"
         let sentenceBack = waitForLine(moveLine + " " + Self.phraseOne, startingWith: "Move06", timeout: 90)
-        result("CMD-SHIFT-Z #2 (the redo after a structural operation, t-14f908b4): decided \(fourth.decision); structural undo/redo sequences "
-            + "begun \(structuralStartCount(from: fourthFrom)); the sentence in the block table: \(blocksContaining(Self.phraseOne)) row(s)")
+        result("CMD-SHIFT-Z #2 (the redo after a structural operation, t-14f908b4): \(redoPresses) text press(es) of the \(textPresses) allowed; "
+            + "the sentence is \(editorBack ? "back" : "NOT back") in the editor (\(redoLine)); structural undo/redo sequences begun "
+            + "\(structuralStartCount(from: fourthFrom)); the sentence in the block table: \(blocksContaining(Self.phraseOne)) row(s)")
         _ = waitForLogQuiet(quiet: 3, cap: capped(30))
         settle()
-        soft.check(structuralStartCount(from: fourthFrom) == 0, "Cmd-Shift-Z #2 began a structural sequence: it must be a plain text step")
+        soft.check(structuralStartCount(from: fourthFrom) == 0 && !redoStructural,
+            "Cmd-Shift-Z #2 began a structural sequence: it must be plain text steps")
+        soft.check(editorBack,
+            "after \(redoPresses) of the \(textPresses) allowed Cmd-Shift-Z text press(es) the editor's document does not have the whole "
+            + "sentence back: \(redoLine)")
         soft.check(sentenceBack,
             "the sentence \"\(Self.phraseOne)\" is not back at the end of the Move06 line after Cmd-Shift-Z #2 (the line reads "
             + "\"\(lineInDatabase(startingWith: "Move06") ?? "nothing")\"): typing done inside a dragged chapter must be redone after "
@@ -1568,6 +1626,28 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     /// How many structural `undo` / `redo` sequences began since log index `index`.
     func structuralStartCount(from index: Int) -> Int {
         traceLines(from: index).filter { $0.family == .sequence && ($0.label == "undo" || $0.label == "redo") && $0.isOpStart }.count
+    }
+
+    /// The EDITOR's own document length around one text-step Cmd-Z (`direction` "undo") or Cmd-Shift-Z ("redo"), from the editor's own log
+    /// lines since log index `index` (taken just before the key press): `before` is `docLength=` of the `[UnifiedUndo] keydown` line (the
+    /// length when the key arrived), `after` is `docLengthAfter=` of the text step's `[UnifiedUndo] keydown-path-invocation` line (the length
+    /// right after the step). The second line follows the first within a moment, so both are polled until each is read (a bounded 10 s; a
+    /// condition, not a sleep); a figure that never appeared is nil. These are the figures the Markdown restore tests read too.
+    func editorLengths(direction: String, from index: Int) -> (before: Int?, after: Int?) {
+        let keydown = "[UnifiedUndo] keydown direction=\(direction) "
+        let invocation = "[UnifiedUndo] keydown-path-invocation direction=\(direction) "
+        var before: Int?
+        var after: Int?
+        let deadline = Date(timeIntervalSinceNow: 10)
+        repeat {
+            tail.poll()
+            let lines = tail.lines[min(index, tail.lines.count)...]
+            before = lines.first { $0.text.contains(keydown) }.flatMap { Phase4bDelTypingParser.intAfter("docLength=", in: $0.text) }
+            after = lines.first { $0.text.contains(invocation) }.flatMap { Phase4bDelTypingParser.intAfter("docLengthAfter=", in: $0.text) }
+            if before != nil, after != nil { break }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        } while Date() < deadline
+        return (before, after)
     }
 }
 
