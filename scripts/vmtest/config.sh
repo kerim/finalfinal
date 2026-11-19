@@ -28,7 +28,20 @@ VMTEST_GUEST_PREP="scripts/vmtest/guest-prep.sh"
 # them; the sync-model docs are only named in comments), so leaving them out of
 # the copy costs nothing. A plain array of strings: nothing here runs at source
 # time.
-VMTEST_SYNC_EXCLUDES=("/docs/architecture/tla/.run/" "/docs/architecture/tla/results/")
+#
+# The third entry is the host's Package.resolved. It is an untracked file that
+# records whichever package versions the host's Xcode last resolved, so it
+# differs per machine and per worktree. When it pins a package version newer
+# than the one the golden VM image has cached, the guest downloads and builds
+# that version from GitHub at run time, and every VM run then depends on
+# GitHub's release servers being up. (Live experiment 2026-11-19: a host pin of
+# Sparkle 2.10.1 made the guest fetch and build 2.10.1; without the file the
+# guest used the image's cached 2.9.1 and fetched nothing. Runs ended with
+# xcodebuild exit 74 on 2026-11-02 and 2026-11-08; board t-e52ef9b8.) Leaving
+# the file out of the copy makes the guest use the versions its image already
+# holds, and it still re-resolves normally if project.yml needs something
+# newer. The pattern contains a space; the engine quotes each entry.
+VMTEST_SYNC_EXCLUDES=("/docs/architecture/tla/.run/" "/docs/architecture/tla/results/" "/final final.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
 
 # Host-side cache-warm script sourced by the engine's provision.sh while the
 # candidate image is booted ($ip, ssh_guest, PROJECT_ROOT in scope).
