@@ -123,6 +123,14 @@ struct Phase4bMdJobWindow {
     let heldSeconds: Double?
 }
 
+/// One reading of the editor's accessibility tree for the Notes (`notesLabelsOnScreen`).
+struct Phase4bNotesReading {
+    /// The footnote labels `[^N]:` of the definitions the tree lists, in tree order (empty: none could be read).
+    let labels: [Int]
+    /// One line per node of the tree (type, label, value; the first 200 nodes), the evidence kept when no label could be read.
+    let dump: [String]
+}
+
 // MARK: - Choosing the drag, and the document worked out by hand
 
 extension WriteQueuePhase4bMarkdownEFE2ETests {
@@ -367,37 +375,92 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
             "\(what): the Notes hold the numbers [\(noteRuns)], expected 1...\(count) once each, in order")
     }
 
-    /// The footnote labels the editor shows for the Notes definitions that are on screen after a click on the Notes card (the editor scrolls
-    /// there). Nil when the card could not be brought into view. Polled (a condition, bounded) until a definition label is on screen.
-    func notesLabelsOnScreen() -> [Int]? {
+    /// What the editor's accessibility tree lists of the Notes definitions after a click on the Notes card (the editor scrolls there). Nil
+    /// when the card could not be brought into view. Polled (a condition, bounded by the test's budget) until a definition label is read;
+    /// when none can be read in 30 s the last reading comes back with no label (and its tree dump).
+    func notesLabelsOnScreen() -> Phase4bNotesReading? {
         guard let notesCard = bringSidebarCardIntoView("Notes", failIfMissing: false) else { return nil }
         app.activateAndWaitForForeground()
         notesCard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-        let deadline = Date(timeIntervalSinceNow: 30)
-        var labels = visibleNoteLabels()
-        while labels.isEmpty, Date() < deadline {
+        let deadline = Date(timeIntervalSinceNow: capped(30))
+        var reading = readNotesFromTree()
+        while reading.labels.isEmpty, Date() < deadline {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
-            labels = visibleNoteLabels()
+            reading = readNotesFromTree()
         }
-        return labels
+        return reading
+    }
+
+    /// One reading of the editor's tree from ONE snapshot (one accessibility round trip, walked in-process): the labels of the definitions
+    /// among its text runs, and a dump of its first nodes. A snapshot that fails is printed and reads as no label (the caller polls again).
+    func readNotesFromTree() -> Phase4bNotesReading {
+        let root: XCUIElementSnapshot
+        do {
+            root = try app.editorArea.snapshot()
+        } catch {
+            print("[notesLabelsOnScreen] snapshot() of editor-area failed: \(error)")
+            return Phase4bNotesReading(labels: [], dump: ["(the snapshot of editor-area failed: \(error))"])
+        }
+        let nodes = Self.snapshotNodes(of: root)
+        let runs = nodes.compactMap { node -> String? in node.elementType == .staticText ? node.value as? String : nil }
+        let dump = nodes.prefix(200).map { node -> String in
+            let value = node.value.map { String(describing: $0) } ?? "nil"
+            return "[type \(node.elementType.rawValue)] label \"\(node.label.prefix(90))\" value \"\(value.prefix(90))\""
+        }
+        return Phase4bNotesReading(labels: Self.definitionLabels(inRuns: runs), dump: dump)
+    }
+
+    /// Every node below `snapshot` (the root itself left out), in tree order.
+    static func snapshotNodes(of snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        snapshot.children.flatMap { child -> [XCUIElementSnapshot] in [child] + snapshotNodes(of: child) }
+    }
+
+    /// The footnote labels of the definitions (`[^N]:` at the start of a Notes line) among the text runs `runs` of the editor, in order.
+    /// The labels are looked for in the runs JOINED, not run by run: the editor marks a definition's `[^N]:` prefix with a decoration (so it
+    /// is a run of its own), and the syntax colouring can cut a label into pieces (`[^1]` and `:`), which a run-by-run read never sees.
+    static func definitionLabels(inRuns runs: [String]) -> [Int] {
+        let joined = runs.joined()
+        guard let pattern = try? NSRegularExpression(pattern: #"\[\^(\d+)\]:"#) else { return [] }
+        let text = joined as NSString
+        return pattern.matches(in: joined, range: NSRange(location: 0, length: text.length))
+            .compactMap { Int(text.substring(with: $0.range(at: 1))) }
     }
 
     /// The Notes the editor SHOWS: no label twice and the labels in step (each one more than the one before). The editor draws only the
     /// definitions near the viewport, so this is a window onto the list.
+    ///
+    /// The labels come from the accessibility tree. The old reader (one run per label) read none while the failure screenshot of the same
+    /// state showed "# Notes" with [^1] and [^2] (t-1268b095); the reader below joins the runs and so also reads a label the editor has cut
+    /// into pieces. No label read within 30 s of the click on the Notes card is a FAILURE: the line below records it, the tree's first nodes
+    /// and the screenshot are attached, and together they show on their own whether the editor did not scroll to the Notes or the reader is
+    /// broken. The Notes' text itself is also asserted AFTER this check without the tree: the saved rows (`addDragChecks`: Notes numbered
+    /// 1...N once each, in order) and `addScreenEqualsDatabaseCheck` (File > Save Version writes the live editor text into the table, and
+    /// the table must be identical to the saved rows).
     func addNotesOnScreenCheck(_ what: String, to soft: inout Phase4bFlowSoftChecks) {
-        guard let labels = notesLabelsOnScreen() else {
+        guard let reading = notesLabelsOnScreen() else {
             result("NOTES ON SCREEN \(what): the Notes card could not be brought into view (not asserted)")
+            return
+        }
+        let shotName = "md-drag-notes-on-screen-\(what.replacingOccurrences(of: " ", with: "-"))"
+        let labels = reading.labels
+        guard !labels.isEmpty else {
+            result("NOTES ON SCREEN \(what): NOT READABLE: the accessibility tree listed no definition label in 30 s (FAILED below; the tree's "
+                + "first \(reading.dump.count) node(s) and the screenshot are attached)")
+            attachText("notes-on-screen-tree-\(methodName)-\(what.replacingOccurrences(of: " ", with: "-")).txt",
+                reading.dump.joined(separator: "\n"))
+            shot(shotName)
+            soft.check(false, "\(what): no Notes definition label in the editor's tree 30 s after a click on the Notes card (tree dump and "
+                + "screenshot attached: they show whether the editor did not scroll to the Notes or the reader is broken)")
             return
         }
         let duplicates = Dictionary(grouping: labels, by: { $0 }).filter { $0.value.count > 1 }.keys.sorted()
         let consecutive = zip(labels, labels.dropFirst()).allSatisfy { $0.1 == $0.0 + 1 }
         result("NOTES ON SCREEN \(what): \(labels.count) definition label(s) visible \(labels); duplicates \(duplicates); consecutive \(consecutive)")
-        soft.check(!labels.isEmpty, "\(what): no Notes definition was on screen after a click on the Notes card (the editor did not scroll to it)")
         soft.check(duplicates.isEmpty, "\(what): the Notes in the editor show duplicate definition label(s) \(duplicates)")
-        soft.check(labels.isEmpty || consecutive,
+        soft.check(consecutive,
             "\(what): the Notes labels visible in the editor are not consecutive: \(labels) (t-9cf4d7e8: the on-screen Notes list can stay out of "
             + "number order after a renumber)")
-        shot("md-drag-notes-on-screen-\(what.replacingOccurrences(of: " ", with: "-"))")
+        shot(shotName)
     }
 }
 
@@ -733,7 +796,9 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     /// its reference (the books repeat one chapter's prose). After the drag has settled, after Cmd-Z and after Cmd-Shift-Z: the heading order
     /// is the hand-worked one, the references read 1...N in reading order with NO jump back, the Notes hold 1...N once each in order and each
     /// definition is the note its reference points at (rows). After the redo (no key follows, so the click on the Notes card cannot take the
-    /// keyboard focus away from a press) the Notes the editor SHOWS are checked too: no label twice, the labels in step. Then File > Save
+    /// keyboard focus away from a press) the Notes the editor SHOWS are checked too: no label twice, the labels in step
+    /// (`addNotesOnScreenCheck`; no label read from the accessibility tree within 30 s of the click on the Notes card is a failure, with the
+    /// tree dump and the screenshot attached for the diagnosis). Then File > Save
     /// Version shows the editor's text equals the table, and after Cmd-W and a reopen the references and Notes are still
     /// 1...N. The fixture's footnote count N is stated in every failure message (book6: 54, book12: 108). An unchanged old-body app fails the
     /// trace checks AND the footnote checks (its references keep reading 1...18, 28...36, 19...27, 37...54).
@@ -1676,7 +1741,9 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
     /// which is what makes the record lag the page. Whether a run enters the stale path is a race (the failing run: Notes write 54 ms,
     /// rebuild read at ~140 ms; the passing sibling: write 247 ms). So: what is ASSERTED on every run is the outcome the user sees: the
     /// references read 1..54 and the Notes are numbered 1..54 once each in order in the saved rows, on the page (File > Save Version writes
-    /// the page's text into the rows and the table is identical; the Notes the editor shows are consecutive with no duplicate label), and
+    /// the page's text into the rows and the table is identical; the Notes labels the accessibility tree lists on screen are consecutive with
+    /// no duplicate label, and a click on the Notes card that yields no label within 30 s is a failure, with the tree dump and the screenshot
+    /// attached for the diagnosis), and
     /// again in the rows after Cmd-W and a reopen; the editor-first trace; and that the seam was applied. What is only RECORDED (result
     /// lines, never a failure) is whether the stale path was entered and what followed: `[MdRegionPush] notes: ... re-push owed`, then a
     /// SECOND `notes rebuild: starts`, then a page `docChanged: true`.
