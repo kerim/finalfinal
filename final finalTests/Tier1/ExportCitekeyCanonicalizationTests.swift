@@ -30,6 +30,33 @@ import XCTest
 import Foundation
 @testable import final_final
 
+/// The three pieces of process-wide `ZoteroService.shared` state that `fetchBibliographyJSON`
+/// changes on its way through -- `isConnected` (set true on success), `connectionError` (cleared)
+/// and `cachedLibraries` (filled by the group-library lookup). Same three fields, same
+/// snapshot-then-restore-in-`defer` shape as the write-back integration test further down
+/// (t-94d16ae2): take the snapshot first in the test body, `defer { snapshot.restore() }`, inside
+/// the `ZoteroNetworkTestLock` closure so the restore lands before the lock is released.
+@MainActor
+private struct ZoteroStateSnapshot {
+    private let isConnected: Bool
+    private let connectionError: String?
+    private let cachedLibraries: [ZoteroLibrary]?
+
+    init() {
+        let zotero = ZoteroService.shared
+        isConnected = zotero.isConnected
+        connectionError = zotero.connectionError
+        cachedLibraries = zotero.cachedLibraries
+    }
+
+    func restore() {
+        let zotero = ZoteroService.shared
+        zotero.isConnected = isConnected
+        zotero.connectionError = connectionError
+        zotero.cachedLibraries = cachedLibraries
+    }
+}
+
 @Suite("Export citekey canonicalization — Tier 1: Silent Killers")
 struct ExportCitekeyCanonicalizationTests {
 
@@ -218,6 +245,11 @@ struct ExportCitekeyCanonicalizationTests {
     @MainActor
     func fetchBibliographyJSONDedupesResolvedItemsById() async throws {
         try await ZoteroNetworkTestLock.shared.run {
+            // fetchBibliographyJSON marks the process-wide ZoteroService.shared connected on
+            // success; put its state back on every way out, before the lock is released.
+            let priorZoteroState = ZoteroStateSnapshot()
+            defer { priorZoteroState.restore() }
+
             MockBBTURLProtocol.reset()
             // Force resolveRawViaPandocFilter to fail so fetchRawItemsForCitekeys falls back
             // to item.export -- the array-based path that doesn't dedupe on its own. Mirrors
@@ -265,6 +297,11 @@ struct ExportCitekeyCanonicalizationTests {
     @MainActor
     func ambiguityVetoSurvivesEvenWhenRegularAmbiguousKeysIsCleared() async throws {
         await ZoteroNetworkTestLock.shared.run {
+            // fetchBibliographyJSON marks the process-wide ZoteroService.shared connected on
+            // success; put its state back on every way out, before the lock is released.
+            let priorZoteroState = ZoteroStateSnapshot()
+            defer { priorZoteroState.restore() }
+
             MockBBTURLProtocol.reset()
             // "Smith2020" has 2 real BBT matches (genuinely ambiguous), while "smith2020"
             // (a different spelling in the same batch) cleanly resolves to one item. Because
@@ -323,6 +360,11 @@ struct ExportCitekeyCanonicalizationTests {
     @MainActor
     func divergentCitationKeyIsNeverARewriteTarget() async throws {
         try await ZoteroNetworkTestLock.shared.run {
+            // fetchBibliographyJSON marks the process-wide ZoteroService.shared connected on
+            // success; put its state back on every way out, before the lock is released.
+            let priorZoteroState = ZoteroStateSnapshot()
+            defer { priorZoteroState.restore() }
+
             MockBBTURLProtocol.reset()
             // citation-key "Smith2020" (the stale legacy value BBT's raw items-dict is keyed
             // by) differs from id "smith2020" ONLY by case -- indistinguishable from a genuine
@@ -377,6 +419,11 @@ struct ExportCitekeyCanonicalizationTests {
     @MainActor
     func fallbackPathNeverBuildsARewriteMap() async throws {
         await ZoteroNetworkTestLock.shared.run {
+            // fetchBibliographyJSON marks the process-wide ZoteroService.shared connected on
+            // success; put its state back on every way out, before the lock is released.
+            let priorZoteroState = ZoteroStateSnapshot()
+            defer { priorZoteroState.restore() }
+
             MockBBTURLProtocol.reset()
             // Force the primary path to fail, triggering the item.export fallback.
             let errorJSON = #"{"jsonrpc":"2.0","error":{"code":-1,"message":"forced failure for test"},"id":1}"#
