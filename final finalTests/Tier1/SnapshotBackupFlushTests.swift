@@ -39,12 +39,20 @@ struct SnapshotBackupFlushTests {
     /// Markdown after the drag: image now follows "Para B." instead of preceding it.
     private let postMoveMarkdown = "# Title\n\nPara A.\n\nPara B.\n\n![alt](media/img.png)"
 
+    /// What `makeStaleMoveFixture` hands back: the seeded database, its project id, and the
+    /// editor state wired to both.
+    private struct StaleMoveFixture {
+        let db: ProjectDatabase
+        let projectId: String
+        let editorState: EditorViewState
+    }
+
     /// Seed a fixture with the pre-move markdown (so the DB is deliberately left stale,
     /// exactly like the confirmed bug: block-sync's incremental diff drops a pure block
     /// move), then construct an `EditorViewState` wired to the same DB/project whose
     /// `content` still holds that stale pre-move markdown, matching what's still in the DB.
     @MainActor
-    private func makeStaleMoveFixture(in dir: URL, name: String) throws -> (db: ProjectDatabase, projectId: String, editorState: EditorViewState) {
+    private func makeStaleMoveFixture(in dir: URL, name: String) throws -> StaleMoveFixture {
         let fixtureURL = dir.appendingPathComponent("\(name).ff")
         let db = try TestFixtureFactory.createFixture(at: fixtureURL, title: name, content: preMoveMarkdown)
         let projectId = try TestFixtureFactory.getProjectId(from: db)
@@ -54,7 +62,7 @@ struct SnapshotBackupFlushTests {
         editorState.currentProjectId = projectId
         editorState.content = preMoveMarkdown
 
-        return (db, projectId, editorState)
+        return StaleMoveFixture(db: db, projectId: projectId, editorState: editorState)
     }
 
     /// Assert that markdown shows the image after "Para B." (the post-move position),
@@ -88,7 +96,10 @@ struct SnapshotBackupFlushTests {
     func createManualSnapshotReflectsBlockMoveNotRecordedByIncrementalDiff() async throws {
         let dir = try makeTempDir()
 
-        let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "ManualSnapshotMove")
+        let fixture = try makeStaleMoveFixture(in: dir, name: "ManualSnapshotMove")
+        let db = fixture.db
+        let projectId = fixture.projectId
+        let editorState = fixture.editorState
         defer {
             editorState.projectDatabase = nil
             TestDatabaseTeardown.closeThenCleanUp(dir, db)
@@ -110,7 +121,10 @@ struct SnapshotBackupFlushTests {
     func createAutoSnapshotReflectsBlockMoveNotRecordedByIncrementalDiff() async throws {
         let dir = try makeTempDir()
 
-        let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "AutoSnapshotMove")
+        let fixture = try makeStaleMoveFixture(in: dir, name: "AutoSnapshotMove")
+        let db = fixture.db
+        let projectId = fixture.projectId
+        let editorState = fixture.editorState
         defer {
             editorState.projectDatabase = nil
             TestDatabaseTeardown.closeThenCleanUp(dir, db)
@@ -128,7 +142,10 @@ struct SnapshotBackupFlushTests {
     func autoBackupIdleTimeoutFlushesLiveContentBeforeSnapshotting() async throws {
         let dir = try makeTempDir()
 
-        let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "IdleBackupMove")
+        let fixture = try makeStaleMoveFixture(in: dir, name: "IdleBackupMove")
+        let db = fixture.db
+        let projectId = fixture.projectId
+        let editorState = fixture.editorState
         defer {
             editorState.projectDatabase = nil
             TestDatabaseTeardown.closeThenCleanUp(dir, db)
@@ -167,7 +184,10 @@ struct SnapshotBackupFlushTests {
     func autoBackupIdleTimeoutWithoutLiveFlushKeepsStaleDatabaseOrder() async throws {
         let dir = try makeTempDir()
 
-        let (db, projectId, editorState) = try makeStaleMoveFixture(in: dir, name: "IdleBackupNoFlushMove")
+        let fixture = try makeStaleMoveFixture(in: dir, name: "IdleBackupNoFlushMove")
+        let db = fixture.db
+        let projectId = fixture.projectId
+        let editorState = fixture.editorState
         defer {
             editorState.projectDatabase = nil
             TestDatabaseTeardown.closeThenCleanUp(dir, db)
