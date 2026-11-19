@@ -137,11 +137,11 @@ final class SplitViewAutosaveNamingLaunchSnapshotTests: XCTestCase { // swiftlin
         // can pass vacuously: a wiped launch must capture the empty set even though the domain
         // holds a key (proving it did not read it back), and an unwiped one must capture exactly
         // that key.
-        let suite = "com.kerim.final-final.tests.LaunchSnapshotDomainCapture"
+        let suite = TestDefaultsSuite.uniqueName("LaunchSnapshotDomainCapture")
         let seededKey = key(stableName)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set(["0.000000, 0.000000, 300.000000, 400.000000, NO, NO"], forKey: seededKey)
-        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        defer { TestDefaultsSuite.remove(suite) }
 
         SplitViewAutosaveNaming.captureLaunchSplitViewFrameKeys(fromDomainNamed: suite, domainWasWiped: true)
         XCTAssertEqual(SplitViewAutosaveNaming.launchSplitViewFrameKeys, Set<String>())
