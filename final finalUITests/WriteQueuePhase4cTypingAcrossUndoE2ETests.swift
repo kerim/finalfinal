@@ -126,6 +126,14 @@ struct Phase4cPremise {
     let decision: String
 }
 
+/// What a polled loop of Cmd-Z (or Cmd-Shift-Z) presses did: how many presses it made, what the editor decided for each, and whether it got
+/// the document where it was meant to go.
+struct Phase4cPressRun {
+    let presses: Int
+    let decisions: [String]
+    let done: Bool
+}
+
 // MARK: - The test class
 
 /// A Cmd-Z that waits keeps waiting when the user types. See the file header.
@@ -314,7 +322,9 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
 
     /// The text of the saved Anchor05 row (the typing goes to its end), `apostrophes` and spaces read as plain; empty when there is none.
     func anchorRowInDatabase() -> String {
-        Self.plain(dbText("SELECT markdownFragment FROM block WHERE instr(markdownFragment, '\(FixtureDatabase.escape(Self.anchorLine))') = 1 LIMIT 1;"))
+        Self.plain(dbText(
+            "SELECT markdownFragment FROM block WHERE instr(markdownFragment, '\(FixtureDatabase.escape(Self.anchorLine))') = 1 LIMIT 1;"
+        ))
     }
 
     /// True once the rows hold nothing of what was typed: no "more words" anywhere and the Anchor05 row cut back to the anchor line.
@@ -477,7 +487,8 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         }
         let rest = piece.dropFirst(head.count).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard rest == Self.wordsTwo else {
-            return "after \"\(head)\" the document reads \"\(rest.prefix(80))\", expected exactly \"\(Self.wordsTwo)\" (the typed words are not in one piece)"
+            return "after \"\(head)\" the document reads \"\(rest.prefix(80))\", expected exactly \"\(Self.wordsTwo)\" "
+                + "(the typed words are not in one piece)"
         }
         return nil
     }
@@ -488,17 +499,23 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         switch kind {
         case .deleted(let title):
             let rows = exactHeadingCount(title)
-            if rows != 1 { found.append("the section \"\(title)\" is in the block table \(rows) time(s), expected once: the Cmd-Z did not bring it back") }
+            if rows != 1 {
+                found.append("the section \"\(title)\" is in the block table \(rows) time(s), expected once: the Cmd-Z did not bring it back")
+            }
             if !sidebarCard(title).exists { found.append("the Outline has no card \"\(title)\"") }
         case .duplicated(let title):
             let copies = copyHeadingRows(title + " copy")
-            if copies != 0 { found.append("the block table holds \(copies) heading row(s) \"\(title) copy\", expected none: the Cmd-Z did not take the copy away") }
+            if copies != 0 {
+                found.append("the block table holds \(copies) heading row(s) \"\(title) copy\", expected none: the Cmd-Z did not take the copy away")
+            }
             let originals = exactHeadingCount(title)
             if originals != 1 { found.append("the section \"\(title)\" is in the block table \(originals) time(s), expected once") }
             if sidebarCard(title + " copy").exists { found.append("the Outline still shows the card \"\(title) copy\"") }
         case .dragged(let order):
             let now = headingFragmentsInDatabase()
-            if now != preHeadingFragments { found.append("the heading order is not the one before the drag (\(firstDifference(preHeadingFragments, now)))") }
+            if now != preHeadingFragments {
+                found.append("the heading order is not the one before the drag (\(firstDifference(preHeadingFragments, now)))")
+            }
             if let problem = sidebarOrderProblem(order) { found.append("the Outline does not show the old order: \(problem)") }
         }
         return found
@@ -696,7 +713,7 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
     /// the editor decided for each, and whether `done()` holds.
     func pressUntil(
         redo: Bool, cap: Int, what: String, signature: () -> String, done: () -> Bool
-    ) -> (presses: Int, decisions: [String], done: Bool) {
+    ) -> Phase4cPressRun {
         var decisions: [String] = []
         for number in 1...cap {
             let before = signature()
@@ -708,9 +725,9 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
                 finished = done()
             }
             if !finished { finished = done() }
-            if finished { return (number, decisions, true) }
+            if finished { return Phase4cPressRun(presses: number, decisions: decisions, done: true) }
         }
-        return (cap, decisions, false)
+        return Phase4cPressRun(presses: cap, decisions: decisions, done: false)
     }
 
     /// A signature of the typed region of the saved document, to see that a press changed something.
@@ -1039,8 +1056,8 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         let onScreen = toastMessage() ?? ""
         shot("after-the-press")
         assertCheck(logged.isEmpty && !onScreen.contains("could not be carried out"),
-                    "(2) TOAST: \"\(Self.refusalToast)\" was shown (\(logged.count) `[toast] show` line(s) in the log: \(logged.prefix(2)); on screen: "
-                        + "\"\(onScreen)\"): the waiting Cmd-Z was cancelled instead of carried out")
+                    "(2) TOAST: \"\(Self.refusalToast)\" was shown (\(logged.count) `[toast] show` line(s) in the log: \(logged.prefix(2)); "
+                        + "on screen: \"\(onScreen)\"): the waiting Cmd-Z was cancelled instead of carried out")
     }
 
     /// (3) The operation was undone and the typed words sit in one piece where they were typed; everything else is the document before.
@@ -1053,7 +1070,9 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         var soft = Phase4bFlowSoftChecks()
         soft.check(landed, "(3) the words typed while the Cmd-Z waited never reached the block table (\"\(Self.wordsTwo)\" occurs "
                    + "\(occurrencesInRows(Self.wordsTwo)) time(s); the Anchor05 row reads \"\(anchorRowInDatabase().prefix(100))\")")
-        for problem in rowProblems(post, what: "after the Cmd-Z that waited and the typing", typedWordsExpected: true) { soft.check(false, "(3) \(problem)") }
+        for problem in rowProblems(post, what: "after the Cmd-Z that waited and the typing", typedWordsExpected: true) {
+            soft.check(false, "(3) \(problem)")
+        }
         for problem in structureProblems(run.kind) { soft.check(false, "(3) \(problem)") }
         if let problem = typedPieceProblem(post) { soft.check(false, "(3) \(problem)") }
         let count = occurrencesInRows(Self.wordsTwo)
@@ -1061,7 +1080,8 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         if !markdownMode {
             let replayed = logLines(containing: "typingReplayed=true", from: run.undoFrom).filter { $0.contains(" ok=true") }
             soft.check(replayed.count == 1,
-                       "(3) the editor's own success line carries `typingReplayed=true` \(replayed.count) time(s), expected once: \(replayed.map { String($0.suffix(60)) })")
+                       "(3) the editor's own success line carries `typingReplayed=true` \(replayed.count) time(s), expected once: "
+                           + "\(replayed.map { String($0.suffix(60)) })")
         }
         let beeps = beepLines(from: run.undoFrom)
         soft.check(beeps.isEmpty, "(3) the editor beeped \(beeps.count) time(s) after the Cmd-Z: \(beeps.prefix(2).map { String($0.suffix(100)) })")
@@ -1082,13 +1102,14 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
             + "\(keys.count) editor key(s) typed, \(after) of them after the page's re-check line")
         let afterUndo = readRows()
         shot("typing-undone")
-        soft.check(undo.done, "(4) \(undo.presses) Cmd-Z press(es) did not take the typed words back out of the block table (decisions \(undo.decisions))")
+        soft.check(undo.done,
+                   "(4) \(undo.presses) Cmd-Z press(es) did not take the typed words back out of the block table (decisions \(undo.decisions))")
         soft.check(undo.decisions.allSatisfy { $0 == "fallthrough" },
                    "(4) a Cmd-Z after the typing was not a plain text step (decisions \(undo.decisions)): the structural undo ran again")
         if after == 0 {
             soft.check(undo.presses == 1,
-                       "(4) every key was typed inside the wait, so the replay is ONE history step, but it took \(undo.presses) Cmd-Z press(es) to take "
-                           + "the typing back (decisions \(undo.decisions))")
+                       "(4) every key was typed inside the wait, so the replay is ONE history step, but it took \(undo.presses) Cmd-Z press(es) "
+                           + "to take the typing back (decisions \(undo.decisions))")
         } else {
             note("(4) \(after) key(s) were typed after the swap, so the typing is more than one history step; \(undo.presses) press(es) were needed "
                 + "(the exact-one-press rule applies only when every key fell inside the wait)")
@@ -1097,15 +1118,20 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         for problem in structureProblems(run.kind) { soft.check(false, "(4) after the typing was undone: \(problem)") }
         assertSoft(soft, "(4) one Cmd-Z removes exactly the typing done in the wait")
 
-        let redo = pressUntil(redo: true, cap: max(undo.presses, 1), what: "the typing is put back", signature: typedSignature) { typedWordsAreBack() }
+        let redo = pressUntil(redo: true, cap: max(undo.presses, 1), what: "the typing is put back",
+                              signature: typedSignature) { typedWordsAreBack() }
         result("REDO OF THE TYPING: \(redo.presses) Cmd-Shift-Z press(es), the editor decided \(redo.decisions); done: \(Self.yesNo(redo.done))")
         _ = settle()
         let afterRedo = readRows()
         shot("typing-redone")
         var redoSoft = Phase4bFlowSoftChecks()
         redoSoft.check(redo.done, "(4) \(redo.presses) Cmd-Shift-Z press(es) did not put the typed words back (decisions \(redo.decisions))")
-        redoSoft.check(redo.presses == undo.presses, "(4) \(undo.presses) Cmd-Z press(es) took the typing out but \(redo.presses) Cmd-Shift-Z press(es) were needed to put it back")
-        for problem in rowProblems(afterRedo, what: "after the typing was redone", typedWordsExpected: true) { redoSoft.check(false, "(4) \(problem)") }
+        redoSoft.check(redo.presses == undo.presses,
+                       "(4) \(undo.presses) Cmd-Z press(es) took the typing out but \(redo.presses) Cmd-Shift-Z press(es) "
+                           + "were needed to put it back")
+        for problem in rowProblems(afterRedo, what: "after the typing was redone", typedWordsExpected: true) {
+            redoSoft.check(false, "(4) \(problem)")
+        }
         for problem in structureProblems(run.kind) { redoSoft.check(false, "(4) after the typing was redone: \(problem)") }
         if let problem = typedPieceProblem(afterRedo) { redoSoft.check(false, "(4) after the redo: \(problem)") }
         assertSoft(redoSoft, "(4) Cmd-Shift-Z puts the typing back")
@@ -1117,7 +1143,9 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         guard reopen() else { return }
         waitUntilRestored(run.kind)
         _ = settle()
-        let anchorShown = app.editorStaticText(startingWith: Self.anchorLine, timeout: appWait(90, before: "the Anchor05 line is looked for on screen")) != nil
+        let anchorShown = app.editorStaticText(
+            startingWith: Self.anchorLine, timeout: appWait(90, before: "the Anchor05 line is looked for on screen")
+        ) != nil
         let rows = readRows()
         shot("reopened")
         var soft = Phase4bFlowSoftChecks()
@@ -1129,9 +1157,11 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         if let problem = typedPieceProblem(rows) { soft.check(false, "(5) after the reopen: \(problem)") }
         addScreenEqualsDatabaseCheck(before: rows, what: "after the reopen", to: &soft)
         let editorCount = occurrencesInRows(Self.wordsTwo)
-        result("(5) \"\(Self.wordsTwo)\" occurs \(rowCount) time(s) in the rows after the reopen and \(editorCount) time(s) in the rows after Save Version wrote "
-            + "the live editor text into them")
-        soft.check(editorCount == 1, "(5) after Save Version wrote the editor's text into the rows, \"\(Self.wordsTwo)\" occurs \(editorCount) time(s) there, expected exactly once in the editor")
+        result("(5) \"\(Self.wordsTwo)\" occurs \(rowCount) time(s) in the rows after the reopen and "
+            + "\(editorCount) time(s) in the rows after Save Version wrote the live editor text into them")
+        soft.check(editorCount == 1,
+                   "(5) after Save Version wrote the editor's text into the rows, \"\(Self.wordsTwo)\" occurs \(editorCount) time(s) there, "
+                       + "expected exactly once in the editor")
         assertSoft(soft, "(5) after the reopen the editor and the rows agree")
     }
 
@@ -1189,12 +1219,14 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         guard waitForReorderPerformed(from: dragFrom) else { return }
         _ = settle()
         guard headingFragmentsInDatabase() != preHeadingFragments else {
-            fail("TEST-SETUP: the heading order in the block table is the one before the drag: the drag changed nothing, so its undo has nothing to undo")
+            fail("TEST-SETUP: the heading order in the block table is the one before the drag: the drag changed nothing, "
+                + "so its undo has nothing to undo")
             return
         }
         clickBackIntoAnchor()
-        note("SCENARIO: the chapter \"\(pair.moved.prefix(12))...\" was dragged above \"\(pair.target.prefix(12))...\"; Cmd-Z, then \"\(Self.wordsOne)\", "
-            + "Return, \"\(Self.wordsTwo)\" typed at the end of the Anchor05 line while the press waits \(holdMs) ms")
+        note("SCENARIO: the chapter \"\(pair.moved.prefix(12))...\" was dragged above \"\(pair.target.prefix(12))...\"; "
+            + "Cmd-Z, then \"\(Self.wordsOne)\", Return, \"\(Self.wordsTwo)\" typed at the end of the Anchor05 line "
+            + "while the press waits \(holdMs) ms")
         app.activateAndWaitForForeground()
         let undoFrom = logIndexNow()
         pressUndo()
@@ -1367,15 +1399,19 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         result("WINDOW: press hold start at log line \(holdStart.map(String.init) ?? "none"), end at \(holdEnd.map(String.init) ?? "none"); "
             + "`[Lifecycle] armed close` at \(armed.map(String.init) ?? "none"); \(keys.count) editor key(s) typed, the last at log line "
             + "\(keys.last.map(String.init) ?? "none")")
-        guard let holdStart, let armed, armed > holdStart, holdEnd.map({ armed < $0 }) ?? true, let lastKey = keys.last, lastKey > holdStart, lastKey < armed else {
-            fail("TEST-SETUP: the close did not come while the Cmd-Z was still waiting with the typing inside the wait (press hold start \(holdStart.map(String.init) ?? "none"), "
-                + "hold end \(holdEnd.map(String.init) ?? "none"), `[Lifecycle] armed close` \(armed.map(String.init) ?? "none"), last typed key "
+        guard let holdStart, let armed, armed > holdStart, holdEnd.map({ armed < $0 }) ?? true,
+              let lastKey = keys.last, lastKey > holdStart, lastKey < armed else {
+            fail("TEST-SETUP: the close did not come while the Cmd-Z was still waiting with the typing inside the wait "
+                + "(press hold start \(holdStart.map(String.init) ?? "none"), hold end \(holdEnd.map(String.init) ?? "none"), "
+                + "`[Lifecycle] armed close` \(armed.map(String.init) ?? "none"), last typed key "
                 + "\(keys.last.map(String.init) ?? "none"))")
             return
         }
         guard relaunch() else { return }
         _ = settle()
-        let anchorShown = app.editorStaticText(startingWith: Self.anchorLine, timeout: appWait(90, before: "the Anchor05 line is looked for on screen")) != nil
+        let anchorShown = app.editorStaticText(
+            startingWith: Self.anchorLine, timeout: appWait(90, before: "the Anchor05 line is looked for on screen")
+        ) != nil
         let rows = readRows()
         shot("close-reopened")
         let undone = headingFragmentsInDatabase() == preHeadingFragments
@@ -1389,12 +1425,15 @@ extension WriteQueuePhase4cTypingAcrossUndoE2ETests {
         soft.check(rowCount == 1, "after Cmd-W and the reopen \"\(Self.wordsTwo)\" occurs \(rowCount) time(s) in the rows, expected exactly once "
                    + "(0: the held typing was lost by the close; 2: it was saved and replayed)")
         if let problem = typedPieceProblem(rows) { soft.check(false, "after the reopen: \(problem)") }
-        soft.check(Phase4bFlowWalk(rows: rows).problems.isEmpty, "after the reopen the footnotes are not 1...n: \(Phase4bFlowWalk(rows: rows).problems)")
+        soft.check(Phase4bFlowWalk(rows: rows).problems.isEmpty,
+                   "after the reopen the footnotes are not 1...n: \(Phase4bFlowWalk(rows: rows).problems)")
         addScreenEqualsDatabaseCheck(before: rows, what: "after Cmd-W and the reopen", to: &soft)
         let editorCount = occurrencesInRows(Self.wordsTwo)
         result("\"\(Self.wordsTwo)\" occurs \(editorCount) time(s) in the rows after Save Version wrote the live editor text into them")
-        soft.check(editorCount == 1, "after Save Version wrote the editor's text into the rows, \"\(Self.wordsTwo)\" occurs \(editorCount) time(s) there, "
-                   + "expected exactly once in the editor")
-        assertSoft(soft, "Cmd-W right after typing in a waiting Cmd-Z's wait keeps the typing exactly once, on \(size.identifier) (drag from \(dragFrom))")
+        soft.check(editorCount == 1,
+                   "after Save Version wrote the editor's text into the rows, \"\(Self.wordsTwo)\" occurs \(editorCount) time(s) there, "
+                       + "expected exactly once in the editor")
+        assertSoft(soft,
+                   "Cmd-W right after typing in a waiting Cmd-Z's wait keeps the typing exactly once, on \(size.identifier) (drag from \(dragFrom))")
     }
 }
