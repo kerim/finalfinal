@@ -264,7 +264,7 @@ struct ExportCitekeyCanonicalizationTests {
     )
     @MainActor
     func ambiguityVetoSurvivesEvenWhenRegularAmbiguousKeysIsCleared() async throws {
-        await ZoteroNetworkTestLock.shared.run {
+        try await ZoteroNetworkTestLock.shared.run {
             MockBBTURLProtocol.reset()
             // "Smith2020" has 2 real BBT matches (genuinely ambiguous), while "smith2020"
             // (a different spelling in the same batch) cleanly resolves to one item. Because
@@ -376,7 +376,7 @@ struct ExportCitekeyCanonicalizationTests {
     )
     @MainActor
     func fallbackPathNeverBuildsARewriteMap() async throws {
-        await ZoteroNetworkTestLock.shared.run {
+        try await ZoteroNetworkTestLock.shared.run {
             MockBBTURLProtocol.reset()
             // Force the primary path to fail, triggering the item.export fallback.
             let errorJSON = #"{"jsonrpc":"2.0","error":{"code":-1,"message":"forced failure for test"},"id":1}"#
@@ -492,31 +492,12 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase { // swift
 
     // MARK: - Write-back reaches the temp file pandoc reads; no new DOCX warnings
 
-    @MainActor
     func testCanonicalizedWriteBackReachesTempFileWithNoNewDOCXWarnings() async throws {
         guard Self.findPandocPath() != nil else {
             throw XCTSkip("Pandoc not installed — skipping citekey canonicalization write-back verification")
         }
 
         try await ZoteroNetworkTestLock.shared.run {
-            // export() below fetches the bibliography through the PROCESS-WIDE ZoteroService.shared
-            // (fetchRawItemsForCitekeys marks it connected: isConnected = true, connectionError =
-            // nil) and caches the library list its group-library lookup fetched (cachedLibraries).
-            // Left behind, every later test sees "Zotero connected": its bibliography check never
-            // asks Zotero, and its settle rebuild strips a Bibliography that has no citations (six
-            // Markdown editor-first tests lost their Bibliography rows this way, t-94d16ae2). Put
-            // all three back to what they were on every way out of this closure -- the skips
-            // and throws below included -- before the lock is released.
-            let zotero = ZoteroService.shared
-            let priorIsConnected = zotero.isConnected
-            let priorConnectionError = zotero.connectionError
-            let priorCachedLibraries = zotero.cachedLibraries
-            defer {
-                zotero.isConnected = priorIsConnected
-                zotero.connectionError = priorConnectionError
-                zotero.cachedLibraries = priorCachedLibraries
-            }
-
             MockBBTURLProtocol.reset()
             // swiftlint:disable line_length
             let json = """
@@ -550,8 +531,6 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase { // swift
                     // as a SEPARATE process and does its own live BBT lookup that
                     // MockBBTURLProtocol (a URLProtocol registered only inside this test
                     // process) cannot intercept -- see isLiveZoteroBBTReachable's doc comment.
-                    // May also happen WITH a live Zotero if the live library lookup fails (see
-                    // the second skip below).
                     // The canonicalization assertion right below reads the diagnostic input.md
                     // pandoc was actually given, which dumpExportDiagnostics writes BEFORE
                     // pandoc ever runs, so it's unaffected by whether pandoc itself then
@@ -591,20 +570,7 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase { // swift
                 )
             }
 
-            // A reachable Zotero is not always enough for export() to succeed: zotero.lua looks
-            // the citekeys up in the REAL library. If that lookup fails, export() throws
-            // citationFilterFailed (caught above, leaving capturedResult nil). That is the same
-            // "outside program can't do its part" case as no Zotero at all, so it skips the same
-            // way. (Why this test used to fail with Zotero open was never pinned down; on
-            // 2026-11-19, with Zotero open, the export succeeded and the warnings check below
-            // ran.)
-            guard let result = capturedResult else {
-                throw XCTSkip(
-                    "Zotero is reachable, but export() threw citationFilterFailed "
-                        + "(pandoc's zotero.lua filter failed against the live library) "
-                        + "— skipping DOCX pandoc-warnings verification"
-                )
-            }
+            let result = try XCTUnwrap(capturedResult, "A live Zotero + BBT connection should let export() fully succeed")
             XCTAssertTrue(
                 result.warnings.isEmpty,
                 "A fully-resolved citekey-case rewrite must not introduce any new DOCX warning: \(result.warnings)"

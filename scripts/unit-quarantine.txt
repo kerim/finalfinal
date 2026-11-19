@@ -18,3 +18,24 @@
 #     it skip itself with XCTSkip, as ZoteroServiceConnectionTests does.
 #   - The entry is removed by the change that fixes the test, after that
 #     change has shown the test passing.
+
+# Added 2026-10-12. Board task t-94d16ae2.
+# Fails on every run while Zotero is open; skips itself when Zotero is closed.
+# With Zotero reachable the test goes on to run a real DOCX export through
+# pandoc against the live library and expects it to succeed; it does not
+# (XCTUnwrap: "A live Zotero + BBT connection should let export() fully
+# succeed"). Why the live export fails has not been investigated — the test's
+# fixture citekey may simply not exist in a real library. The part of the test
+# that matters (the rewritten citekey reaches the file pandoc reads) is
+# asserted before that point and is lost while this entry stands.
+final finalTests/ExportCitekeyCanonicalizationIntegrationTests/testCanonicalizedWriteBackReachesTempFileWithNoNewDOCXWarnings
+
+# Added 2026-10-12. Board task t-94d16ae2.
+# Fails on every run, Zotero open or closed. The test asserts an old pandoc
+# fault: with the app's math fix switched off, text after an unescaped % in
+# math is dropped from the PDF. The installed pandoc no longer drops it (the
+# rendered text keeps the "7"), so the assertion is out of date, not the app.
+# The fix is to rewrite or delete this test and decide whether the app's own
+# % handling is still needed; its partner test with the fix switched on still
+# runs.
+final finalTests/MathSpecialCharsExportTests/testPercentInMath_WithoutFix_SilentlyDropsTextAfterItButDoesNotCrash
