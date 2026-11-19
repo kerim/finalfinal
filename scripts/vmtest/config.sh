@@ -17,6 +17,19 @@ VMTEST_XCODEBUILD_ARGS="-parallel-testing-enabled NO"
 # bundle, xcodegen). Project-relative path.
 VMTEST_GUEST_PREP="scripts/vmtest/guest-prep.sh"
 
+# Paths the engine's copy of the checkout into the guest leaves out. Each entry
+# is an rsync --exclude pattern relative to the project root; a leading / pins
+# it to the root (see the engine README, section "VMTEST_SYNC_EXCLUDES"). The
+# sync-model checker (docs/architecture/tla/run_tlc.py) rewrites these two
+# folders for over an hour on the host. A guest copy that runs meanwhile fails
+# with rsync exit 23 ("files vanished"), so no test runs, and two such failures
+# in a row lock that test's key behind the diagnosis gate. The guest build and
+# the tests need neither folder (guest-prep.sh and the app build do not read
+# them; the sync-model docs are only named in comments), so leaving them out of
+# the copy costs nothing. A plain array of strings: nothing here runs at source
+# time.
+VMTEST_SYNC_EXCLUDES=("/docs/architecture/tla/.run/" "/docs/architecture/tla/results/")
+
 # Host-side cache-warm script sourced by the engine's provision.sh while the
 # candidate image is booted ($ip, ssh_guest, PROJECT_ROOT in scope).
 VMTEST_PROVISION_WARM_SCRIPT="provision-warm.sh"
