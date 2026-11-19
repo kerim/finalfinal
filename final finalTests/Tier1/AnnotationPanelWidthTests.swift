@@ -22,52 +22,45 @@ import Foundation
 struct AnnotationPanelWidthTests {
 
     /// A fresh, isolated UserDefaults suite -- never the real `com.kerim.final-final` domain.
-    /// Returns the suite name too: every test must end with `defer { TestDefaultsSuite.remove(suiteName) }`
-    /// so the suite's file in the helper's temporary folder does not outlive the test.
-    private func freshDefaults() -> (defaults: UserDefaults, suiteName: String) {
-        let suiteName = TestDefaultsSuite.uniqueName()
+    private func freshDefaults() -> UserDefaults {
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             Issue.record("UserDefaults(suiteName:) returned nil for a fixed, valid literal")
-            return (.standard, suiteName)
+            return .standard
         }
-        return (defaults, suiteName)
+        return defaults
     }
 
     @Test("A valid width round-trips through save/load unchanged")
     func roundTrip() {
-        let (defaults, suiteName) = freshDefaults()
-        defer { TestDefaultsSuite.remove(suiteName) }
+        let defaults = freshDefaults()
         AnnotationPanelWidth.save(275, to: defaults)
         #expect(AnnotationPanelWidth.load(from: defaults) == 275)
     }
 
     @Test("Loading with nothing persisted yet returns the shared default width")
     func loadWithNothingPersisted() {
-        let (defaults, suiteName) = freshDefaults()
-        defer { TestDefaultsSuite.remove(suiteName) }
+        let defaults = freshDefaults()
         #expect(AnnotationPanelWidth.load(from: defaults) == AnnotationPanelWidth.defaultWidth)
     }
 
     @Test("A width below the shared minimum is clamped up to it on save")
     func clampsBelowMinOnSave() {
-        let (defaults, suiteName) = freshDefaults()
-        defer { TestDefaultsSuite.remove(suiteName) }
+        let defaults = freshDefaults()
         AnnotationPanelWidth.save(50, to: defaults)
         #expect(AnnotationPanelWidth.load(from: defaults) == AnnotationPanelWidth.minWidth)
     }
 
     @Test("A width above the shared maximum is clamped down to it on save")
     func clampsAboveMaxOnSave() {
-        let (defaults, suiteName) = freshDefaults()
-        defer { TestDefaultsSuite.remove(suiteName) }
+        let defaults = freshDefaults()
         AnnotationPanelWidth.save(1_000, to: defaults)
         #expect(AnnotationPanelWidth.load(from: defaults) == AnnotationPanelWidth.maxWidth)
     }
 
     @Test("A garbage value written directly to the defaults key (bypassing save's own clamp) is clamped on load")
     func clampsGarbagePersistedValueOnLoad() {
-        let (defaults, suiteName) = freshDefaults()
-        defer { TestDefaultsSuite.remove(suiteName) }
+        let defaults = freshDefaults()
 
         // A small-but-positive out-of-range value: clamped up to minWidth, same as save() would.
         defaults.set(50.0, forKey: AnnotationPanelWidth.defaultsKey)

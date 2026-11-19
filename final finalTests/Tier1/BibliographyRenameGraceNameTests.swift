@@ -133,7 +133,7 @@ struct BibliographyRenameGraceNameTests {
         // Isolation is inline: this test drives `ExportSettingsManager.shared`, a @MainActor
         // singleton, directly, and has no explicit-parameter path around it the way
         // `staleReparseAfterRenameKeepsBibliographyFlags` above does.
-        let suiteName = TestDefaultsSuite.uniqueName("bibRenameGraceCap")
+        let suiteName = "com.kerim.final-final.tests.bibRenameGraceCap.\(UUID().uuidString)"
         let suite = try #require(UserDefaults(suiteName: suiteName))
         // Cross-suite lock (see ExportSettingsTestLock.swift): must be acquired before the
         // very first write to the shared `ExportSettings.userDefaults` pointer below, and
@@ -155,7 +155,7 @@ struct BibliographyRenameGraceNameTests {
         ExportSettings.userDefaults = suite
         defer {
             ExportSettings.userDefaults = previousStore
-            TestDefaultsSuite.remove(suiteName)
+            suite.removePersistentDomain(forName: suiteName)
             exportSettingsTestLock.unlock()
         }
 

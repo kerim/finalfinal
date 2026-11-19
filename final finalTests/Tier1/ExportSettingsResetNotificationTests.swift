@@ -57,7 +57,7 @@ struct ExportSettingsResetNotificationTests {
 
     @Test("resetToDefaults() posts .citationStyleChanged, matching the individual CSL-style setters")
     func resetToDefaultsPostsCitationStyleChanged() {
-        let suiteName = TestDefaultsSuite.uniqueName("exportSettingsManagerReset")
+        let suiteName = "com.kerim.final-final.tests.exportSettingsManagerReset.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         // Cross-suite lock (see ExportSettingsTestLock.swift): must be acquired before the
         // very first write to the shared `ExportSettings.userDefaults` pointer below, and
@@ -80,7 +80,7 @@ struct ExportSettingsResetNotificationTests {
             // store and never the real one.
             manager.update { $0 = previousSettings }
             ExportSettings.userDefaults = previousStore
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
             // Release LAST, after both restores above have fully landed.
             exportSettingsTestLock.unlock()
         }
@@ -124,7 +124,7 @@ struct ExportSettingsResetNotificationTests {
     /// rename would retitle it).
     @Test("resetToDefaults() folds the outgoing bibliography heading name into the grace list and notifies")
     func resetToDefaultsPreservesBibliographyGraceList() {
-        let suiteName = TestDefaultsSuite.uniqueName("exportSettingsManagerReset")
+        let suiteName = "com.kerim.final-final.tests.exportSettingsManagerReset.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         exportSettingsTestLock.lock()
 
@@ -143,7 +143,7 @@ struct ExportSettingsResetNotificationTests {
             // store and never the real one.
             manager.update { $0 = previousSettings }
             ExportSettings.userDefaults = previousStore
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
             exportSettingsTestLock.unlock()
         }
 
@@ -182,7 +182,7 @@ struct ExportSettingsResetNotificationTests {
     /// notification -- matching `setBibliographyHeaderName`'s own no-op-must-not-notify rule.
     @Test("resetToDefaults() does not post .bibliographyHeaderNameChanged when already at the default")
     func resetToDefaultsNoOpDoesNotPostBibliographyChange() {
-        let suiteName = TestDefaultsSuite.uniqueName("exportSettingsManagerReset")
+        let suiteName = "com.kerim.final-final.tests.exportSettingsManagerReset.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         exportSettingsTestLock.lock()
 
@@ -201,7 +201,7 @@ struct ExportSettingsResetNotificationTests {
             // store and never the real one.
             manager.update { $0 = previousSettings }
             ExportSettings.userDefaults = previousStore
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
             exportSettingsTestLock.unlock()
         }
 

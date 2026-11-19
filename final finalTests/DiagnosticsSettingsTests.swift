@@ -19,13 +19,13 @@ struct DiagnosticsSettingsTests {
     /// the duration of `body`, instead of touching the real `com.kerim.final-final` defaults
     /// domain through the shared singleton, and tears the suite down after.
     private func withIsolatedUserDefaults(_ body: (UserDefaults) -> Void) {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         let originalUserDefaults = DiagnosticsSettings.userDefaults
         DiagnosticsSettings.userDefaults = testDefaults
         defer {
             DiagnosticsSettings.userDefaults = originalUserDefaults
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
         body(testDefaults)
     }
@@ -52,7 +52,7 @@ struct DiagnosticsSettingsTests {
     /// statics, so it points BOTH at the SAME isolated suite -- a test that swapped only one of
     /// them could not observe the other side's read.
     @Test func loggingEnabledDidSetInvalidatesDiagnosticLogFileCache() {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         let originalSettingsDefaults = DiagnosticsSettings.userDefaults
         let originalLogFileDefaults = DiagnosticLogFile.userDefaults
@@ -61,7 +61,7 @@ struct DiagnosticsSettingsTests {
         defer {
             DiagnosticsSettings.userDefaults = originalSettingsDefaults
             DiagnosticLogFile.userDefaults = originalLogFileDefaults
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
 
         let settings = DiagnosticsSettings.shared

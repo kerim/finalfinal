@@ -665,7 +665,7 @@ extension MarkdownParseCacheTests {
     private func prepareUnderSettings(_ rig: MarkdownWriterRig, text: String, headers: [String]) -> [(hits: Int, misses: Int)] {
         exportSettingsTestLock.lock()
         let previousStore = ExportSettings.userDefaults
-        let suiteName = TestDefaultsSuite.uniqueName("markdownParseCache")
+        let suiteName = "MarkdownParseCacheTests.\(UUID().uuidString)"
         guard let suite = UserDefaults(suiteName: suiteName) else {
             exportSettingsTestLock.unlock()
             return []
@@ -673,7 +673,7 @@ extension MarkdownParseCacheTests {
         ExportSettings.userDefaults = suite
         defer {
             ExportSettings.userDefaults = previousStore
-            TestDefaultsSuite.remove(suiteName)
+            suite.removePersistentDomain(forName: suiteName)
             exportSettingsTestLock.unlock()
         }
         let cache = rig.markdownWriter.parseCache

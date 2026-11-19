@@ -463,13 +463,13 @@ final class ExportCitekeyCanonicalizationIntegrationTests: XCTestCase { // swift
     /// Points `ExportService.userDefaults` at a fresh isolated `UserDefaults` suite for the
     /// duration of `body` -- same idiom as ExportDiagnosticCaptureGatingTests.swift.
     private func withIsolatedUserDefaults(_ body: (UserDefaults) async throws -> Void) async throws {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         let originalUserDefaults = ExportService.userDefaults
         ExportService.userDefaults = testDefaults
         defer {
             ExportService.userDefaults = originalUserDefaults
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
         try await body(testDefaults)
     }

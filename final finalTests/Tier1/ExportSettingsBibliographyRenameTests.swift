@@ -44,7 +44,7 @@ struct ExportSettingsBibliographyRenameTests {
     /// `body`, then restores both the manager's cache and the previous store to exactly what
     /// they held before this call. Mirrors `ExportSettingsResetNotificationTests`' inline setup.
     private func withIsolatedManager(_ body: (ExportSettingsManager) -> Void) {
-        let suiteName = TestDefaultsSuite.uniqueName("exportSettingsManagerBibRename")
+        let suiteName = "com.kerim.final-final.tests.exportSettingsManagerBibRename.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         exportSettingsTestLock.lock()
 
@@ -60,7 +60,7 @@ struct ExportSettingsBibliographyRenameTests {
         defer {
             manager.update { $0 = previousManagerSettings }
             ExportSettings.userDefaults = previousStore
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
             exportSettingsTestLock.unlock()
         }
 

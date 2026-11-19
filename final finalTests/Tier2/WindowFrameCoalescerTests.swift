@@ -15,10 +15,10 @@ struct WindowFrameCoalescerTests {
     /// touching the real `com.kerim.final-final` defaults domain -- mirrors the pattern in
     /// `DiagnosticsSettingsTests`.
     private func withIsolatedUserDefaults(_ body: (UserDefaults) -> Void) {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         defer {
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
         body(testDefaults)
     }

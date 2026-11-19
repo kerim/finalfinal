@@ -23,7 +23,7 @@ struct DiagnosticLogFileTests {
     /// that seam at a fresh isolated `UserDefaults` suite for the duration of `body`, instead of
     /// touching the real `com.kerim.final-final` defaults domain, and tears the suite down after.
     private func withLoggingEnabled(_ enabled: Bool, _ body: () -> Void) {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         // Write the key BEFORE swapping the seam, not after: swapping `userDefaults` invalidates
         // `enabledCache` (see its setter), so any read that lands between the swap and the write
@@ -35,7 +35,7 @@ struct DiagnosticLogFileTests {
         DiagnosticLogFile.userDefaults = testDefaults
         defer {
             DiagnosticLogFile.userDefaults = originalUserDefaults
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
         body()
     }
@@ -195,8 +195,8 @@ struct DiagnosticLogFileTests {
     /// being observable after ITS OWN seam swap, which holds regardless of any concurrent
     /// invalidation elsewhere.
     @Test func seamSwapInvalidatesEnabledCache() {
-        let suiteNameA = TestDefaultsSuite.uniqueName()
-        let suiteNameB = TestDefaultsSuite.uniqueName()
+        let suiteNameA = "com.kerim.final-final.tests.\(UUID().uuidString)"
+        let suiteNameB = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let defaultsA = UserDefaults(suiteName: suiteNameA)!
         let defaultsB = UserDefaults(suiteName: suiteNameB)!
         defaultsA.set(false, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
@@ -205,8 +205,8 @@ struct DiagnosticLogFileTests {
         let originalUserDefaults = DiagnosticLogFile.userDefaults
         defer {
             DiagnosticLogFile.userDefaults = originalUserDefaults
-            TestDefaultsSuite.remove(suiteNameA)
-            TestDefaultsSuite.remove(suiteNameB)
+            defaultsA.removePersistentDomain(forName: suiteNameA)
+            defaultsB.removePersistentDomain(forName: suiteNameB)
         }
 
         DiagnosticLogFile.userDefaults = defaultsA
@@ -221,7 +221,7 @@ struct DiagnosticLogFileTests {
     /// With the seam held fixed on one store, flipping the underlying key in place is only
     /// observed once `invalidateEnabledCache()` is called.
     @Test func invalidateEnabledCachePicksUpAnInPlaceKeyChange() {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         testDefaults.set(false, forKey: DiagnosticLogFile.loggingEnabledDefaultsKey)
 
@@ -229,7 +229,7 @@ struct DiagnosticLogFileTests {
         DiagnosticLogFile.userDefaults = testDefaults
         defer {
             DiagnosticLogFile.userDefaults = originalUserDefaults
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
 
         #expect(DiagnosticLogFile.isEnabled == false)

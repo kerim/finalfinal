@@ -36,13 +36,13 @@ final class ExportDiagnosticCaptureGatingTests: XCTestCase {
     /// `DiagnosticsSettingsTests.withIsolatedUserDefaults`, adapted to an async body since
     /// `ExportService.export(...)` is async.
     private func withIsolatedUserDefaults(_ body: (UserDefaults) async throws -> Void) async throws {
-        let suiteName = TestDefaultsSuite.uniqueName()
+        let suiteName = "com.kerim.final-final.tests.\(UUID().uuidString)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         let originalUserDefaults = ExportService.userDefaults
         ExportService.userDefaults = testDefaults
         defer {
             ExportService.userDefaults = originalUserDefaults
-            TestDefaultsSuite.remove(suiteName)
+            testDefaults.removePersistentDomain(forName: suiteName)
         }
         try await body(testDefaults)
     }
