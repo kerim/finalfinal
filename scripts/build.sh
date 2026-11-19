@@ -120,7 +120,10 @@ last_green=
 EOF
 else
   echo -e "${YELLOW}Checking for a green --suite full run on $TESTED_COMMIT...${NC}"
-  if VERIFIED_LINE="$(bash "$PROJECT_DIR/scripts/vmtest/vmtest" verified --suite full --commit "$TESTED_COMMIT" --src "$PROJECT_DIR" 2>/dev/null)"; then
+  # When `verified` says no, its reason (which test is unproven, and the command
+  # that proves it) is on stderr. Keep it in a file so the error below can show it.
+  VERIFIED_ERR_FILE="$PROJECT_DIR/build/.verified-reason"
+  if VERIFIED_LINE="$(bash "$PROJECT_DIR/scripts/vmtest/vmtest" verified --suite full --commit "$TESTED_COMMIT" --src "$PROJECT_DIR" 2>"$VERIFIED_ERR_FILE")"; then
     VERIFIED_RESULT_FILE="$(printf '%s' "$VERIFIED_LINE" | cut -f1)"
     VERIFIED_RUN_ID="$(basename "$(dirname "$VERIFIED_RESULT_FILE")")"
     echo -e "${GREEN}  Verified: $VERIFIED_RUN_ID${NC}"
@@ -131,8 +134,14 @@ run_id=$VERIFIED_RUN_ID
 last_green=$VERIFIED_RESULT_FILE
 EOF
   else
-    echo -e "${RED}Error: no green (pass or pass-with-known-flakes), clean-tree --suite full run recorded for $TESTED_COMMIT.${NC}"
-    echo -e "${RED}Run this first: $PROJECT_DIR/scripts/vmtest/vmtest run --suite full --detach${NC}"
+    VERIFIED_REASON="$(cat "$VERIFIED_ERR_FILE" 2>/dev/null || true)"
+    if [ -n "$VERIFIED_REASON" ]; then
+      echo -e "${RED}Error: the full UI suite is not proven for $TESTED_COMMIT:${NC}"
+      printf '%s\n' "$VERIFIED_REASON"
+    else
+      echo -e "${RED}Error: no green (pass or pass-with-known-flakes), clean-tree --suite full run recorded for $TESTED_COMMIT.${NC}"
+      echo -e "${RED}Run this first: $PROJECT_DIR/scripts/vmtest/vmtest run --suite full --detach${NC}"
+    fi
     echo -e "${RED}Or pass --no-verify to build anyway (recorded in the release notes).${NC}"
     exit 1
   fi
