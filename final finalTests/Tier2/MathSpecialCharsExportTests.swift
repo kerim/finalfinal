@@ -42,6 +42,14 @@ final class MathSpecialCharsExportTests: XCTestCase {
 
     // MARK: - Real PDF-compile harness
 
+    /// What one `compileMathFixture` run produced: pandoc's raw exit code, the PDF's
+    /// pdftotext-extracted text (empty when pandoc failed, so no PDF exists), and pandoc's stderr.
+    private struct MathFixtureResult {
+        let exitCode: Int32
+        let renderedText: String
+        let stderr: String
+    }
+
     /// Compiles a markdown fixture with real pandoc + the real bundled xelatex, optionally
     /// wiring in math-special-chars.lua. Unlike URLWrapExportTests.swift's harness (which always
     /// expects success and only inspects Overfull-hbox warning counts), this one also has to
@@ -50,7 +58,7 @@ final class MathSpecialCharsExportTests: XCTestCase {
     private func compileMathFixture(
         markdown: String,
         applyMathFix: Bool
-    ) throws -> (exitCode: Int32, renderedText: String, stderr: String) {
+    ) throws -> MathFixtureResult {
         guard let pandocPath = URLWrapExportFixtures.findPandocPath() else {
             throw XCTSkip("Pandoc not installed -- skipping real PDF compilation verification")
         }
@@ -130,7 +138,8 @@ final class MathSpecialCharsExportTests: XCTestCase {
             renderedText = String(data: textPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         }
 
-        return (process.terminationStatus, renderedText, stderrText)
+        return MathFixtureResult(
+            exitCode: process.terminationStatus, renderedText: renderedText, stderr: stderrText)
     }
 
     /// Fast fragment helper (no PDF compile) for tests that only need to see how
