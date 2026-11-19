@@ -6,6 +6,11 @@
 # its `autodev/<slug>` branch and `.claude/superdev/<slug>` run notes) and takes
 # the one action that state allows — or refuses and explains why.
 #
+# A worktree at a detached HEAD has no branch. It is removed when its HEAD
+# commit is already contained in the base (git merge-base --is-ancestor), and
+# refused (exit 4, naming the commit) when it is not. No branch is ever
+# deleted in that case.
+#
 # NOTE: this script performs destructive filesystem operations under
 # .claude/worktrees/<slug> and .claude/superdev/<slug>. When invoked from
 # Claude Code, it MUST be run with the sandbox disabled
@@ -23,7 +28,8 @@
 #   0 = success (no-op, plain removal, or auto-recovered)
 #   2 = usage error (missing/bad args)
 #   3 = refuse: genuine uncommitted changes present
-#   4 = refuse: branch not merged into base
+#   4 = refuse: branch not merged into base (for a detached worktree: its
+#       HEAD commit is not contained in base)
 #   5 = ambiguous leftover artifact, needs a human decision
 #   6 = unexpected failure during a mutating command (e.g. git worktree
 #       remove/prune or rm -rf itself failed) — state may have changed;
@@ -68,7 +74,8 @@ Exit codes:
   0 = success (no-op, plain removal, or auto-recovered)
   2 = usage error (missing/bad args)
   3 = refuse: genuine uncommitted changes present
-  4 = refuse: branch not merged into base
+  4 = refuse: branch not merged into base (for a detached-HEAD worktree: its
+      HEAD commit is not contained in base)
   5 = ambiguous leftover artifact, needs a human decision
   6 = unexpected failure during a mutating command — state may have changed;
       re-run with the same --slug/--base to detect and recover/report it
@@ -163,6 +170,8 @@ NOTES="$repo/.claude/superdev/$slug"
 registered=0
 prunable=0
 registered_branch=""
+registered_head=""
+registered_detached=0
 if worktree_list_porcelain="$(git -C "$repo" worktree list --porcelain 2>/dev/null)"; then
     # Parse porcelain output: entries are separated by blank lines, each
     # starting with "worktree <path>", possibly followed by "HEAD"/"branch"/
@@ -176,9 +185,19 @@ if worktree_list_porcelain="$(git -C "$repo" worktree list --porcelain 2>/dev/nu
                     registered=1
                 fi
                 ;;
+            "HEAD "*)
+                if [ "$current_path" = "$WT" ]; then
+                    registered_head="${line#HEAD }"
+                fi
+                ;;
             "branch "*)
                 if [ "$current_path" = "$WT" ]; then
                     registered_branch="${line#branch refs/heads/}"
+                fi
+                ;;
+            "detached")
+                if [ "$current_path" = "$WT" ]; then
+                    registered_detached=1
                 fi
                 ;;
             "prunable"*)
@@ -196,9 +215,11 @@ fi
 # Determine the branch for this slug. Prefer the branch git itself reports
 # for a currently-registered worktree (authoritative, and correct regardless
 # of naming convention) over guessing. Only guess when there's no live
-# registration to consult (branch/dir already removed by an earlier attempt,
-# or a detached worktree). Two conventions exist in practice: the manual
-# fallback this script's usage docs assume (`autodev/<slug>`), and the native
+# registration to consult (branch/dir already removed by an earlier attempt).
+# A registered worktree at a detached HEAD has no branch at all: the guess
+# below is never acted on for it (see "detached" further down). Two
+# conventions exist in practice: the manual fallback this script's usage
+# docs assume (`autodev/<slug>`), and the native
 # EnterWorktree tool, which prefixes the branch with `worktree-` and flattens
 # any `/` in the requested name to `+` (an EnterWorktree name of
 # "autodev/foo" ends up as branch "worktree-autodev+foo", worktree dir
@@ -228,6 +249,22 @@ branch_merged=0
 if [ "$branch_exists" -eq 1 ]; then
     if [ -n "$(git -C "$repo" branch --merged "$base" --list "$BR" 2>/dev/null)" ]; then
         branch_merged=1
+    fi
+fi
+
+# A registered worktree at a detached HEAD has no branch, so there is no
+# branch to merge-check (the name guessed above does not belong to it — it
+# may not exist, or may be an unrelated leftover). Judge it by its HEAD
+# commit instead: is that commit already contained in "$base"? Seen
+# 2026-10-19: a scratch worktree at a detached HEAD already part of the base
+# was refused as "branch autodev/<slug> is NOT merged" for a branch that
+# never existed.
+detached=0
+head_merged=0
+if [ "$registered" -eq 1 ] && [ -z "$registered_branch" ] && [ "$registered_detached" -eq 1 ]; then
+    detached=1
+    if [ -n "$registered_head" ] && git -C "$repo" merge-base --is-ancestor "$registered_head" "$base" 2>/dev/null; then
+        head_merged=1
     fi
 fi
 
@@ -288,6 +325,29 @@ elif [ "$branch_exists" -eq 1 ]; then
     fi
 else
     state="S0"
+fi
+
+# Detached-HEAD worktree: re-judge every state that was decided by the
+# (non-existent) branch by the HEAD commit instead. "S2a" (uncommitted
+# changes) does not depend on a branch and stays as classified.
+#   D1          clean, HEAD contained in base      -> remove
+#   D2c         interrupted removal, HEAD in base  -> finish removing (--force)
+#   D3          directory already gone, HEAD in base -> prune metadata
+#   D-unmerged  any of the above with HEAD NOT in base -> refuse (exit 4)
+if [ "$detached" -eq 1 ]; then
+    case "$state" in
+        S1|S2b)                  new_state="D1" ;;
+        S2c-merged|S2c-unmerged) new_state="D2c" ;;
+        S3)                      new_state="D3" ;;
+        *)                       new_state="" ;;
+    esac
+    if [ -n "$new_state" ]; then
+        if [ "$head_merged" -eq 1 ]; then
+            state="$new_state"
+        else
+            state="D-unmerged"
+        fi
+    fi
 fi
 
 # ─────────────────────────────────────────────
@@ -470,6 +530,37 @@ case "$state" in
             echo "worktree-cleanup: PRUNED — worktree directory for '$slug' was already missing; git metadata pruned. Branch '$BR': already absent. Run notes: deleted."
         fi
         exit 0
+        ;;
+
+    D1)
+        # Detached HEAD, nothing uncommitted, HEAD commit already in base.
+        # No branch belongs to this worktree, so none is deleted.
+        keep_run_logs
+        run git -C "$repo" worktree remove "$WT"
+        run rm -rf "$NOTES"
+        echo "worktree-cleanup: REMOVED — '$slug' worktree removed (detached HEAD, no branch: commit $registered_head was already contained in '$base'), run notes deleted. No branch was deleted."
+        exit 0
+        ;;
+
+    D2c)
+        n="$(count_pure_deletions)"
+        keep_run_logs
+        run git -C "$repo" worktree remove --force "$WT"
+        run rm -rf "$NOTES"
+        echo "worktree-cleanup: RECOVERED — '$slug' had an interrupted prior removal: $n tracked path(s) were deleted from disk without being committed (pure worktree-side deletions, fully recoverable from git history — not genuine new work). Finished the removal (detached HEAD, no branch: commit $registered_head was already contained in '$base'). No branch was deleted. Run notes: deleted."
+        exit 0
+        ;;
+
+    D3)
+        run git -C "$repo" worktree prune
+        run rm -rf "$NOTES"
+        echo "worktree-cleanup: PRUNED — worktree directory for '$slug' was already missing; git metadata pruned (detached HEAD, no branch: commit $registered_head was already contained in '$base'). No branch was deleted. Run notes: deleted."
+        exit 0
+        ;;
+
+    D-unmerged)
+        echo -e "${RED}worktree-cleanup: REFUSING — worktree '$slug' has no branch (detached HEAD) and its commit $registered_head is NOT contained in '$base'. Merge that commit into '$base', then retry. (Saving it with 'git branch <name> $registered_head' keeps the commit but does not make this worktree removable by this script: remove the leftover worktree by hand afterwards with 'git worktree remove --force' or 'git worktree prune'.) Nothing was removed.${NC}" >&2
+        exit 4
         ;;
 
     S4)
