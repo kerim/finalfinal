@@ -223,30 +223,34 @@ final class MathSpecialCharsExportTests: XCTestCase {
                       "The escaped # must still render as a literal hash. Rendered text:\n\(result.renderedText)")
     }
 
-    // MARK: - `%`: does NOT crash pandoc, but silently truncates the rest of the line
+    // MARK: - `%`: no crash, and the text after it survives -- even with no filter applied
 
-    /// `%` is a different failure shape than `&`/`#`: pandoc's own LaTeX writer already inserts a
-    /// newline immediately after `%` in its output, so it never runs off into a LaTeX comment
-    /// that swallows the rest of the compiled .tex file -- it just silently drops the text
-    /// between the `%` and that inserted newline. Confirmed by direct reproduction: exit 0, but
-    /// the trailing "7" never reaches the rendered PDF.
+    /// `%` is a different shape than `&`/`#`: an unescaped one never crashes pandoc. Older pandoc
+    /// builds also silently dropped the text between the `%` and the newline their LaTeX writer
+    /// inserts after it (the trailing "7" never reached the rendered PDF); the installed pandoc
+    /// (3.13) no longer does -- confirmed by direct reproduction: it does not even read
+    /// `$x % 7$` as a math span, it emits it as literal text (`\$x \% 7\$`), so the "7" reaches the
+    /// PDF with no filter at all. This test pins that current behaviour -- no crash and the text
+    /// after the `%` survives, with the fix switched OFF. It is the unfixed-pipeline counterpart of
+    /// `testPercentInMath_WithFix_PreservesTextThatWasPreviouslySilentlyDropped` below, and would
+    /// fail if a pandoc update brought the old silent drop back.
     ///
     /// Uses a digit ("7"), not a letter, as the post-% survival marker: xelatex's unicode-math
     /// renders a bare math-mode LETTER as an italic Unicode math-alphanumeric symbol (e.g. "y"
     /// becomes U+1D466 "𝑦", confirmed empirically via pdftotext -- not the plain ASCII "y" a
-    /// naive `.contains("y")` check looks for, so that check could never match either before or
-    /// after the fix). A digit renders as its own plain ASCII character in this font, so
-    /// `.contains("7")` is a direct, unambiguous check with no Unicode-variant pitfalls.
-    func testPercentInMath_WithoutFix_SilentlyDropsTextAfterItButDoesNotCrash() throws {
+    /// naive `.contains("y")` check looks for, so that check could never match either way).
+    /// A digit renders as its own plain ASCII character in this font, so `.contains("7")` is a
+    /// direct, unambiguous check with no Unicode-variant pitfalls.
+    func testPercentInMath_WithoutFix_DoesNotCrashAndKeepsTextAfterIt() throws {
         let markdown = "Test math: $x % 7$ should not crash.\n"
 
         let result = try compileMathFixture(markdown: markdown, applyMathFix: false)
 
         XCTAssertEqual(result.exitCode, 0,
                        "An unescaped % in math must NOT crash pandoc (unlike & and #). Stderr:\n\(result.stderr)")
-        XCTAssertFalse(result.renderedText.contains("7"),
-                       "Known pre-fix bug: text after an unescaped % in math is silently dropped. " +
-                       "Rendered text:\n\(result.renderedText)")
+        XCTAssertTrue(result.renderedText.contains("7"),
+                      "Text after an unescaped % in math must survive into the PDF even with no filter " +
+                      "applied. Rendered text:\n\(result.renderedText)")
     }
 
     func testPercentInMath_WithFix_PreservesTextThatWasPreviouslySilentlyDropped() throws {
