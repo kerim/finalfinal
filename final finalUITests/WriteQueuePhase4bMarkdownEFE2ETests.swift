@@ -1426,24 +1426,10 @@ extension WriteQueuePhase4bMarkdownEFE2ETests {
             "the definitions are numbered \(walk.definitions.map(\.number)), not 1...\(remaining) (one each)")
         shot("md-footnoted-delete-1-after-the-delete")
 
-        // Scroll to Notes (the Outline card of the Notes section) and read the definition labels the editor shows.
-        if let notesCard = bringSidebarCardIntoView("Notes", failIfMissing: false) {
-            app.activateAndWaitForForeground()
-            notesCard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-            // The editor scrolls to Notes: wait (a condition, bounded) until a definition label is on screen.
-            let labelsDeadline = Date(timeIntervalSinceNow: 30)
-            var labels = visibleNoteLabels()
-            while labels.isEmpty, Date() < labelsDeadline {
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
-                labels = visibleNoteLabels()
-            }
-            let duplicates = Dictionary(grouping: labels, by: { $0 }).filter { $0.value.count > 1 }.keys.sorted()
-            let consecutive = zip(labels, labels.dropFirst()).allSatisfy { $0.1 == $0.0 + 1 }
-            result("NOTES ON SCREEN: \(labels.count) definition label(s) visible \(labels); duplicates \(duplicates); consecutive \(consecutive)")
-            soft.check(duplicates.isEmpty, "the Notes in the editor show duplicate definition label(s) \(duplicates)")
-            soft.check(labels.isEmpty || consecutive, "the Notes labels visible in the editor are not consecutive: \(labels)")
-            shot("md-footnoted-delete-2-notes-on-screen")
-        }
+        // Scroll to Notes (the Outline card of the Notes section) and read the definition labels the editor shows, from one snapshot of the
+        // editor's tree (`addNotesOnScreenCheck`: no label read within 30 s of the click is a FAILURE, with the tree dump and the screenshot
+        // attached; the old run-by-run reader came back empty and its `labels.isEmpty || consecutive` check passed on nothing).
+        addNotesOnScreenCheck("after the delete and the typing", to: &soft)
         addScreenEqualsDatabaseCheck(before: post, what: "after the delete and the typing", to: &soft)
         addMarkdownMechanismChecks(from: from, commands: 1, to: &soft)
         addLogChecks(from: from, to: &soft)
