@@ -986,39 +986,63 @@ struct SystemWriteOrderingTests {
     // unchanged-rendered-content early return, so an unresolvable citekey caused every
     // later check to see a "changed" set and reschedule a full run (including a Zotero
     // fetch and a Source-Mode wholesale flush) forever.
+    // The Zotero fetch these keys trigger is stubbed (`MockBBTURLProtocol`, under the shared network lock): a real Zotero on this
+    // Mac, or a connection failure to it (which drops `isConnected` and ends the second run early), must never decide the outcome.
     @Test("""
         an unresolvable citekey set still commits lastKnownCitekeys on the unchanged-content path, so a later check doesn't see \
         a false 'changed' set forever
         """)
     func unresolvableCitekeys_commitOnUnchangedContentPath() async throws {
-        ZoteroService.shared.isConnected = true
-        defer {
-            ZoteroService.shared.isConnected = false
-            ZoteroService.shared.clearCache()
+        try await ZoteroNetworkTestLock.shared.run {
+            // The shared service's state as it was before this test (read before the assignment below), put back afterwards.
+            let previousIsConnected = ZoteroService.shared.isConnected
+            let previousConnectionError = ZoteroService.shared.connectionError
+            let previousLibraries = ZoteroService.shared.cachedLibraries
+            ZoteroService.shared.isConnected = true
+            defer {
+                ZoteroService.shared.clearCache()
+                ZoteroService.shared.isConnected = previousIsConnected
+                ZoteroService.shared.connectionError = previousConnectionError
+                ZoteroService.shared.cachedLibraries = previousLibraries
+            }
+            // BBT's answer for both keys: not found (error code 0) in the personal library and, with no group libraries, in
+            // every other. The fetch ends with no items and never reaches a real Zotero. Unregistered before the lock is released.
+            MockBBTURLProtocol.reset()
+            let notFoundJSON = #"{"jsonrpc":"2.0","result":{"errors":{"unresolvableA2026":0,"unresolvableB2026":0},"items":{}},"id":1}"#
+            MockBBTURLProtocol.responses["item.pandoc_filter"] = (200, Data(notFoundJSON.utf8))
+            MockBBTURLProtocol.responses["user.groups"] = (200, Data(#"{"jsonrpc":"2.0","result":[],"id":0}"#.utf8))
+            URLProtocol.registerClass(MockBBTURLProtocol.self)
+            defer { URLProtocol.unregisterClass(MockBBTURLProtocol.self) }
+
+            // Deliberately never load items for these keys -- both are permanently
+            // unresolvable, so `generateBibliographyMarkdown` renders "" for either set.
+            let stack = try makeStack(content: "Citing [@unresolvableA2026] here.")
+            let service = BibliographySyncService()
+            service.configure(database: stack.db, projectId: stack.pid)
+            service.systemWriter = SystemWriter(blockSync: stack.sync)
+
+            await service.performBibliographyUpdate(
+                citekeys: ["unresolvableA2026"], projectId: stack.pid, scheduledGeneration: 0)
+            #expect(ZoteroService.shared.isConnected, Comment(rawValue:
+                    "precondition: the stubbed Zotero call must leave the service connected; " +
+                    "if not, the stub was not reached or the connection dropped"))
+
+            // A DIFFERENT unresolvable citekey set. Content renders identically ("" either
+            // way), so this must take the unchanged-content early return -- and still
+            // commit `lastKnownCitekeys` to the NEW set.
+            await service.performBibliographyUpdate(
+                citekeys: ["unresolvableB2026"], projectId: stack.pid, scheduledGeneration: 0)
+
+            // Proven indirectly: checking again with the SAME (just-seen) set must schedule
+            // NOTHING, because `currentSet == lastKnownCitekeys` now holds. Under the old
+            // bug, `lastKnownCitekeys` would still be stuck at the FIRST set, so this would
+            // look "changed" and schedule a pending update every single time.
+            service.checkAndUpdateBibliography(currentCitekeys: ["unresolvableB2026"], projectId: stack.pid)
+            #expect(MockBBTURLProtocol.capturedRequests.contains(where: { $0.method == "item.pandoc_filter" }),
+                    "the fetch must have gone to the stub, never to a real Zotero")
+            #expect(!service.testHasPendingUpdate, Comment(rawValue:
+                    "lastKnownCitekeys must have been committed on the unchanged-content path -- otherwise " +
+                    "checkAndUpdateBibliography sees a 'changed' set every time and reschedules forever"))
         }
-        // Deliberately never load items for these keys -- both are permanently
-        // unresolvable, so `generateBibliographyMarkdown` renders "" for either set.
-        let stack = try makeStack(content: "Citing [@unresolvableA2026] here.")
-        let service = BibliographySyncService()
-        service.configure(database: stack.db, projectId: stack.pid)
-        service.systemWriter = SystemWriter(blockSync: stack.sync)
-
-        await service.performBibliographyUpdate(
-            citekeys: ["unresolvableA2026"], projectId: stack.pid, scheduledGeneration: 0)
-
-        // A DIFFERENT unresolvable citekey set. Content renders identically ("" either
-        // way), so this must take the unchanged-content early return -- and still
-        // commit `lastKnownCitekeys` to the NEW set.
-        await service.performBibliographyUpdate(
-            citekeys: ["unresolvableB2026"], projectId: stack.pid, scheduledGeneration: 0)
-
-        // Proven indirectly: checking again with the SAME (just-seen) set must schedule
-        // NOTHING, because `currentSet == lastKnownCitekeys` now holds. Under the old
-        // bug, `lastKnownCitekeys` would still be stuck at the FIRST set, so this would
-        // look "changed" and schedule a pending update every single time.
-        service.checkAndUpdateBibliography(currentCitekeys: ["unresolvableB2026"], projectId: stack.pid)
-        #expect(!service.testHasPendingUpdate, Comment(rawValue:
-                "lastKnownCitekeys must have been committed on the unchanged-content path -- otherwise " +
-                "checkAndUpdateBibliography sees a 'changed' set every time and reschedules forever"))
     }
 }
