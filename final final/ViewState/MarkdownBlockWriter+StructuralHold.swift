@@ -39,7 +39,14 @@
 //
 //  NEVER A WHOLE-DOCUMENT WRITE. The two structural triggers go through `prepare` unchanged (the same diff and alignment). On
 //  `.skippedOpenFence`, `.refused`, `.unreadable` or `.noWriter` they reserve nothing and return that outcome; they never fall
-//  back to `flushContentToDatabase` (plan A17): the typing is saved by the post-apply flush or the owed pull that follows.
+//  back to `flushContentToDatabase` (plan A17).
+//
+//  SO THE TYPING BEFORE A CLICK IS NOT ALWAYS SAVED BEFORE THE CLICK. After one of those four outcomes (the one a user reaches is
+//  `.skippedOpenFence`: the text ends inside a code fence or `$$` block with no closing line) that typing is not in the rows when the
+//  command's job runs. The callers ignore the outcome on purpose. Nothing is lost: the text is still in the page, and step 8's
+//  post-apply flush writes the live text after the job. That flush goes through the same open-fence check, so while the live text
+//  still ends inside the open fence it is skipped too, and the next save writes it (the re-parse once the fence is closed, or the
+//  whole-document save of a close, quit or project switch).
 //
 
 import Foundation
@@ -245,8 +252,12 @@ extension MarkdownBlockWriter {
     /// the typing turn that comes before the command's job. Ignores the hold. Synchronous: parse, alignment, diff, reservation
     /// and the start of the apply Task are one main-actor turn, as for the debounce fire.
     ///
-    /// Never a whole-document write: `.skippedOpenFence`, `.refused`, `.unreadable` and `.noWriter` reserve nothing and are
-    /// returned as they are; the command's post-apply flush saves the typing. The caller follows a reserved batch with
+    /// Never a whole-document write, so the typing is NOT always saved before the click: `.skippedOpenFence` (the text ends inside an
+    /// unclosed code fence or `$$` block), `.refused`, `.unreadable` and `.noWriter` reserve nothing and are returned as they are.
+    /// Only a `.started` batch puts the pre-click typing into the rows before the job runs (`.nothingToWrite` and `.stayedRows` mean
+    /// there was none to write). The callers ignore the outcome on purpose: the typing is still in the page, and the command's
+    /// post-apply flush (step 8) writes the live text after the job; that flush is skipped too while the text still ends inside the
+    /// open fence, and the next save writes it. The caller follows a reserved batch with
     /// `noteQueuedStructuralJob()` (a baseline that names rows the job is about to delete must never be installed).
     @discardableResult
     func prepareStructuralClick(

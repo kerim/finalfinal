@@ -31,8 +31,9 @@
 //       `markdownStructuralDuplicate(request)`. On `leadersMismatch` the typing is flushed and the call is made once more; a second
 //       mismatch, any other refusal or a JavaScript error adopts the page's live text into the record and returns nil (the old body runs);
 //    6. the reply turn (`markdownDuplicateReplyTurn`, shared with the quick redo): one synchronous stretch after the writer's last write is
-//       awaited (the typing batch up to the click, the page's text adopted, the sidebar overlay built from the ROWS of the subtree, the
-//       step-8 gate, the job); only when the job reserved its place is the hold handed to the step-8 continuation;
+//       awaited (the typing batch up to the click, saved only when `prepareStructuralClick` returns `.started`, see the reply turn; the
+//       page's text adopted, the sidebar overlay built from the ROWS of the subtree, the step-8 gate, the job); only when the job
+//       reserved its place is the hold handed to the step-8 continuation;
 //    7. the entry: `efRecordedGeneration`, `efRecordedStructGeneration`, `efEditorKind[opId] = .markdown`, `StructuralEntry(.sectionDuplicate)`.
 //       NO bump of `structuralOutOfQueueGeneration` (that bump lives only in the old body): an earlier Delete stays quick-undoable.
 //
@@ -306,6 +307,12 @@ extension StructuralUndoController {
     /// through `startEditorFirstDuplicateJob` with `copiesAreLeadersOnly`. Once the starter has returned true the hold is HANDED OFF in the
     /// same synchronous turn (D2/O21): a continuation Task takes it and releases it in its own `defer`. When the job did not reserve its
     /// place there is no continuation: the gate is finished and the caller's `defer` releases the hold.
+    ///
+    /// THE TYPING BATCH IS NOT ALWAYS SAVED BEFORE THE CLICK. `prepareStructuralClick` reserves it only when it returns `.started`. With
+    /// `.skippedOpenFence` (the text ends inside a code fence with no closing line), `.refused`, `.unreadable` or `.noWriter` it reserves
+    /// nothing, and the typing is not in the rows when the copy's job runs. This turn does not inspect that answer, on purpose: nothing
+    /// is lost, because the typing is still in the page text (and in the quick undo's checkpoint), and step 8's flush writes the live text
+    /// after the job. That flush is skipped too while the text still ends inside the open fence; the next save then writes it.
     ///
     /// `jobKey` is the quick redo's fresh registry key (nil for the click, whose job is keyed by the entry's id); it is also the key of the
     /// gate and of the continuation. A redo has marked its slot `reserved` before the job starts (`efSlots.markReserved`, as the Rich Text

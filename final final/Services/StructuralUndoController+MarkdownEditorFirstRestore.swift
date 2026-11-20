@@ -328,11 +328,13 @@ extension StructuralUndoController {
     ///
     /// WHAT THE TYPING BATCH COVERS. When `prepareStructuralClick` reserves a batch (disposition `.started`), what was typed before the
     /// call, inside the replaced part too, is in the rows before the job runs: the automatic version the job writes and the undo's
-    /// reinsert hold it, and one Cmd-Z brings it back at the same place. When it reserves nothing (`.skippedOpenFence`: the caret is
-    /// inside an unclosed code fence; `.refused`, `.unreadable`, `.noWriter`; the disposition is not inspected here, as in the Delete's
-    /// and the Duplicate's reply turns) that typing is not in the rows yet. It is not lost: the page's checkpoint (the entry's pre-op
-    /// state, taken from the live document before the swap) brings it back with the old text on Cmd-Z, and step 8's flush writes the
-    /// live text into the rows after the job.
+    /// reinsert hold it, and one Cmd-Z brings it back at the same place. When it reserves nothing (`.skippedOpenFence`: the text ends
+    /// inside an unclosed code fence; `.refused`, `.unreadable`, `.noWriter`; the disposition is not inspected here, on purpose, as in
+    /// the Delete's and the Duplicate's reply turns) that typing is NOT saved before the click: it is not in the rows when the job runs,
+    /// so the automatic version the job writes and the undo's reinsert lack it. It is not lost: the page's checkpoint (the entry's
+    /// pre-op state, taken from the live document before the swap) brings it back with the old text on Cmd-Z, and step 8's flush
+    /// writes the live text into the rows after the job. That flush is skipped too while the live text still ends inside the open
+    /// fence; the next save then writes it.
     ///
     /// NEVER records an entry (the click records its own once; a quick redo's entry is already on the timeline).
     ///
