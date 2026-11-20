@@ -38,6 +38,7 @@ final class ListNumberingE2ETests: XCTestCase {
 
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
 
         try TestFixtureHelper.setupFixture(from: self)
         app.launchForTesting(fixturePath: TestFixtureHelper.fixturePath)
@@ -113,9 +114,12 @@ final class ListNumberingE2ETests: XCTestCase {
         // inserted image), not literal Source Mode markdown.
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
-        app.typeKey("/", modifierFlags: .command)
+        // The helper brings the app to the front before each Cmd-/ (the bare press used to go out without that, so it could be lost),
+        // resends only a press the app's own log shows it did not receive, and waits up to 30 s for the label, which since the carried
+        // switch flips only after the incoming page is ready (`toggleEditorModeUntilReceived`, UITestHelpers.swift).
+        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 5)
         XCTAssertTrue(
-            editorMode.waitForLabel("== 'Markdown'", timeout: 10),
+            toggle.flipped,
             "Editor-mode button should report Markdown (triggers the flush; view swap itself may lag -- see comment above)"
         )
 
@@ -222,9 +226,10 @@ final class ListNumberingE2ETests: XCTestCase {
         // show WYSIWYG. The proof below is the persisted `block` row, not pixels.
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear. Blocks before toggle: \(preToggleBlocks)")
-        app.typeKey("/", modifierFlags: .command)
+        // Same helper as in testImagePasteMidListContinuesNumbering() above: front-activated press, resend only if the app never got it.
+        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 5)
         XCTAssertTrue(
-            editorMode.waitForLabel("== 'Markdown'", timeout: 10),
+            toggle.flipped,
             "Editor-mode button should report Markdown (triggers the flush). Blocks before toggle: \(preToggleBlocks)"
         )
 
