@@ -194,6 +194,7 @@ Intro paragraph for section A.
         continueAfterFailure = false
         app = XCUIApplication.targetApp()
         app.terminate()
+        app.launchEnvironment["FF_UI_TESTING_FORCE_DIAGNOSTIC_LOGGING"] = "1"  // toggleEditorModeUntilReceived reads the app log
         try TestFixtureHelper.setupFixture(from: self)
 
         // Record where the persistent diagnostic log currently ends, so
@@ -289,9 +290,12 @@ Intro paragraph for section A.
 
         let editorMode = app.buttons["status-bar-editor-mode"]
         XCTAssertTrue(editorMode.waitForExistence(timeout: 10), "Editor mode button should appear")
-        app.activateAndWaitForForeground()
-        app.typeKey("/", modifierFlags: .command)
-        XCTAssertTrue(editorMode.waitForLabel("== 'Markdown'", timeout: 10), "Editor-mode button should report Markdown")
+        // Since the carried editor-mode switch the label flips only after the incoming page is ready (well past 10 s with two VMs
+        // running), so one press plus a 10 s wait was a timeout flake. The helper brings the app to the front, presses Cmd-/, and
+        // resends only a press the app's own log shows it did not receive, then waits up to 30 s for the label
+        // (`toggleEditorModeUntilReceived`, UITestHelpers.swift).
+        let toggle = toggleEditorModeUntilReceived(app, to: "Markdown", maxPresses: 5, receiptWindow: 5)
+        XCTAssertTrue(toggle.flipped, "Editor-mode button should report Markdown")
 
         // KNOWN RISK (see file header "Trigger mechanism"): the label flips
         // before the async WYSIWYG->CodeMirror view swap necessarily
