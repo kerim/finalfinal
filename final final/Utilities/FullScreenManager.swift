@@ -164,14 +164,22 @@ enum FullScreenManager {
         }
     }
 
-    /// Applies a `TransitionAction` against `window`. The only place in this file (and,
-    /// modulo `AppDelegate`'s own bootstrap path, in the app) that calls
-    /// `window.toggleFullScreen(nil)`.
+    /// Applies a `TransitionAction` against `window`. The only place in the app that calls
+    /// `window.toggleFullScreen(nil)`, except under unit tests, where it never toggles.
     private static func apply(_ action: TransitionAction, window: NSWindow) {
         switch action {
         case .issueToggle:
-            DebugLog.log(.lifecycle, "[FullScreenManager] toggle issued: window.toggleFullScreen(nil)")
-            window.toggleFullScreen(nil)
+            if TestMode.isUnitTesting {
+                // The unit-test host's main window is a real window on the user's screen: a real toggle would
+                // move the user's Mac to another desktop on every Focus Mode test run. The model records the
+                // request, but no did* notification arrives, so only the 5 s watchdog moves it on (in the app it
+                // settles in about 0.5 s); a following request(.windowed) is therefore held as pending, which
+                // differs from the app.
+                DebugLog.log(.lifecycle, "[FullScreenManager] toggle skipped under unit tests (a real toggle would move the user to another desktop)")
+            } else {
+                DebugLog.log(.lifecycle, "[FullScreenManager] toggle issued: window.toggleFullScreen(nil)")
+                window.toggleFullScreen(nil)
+            }
             armWatchdog()
         case .waitForCurrentTransition:
             DebugLog.log(.lifecycle, "[FullScreenManager] request deferred: transition already in flight")
@@ -190,9 +198,12 @@ enum FullScreenManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + watchdogInterval, execute: workItem)
     }
 
-    /// Resets all static state for unit tests. `AppDelegate.shared` is nil under unit tests,
-    /// so `request(_:)` always takes the "no window" branch there regardless — this exists so
-    /// tests don't leak observers, a pending watchdog, or stored intents across runs.
+    /// Resets all static state for unit tests. `AppDelegate.shared` is set under unit tests (the
+    /// test host runs the app's own launch code), and its `mainWindow` is the host's real main
+    /// window, so `request(_:)` finds a window there and records its transitions in the model;
+    /// `apply(_:window:)` then skips the real `toggleFullScreen(nil)` under unit tests, so no
+    /// window ever really changes full-screen state. This exists so tests don't leak observers,
+    /// a pending watchdog, or stored intents across runs.
     static func resetForTesting() {
         for token in observerTokens {
             NotificationCenter.default.removeObserver(token)
