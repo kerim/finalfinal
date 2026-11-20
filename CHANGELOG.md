@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Undoing or redoing a Delete Section, Duplicate Section or Version History restore is now quick in both editors.** Typing you did inside a copied, restored or moved section comes back when you redo. A ⌘Z pressed while an earlier one is still being carried out is held, not dropped. If you keep typing while it waits, it still runs, and your typing is kept on top.
 - **Zooming into a section and switching between Rich Text and Markdown no longer lose what you type while the switch happens** — the page you are leaving stays typeable until the new one is ready, and words typed in between are carried across.
 - **The Outline sidebar updates faster on long documents after each change.**
-- **In Markdown mode, Delete Section, Duplicate Section and dragging a section in the Outline pause the app much less on long books.**
+- **Section commands and their undo are much quicker on long books.** Measured on a long test book (about 90,000 words, twelve chapters) in a virtual machine: in Rich Text, undoing a Delete Section now puts the section back in about 0.07 seconds instead of 0.85 (about 0.05 instead of 0.46 on a six-chapter book). In Markdown mode, a deleted section's card leaves the Outline after about 0.1 seconds instead of about 0.5, a Duplicate's copy appears after about 0.13 seconds instead of about 0.47, a restored section from Version History is on screen in about 0.6 seconds instead of 2.4, and dragging a section in the Outline answers in about 0.2 seconds instead of about 0.35. Real-Mac times will differ, and a short pause still follows some of these commands.
 
 ### Fixed
 
