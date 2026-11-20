@@ -473,7 +473,7 @@ extension ProjectDatabase {
             //
             // isSectionBreakMarker (not `trimmed ==`) matches the marker as the
             // block's first line too, not only the marker alone — see its doc
-            // comment in BlockParser.swift for why a marker-then-body shape on
+            // comment in BlockParser+Classification.swift for why a marker-then-body shape on
             // one block/node is real and reachable, not hypothetical.
             block.blockType = .sectionBreak
             block.headingLevel = nil
@@ -493,8 +493,7 @@ extension ProjectDatabase {
             // Without this branch the row silently stayed a paragraph with
             // markdownFragment '---' and the next sync minted a duplicate hr insert.
             //
-            // Scope, confirmed (see review notes on this branch, superdev
-            // hr-block-sync-types round 2):
+            // Scope:
             // - Paragraph-only by construction (the `block.blockType == .paragraph`
             //   guard above): a code_block's markdownFragment is always fence-wrapped
             //   ("```lang\n…\n```", see nodeToMarkdownFragment in
@@ -502,35 +501,32 @@ extension ProjectDatabase {
             //   even without this guard — the explicit check is defensive
             //   belt-and-suspenders against a future serializer change, and it also
             //   protects blockquote/list/table/heading/image/math rows the same way.
-            // - Escape handling matches BlockParser.swift's own thematic-break
-            //   detector (line ~396, identical `^[-*_]{3,}$` pattern) exactly — ANY
-            //   leading backslash (e.g. `\---`) fails the anchored match on both
-            //   sides, so literal escaped dashes are never misread as a rule. This
-            //   branch deliberately does not invent different escape semantics.
-            //   (Separately: block-sync-plugin.ts's escapeInlineText only
-            //   re-escapes a leading `#`/`[^N]:` on round-trip, not leading `-`/`*`/
-            //   `_` — so a paragraph whose true text content is exactly "---" is
-            //   already ambiguous with a real rule before it reaches Swift at all.
-            //   That ambiguity is pre-existing on both the old BlockParser.swift
-            //   detector and this branch equally; not a regression introduced here.)
+            // - Escape handling matches the thematic-break detector in
+            //   BlockParser+Classification.swift (`fencedOrQuotedType`, identical
+            //   `^[-*_]{3,}$` pattern) exactly — ANY leading backslash (e.g. `\---`)
+            //   fails the anchored match on both sides, so literal escaped dashes are
+            //   never misread as a rule. This branch deliberately does not invent
+            //   different escape semantics.
             // - All three CommonMark thematic-break characters (-, *, _) are
-            //   covered — same `{3,}` character class as BlockParser.swift, not a
-            //   narrower "---"-only pattern.
-            // - WYSIWYG-only (as first written; Markdown mode's per-block writer has
-            //   applied its batches through here too since Phase 4a, and the rest of
-            //   this bullet has not been rechecked for it): this whole
-            //   applyBlockChangesFromEditor() function was reached only through the
-            //   Rich Text editor's block batches (today the Milkdown page's reports:
-            //   ReportApplier, then BlockSyncService.applyFetchedBatch) —
-            //   BlockSyncService.configure(webView:) is wired up exclusively from
-            //   MilkdownEditor's onWebViewReady (ContentView+EditorPresentation.swift),
-            //   never from CodeMirrorEditor's. Source Mode content instead flows
-            //   through flushContentToDatabase() → BlockParser.parse() (a full
-            //   document reparse using the same pre-existing detector referenced
-            //   above), a completely different path this branch cannot see. So a
-            //   YAML-frontmatter "---" delimiter or mid-typing source text can never
-            //   reach this specific branch — only a WYSIWYG paragraph whose full
-            //   trimmed content is already exactly "---"/"***"/"___" does.
+            //   covered — same `{3,}` character class as
+            //   BlockParser+Classification.swift, not a narrower "---"-only pattern.
+            // - Reached from both editors: Rich Text's block reports (ReportApplier,
+            //   then BlockSyncService.applyFetchedBatch) and Markdown mode's per-block
+            //   writer (MarkdownBlockDiff batches applied by DocumentWriter). In
+            //   Markdown mode MarkdownBlockDiff ordinarily pairs a removed row only
+            //   with a new block of the same type (pairMovedNotes pairs Notes
+            //   paragraphs by footnote slot, with no type check), and the parse types
+            //   a lone all-dashes line a rule (BlockParser+Classification.swift), so
+            //   that line ordinarily arrives as a delete plus an insert, not as this
+            //   update. Markdown mode reaches this branch when a stored paragraph row
+            //   is still recorded as a rule in the writer's baseline (t-fd0d907e:
+            //   editing an existing rule's dash count leaves the row a paragraph);
+            //   the row then ends up a rule, as the parse says. Front matter made only
+            //   of `key: value` lines ("---", "key: value", "---") is one multi-line
+            //   paragraph and does not match the anchored pattern, so its row keeps
+            //   its text and type. Front matter with list values is split by the
+            //   splitter (see the board). MarkdownThematicBreakRoundTripTests pins the
+            //   `key: value` case and the lone-line case.
             block.blockType = .horizontalRule
             block.headingLevel = nil
             block.textContent = ""
