@@ -78,7 +78,7 @@ Grammar checking can use the free version of Language Tool out-of-the box, but i
 # Using FINAL|FINAL
 
 1. **Create a project** — Use File → New Project to start writing
-2. **Start typing** — Your work saves automatically to the project
+2. **Start typing** — Your work saves automatically to the project, in the order you typed it. Closing, quitting, or switching projects always saves your latest words first.
 3. **Organize with headings** — Use # for H1, ## for H2, and so on
 4. **Navigate** — Click sections in the sidebar to jump to them
 
@@ -96,7 +96,9 @@ Right-click sections to:
 
 * Add **word goals** with progress tracking. Can set minimum, maximum, or approximate (+/- 5%) goals. 
 
-* **Duplicate** or **Delete** a section, including everything nested under it. Both can be undone with **⌘Z**, in order with everything else you've done — see Version History below.
+* **Duplicate** or **Delete** a section, including everything nested under it. Both take effect at once, and you can keep typing while the app finishes the job behind the scenes. Both can be undone with **⌘Z**, in order with everything else you've done — see Version History below.
+
+To hide the sidebar, use the button at the left of the toolbar, the View menu, or **⌘[**.
 
 ### Source View
 
@@ -110,19 +112,23 @@ Use `/cite` to enter a citation from Zotero. A bibliography section will be crea
 
 Use `/task`, `/comment`, or `/reference` to add annotations. Tasks have check boxes that can be checked-off. To avoid surprises everything shows inline to begin with, but I recommend setting comments and references to “collapsed” via the “eye” menu in the top right corner of the annotations panel. This will still show them with a pop-up tool tip.
 
+Each project remembers how you like its annotations shown — whether Task, Comment, and Reference notes appear inline or collapsed, whether they show in the side panel only, and whether completed ones are hidden. The eye menu's **Set as Default** button saves your choices as the starting point for any project that doesn't have its own yet.
+
 ### Focus Mode
 
 Press **⌘⇧F** to enter focus mode for distraction-free writing. By default, focus mode enters full screen, hides both sidebars, the toolbar, and the status bar, and dims everything except the paragraph you're editing.
 
 You can customize which elements are affected in **Preferences → Focus**:
 
-* **Hide Outline** — hides the left sidebar
-* **Hide Annotations** — hides the right sidebar and collapses annotations
+* **Hide Outline Panel** — hides the left sidebar
+* **Hide Annotations Panel** — hides the right sidebar and collapses annotations
+* **Inline Annotations** — leave annotations as they are, collapse them, or hide them while focus mode is on, without changing what each project has saved
 * **Hide Toolbar** — hides the window toolbar
 * **Hide Status Bar** — hides the bottom status bar
 * **Paragraph Highlighting** — dims all paragraphs except the one you're editing
+* **Typewriter Scrolling** — keeps the line you're typing on at a fixed height on screen while the text scrolls underneath it, instead of the page jumping as you type (works in both the formatted and source editors)
 
-All settings are on by default. Changes take effect the next time you enter focus mode.
+The hide and highlight settings are on by default; Typewriter Scrolling is off. Changes take effect the next time you enter focus mode.
 
 ### Version History
 

@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.139] - 2026-11-20
+
+### Changed
+
+- **The way your typing is saved has been rebuilt.** Every change is now saved in the order you made it, even while the app is busy with something else, such as a section command, a bibliography update or a zoom. In Markdown mode only the paragraphs you changed are saved, not the whole text.
+- **Every way of closing or switching projects now saves your latest typing first:** ⌘W, ⌘Q, ⌘O, Open Recent, opening a file from Finder, New Project, Import, Save As and Getting Started. If you choose another of these while the app is still saving, it is carried out as soon as the save finishes. If you choose several, the last one wins.
+- **Delete Section, Duplicate Section, dragging a section in the Outline, and the three Version History restores (restore the version, replace a section, insert a section as new) now take effect at once in both Rich Text and Markdown** — the editor changes immediately and the saving finishes behind anything you type. Typing during one of them is no longer lost.
+- **Undoing or redoing a Delete Section, Duplicate Section or Version History restore is now quick in both editors.** Typing you did inside a copied, restored or moved section comes back when you redo. A ⌘Z pressed while an earlier one is still being carried out is held, not dropped. If you keep typing while it waits, it still runs, and your typing is kept on top.
+- **Zooming into a section and switching between Rich Text and Markdown no longer lose what you type while the switch happens** — the page you are leaving stays typeable until the new one is ready, and words typed in between are carried across.
+- **The Outline sidebar updates faster on long documents after each change.**
+- **In Markdown mode, Delete Section, Duplicate Section and dragging a section in the Outline pause the app much less on long books.**
+
+### Fixed
+
+- **Opening a book that cites sources could leave it without its Bibliography until you next changed a citation, if Zotero connected a moment late** — fixed.
+- **A bibliography, Notes or footnote update could erase the edit that triggered it, or words you typed in the second or two it took** — fixed; your own paragraphs and unsaved edits are now left alone while it updates.
+- **Quitting or closing a project right after adding a paragraph could save it twice** — fixed.
+- **Closing a project could save an out-of-date copy of your text, and closing or quitting could save the Notes section from older text** — fixed; close now reads the editor first. Closing or switching projects while zoomed into a section no longer deletes the sections outside it.
+- **Quitting could still hang forever if the editor stopped responding, and so could Save Version, auto-backup and undo.** The time limit added in 0.2.134 did not always take effect — now it does.
+- **A quick edit to a paragraph you had just created could be silently dropped** when two saves overlapped — fixed.
+- **Pasting, deleting, typing or dragging could move a paragraph's annotations, or a section's status, tags and word goal, onto unrelated text. A new paragraph could also pick them up from one you had just deleted.** Fixed.
+- **Adding many paragraphs in one spot could leave them in the wrong order after reopening, exporting or saving a version.** This happened when you pasted or typed about 50 at once, wrote a long run just above Notes or Bibliography, or repeated Duplicate Section or Insert as New Section many times. Fixed.
+- **Undoing a footnote deletion could bring the number back with an empty footnote. Undoing only some of several deleted footnotes could leave blank ones. Deleting the first of several footnotes, pressing ⌘Z once and then closing could lose a footnote's text.** All fixed.
+- **Hovering a section row in File ▸ Version History could freeze the app for documents with footnotes or citations, and restoring a section from Version History could freeze it** — fixed.
+- **A Version History window macOS restored at launch showed an empty list, and ⌘⌥V reopened that stale empty window** — fixed; the window is never restored at launch.
+- **With diagnostic logging switched on, the log no longer records your key presses or pieces of your document text.**
+
 ## [0.2.135] - 2026-09-23
 
 ### Added
